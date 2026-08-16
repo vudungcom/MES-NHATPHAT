@@ -4,6 +4,9 @@
 @using MES.Web.Data.Entities
 @using MES.Web.Services
 @inject PartMasterListService ListSvc
+@inject PartMasterService PmSvc
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Part Master - MES</PageTitle>
 
@@ -11,8 +14,17 @@
     <div>
         <h1 class="mb-1">Part Master</h1>
         <p class="text-muted small mb-0">
-            Mỗi dòng = 1 Part. Click <i class="bi bi-caret-right-fill"></i> đầu dòng để xem chi tiết công đoạn.
+            Mỗi dòng = 1 Part. Click <i class="bi bi-caret-right-fill"></i> để xem chi tiết,
+            <strong>double-click</strong> hoặc bấm "Chi tiết" để mở trang sửa.
         </p>
+    </div>
+    <div class="d-flex gap-2">
+        @if (_canCreate)
+        {
+            <a href="/part-master/create" class="btn btn-primary">
+                <i class="bi bi-plus-lg"></i> Tạo Part mới
+            </a>
+        }
     </div>
 </div>
 
@@ -55,6 +67,10 @@ else if (_rows.Count == 0)
     <div class="alert alert-secondary">
         <i class="bi bi-inbox"></i> Chưa có Part Master nào trong hệ thống.
         Khi Kế hoạch tạo phiếu KH với Part No mới, Part Master sẽ tự động được tạo.
+        @if (_canCreate)
+        {
+            <span>Hoặc bấm <strong>"Tạo Part mới"</strong> ở góc trên để tạo Part sạch.</span>
+        }
     </div>
 }
 else
@@ -75,15 +91,18 @@ else
                     <th>Bavia</th>
                     <th>Rửa</th>
                     <th>Kiểm tra</th>
+                    <th style="width: 90px;">Thao tác</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var row in Filtered)
                 {
-                    <tr>
-                        <td class="text-center">
+                    <tr @ondblclick="() => OpenDetail(row.PartNo)"
+                        style="cursor: pointer;"
+                        title="Double-click để mở trang chi tiết">
+                        <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
                             <button class="btn btn-sm btn-link p-0" @onclick="() => ToggleExpandAsync(row.PartId)"
-                                    title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết")">
+                                    title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết inline")">
                                 @if (IsExpanded(row.PartId))
                                 {
                                     <i class="bi bi-caret-down-fill"></i>
@@ -105,12 +124,18 @@ else
                         <td>@RenderNcs(row.BaviaNcs)</td>
                         <td>@RenderNcs(row.WashingNcs)</td>
                         <td>@RenderNcs(row.InspectionNcs)</td>
+                        <td @onclick:stopPropagation @ondblclick:stopPropagation>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)"
+                                    title="Mở trang chi tiết">
+                                <i class="bi bi-arrow-right-circle"></i> Chi tiết
+                            </button>
+                        </td>
                     </tr>
 
                     @if (IsExpanded(row.PartId))
                     {
                         <tr>
-                            <td colspan="12" class="bg-light p-3">
+                            <td colspan="13" class="bg-light p-3">
                                 @if (_detailByPart.TryGetValue(row.PartId, out var detail))
                                 {
                                     @RenderExpandedDetail(row, detail)
@@ -134,10 +159,20 @@ else
     private Dictionary<int, PartMasterExpandDetail> _detailByPart = new();
     private string _search = string.Empty;
     private string _customerFilter = string.Empty;
+    private bool _canCreate;
 
     protected override async Task OnInitializedAsync()
     {
         _rows = await ListSvc.GetAllRowsAsync();
+
+        // Check quyền tạo Part mới — query fresh từ DB
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userIdStr = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (int.TryParse(userIdStr, out var uid))
+        {
+            var ctx = await PmSvc.GetUserContextAsync(uid);
+            _canCreate = PartMasterPermissionHelper.CanCreatePartMaster(ctx?.GroupCode, ctx?.Role);
+        }
     }
 
     private bool IsExpanded(int partId) => _expanded.Contains(partId);
@@ -158,6 +193,11 @@ else
         }
     }
 
+    private void OpenDetail(string partNo)
+    {
+        Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(partNo)}");
+    }
+
     // Chuỗi NC nối "→" (VD: NC01 → NC02 → NC03)
     private RenderFragment RenderNcs(List<string> ncs) => builder =>
     {
@@ -173,7 +213,6 @@ else
         builder.CloseElement();
     };
 
-    // Filter + search
     private IEnumerable<PartMasterListRow> Filtered
     {
         get
@@ -197,7 +236,6 @@ else
         }
     }
 
-    // Dropdown customer: distinct từ _rows
     private IEnumerable<(int Id, string Name)> CustomerOptions
     {
         get
@@ -211,9 +249,6 @@ else
         }
     }
 
-    // ================================================================
-    // Render 5 bảng con khi expand
-    // ================================================================
     private RenderFragment RenderExpandedDetail(PartMasterListRow row, PartMasterExpandDetail detail) => __builder =>
     {
         <div class="row g-3">
@@ -225,17 +260,20 @@ else
                     {
                         <span class="text-muted"> — @row.PartName</span>
                     }
+                    <a href="/part-master/detail?partNo=@Uri.EscapeDataString(row.PartNo)"
+                       class="btn btn-sm btn-outline-primary ms-2">
+                        <i class="bi bi-arrow-right-circle"></i> Mở trang chi tiết
+                    </a>
                 </div>
                 @if (detail.TotalSteps == 0)
                 {
                     <div class="alert alert-warning py-2 small mb-0">
                         <i class="bi bi-exclamation-triangle"></i>
-                        Part này chưa có công đoạn nào. Sẽ được thêm ở trang Chi tiết (Lượt 6D).
+                        Part này chưa có công đoạn nào. Vào trang chi tiết để thêm.
                     </div>
                 }
             </div>
 
-            @* --- Vùng B: Quy trình gia công --- *@
             @if (detail.Machining.Count > 0)
             {
                 <div class="col-12">
@@ -285,7 +323,6 @@ else
                 </div>
             }
 
-            @* --- Vùng C: Hoàn thiện SP --- *@
             @if (detail.Taro.Count > 0)
             {
                 <div class="col-md-6">
@@ -378,7 +415,6 @@ else
                 </div>
             }
 
-            @* --- Vùng D: Kiểm tra --- *@
             @if (detail.Inspection.Count > 0)
             {
                 <div class="col-md-6">

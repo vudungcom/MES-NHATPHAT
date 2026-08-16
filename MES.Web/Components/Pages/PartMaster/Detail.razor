@@ -1,0 +1,975 @@
+@page "/part-master/detail"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Components.Shared
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject PartMasterService PmSvc
+@inject PartMasterListService ListSvc
+@inject PartMachiningService MachiningSvc
+@inject PartTaroService TaroSvc
+@inject PartBaviaService BaviaSvc
+@inject PartWashingService WashingSvc
+@inject PartInspectionService InspectionSvc
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>@(_part?.PartNo ?? "Part Master") - Chi tiết</PageTitle>
+
+@if (_loading)
+{
+    <p><em>Đang tải...</em></p>
+}
+else if (_part == null)
+{
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i>
+        Không tìm thấy Part với Part No: <code>@PartNo</code>
+    </div>
+    <a href="/part-master" class="btn btn-outline-primary">
+        <i class="bi bi-arrow-left"></i> Về trang Part Master
+    </a>
+}
+else
+{
+    @* ==================== HEADER ==================== *@
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="mb-1">
+                <code>@_part.PartNo</code>
+                @if (!string.IsNullOrEmpty(_part.PartName))
+                {
+                    <span class="text-muted fs-4"> — @_part.PartName</span>
+                }
+            </h1>
+            <div class="small text-muted">
+                <i class="bi bi-building"></i> Khách hàng:
+                <strong>@(_part.Customer?.CustomerName ?? "—")</strong>
+                @* Badge quyền *@
+                <span class="ms-3">
+                    <i class="bi bi-person-badge"></i> Bạn:
+                    <span class="badge bg-secondary">@(_ctx?.DisplayRoleBadge ?? "?")</span>
+                </span>
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="/part-master" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Quay lại
+            </a>
+            @if (CanEditAnyArea)
+            {
+                <button class="btn btn-primary" @onclick="TrySaveAsync" disabled="@_saving">
+                    <i class="bi bi-save"></i>
+                    @(_saving ? "Đang lưu..." : "Lưu tất cả")
+                </button>
+            }
+        </div>
+    </div>
+
+    @* Cảnh báo permission tổng quát *@
+    @if (!CanEditAnyArea)
+    {
+        <div class="alert alert-info py-2 small mb-3">
+            <i class="bi bi-info-circle"></i>
+            Bạn chỉ có quyền xem. Để sửa cần ADMIN hoặc Leader của nhóm tương ứng.
+        </div>
+    }
+
+    @* Toggle hiện dòng đã xóa *@
+    @if (CanEditAnyArea)
+    {
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="chkShowDeleted"
+                   @bind="_showDeleted" @bind:after="ReloadDeletedAsync" />
+            <label class="form-check-label small" for="chkShowDeleted">
+                Hiện dòng đã xóa (chỉ Leader/ADMIN thấy được nút Khôi phục)
+            </label>
+        </div>
+    }
+
+    @* ==================== VÙNG A ==================== *@
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white fw-bold">
+            <i class="bi bi-stars"></i> A. Kế hoạch nhập
+            @if (!_canEditA)
+            {
+                <span class="badge bg-light text-dark ms-2">Chỉ xem</span>
+            }
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">Tên chi tiết</label>
+                    <input class="form-control form-control-sm" @bind="_partName"
+                           disabled="@(!_canEditA)"
+                           placeholder="Tên đầy đủ của chi tiết" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">Mã VL (Material)</label>
+                    <AttributePicker Label="" Placeholder="VD: SS400"
+                                     Attributes="@(_attrGroups.GetValueOrDefault("Material"))"
+                                     @bind-Value="_material"
+                                     @bind-IsSetAsDefault="_setDefaultMaterial" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">Cấu hình phôi (Material Config)</label>
+                    <AttributePicker Label="" Placeholder="VD: 100x50x20"
+                                     Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))"
+                                     @bind-Value="_materialConfig"
+                                     @bind-IsSetAsDefault="_setDefaultConfig" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small mb-1">Ghi chú phôi</label>
+                    <AttributePicker Label="" Placeholder="Ghi chú"
+                                     Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))"
+                                     @bind-Value="_materialNote"
+                                     @bind-IsSetAsDefault="_setDefaultNote" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ==================== VÙNG B: Machining ==================== *@
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi bi-gear-wide-connected"></i> B. Quy trình gia công (@ActiveMachiningCount)
+                @if (!_canEditB) { <span class="badge bg-light text-dark ms-2">Chỉ xem</span> }
+            </span>
+            @if (_canEditB)
+            {
+                <button class="btn btn-sm btn-light" @onclick="AddMachiningRow">
+                    <i class="bi bi-plus-lg"></i> Thêm dòng
+                </button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (_machiningEdits.Count == 0)
+            {
+                <div class="p-3 text-muted small"><em>Chưa có công đoạn nào. Bấm "Thêm dòng" để thêm.</em></div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered mb-0" style="font-size: 0.75rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 80px;">NC *</th>
+                                <th>Bản vẽ</th>
+                                <th>Máy đăng ký</th>
+                                <th>Máy đồng dạng</th>
+                                <th>Đồ gá</th>
+                                <th class="text-end" style="width: 70px;">T.Gá lắp</th>
+                                <th class="text-end" style="width: 70px;">T.Gia công</th>
+                                <th class="text-end" style="width: 70px;">T.Kiểm tra</th>
+                                <th class="text-end" style="width: 70px;">T.Chuẩn bị</th>
+                                <th class="text-end" style="width: 70px;">T.Chạy thử</th>
+                                @if (_canEditB) { <th style="width: 50px;"></th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (edit, idx) in _machiningEdits.Select((e, i) => (e, i)))
+                            {
+                                <tr class="@RowCssClass(edit)">
+                                    <td>@(idx + 1)@StateBadge(edit)</td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@RowLocked(edit)" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.MachineRegistered" disabled="@RowLocked(edit)" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.MachineAlternative" disabled="@RowLocked(edit)" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.FixtureType" disabled="@RowLocked(edit)" /></td>
+                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.SetupTime" disabled="@RowLocked(edit)" /></td>
+                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.MachiningTime" disabled="@RowLocked(edit)" /></td>
+                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.InspectionTime" disabled="@RowLocked(edit)" /></td>
+                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.PreparationTime" disabled="@RowLocked(edit)" /></td>
+                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.TrialRunTime" disabled="@RowLocked(edit)" /></td>
+                                    @if (_canEditB)
+                                    {
+                                        <td class="text-center">@RowActionButton(edit, () => MachiningToggleDelete(edit))</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    @* ==================== VÙNG C: Hoàn thiện SP ==================== *@
+    <div class="row g-3 mb-4">
+        @* C.1 Taro *@
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-nut"></i> C.1 Taro (@ActiveTaroCount)</span>
+                    @if (_canEditC)
+                    {
+                        <button class="btn btn-sm btn-light" @onclick="AddTaroRow">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    }
+                </div>
+                <div class="card-body p-0">
+                    @if (_taroEdits.Count == 0)
+                    {
+                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 60px;">NC *</th>
+                                    <th>Tên công đoạn</th>
+                                    <th class="text-end" style="width: 80px;">T.Chuẩn</th>
+                                    @if (_canEditC) { <th style="width: 40px;"></th> }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var edit in _taroEdits)
+                                {
+                                    <tr class="@RowCssClass(edit)">
+                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
+                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                        <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@RowLocked(edit)" /></td>
+                                        @if (_canEditC)
+                                        {
+                                            <td class="text-center">@RowActionButton(edit, () => TaroToggleDelete(edit))</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* C.2 Bavia *@
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-scissors"></i> C.2 Bavia (@ActiveBaviaCount)</span>
+                    @if (_canEditC)
+                    {
+                        <button class="btn btn-sm btn-light" @onclick="AddBaviaRow">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    }
+                </div>
+                <div class="card-body p-0">
+                    @if (_baviaEdits.Count == 0)
+                    {
+                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 60px;">NC *</th>
+                                    <th>Tên công đoạn</th>
+                                    @if (_canEditC) { <th style="width: 40px;"></th> }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var edit in _baviaEdits)
+                                {
+                                    <tr class="@RowCssClass(edit)">
+                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
+                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                        @if (_canEditC)
+                                        {
+                                            <td class="text-center">@RowActionButton(edit, () => BaviaToggleDelete(edit))</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* C.3 Rửa *@
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-droplet"></i> C.3 Rửa (@ActiveWashingCount)</span>
+                    @if (_canEditC)
+                    {
+                        <button class="btn btn-sm btn-light" @onclick="AddWashingRow">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    }
+                </div>
+                <div class="card-body p-0">
+                    @if (_washingEdits.Count == 0)
+                    {
+                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 60px;">NC *</th>
+                                    <th>Tên công đoạn</th>
+                                    @if (_canEditC) { <th style="width: 40px;"></th> }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var edit in _washingEdits)
+                                {
+                                    <tr class="@RowCssClass(edit)">
+                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
+                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                        @if (_canEditC)
+                                        {
+                                            <td class="text-center">@RowActionButton(edit, () => WashingToggleDelete(edit))</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ==================== VÙNG D: Kiểm tra ==================== *@
+    <div class="card mb-4">
+        <div class="card-header bg-warning text-dark fw-bold d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi bi-search"></i> D. Kiểm tra (@ActiveInspectionCount)
+                @if (!_canEditD) { <span class="badge bg-dark text-white ms-2">Chỉ xem</span> }
+            </span>
+            @if (_canEditD)
+            {
+                <button class="btn btn-sm btn-dark" @onclick="AddInspectionRow">
+                    <i class="bi bi-plus-lg"></i> Thêm dòng
+                </button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (_inspectionEdits.Count == 0)
+            {
+                <div class="p-3 text-muted small"><em>Chưa có công đoạn nào.</em></div>
+            }
+            else
+            {
+                <table class="table table-sm mb-0" style="font-size: 0.8rem;">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 80px;">NC *</th>
+                            <th>Tên công đoạn</th>
+                            @if (_canEditD) { <th style="width: 50px;"></th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var edit in _inspectionEdits)
+                        {
+                            <tr class="@RowCssClass(edit)">
+                                <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
+                                <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                @if (_canEditD)
+                                {
+                                    <td class="text-center">@RowActionButton(edit, () => InspectionToggleDelete(edit))</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    @* ==================== REASON + SAVE ==================== *@
+    @if (CanEditAnyArea)
+    {
+        <div class="card mb-4 border-danger">
+            <div class="card-header bg-danger text-white fw-bold">
+                <i class="bi bi-pencil-square"></i> Lý do thay đổi <span class="text-warning">*</span> (bắt buộc khi Save)
+            </div>
+            <div class="card-body">
+                <textarea class="form-control" @bind="_reason" rows="2"
+                          placeholder="VD: Cập nhật bản vẽ theo yêu cầu khách, sửa thời gian gia công cho máy mới..."></textarea>
+                <small class="text-muted">Tối thiểu 3 ký tự. Lý do sẽ được ghi vào lịch sử của mọi dòng bị thay đổi.</small>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_saveResult))
+        {
+            <div class="alert @(_saveHasError ? "alert-danger" : "alert-success") small">
+                <pre class="mb-0" style="white-space: pre-wrap; font-family: inherit;">@_saveResult</pre>
+            </div>
+        }
+
+        <div class="d-flex gap-2 mb-4">
+            <button class="btn btn-primary btn-lg" @onclick="TrySaveAsync" disabled="@_saving">
+                <i class="bi bi-save"></i>
+                @(_saving ? "Đang lưu..." : "Lưu tất cả thay đổi")
+            </button>
+            <a href="/part-master" class="btn btn-outline-secondary btn-lg">Hủy, về danh sách</a>
+        </div>
+    }
+}
+
+@* ==================== PIN MODAL cho default changes ==================== *@
+<PinConfirmModal IsOpen="_showPinModal"
+                 Title="Xác nhận đổi giá trị default"
+                 Description="Bạn đang đổi giá trị default của Part Master. Cần nhập PIN để xác nhận."
+                 Changes="@_pendingDefaultChanges"
+                 OnConfirmed="OnPinConfirmed"
+                 OnCancelled="OnPinCancelled" />
+
+@code {
+    // ===== Query string =====
+    [SupplyParameterFromQuery(Name = "partNo")]
+    public string? PartNo { get; set; }
+
+    // ===== State =====
+    private bool _loading = true;
+    private bool _saving = false;
+    private PartMaster? _part;
+    private UserContext? _ctx;
+
+    private bool _canEditA;
+    private bool _canEditB;
+    private bool _canEditC;
+    private bool _canEditD;
+    private bool CanEditAnyArea => _canEditA || _canEditB || _canEditC || _canEditD;
+
+    // ===== Vùng A =====
+    private string? _partName;
+    private Dictionary<string, List<PartMasterAttribute>> _attrGroups = new();
+    private string? _material;
+    private string? _materialConfig;
+    private string? _materialNote;
+    private bool _setDefaultMaterial;
+    private bool _setDefaultConfig;
+    private bool _setDefaultNote;
+    private string? _originalPartName;
+    private string? _originalMaterial;
+    private string? _originalConfig;
+    private string? _originalNote;
+
+    // ===== Vùng B/C/D — edit models =====
+    private List<MachiningEdit> _machiningEdits = new();
+    private List<TaroEdit> _taroEdits = new();
+    private List<BaviaEdit> _baviaEdits = new();
+    private List<WashingEdit> _washingEdits = new();
+    private List<InspectionEdit> _inspectionEdits = new();
+
+    private int ActiveMachiningCount => _machiningEdits.Count(e => e.State != EditState.Deleted);
+    private int ActiveTaroCount => _taroEdits.Count(e => e.State != EditState.Deleted);
+    private int ActiveBaviaCount => _baviaEdits.Count(e => e.State != EditState.Deleted);
+    private int ActiveWashingCount => _washingEdits.Count(e => e.State != EditState.Deleted);
+    private int ActiveInspectionCount => _inspectionEdits.Count(e => e.State != EditState.Deleted);
+
+    // ===== Reason & flags =====
+    private string _reason = string.Empty;
+    private bool _showDeleted = false;
+
+    // ===== PIN modal =====
+    private bool _showPinModal = false;
+    private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
+
+    // ===== Save result =====
+    private string _saveResult = string.Empty;
+    private bool _saveHasError = false;
+
+    // ================================================================
+    // LOAD
+    // ================================================================
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrWhiteSpace(PartNo))
+        {
+            _loading = false;
+            return;
+        }
+
+        // Load user context
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userIdStr = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (int.TryParse(userIdStr, out var uid))
+        {
+            _ctx = await PmSvc.GetUserContextAsync(uid);
+        }
+
+        _canEditA = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.A_KeHoach);
+        _canEditB = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.B_Machining);
+        _canEditC = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.C_HoanThienSP);
+        _canEditD = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.D_KiemTra);
+
+        // Load Part
+        _part = await PmSvc.GetByPartNoAsync(PartNo);
+        if (_part == null)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadAllAsync();
+        _loading = false;
+    }
+
+    private async Task LoadAllAsync()
+    {
+        // Vùng A
+        _partName = _part!.PartName;
+        _originalPartName = _partName;
+
+        _attrGroups = await PmSvc.GetAttributesGroupedAsync(_part.PartId);
+        _material = _attrGroups.GetValueOrDefault("Material")?.FirstOrDefault(a => a.IsDefault)?.Value;
+        _materialConfig = _attrGroups.GetValueOrDefault("MaterialConfig")?.FirstOrDefault(a => a.IsDefault)?.Value;
+        _materialNote = _attrGroups.GetValueOrDefault("MaterialNote")?.FirstOrDefault(a => a.IsDefault)?.Value;
+        _originalMaterial = _material;
+        _originalConfig = _materialConfig;
+        _originalNote = _materialNote;
+
+        // Vùng B/C/D
+        await ReloadStepsAsync();
+    }
+
+    private async Task ReloadStepsAsync()
+    {
+        List<PartMachiningStep> mSteps;
+        List<PartTaroStep> tSteps;
+        List<PartBaviaStep> bSteps;
+        List<PartWashingStep> wSteps;
+        List<PartInspectionStep> iSteps;
+
+        if (_showDeleted)
+        {
+            mSteps = await MachiningSvc.GetAllByPartAsync(_part!.PartId);
+            tSteps = await TaroSvc.GetAllByPartAsync(_part.PartId);
+            bSteps = await BaviaSvc.GetAllByPartAsync(_part.PartId);
+            wSteps = await WashingSvc.GetAllByPartAsync(_part.PartId);
+            iSteps = await InspectionSvc.GetAllByPartAsync(_part.PartId);
+        }
+        else
+        {
+            mSteps = await MachiningSvc.GetActiveByPartAsync(_part!.PartId);
+            tSteps = await TaroSvc.GetActiveByPartAsync(_part.PartId);
+            bSteps = await BaviaSvc.GetActiveByPartAsync(_part.PartId);
+            wSteps = await WashingSvc.GetActiveByPartAsync(_part.PartId);
+            iSteps = await InspectionSvc.GetActiveByPartAsync(_part.PartId);
+        }
+
+        _machiningEdits = mSteps.Select(MachiningEdit.FromEntity).ToList();
+        _taroEdits = tSteps.Select(TaroEdit.FromEntity).ToList();
+        _baviaEdits = bSteps.Select(BaviaEdit.FromEntity).ToList();
+        _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
+        _inspectionEdits = iSteps.Select(InspectionEdit.FromEntity).ToList();
+    }
+
+    private async Task ReloadDeletedAsync()
+    {
+        await ReloadStepsAsync();
+    }
+
+    // ================================================================
+    // ADD ROW
+    // ================================================================
+    private void AddMachiningRow() => _machiningEdits.Add(new MachiningEdit { State = EditState.New });
+    private void AddTaroRow() => _taroEdits.Add(new TaroEdit { State = EditState.New });
+    private void AddBaviaRow() => _baviaEdits.Add(new BaviaEdit { State = EditState.New });
+    private void AddWashingRow() => _washingEdits.Add(new WashingEdit { State = EditState.New });
+    private void AddInspectionRow() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New });
+
+    // ================================================================
+    // TOGGLE DELETE (soft)
+    // ================================================================
+    private void MachiningToggleDelete(MachiningEdit e) => ToggleDelete(e, _machiningEdits);
+    private void TaroToggleDelete(TaroEdit e) => ToggleDelete(e, _taroEdits);
+    private void BaviaToggleDelete(BaviaEdit e) => ToggleDelete(e, _baviaEdits);
+    private void WashingToggleDelete(WashingEdit e) => ToggleDelete(e, _washingEdits);
+    private void InspectionToggleDelete(InspectionEdit e) => ToggleDelete(e, _inspectionEdits);
+
+    private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
+    {
+        if (edit.State == EditState.New)
+        {
+            // Chưa persist → remove khỏi list
+            list.Remove(edit);
+        }
+        else if (edit.State == EditState.Deleted)
+        {
+            // Đang là DB-deleted → restore
+            edit.State = edit.WasActiveInDb ? EditState.Unchanged : EditState.Restored;
+        }
+        else
+        {
+            // Unchanged/Modified → mark to delete
+            edit.State = EditState.Deleted;
+        }
+    }
+
+    // ================================================================
+    // UI helpers
+    // ================================================================
+    private string RowCssClass(StepEditBase e) => e.State switch
+    {
+        EditState.New => "table-success",
+        EditState.Deleted => "table-secondary text-muted",
+        EditState.Restored => "table-info",
+        _ => ""
+    };
+
+    private bool RowLocked(StepEditBase e) => e.State == EditState.Deleted;
+
+    private RenderFragment StateBadge(StepEditBase e) => builder =>
+    {
+        var label = e.State switch
+        {
+            EditState.New => (" MỚI", "success"),
+            EditState.Deleted => (" ĐÃ XÓA", "secondary"),
+            EditState.Restored => (" KHÔI PHỤC", "info"),
+            _ => (null!, null!)
+        };
+        if (label.Item1 == null) return;
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", $"badge bg-{label.Item2} ms-1");
+        builder.AddContent(2, label.Item1.Trim());
+        builder.CloseElement();
+    };
+
+    private RenderFragment RowActionButton(StepEditBase e, Action onClick) => builder =>
+    {
+        var isDeleted = e.State == EditState.Deleted;
+        var title = isDeleted ? "Khôi phục" : "Xóa dòng";
+        var icon = isDeleted ? "bi-arrow-counterclockwise" : "bi-x-lg";
+        var cls = isDeleted ? "btn-outline-success" : "btn-outline-danger";
+
+        builder.OpenElement(0, "button");
+        builder.AddAttribute(1, "class", $"btn btn-sm {cls} p-0 px-1");
+        builder.AddAttribute(2, "type", "button");
+        builder.AddAttribute(3, "title", title);
+        builder.AddAttribute(4, "onclick", EventCallback.Factory.Create(this, onClick));
+        builder.OpenElement(5, "i");
+        builder.AddAttribute(6, "class", $"bi {icon}");
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    // ================================================================
+    // SAVE
+    // ================================================================
+    private async Task TrySaveAsync()
+    {
+        _saveResult = string.Empty;
+        _saveHasError = false;
+
+        // Validate reason
+        if (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3)
+        {
+            _saveResult = "Lý do bắt buộc, tối thiểu 3 ký tự.";
+            _saveHasError = true;
+            return;
+        }
+
+        // Kiểm tra pending default changes → mở PIN modal nếu có
+        _pendingDefaultChanges = CollectDefaultChanges();
+        if (_pendingDefaultChanges.Count > 0)
+        {
+            _showPinModal = true;
+        }
+        else
+        {
+            await DoSaveAsync(applyDefaultChanges: false);
+        }
+    }
+
+    private async Task OnPinConfirmed()
+    {
+        _showPinModal = false;
+        await DoSaveAsync(applyDefaultChanges: true);
+    }
+
+    private void OnPinCancelled()
+    {
+        _showPinModal = false;
+    }
+
+    private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
+    {
+        var list = new List<PinConfirmModal.DefaultChangeInfo>();
+        if (!_canEditA) return list;
+
+        if (_setDefaultMaterial && !string.IsNullOrWhiteSpace(_material) && _material != _originalMaterial)
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Material", OldValue = _originalMaterial, NewValue = _material! });
+        if (_setDefaultConfig && !string.IsNullOrWhiteSpace(_materialConfig) && _materialConfig != _originalConfig)
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialConfig", OldValue = _originalConfig, NewValue = _materialConfig! });
+        if (_setDefaultNote && !string.IsNullOrWhiteSpace(_materialNote) && _materialNote != _originalNote)
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialNote", OldValue = _originalNote, NewValue = _materialNote! });
+        return list;
+    }
+
+    private async Task DoSaveAsync(bool applyDefaultChanges)
+    {
+        _saving = true;
+        var log = new List<string>();
+        var errors = new List<string>();
+        var reason = _reason.Trim();
+        var uid = _ctx!.UserId;
+
+        try
+        {
+            // ==== VÙNG A ====
+            if (_canEditA)
+            {
+                // PartName
+                if (_partName != _originalPartName)
+                {
+                    try
+                    {
+                        await PmSvc.UpdatePartNameAsync(_part!.PartId, _partName, uid);
+                        log.Add("✓ Đã cập nhật Tên chi tiết");
+                    }
+                    catch (Exception ex) { errors.Add("✗ Tên chi tiết: " + ex.Message); }
+                }
+
+                // Attribute — thêm value mới (không default) nếu khác
+                await TryAddAttrValue("Material", _material, uid, log, errors);
+                await TryAddAttrValue("MaterialConfig", _materialConfig, uid, log, errors);
+                await TryAddAttrValue("MaterialNote", _materialNote, uid, log, errors);
+
+                // Apply default changes nếu PIN đã confirm
+                if (applyDefaultChanges)
+                {
+                    foreach (var chg in _pendingDefaultChanges)
+                    {
+                        try
+                        {
+                            await PmSvc.SetAsDefaultAsync(_part!.PartId, chg.AttributeType, chg.NewValue, uid);
+                            log.Add($"✓ Đã đặt default {chg.AttributeType} = {chg.NewValue}");
+                        }
+                        catch (Exception ex) { errors.Add($"✗ Đặt default {chg.AttributeType}: {ex.Message}"); }
+                    }
+                }
+            }
+
+            // ==== VÙNG B: Machining ====
+            await SaveStepListAsync(_machiningEdits,
+                addFn: e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
+                updateFn: (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
+                deleteFn: id => MachiningSvc.SoftDeleteAsync(id, uid, reason),
+                restoreFn: id => MachiningSvc.RestoreAsync(id, uid, reason),
+                areaLabel: "Machining", log: log, errors: errors);
+
+            // ==== VÙNG C: Taro / Bavia / Washing ====
+            await SaveStepListAsync(_taroEdits,
+                addFn: e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
+                updateFn: (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
+                deleteFn: id => TaroSvc.SoftDeleteAsync(id, uid, reason),
+                restoreFn: id => TaroSvc.RestoreAsync(id, uid, reason),
+                areaLabel: "Taro", log: log, errors: errors);
+
+            await SaveStepListAsync(_baviaEdits,
+                addFn: e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
+                updateFn: (id, e) => BaviaSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
+                deleteFn: id => BaviaSvc.SoftDeleteAsync(id, uid, reason),
+                restoreFn: id => BaviaSvc.RestoreAsync(id, uid, reason),
+                areaLabel: "Bavia", log: log, errors: errors);
+
+            await SaveStepListAsync(_washingEdits,
+                addFn: e => WashingSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
+                updateFn: (id, e) => WashingSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
+                deleteFn: id => WashingSvc.SoftDeleteAsync(id, uid, reason),
+                restoreFn: id => WashingSvc.RestoreAsync(id, uid, reason),
+                areaLabel: "Rửa", log: log, errors: errors);
+
+            // ==== VÙNG D: Inspection ====
+            await SaveStepListAsync(_inspectionEdits,
+                addFn: e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
+                updateFn: (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
+                deleteFn: id => InspectionSvc.SoftDeleteAsync(id, uid, reason),
+                restoreFn: id => InspectionSvc.RestoreAsync(id, uid, reason),
+                areaLabel: "Kiểm tra", log: log, errors: errors);
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        _saveHasError = errors.Count > 0;
+        var messages = new List<string>();
+        if (log.Count > 0) messages.Add("Thành công:\n" + string.Join("\n", log));
+        if (errors.Count > 0) messages.Add("Lỗi:\n" + string.Join("\n", errors));
+        if (messages.Count == 0) messages.Add("Không có thay đổi nào để lưu.");
+        _saveResult = string.Join("\n\n", messages);
+
+        // Reload data để user thấy state mới
+        if (log.Count > 0)
+        {
+            _reason = string.Empty;
+            _setDefaultMaterial = _setDefaultConfig = _setDefaultNote = false;
+            await LoadAllAsync();
+        }
+    }
+
+    private async Task TryAddAttrValue(string type, string? value, int uid, List<string> log, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var attrs = _attrGroups.GetValueOrDefault(type);
+        if (attrs != null && attrs.Any(a => a.Value == value && a.IsActive)) return; // Đã có value này
+        try
+        {
+            await PmSvc.AddValueAsync(_part!.PartId, type, value, uid);
+            log.Add($"✓ Đã thêm giá trị mới cho {type}: {value}");
+        }
+        catch (Exception ex) { errors.Add($"✗ Thêm {type}: {ex.Message}"); }
+    }
+
+    // Generic save cho step list
+    private async Task SaveStepListAsync<T>(List<T> edits,
+        Func<T, Task<long>> addFn,
+        Func<long, T, Task> updateFn,
+        Func<long, Task> deleteFn,
+        Func<long, Task> restoreFn,
+        string areaLabel, List<string> log, List<string> errors) where T : StepEditBase
+    {
+        foreach (var e in edits.ToList())
+        {
+            try
+            {
+                switch (e.State)
+                {
+                    case EditState.New:
+                        if (string.IsNullOrWhiteSpace(e.NC)) continue;
+                        var newId = await addFn(e);
+                        log.Add($"✓ [{areaLabel}] Thêm dòng NC={e.NC}, StepId={newId}");
+                        break;
+                    case EditState.Deleted when e.StepId > 0 && e.WasActiveInDb:
+                        await deleteFn(e.StepId);
+                        log.Add($"✓ [{areaLabel}] Xóa dòng NC={e.NC}, StepId={e.StepId}");
+                        break;
+                    case EditState.Restored when e.StepId > 0:
+                        await restoreFn(e.StepId);
+                        log.Add($"✓ [{areaLabel}] Khôi phục dòng NC={e.NC}, StepId={e.StepId}");
+                        break;
+                    default:
+                        // Chỉ update nếu dòng đang active (không phải deleted, không phải new)
+                        if (e.StepId > 0 && e.State != EditState.Deleted && e.HasChanges)
+                        {
+                            await updateFn(e.StepId, e);
+                            log.Add($"✓ [{areaLabel}] Sửa dòng NC={e.NC}, StepId={e.StepId}");
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"✗ [{areaLabel}] NC={e.NC}: {ex.Message}");
+            }
+        }
+    }
+
+    // ================================================================
+    // Edit models — hold state per row
+    // ================================================================
+    public enum EditState { Unchanged, Modified, New, Deleted, Restored }
+
+    public abstract class StepEditBase
+    {
+        public long StepId { get; set; }
+        public string NC { get; set; } = "";
+        public EditState State { get; set; } = EditState.Unchanged;
+        public bool WasActiveInDb { get; set; }
+        public virtual bool HasChanges => true; // Simple: always consider modified. Service filter no-op.
+    }
+
+    public class MachiningEdit : StepEditBase
+    {
+        public string? Drawing { get; set; }
+        public string? MachineRegistered { get; set; }
+        public string? MachineAlternative { get; set; }
+        public string? FixtureType { get; set; }
+        public decimal? SetupTime { get; set; }
+        public decimal? MachiningTime { get; set; }
+        public decimal? InspectionTime { get; set; }
+        public decimal? PreparationTime { get; set; }
+        public decimal? TrialRunTime { get; set; }
+
+        public static MachiningEdit FromEntity(PartMachiningStep s) => new()
+        {
+            StepId = s.StepId, NC = s.NC, Drawing = s.Drawing,
+            MachineRegistered = s.MachineRegistered, MachineAlternative = s.MachineAlternative,
+            FixtureType = s.FixtureType, SetupTime = s.SetupTime, MachiningTime = s.MachiningTime,
+            InspectionTime = s.InspectionTime, PreparationTime = s.PreparationTime,
+            TrialRunTime = s.TrialRunTime,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
+        };
+
+        public PartMachiningStep ToEntity() => new()
+        {
+            StepId = StepId, NC = NC ?? "", Drawing = Drawing,
+            MachineRegistered = MachineRegistered, MachineAlternative = MachineAlternative,
+            FixtureType = FixtureType, SetupTime = SetupTime, MachiningTime = MachiningTime,
+            InspectionTime = InspectionTime, PreparationTime = PreparationTime,
+            TrialRunTime = TrialRunTime
+        };
+    }
+
+    public class TaroEdit : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public decimal? StandardTime { get; set; }
+        public static TaroEdit FromEntity(PartTaroStep s) => new()
+        {
+            StepId = s.StepId, NC = s.NC, StepName = s.StepName, StandardTime = s.StandardTime,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+        };
+        public PartTaroStep ToEntity() => new()
+        {
+            StepId = StepId, NC = NC ?? "", StepName = StepName, StandardTime = StandardTime
+        };
+    }
+
+    public class BaviaEdit : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public static BaviaEdit FromEntity(PartBaviaStep s) => new()
+        {
+            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+        };
+        public PartBaviaStep ToEntity() => new()
+        {
+            StepId = StepId, NC = NC ?? "", StepName = StepName
+        };
+    }
+
+    public class WashingEdit : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public static WashingEdit FromEntity(PartWashingStep s) => new()
+        {
+            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+        };
+        public PartWashingStep ToEntity() => new()
+        {
+            StepId = StepId, NC = NC ?? "", StepName = StepName
+        };
+    }
+
+    public class InspectionEdit : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public static InspectionEdit FromEntity(PartInspectionStep s) => new()
+        {
+            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+        };
+        public PartInspectionStep ToEntity() => new()
+        {
+            StepId = StepId, NC = NC ?? "", StepName = StepName
+        };
+    }
+}

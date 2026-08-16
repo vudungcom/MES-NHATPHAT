@@ -1,0 +1,235 @@
+@page "/part-master/create"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject PartMasterService PmSvc
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Tạo Part Master mới - MES</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Tạo Part Master mới</h1>
+        <p class="text-muted small mb-0">
+            Điền thông tin cơ bản. Sau khi tạo, có thể vào trang chi tiết để thêm quy trình sản xuất.
+        </p>
+    </div>
+    <div>
+        <a href="/part-master" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Quay lại
+        </a>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <p><em>Đang tải...</em></p>
+}
+else if (!_canCreate)
+{
+    <div class="alert alert-danger">
+        <i class="bi bi-shield-exclamation"></i>
+        <strong>Không có quyền.</strong> Chỉ ADMIN hoặc Leader của 1 trong 4 nhóm
+        (Kế hoạch / Kỹ thuật / Hoàn thiện SP / Kiểm tra) mới được tạo Part Master mới.
+        <br />
+        <small class="text-muted">Bạn đang là: <code>@(_ctx?.DisplayRoleBadge ?? "?")</code></small>
+    </div>
+    <a href="/part-master" class="btn btn-outline-primary">
+        <i class="bi bi-arrow-left"></i> Về trang Part Master
+    </a>
+}
+else
+{
+    <div class="row g-3">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white fw-bold">
+                    <i class="bi bi-file-earmark-plus"></i> Thông tin Part Master
+                </div>
+                <div class="card-body">
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Part No <span class="text-danger">*</span></label>
+                        <input class="form-control @(_errorPartNo != null ? "is-invalid" : "")"
+                               @bind="_partNo" @bind:event="oninput"
+                               placeholder="VD: 4A-BE7364810"
+                               maxlength="100" />
+                        @if (_errorPartNo != null)
+                        {
+                            <div class="invalid-feedback">@_errorPartNo</div>
+                        }
+                        <small class="text-muted">Định danh duy nhất, không được trùng với Part đã có.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Tên chi tiết</label>
+                        <input class="form-control" @bind="_partName" maxlength="200"
+                               placeholder="Tên đầy đủ của chi tiết (VD: Vỏ máy khoan)" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Khách hàng</label>
+                        <select class="form-select" @bind="_customerId">
+                            <option value="0">-- Chưa có khách hàng --</option>
+                            @foreach (var c in _customers)
+                            {
+                                <option value="@c.CustomerId">@c.CustomerName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <hr class="my-3" />
+                    <div class="fw-bold text-primary mb-2">
+                        <i class="bi bi-stars"></i> A. Kế hoạch nhập — giá trị default ban đầu
+                    </div>
+                    <p class="small text-muted mb-3">
+                        Các giá trị này sẽ được đặt làm default cho Part. Có thể để trống, sau này thêm sau.
+                    </p>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Mã VL (Material)</label>
+                        <input class="form-control form-control-sm" @bind="_material"
+                               placeholder="VD: SS400" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Cấu hình phôi (Material Config)</label>
+                        <input class="form-control form-control-sm" @bind="_materialConfig"
+                               placeholder="VD: 100x50x20" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Ghi chú phôi</label>
+                        <textarea class="form-control form-control-sm" @bind="_materialNote"
+                                  rows="2" placeholder="Ghi chú thêm về phôi (nếu có)"></textarea>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(_errorGeneral))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">
+                            <i class="bi bi-exclamation-triangle"></i> @_errorGeneral
+                        </div>
+                    }
+
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                            <i class="bi bi-check-lg"></i>
+                            @(_saving ? "Đang tạo..." : "Tạo Part Master")
+                        </button>
+                        <a href="/part-master" class="btn btn-outline-secondary">Hủy</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-light small fw-bold">
+                    <i class="bi bi-info-circle"></i> Lưu ý
+                </div>
+                <div class="card-body small">
+                    <ul class="mb-0 ps-3">
+                        <li>Sau khi tạo, Part sẽ hiện trong list Part Master.</li>
+                        <li>Vào trang chi tiết để thêm <strong>quy trình gia công, Taro, Bavia, Rửa, Kiểm tra</strong>.</li>
+                        <li>Bên Kế hoạch KH khi chọn Part này, sẽ auto-fill các giá trị default vừa nhập.</li>
+                        <li class="text-danger"><strong>Part No không sửa được sau khi tạo.</strong></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _canCreate;
+    private UserContext? _ctx;
+
+    private List<Customer> _customers = new();
+
+    private string _partNo = string.Empty;
+    private string _partName = string.Empty;
+    private int _customerId; // 0 = null
+    private string _material = string.Empty;
+    private string _materialConfig = string.Empty;
+    private string _materialNote = string.Empty;
+
+    private string? _errorPartNo;
+    private string? _errorGeneral;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userIdStr = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (int.TryParse(userIdStr, out var uid))
+        {
+            _ctx = await PmSvc.GetUserContextAsync(uid);
+            _canCreate = PartMasterPermissionHelper.CanCreatePartMaster(_ctx?.GroupCode, _ctx?.Role);
+        }
+
+        if (_canCreate)
+        {
+            _customers = await Db.Customers
+                .Where(c => c.IsActive)
+                .OrderBy(c => c.CustomerName)
+                .AsNoTracking()
+                .ToListAsync();
+        }
+
+        _loading = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        _errorPartNo = null;
+        _errorGeneral = null;
+
+        // Validate
+        if (string.IsNullOrWhiteSpace(_partNo))
+        {
+            _errorPartNo = "Part No bắt buộc";
+            return;
+        }
+        if (_partNo.Trim().Length > 100)
+        {
+            _errorPartNo = "Part No tối đa 100 ký tự";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var attrs = new Dictionary<string, string>();
+            if (!string.IsNullOrWhiteSpace(_material)) attrs["Material"] = _material.Trim();
+            if (!string.IsNullOrWhiteSpace(_materialConfig)) attrs["MaterialConfig"] = _materialConfig.Trim();
+            if (!string.IsNullOrWhiteSpace(_materialNote)) attrs["MaterialNote"] = _materialNote.Trim();
+
+            var pm = await PmSvc.CreatePartMasterAsync(
+                partNo: _partNo,
+                customerId: _customerId == 0 ? null : _customerId,
+                initialAttributes: attrs,
+                createdBy: _ctx!.UserId,
+                partName: _partName);
+
+            // Redirect sang trang chi tiết
+            Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(pm.PartNo)}");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("đã tồn tại"))
+        {
+            _errorPartNo = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _errorGeneral = "Lỗi khi tạo: " + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}
