@@ -1,0 +1,46 @@
+@page "/"
+@attribute [Authorize]
+
+<PageTitle>Trang chủ - MES</PageTitle>
+
+<h1>Trang chủ</h1>
+<p class="text-muted">Chào mừng đến với MES Prototype v0.1</p>
+
+<div class="row g-3 mt-2">
+    <div class="col-md-6 col-lg-4">
+        <a href="/kh-plan" class="text-decoration-none">
+            <div class="card mes-shortcut">
+                <div class="card-body">
+                    <i class="bi bi-calendar-check fs-2 text-primary"></i>
+                    <h5 class="mt-2">Kế Hoạch</h5>
+                    <p class="text-muted small mb-0">Nhập phiếu KH mới, xem danh sách, sửa deadline hàng loạt</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <a href="/kho" class="text-decoration-none">
+            <div class="card mes-shortcut">
+                <div class="card-body">
+                    <i class="bi bi-box-seam fs-2 text-primary"></i>
+                    <h5 class="mt-2">Kho</h5>
+                    <p class="text-muted small mb-0">Xem tồn kho, nhập/xuất phôi (sẽ có ở phase 2)</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-lg-4">
+        <div class="card mes-shortcut opacity-50">
+            <div class="card-body">
+                <i class="bi bi-cpu fs-2"></i>
+                <h5 class="mt-2">Hiệu suất máy</h5>
+                <p class="text-muted small mb-0">Downtime, utilization (chưa mở)</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info mt-4 small">
+    <i class="bi bi-info-circle"></i>
+    <strong>Đây là prototype.</strong> Dữ liệu có thể bị xóa/reset để đổi schema. Chưa dùng nhập dữ liệu thật của khách.
+</div>

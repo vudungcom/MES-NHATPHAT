@@ -1,0 +1,149 @@
+@rendermode InteractiveServer
+
+@*
+   Component 1 ô nhập cho 1 thuộc tính Part (Material, MaterialConfig, Location, MaterialNote).
+   
+   Hiển thị:
+   - Label
+   - Input text với datalist xổ list các giá trị đã có trong PartMasterAttribute
+   - Nút mũi tên xổ list (visual cue)
+   - Nếu user gõ giá trị khác default → warning nhỏ dưới ô + hiện checkbox "Đặt default mới"
+   - Nếu tick checkbox → cha xử lý ghi lại pending change để hỏi PIN khi Save
+   
+   Cha (Create.razor) truyền vào:
+   - Attributes: list PartMasterAttribute của loại này cho Part này
+   - Value: giá trị hiện tại
+   - ValueChanged: 2-way binding
+   - IsSetAsDefault: user đã tick "đặt default"?
+   - IsSetAsDefaultChanged: 2-way binding
+*@
+
+<div>
+    <label class="form-label small mb-1">
+        @Label
+        @if (IsRequired)
+        {
+            <span class="text-danger">*</span>
+        }
+    </label>
+
+    @if (Attributes != null && Attributes.Any())
+    {
+        @* Có sẵn attribute → hiện input với datalist *@
+        <div class="position-relative">
+            <input class="form-control form-control-sm @InputCssClass"
+                   list="@_datalistId"
+                   @bind="_value"
+                   @bind:after="OnValueChangedAsync"
+                   placeholder="@Placeholder" />
+            <i class="bi bi-chevron-down position-absolute"
+               style="right: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; color: #999; pointer-events: none;"></i>
+        </div>
+        <datalist id="@_datalistId">
+            @foreach (var attr in Attributes.OrderByDescending(a => a.IsDefault).ThenBy(a => a.Value))
+            {
+                <option value="@attr.Value">@(attr.IsDefault ? "★ (default) " : "")@attr.Value</option>
+            }
+        </datalist>
+    }
+    else
+    {
+        @* Chưa có attribute nào (Part mới) → chỉ hiện input thường *@
+        <input class="form-control form-control-sm"
+               @bind="_value"
+               @bind:after="OnValueChangedAsync"
+               placeholder="@Placeholder" />
+    }
+
+    @if (_isValueDifferentFromDefault && !string.IsNullOrEmpty(_value))
+    {
+        <div class="mt-1">
+            <div class="small text-warning">
+                <i class="bi bi-exclamation-triangle"></i>
+                @if (string.IsNullOrEmpty(_defaultValue))
+                {
+                    <span>Chưa có giá trị default cho attribute này</span>
+                }
+                else
+                {
+                    <span>Khác default (<code>@_defaultValue</code>)</span>
+                }
+            </div>
+            <div class="form-check form-check-sm mt-1">
+                <input class="form-check-input" type="checkbox" id="@_checkboxId"
+                       checked="@IsSetAsDefault"
+                       @onchange="OnSetDefaultToggled" />
+                <label class="form-check-label small text-muted" for="@_checkboxId">
+                    Đặt <code>@_value</code> làm default mới (cần PIN xác nhận khi Save)
+                </label>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public bool IsRequired { get; set; }
+    [Parameter] public List<PartMasterAttribute>? Attributes { get; set; }
+
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter] public bool IsSetAsDefault { get; set; }
+    [Parameter] public EventCallback<bool> IsSetAsDefaultChanged { get; set; }
+
+    private string? _value;
+    private string? _defaultValue;
+    private bool _isValueDifferentFromDefault;
+
+    private string _datalistId = "dl-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+    private string _checkboxId = "cb-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+
+    private string InputCssClass => _isValueDifferentFromDefault && !string.IsNullOrEmpty(_value)
+        ? "border-warning"
+        : (IsAutoFilledFromDefault ? "bg-success bg-opacity-10" : "");
+
+    private bool IsAutoFilledFromDefault =>
+        !string.IsNullOrEmpty(_value) &&
+        !string.IsNullOrEmpty(_defaultValue) &&
+        _value == _defaultValue;
+
+    protected override void OnParametersSet()
+    {
+        _value = Value;
+        _defaultValue = Attributes?.FirstOrDefault(a => a.IsDefault)?.Value;
+        RecalcDifference();
+    }
+
+    private void RecalcDifference()
+    {
+        if (string.IsNullOrEmpty(_value))
+        {
+            _isValueDifferentFromDefault = false;
+            return;
+        }
+        _isValueDifferentFromDefault = _value != _defaultValue;
+    }
+
+    private async Task OnValueChangedAsync()
+    {
+        RecalcDifference();
+
+        // Nếu về lại default → tự tắt checkbox
+        if (!_isValueDifferentFromDefault && IsSetAsDefault)
+        {
+            IsSetAsDefault = false;
+            await IsSetAsDefaultChanged.InvokeAsync(false);
+        }
+
+        await ValueChanged.InvokeAsync(_value);
+    }
+
+    private async Task OnSetDefaultToggled(ChangeEventArgs e)
+    {
+        var newVal = (bool)(e.Value ?? false);
+        IsSetAsDefault = newVal;
+        await IsSetAsDefaultChanged.InvokeAsync(newVal);
+    }
+}

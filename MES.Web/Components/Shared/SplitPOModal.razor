@@ -1,0 +1,284 @@
+@rendermode InteractiveServer
+@inject KhPlanService KhSvc
+@inject AuthService Auth
+@inject AuthenticationStateProvider AuthState
+
+@if (IsOpen && Source != null)
+{
+    @* Backdrop: KHÔNG có @onclick — click ra ngoài không đóng modal (tránh mất dữ liệu đang nhập).
+       Chỉ có nút X ở header và nút "Hủy" ở footer mới đóng modal. *@
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal mes-modal-lg" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0"><i class="bi bi-diagram-3"></i> Tách PO</h5>
+                <button class="btn-close" @onclick="CancelAsync"></button>
+            </div>
+            <div class="mes-modal-body">
+
+                <div class="alert alert-info small mb-3">
+                    <strong>PO gốc:</strong> <code>@Source.PurchaseOrder</code>
+                    · <strong>Part No:</strong> <code>@Source.PartNo</code>
+                    · <strong>SL gốc:</strong> <span class="fw-bold text-primary">@Source.Quantity @Source.Unit</span>
+                    · <strong>STD:</strong> @Source.STD.ToString("dd/MM/yyyy")
+                </div>
+
+                <div class="alert alert-warning small py-2 mb-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Quy tắc tách:</strong> Tổng SL các PO mới PHẢI bằng SL PO gốc. Dòng gốc sẽ bị XÓA, chỉ còn các dòng mới. Các dòng mới kế thừa toàn bộ thông tin từ dòng gốc (Material, Config, STD, Order VL, Location, Status...).
+                </div>
+
+                <p class="small text-secondary fw-bold mb-2"><i class="bi bi-list-check"></i> Các PO mới (tối thiểu 2 dòng)</p>
+
+                <div class="table-responsive mb-2">
+                    <table class="table table-sm table-bordered small mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th>PO mới <span class="text-danger">*</span></th>
+                                <th style="width: 150px;">SL <span class="text-danger">*</span></th>
+                                <th style="width: 50px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = 0; i < _newRows.Count; i++)
+                            {
+                                var idx = i;
+                                var r = _newRows[idx];
+                                <tr>
+                                    <td class="text-center text-muted">@(idx + 1)</td>
+                                    <td>
+                                        <input class="form-control form-control-sm font-monospace"
+                                               @bind="r.PurchaseOrder" placeholder="VD 0003958168" />
+                                    </td>
+                                    <td>
+                                        <input type="number" step="1" min="1" class="form-control form-control-sm text-end"
+                                               @bind="r.Quantity" />
+                                    </td>
+                                    <td>
+                                        @if (_newRows.Count > 2)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-1" @onclick="() => RemoveRow(idx)" title="Xóa dòng">
+                                                <i class="bi bi-x"></i>
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <td colspan="2" class="text-end fw-bold">Tổng SL các PO mới:</td>
+                                <td class="text-end fw-bold @(IsTotalMatched ? "text-success" : "text-danger")">
+                                    @_newRows.Sum(r => r.Quantity).ToString("N0")
+                                    @if (IsTotalMatched)
+                                    {
+                                        <i class="bi bi-check-circle ms-1"></i>
+                                    }
+                                    else
+                                    {
+                                        <span class="ms-1">(cần @Source.Quantity)</span>
+                                    }
+                                </td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <button class="btn btn-sm btn-outline-primary mb-3" @onclick="AddRow">
+                    <i class="bi bi-plus-lg"></i> Thêm dòng
+                </button>
+
+                <div class="mb-3">
+                    <label class="form-label small mb-1">
+                        <strong>Lý do tách</strong> <span class="text-danger">*</span> (bắt buộc)
+                    </label>
+                    <textarea class="form-control form-control-sm" rows="2" @bind="_reason"
+                              placeholder="VD: Khách chia đơn hàng thành 2 batch giao khác thời điểm / Chia PO theo yêu cầu mới..."></textarea>
+                </div>
+
+                @if (!_showPinInput)
+                {
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="alert alert-danger py-1 small mb-2">@_error</div>
+                    }
+                }
+                else
+                {
+                    <div class="card border-danger mb-2">
+                        <div class="card-body py-2">
+                            <label class="form-label small mb-1">
+                                <i class="bi bi-shield-lock"></i> <strong>Nhập PIN của bạn</strong> <span class="text-danger">*</span>
+                            </label>
+                            <input type="password" inputmode="numeric" maxlength="6"
+                                   class="form-control form-control-sm text-center"
+                                   style="letter-spacing: 8px; font-size: 1.3rem;"
+                                   @bind="_pin" @bind:event="oninput"
+                                   @onkeypress="OnPinKeyPress" />
+                            @if (!string.IsNullOrEmpty(_error))
+                            {
+                                <div class="alert alert-danger py-1 small mb-0 mt-2">@_error</div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-outline-secondary ms-auto me-2" @onclick="CancelAsync">Hủy</button>
+                @if (!_showPinInput)
+                {
+                    <button class="btn btn-sm btn-warning" @onclick="ProceedToPinAsync" disabled="@_saving">
+                        <i class="bi bi-shield-lock"></i> Tiếp tục (nhập PIN)
+                    </button>
+                }
+                else
+                {
+                    <button class="btn btn-sm btn-danger" @onclick="ConfirmSplitAsync" disabled="@_saving">
+                        <i class="bi bi-diagram-3"></i>
+                        @(_saving ? "Đang tách..." : "Xác nhận tách")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public KhPlanDetailRow? Source { get; set; }
+    [Parameter] public EventCallback OnSplitDone { get; set; }
+    [Parameter] public EventCallback OnCancelled { get; set; }
+
+    private List<SplitPORow> _newRows = new();
+    private string _reason = "";
+    private string _pin = "";
+    private string? _error;
+    private bool _saving;
+    private bool _showPinInput;
+
+    private bool IsTotalMatched =>
+        Source != null && _newRows.Sum(r => r.Quantity) == Source.Quantity;
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen && Source != null && _newRows.Count == 0)
+        {
+            // Init 2 dòng trống
+            _newRows = new List<SplitPORow>
+            {
+                new() { Quantity = 0 },
+                new() { Quantity = 0 }
+            };
+            _reason = "";
+            _pin = "";
+            _error = null;
+            _showPinInput = false;
+        }
+    }
+
+    private void AddRow() => _newRows.Add(new SplitPORow { Quantity = 0 });
+
+    private void RemoveRow(int idx)
+    {
+        if (_newRows.Count > 2) _newRows.RemoveAt(idx);
+    }
+
+    private async Task ProceedToPinAsync()
+    {
+        _error = null;
+
+        // Validation
+        if (Source == null) { _error = "Không có dòng gốc"; return; }
+        if (_newRows.Count < 2) { _error = "Cần ít nhất 2 dòng mới"; return; }
+        foreach (var r in _newRows)
+        {
+            if (string.IsNullOrWhiteSpace(r.PurchaseOrder)) { _error = "Điền PO cho mọi dòng"; return; }
+            if (r.Quantity <= 0) { _error = "SL của mọi dòng phải > 0"; return; }
+        }
+        var dupes = _newRows.GroupBy(r => r.PurchaseOrder).Where(g => g.Count() > 1).ToList();
+        if (dupes.Any()) { _error = $"PO trùng nhau: {string.Join(", ", dupes.Select(g => g.Key))}"; return; }
+        if (!IsTotalMatched)
+        {
+            _error = $"Tổng SL {_newRows.Sum(r => r.Quantity)} không khớp SL gốc {Source.Quantity}";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3)
+        {
+            _error = "Nhập lý do tách (tối thiểu 3 ký tự)";
+            return;
+        }
+
+        // Chuyển sang bước nhập PIN
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        var hasPin = await Auth.HasPinAsync(userId);
+        if (!hasPin)
+        {
+            _error = "Bạn chưa thiết lập PIN. Vào /profile để thiết lập trước.";
+            return;
+        }
+
+        _showPinInput = true;
+    }
+
+    private async Task OnPinKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_pin))
+        {
+            await ConfirmSplitAsync();
+        }
+    }
+
+    private async Task ConfirmSplitAsync()
+    {
+        _error = null;
+
+        if (string.IsNullOrWhiteSpace(_pin)) { _error = "Nhập PIN"; return; }
+
+        _saving = true;
+        try
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var userId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+
+            var pinOk = await Auth.VerifyPinAsync(userId, _pin);
+            if (!pinOk)
+            {
+                _error = "PIN không đúng";
+                _pin = "";
+                _saving = false;
+                return;
+            }
+
+            await KhSvc.SplitPOAsync(Source!.KhPlanDetailId, _newRows, userId, _reason.Trim());
+            await ResetAsync();
+            await OnSplitDone.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        await ResetAsync();
+        await OnCancelled.InvokeAsync();
+    }
+
+    private Task ResetAsync()
+    {
+        _newRows.Clear();
+        _reason = "";
+        _pin = "";
+        _error = null;
+        _showPinInput = false;
+        _saving = false;
+        return Task.CompletedTask;
+    }
+}

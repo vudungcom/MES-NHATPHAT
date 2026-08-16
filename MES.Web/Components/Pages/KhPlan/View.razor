@@ -1,0 +1,189 @@
+@page "/kh-plan/{Id:int}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject KhPlanService KhSvc
+@inject NavigationManager Nav
+
+<PageTitle>Xem phiếu KH - MES</PageTitle>
+
+@if (_plan == null)
+{
+    <p><em>Đang tải...</em></p>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="mb-1">Phiếu KH <code>@_plan.PlanNo</code></h1>
+            <p class="text-muted mb-0 small">
+                <i class="bi bi-calendar"></i> Ngày lập: @_plan.PlanDate.ToString("dd/MM/yyyy") ·
+                @if (_plan.ReceivedDate.HasValue)
+                {
+                    <span><i class="bi bi-inbox"></i> Ngày nhận: @_plan.ReceivedDate.Value.ToString("dd/MM/yyyy") ·</span>
+                }
+                <i class="bi bi-building"></i> @_plan.Customer?.CustomerName ·
+                <span class="badge bg-info">@_plan.Status</span> ·
+                <span class="text-muted">Tạo bởi @_plan.CreatedByUser?.FullName lúc @_plan.CreatedAt.ToString("dd/MM/yyyy HH:mm")</span>
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="/kh-plan" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Danh sách
+            </a>
+            <a href="@($"/kh-plan/{_plan.KhPlanId}/edit")" class="btn btn-primary">
+                <i class="bi bi-pencil-square"></i> Sửa phiếu
+            </a>
+        </div>
+    </div>
+
+    <div class="alert alert-secondary py-2 small">
+        <i class="bi bi-eye"></i> Chế độ <strong>chỉ xem</strong>. Bấm "Sửa phiếu" để chỉnh sửa (bắt buộc nhập lý do).
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h6 class="text-secondary"><i class="bi bi-file-earmark-text"></i> Thông tin phiếu</h6>
+            <div class="row g-3">
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Số phiếu</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_plan.PlanNo" readonly />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Ngày lập PO khách</label>
+                    <input class="form-control form-control-sm bg-light" value="@_plan.PlanDate.ToString("dd/MM/yyyy")" readonly />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Ngày nhận PO</label>
+                    <input class="form-control form-control-sm bg-light"
+                           value="@(_plan.ReceivedDate?.ToString("dd/MM/yyyy") ?? "(chưa điền)")" readonly />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Khách hàng</label>
+                    <input class="form-control form-control-sm bg-light" value="@_plan.Customer?.CustomerName" readonly />
+                </div>
+                @if (!string.IsNullOrEmpty(_plan.Notes))
+                {
+                    <div class="col-12">
+                        <label class="form-label small text-muted">Ghi chú chung</label>
+                        <input class="form-control form-control-sm bg-light" value="@_plan.Notes" readonly />
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <h6 class="text-secondary mb-2"><i class="bi bi-list-check"></i> Chi tiết (@_plan.Details.Count Part)</h6>
+
+    @foreach (var d in _plan.Details.OrderBy(x => x.LineNo))
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
+                    <div>
+                        <strong>Part @d.LineNo</strong>
+                        <span class="badge bg-@GetStatusColor(d.Status) ms-2">@d.Status</span>
+                        @if (!string.IsNullOrEmpty(d.OldPurchaseOrder))
+                        {
+                            <span class="badge bg-info ms-1" title="Tách từ PO cũ">
+                                <i class="bi bi-diagram-3"></i> Old PO: <code>@d.OldPurchaseOrder</code>
+                            </span>
+                        }
+                    </div>
+                </div>
+
+                <p class="small text-secondary fw-500 mb-2">A. Thông tin Part từ PO khách</p>
+                <div class="row g-2 mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">PO</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.PurchaseOrder" readonly />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Part No</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.PartNo" readonly />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">SL</label>
+                        <input class="form-control form-control-sm text-end bg-light" value="@d.Quantity.ToString("N0")" readonly />
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small text-muted">Đvị</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.Unit" readonly />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">STD (deadline)</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.STD.ToString("dd/MM/yyyy")" readonly />
+                    </div>
+                </div>
+
+                <div class="row g-2 mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Loại hàng</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.Type" readonly />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Ưu tiên</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.Priority" readonly />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Ghi chú Hàng</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.PartNotes" readonly />
+                    </div>
+                </div>
+
+                <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật</p>
+                <div class="row g-2 mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Mã vật liệu</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.Material" readonly />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Cấu hình phôi</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.MaterialConfig" readonly />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Ghi chú Phôi</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.MaterialNotes" readonly />
+                    </div>
+                </div>
+
+                <p class="small text-secondary fw-500 mb-2 mt-3">C. Thông tin nội bộ</p>
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Order VL</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.OrderVL" readonly />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-muted">Vị trí kho</label>
+                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.Location" readonly />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Tình trạng phôi</label>
+                        <input class="form-control form-control-sm bg-light" value="@d.MaterialCondition" readonly />
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private KhPlan? _plan;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _plan = await KhSvc.GetByIdAsync(Id);
+    }
+
+    private string GetStatusColor(string status) => status switch
+    {
+        "WaitingSupplierOrder" => "info",
+        "Ordered" => "primary",
+        "PartialReceived" => "primary",
+        "FullyReceived" => "success",
+        "InProduction" => "success",
+        "Completed" => "success",
+        "Cancelled" => "secondary",
+        _ => "secondary"
+    };
+}

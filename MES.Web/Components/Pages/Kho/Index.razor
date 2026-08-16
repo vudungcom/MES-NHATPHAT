@@ -1,0 +1,93 @@
+@page "/kho"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject AppDbContext Db
+
+<PageTitle>Kho - MES</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Kho</h1>
+        <p class="text-muted small mb-0">Tồn kho hiện tại tính từ StockTransaction (event log)</p>
+    </div>
+    <div>
+        <button class="btn btn-outline-secondary" disabled>
+            <i class="bi bi-box-arrow-in-down"></i> Nhập kho (Phase 2)
+        </button>
+        <button class="btn btn-outline-secondary" disabled>
+            <i class="bi bi-box-arrow-up"></i> Xuất kho (Phase 2)
+        </button>
+    </div>
+</div>
+
+<div class="alert alert-info small">
+    <i class="bi bi-info-circle"></i>
+    Phase 1 chỉ hiển thị query tồn kho. Chức năng Nhập/Xuất kho sẽ có ở Phase 2 sau khi khảo sát chốt workflow ở nhà máy.
+</div>
+
+@if (_stockRows == null)
+{
+    <p><em>Đang tải...</em></p>
+}
+else if (_stockRows.Count == 0)
+{
+    <div class="alert alert-secondary">
+        <i class="bi bi-inbox"></i> Kho trống. Chưa có StockTransaction nào.
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Part No</th>
+                    <th>PO</th>
+                    <th class="text-end">Tồn</th>
+                    <th>Vị trí</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _stockRows)
+                {
+                    <tr>
+                        <td><code>@r.PartNo</code></td>
+                        <td><code>@r.PurchaseOrder</code></td>
+                        <td class="text-end">@r.Stock.ToString("N0")</td>
+                        <td>@r.Location</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<StockRow>? _stockRows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Query tồn theo Business Rules: SUM(QuantityChange) GROUP BY PartId, PurchaseOrder
+        var q = from st in Db.StockTransactions
+                join p in Db.PartMasters on st.PartId equals p.PartId
+                group new { st, p } by new { st.PartId, st.PurchaseOrder, p.PartNo, p.LocationDefault } into g
+                where g.Sum(x => x.st.QuantityChange) > 0
+                select new StockRow
+                {
+                    PartNo = g.Key.PartNo,
+                    PurchaseOrder = g.Key.PurchaseOrder,
+                    Stock = g.Sum(x => x.st.QuantityChange),
+                    Location = g.Key.LocationDefault ?? ""
+                };
+
+        _stockRows = await q.OrderBy(x => x.PartNo).ToListAsync();
+    }
+
+    private class StockRow
+    {
+        public string PartNo { get; set; } = "";
+        public string PurchaseOrder { get; set; } = "";
+        public decimal Stock { get; set; }
+        public string Location { get; set; } = "";
+    }
+}

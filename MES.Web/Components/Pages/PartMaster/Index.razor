@@ -1,0 +1,415 @@
+@page "/part-master"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject PartMasterListService ListSvc
+
+<PageTitle>Part Master - MES</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Part Master</h1>
+        <p class="text-muted small mb-0">
+            Mỗi dòng = 1 Part. Click <i class="bi bi-caret-right-fill"></i> đầu dòng để xem chi tiết công đoạn.
+        </p>
+    </div>
+</div>
+
+<div class="row mb-3 g-2">
+    <div class="col-md-5">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input class="form-control" placeholder="Tìm theo Part No / Tên chi tiết / Khách hàng..."
+                   @bind="_search" @bind:event="oninput" />
+            @if (!string.IsNullOrEmpty(_search))
+            {
+                <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
+                    <i class="bi bi-x"></i>
+                </button>
+            }
+        </div>
+    </div>
+    <div class="col-md-3">
+        <select class="form-select form-select-sm" @bind="_customerFilter">
+            <option value="">-- Tất cả khách hàng --</option>
+            @foreach (var c in CustomerOptions)
+            {
+                <option value="@c.Id">@c.Name</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-4 text-end">
+        <small class="text-muted">
+            Hiển thị @Filtered.Count() / @(_rows?.Count ?? 0) Part
+        </small>
+    </div>
+</div>
+
+@if (_rows == null)
+{
+    <p><em>Đang tải...</em></p>
+}
+else if (_rows.Count == 0)
+{
+    <div class="alert alert-secondary">
+        <i class="bi bi-inbox"></i> Chưa có Part Master nào trong hệ thống.
+        Khi Kế hoạch tạo phiếu KH với Part No mới, Part Master sẽ tự động được tạo.
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
+            <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                <tr>
+                    <th style="width: 30px;"></th>
+                    <th><strong>Part No</strong></th>
+                    <th>Tên chi tiết</th>
+                    <th>Khách hàng</th>
+                    <th>Mã VL</th>
+                    <th>Cấu hình phôi</th>
+                    <th>Ghi chú phôi</th>
+                    <th>Quy trình gia công</th>
+                    <th>Taro</th>
+                    <th>Bavia</th>
+                    <th>Rửa</th>
+                    <th>Kiểm tra</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Filtered)
+                {
+                    <tr>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-link p-0" @onclick="() => ToggleExpandAsync(row.PartId)"
+                                    title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết")">
+                                @if (IsExpanded(row.PartId))
+                                {
+                                    <i class="bi bi-caret-down-fill"></i>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-caret-right-fill"></i>
+                                }
+                            </button>
+                        </td>
+                        <td><code class="fw-bold">@row.PartNo</code></td>
+                        <td>@(row.PartName ?? "—")</td>
+                        <td>@(row.CustomerName ?? "—")</td>
+                        <td>@(row.Material ?? "—")</td>
+                        <td>@(row.MaterialConfig ?? "—")</td>
+                        <td>@(row.MaterialNote ?? "—")</td>
+                        <td>@RenderNcs(row.MachiningNcs)</td>
+                        <td>@RenderNcs(row.TaroNcs)</td>
+                        <td>@RenderNcs(row.BaviaNcs)</td>
+                        <td>@RenderNcs(row.WashingNcs)</td>
+                        <td>@RenderNcs(row.InspectionNcs)</td>
+                    </tr>
+
+                    @if (IsExpanded(row.PartId))
+                    {
+                        <tr>
+                            <td colspan="12" class="bg-light p-3">
+                                @if (_detailByPart.TryGetValue(row.PartId, out var detail))
+                                {
+                                    @RenderExpandedDetail(row, detail)
+                                }
+                                else
+                                {
+                                    <em class="text-muted small">Đang tải chi tiết...</em>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<PartMasterListRow>? _rows;
+    private HashSet<int> _expanded = new();
+    private Dictionary<int, PartMasterExpandDetail> _detailByPart = new();
+    private string _search = string.Empty;
+    private string _customerFilter = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _rows = await ListSvc.GetAllRowsAsync();
+    }
+
+    private bool IsExpanded(int partId) => _expanded.Contains(partId);
+
+    private async Task ToggleExpandAsync(int partId)
+    {
+        if (_expanded.Contains(partId))
+        {
+            _expanded.Remove(partId);
+        }
+        else
+        {
+            _expanded.Add(partId);
+            if (!_detailByPart.ContainsKey(partId))
+            {
+                _detailByPart[partId] = await ListSvc.GetDetailForExpandAsync(partId);
+            }
+        }
+    }
+
+    // Chuỗi NC nối "→" (VD: NC01 → NC02 → NC03)
+    private RenderFragment RenderNcs(List<string> ncs) => builder =>
+    {
+        if (ncs.Count == 0)
+        {
+            builder.AddContent(0, "—");
+            return;
+        }
+        var text = string.Join(" → ", ncs);
+        builder.OpenElement(1, "span");
+        builder.AddAttribute(2, "class", "text-muted");
+        builder.AddContent(3, text);
+        builder.CloseElement();
+    };
+
+    // Filter + search
+    private IEnumerable<PartMasterListRow> Filtered
+    {
+        get
+        {
+            if (_rows == null) return Enumerable.Empty<PartMasterListRow>();
+            IEnumerable<PartMasterListRow> q = _rows;
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var s = _search.Trim();
+                q = q.Where(r =>
+                    r.PartNo.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || (r.PartName?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (r.CustomerName?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+                );
+            }
+            if (!string.IsNullOrEmpty(_customerFilter) && int.TryParse(_customerFilter, out var cid))
+            {
+                q = q.Where(r => r.CustomerId == cid);
+            }
+            return q;
+        }
+    }
+
+    // Dropdown customer: distinct từ _rows
+    private IEnumerable<(int Id, string Name)> CustomerOptions
+    {
+        get
+        {
+            if (_rows == null) return Enumerable.Empty<(int, string)>();
+            return _rows
+                .Where(r => r.CustomerId.HasValue && !string.IsNullOrEmpty(r.CustomerName))
+                .Select(r => (r.CustomerId!.Value, r.CustomerName!))
+                .Distinct()
+                .OrderBy(x => x.Item2);
+        }
+    }
+
+    // ================================================================
+    // Render 5 bảng con khi expand
+    // ================================================================
+    private RenderFragment RenderExpandedDetail(PartMasterListRow row, PartMasterExpandDetail detail) => __builder =>
+    {
+        <div class="row g-3">
+            <div class="col-12">
+                <div class="fw-bold text-primary mb-2">
+                    <i class="bi bi-file-earmark-ruled"></i>
+                    Chi tiết Part Master: <code>@row.PartNo</code>
+                    @if (!string.IsNullOrEmpty(row.PartName))
+                    {
+                        <span class="text-muted"> — @row.PartName</span>
+                    }
+                </div>
+                @if (detail.TotalSteps == 0)
+                {
+                    <div class="alert alert-warning py-2 small mb-0">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Part này chưa có công đoạn nào. Sẽ được thêm ở trang Chi tiết (Lượt 6D).
+                    </div>
+                }
+            </div>
+
+            @* --- Vùng B: Quy trình gia công --- *@
+            @if (detail.Machining.Count > 0)
+            {
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header py-1 px-2 bg-primary text-white small fw-bold">
+                            <i class="bi bi-gear-wide-connected"></i>
+                            B. Quy trình gia công (@detail.Machining.Count công đoạn)
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm table-bordered mb-0" style="font-size: 0.75rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 5%;">#</th>
+                                        <th style="width: 7%;">NC</th>
+                                        <th style="width: 15%;">Bản vẽ</th>
+                                        <th style="width: 10%;">Máy đăng ký</th>
+                                        <th style="width: 15%;">Máy đồng dạng</th>
+                                        <th style="width: 8%;">Đồ gá</th>
+                                        <th class="text-end" style="width: 7%;">T.Gá lắp</th>
+                                        <th class="text-end" style="width: 7%;">T.Gia công</th>
+                                        <th class="text-end" style="width: 7%;">T.Kiểm tra</th>
+                                        <th class="text-end" style="width: 7%;">T.Chuẩn bị</th>
+                                        <th class="text-end" style="width: 7%;">T.Chạy thử</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in detail.Machining)
+                                    {
+                                        <tr>
+                                            <td>@s.StepOrder</td>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.Drawing ?? "—")</td>
+                                            <td>@(s.MachineRegistered ?? "—")</td>
+                                            <td>@(s.MachineAlternative ?? "—")</td>
+                                            <td>@(s.FixtureType ?? "—")</td>
+                                            <td class="text-end">@FmtTime(s.SetupTime)</td>
+                                            <td class="text-end">@FmtTime(s.MachiningTime)</td>
+                                            <td class="text-end">@FmtTime(s.InspectionTime)</td>
+                                            <td class="text-end">@FmtTime(s.PreparationTime)</td>
+                                            <td class="text-end">@FmtTime(s.TrialRunTime)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @* --- Vùng C: Hoàn thiện SP --- *@
+            @if (detail.Taro.Count > 0)
+            {
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header py-1 px-2 bg-success text-white small fw-bold">
+                            <i class="bi bi-nut"></i> C.1 Taro (@detail.Taro.Count)
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 15%;">NC</th>
+                                        <th>Tên công đoạn</th>
+                                        <th class="text-end" style="width: 20%;">Thời gian chuẩn</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in detail.Taro)
+                                    {
+                                        <tr>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                            <td class="text-end">@FmtTime(s.StandardTime)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (detail.Bavia.Count > 0)
+            {
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header py-1 px-2 bg-success text-white small fw-bold">
+                            <i class="bi bi-scissors"></i> C.2 Bavia (@detail.Bavia.Count)
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 15%;">NC</th>
+                                        <th>Tên công đoạn</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in detail.Bavia)
+                                    {
+                                        <tr>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (detail.Washing.Count > 0)
+            {
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header py-1 px-2 bg-success text-white small fw-bold">
+                            <i class="bi bi-droplet"></i> C.3 Rửa (@detail.Washing.Count)
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 15%;">NC</th>
+                                        <th>Tên công đoạn</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in detail.Washing)
+                                    {
+                                        <tr>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @* --- Vùng D: Kiểm tra --- *@
+            @if (detail.Inspection.Count > 0)
+            {
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header py-1 px-2 bg-warning text-dark small fw-bold">
+                            <i class="bi bi-search"></i> D. Kiểm tra (@detail.Inspection.Count)
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0" style="font-size: 0.75rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 15%;">NC</th>
+                                        <th>Tên công đoạn</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in detail.Inspection)
+                                    {
+                                        <tr>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    };
+
+    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.##") : "—";
+}

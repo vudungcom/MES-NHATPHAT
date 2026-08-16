@@ -1,0 +1,27 @@
+@inherits LayoutComponentBase
+
+<div class="mes-layout">
+    <NavMenu />
+    <main class="mes-main">
+        <div class="mes-topbar">
+            <AuthorizeView>
+                <Authorized>
+                    <span class="me-3 text-muted small">
+                        <i class="bi bi-person-circle"></i>
+                        @context.User.FindFirst("FullName")?.Value
+                        <span class="badge bg-secondary ms-1">@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value</span>
+                    </span>
+                    <a class="btn btn-sm btn-outline-primary me-2" href="/profile">
+                        <i class="bi bi-person-gear"></i> Hồ sơ
+                    </a>
+                    <a class="btn btn-sm btn-outline-secondary" href="/logout">
+                        <i class="bi bi-box-arrow-right"></i> Đăng xuất
+                    </a>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+        <div class="mes-content">
+            @Body
+        </div>
+    </main>
+</div>

@@ -1,0 +1,164 @@
+@rendermode InteractiveServer
+@inject AuthService Auth
+@inject AuthenticationStateProvider AuthState
+
+@if (IsOpen)
+{
+    @* Backdrop: KHÔNG có @onclick — click ra ngoài không đóng modal (tránh mất PIN đang nhập).
+       Chỉ có nút X ở header và nút "Hủy" ở footer mới đóng modal. *@
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0"><i class="bi bi-shield-lock"></i> @Title</h5>
+                <button class="btn-close" @onclick="CancelAsync"></button>
+            </div>
+            <div class="mes-modal-body">
+                @if (!string.IsNullOrEmpty(Description))
+                {
+                    <p class="small text-muted mb-2">@Description</p>
+                }
+
+                @if (Changes != null && Changes.Any())
+                {
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <strong><i class="bi bi-exclamation-triangle"></i> Bạn đang thay đổi @Changes.Count giá trị default:</strong>
+                        <ul class="mb-0 mt-1">
+                            @foreach (var c in Changes)
+                            {
+                                <li>
+                                    Part <code>@c.PartNo</code> — <strong>@c.AttributeType</strong>:
+                                    <span class="text-danger"><del>@c.OldValue</del></span>
+                                    →
+                                    <span class="text-success"><strong>@c.NewValue</strong></span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Nhập PIN của bạn <span class="text-danger">*</span></label>
+                    <input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+                           class="form-control form-control-sm text-center"
+                           style="letter-spacing: 8px; font-size: 1.5rem;"
+                           @bind="_pin" @bind:event="oninput"
+                           @onkeypress="OnPinKeyPress"
+                           autofocus />
+                </div>
+
+                @if (!string.IsNullOrEmpty(_error))
+                {
+                    <div class="alert alert-danger py-1 small mb-2">@_error</div>
+                }
+
+                @if (_noPin)
+                {
+                    <div class="alert alert-warning py-1 small mb-2">
+                        <i class="bi bi-info-circle"></i> Bạn chưa thiết lập PIN.
+                        <a href="/profile" target="_blank">Vào Hồ sơ</a> để thiết lập trước.
+                    </div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-outline-secondary ms-auto me-2" @onclick="CancelAsync">Hủy</button>
+                <button class="btn btn-sm btn-primary" @onclick="ConfirmAsync" disabled="@_verifying">
+                    <i class="bi bi-check-lg"></i>
+                    @(_verifying ? "Đang xác thực..." : "Xác nhận")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public string Title { get; set; } = "Xác nhận PIN";
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public List<DefaultChangeInfo>? Changes { get; set; }
+
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+    [Parameter] public EventCallback OnCancelled { get; set; }
+
+    private string _pin = "";
+    private string? _error;
+    private bool _verifying;
+    private bool _noPin;
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen)
+        {
+            _pin = "";
+            _error = null;
+            _noPin = false;
+        }
+    }
+
+    private async Task OnPinKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_pin))
+        {
+            await ConfirmAsync();
+        }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        _error = null;
+        _noPin = false;
+
+        if (string.IsNullOrWhiteSpace(_pin))
+        {
+            _error = "Nhập PIN";
+            return;
+        }
+
+        _verifying = true;
+        try
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var userIdStr = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var userId = int.Parse(userIdStr ?? "0");
+
+            var hasPin = await Auth.HasPinAsync(userId);
+            if (!hasPin)
+            {
+                _noPin = true;
+                return;
+            }
+
+            var ok = await Auth.VerifyPinAsync(userId, _pin);
+            if (!ok)
+            {
+                _error = "PIN không đúng";
+                _pin = "";
+                return;
+            }
+
+            await OnConfirmed.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _verifying = false;
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        _pin = "";
+        _error = null;
+        await OnCancelled.InvokeAsync();
+    }
+
+    public class DefaultChangeInfo
+    {
+        public string PartNo { get; set; } = "";
+        public string AttributeType { get; set; } = "";
+        public string? OldValue { get; set; }
+        public string NewValue { get; set; } = "";
+    }
+}

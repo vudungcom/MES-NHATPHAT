@@ -1,0 +1,222 @@
+@page "/profile"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject AuthService Auth
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Hồ sơ - MES</PageTitle>
+
+<h1 class="mb-1"><i class="bi bi-person-circle"></i> Hồ sơ cá nhân</h1>
+<p class="text-muted small mb-3">Đổi password và thiết lập PIN (dùng để xác nhận thao tác nhạy cảm)</p>
+
+<div class="row g-3">
+    <!-- Info -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h6 class="text-secondary"><i class="bi bi-info-circle"></i> Thông tin</h6>
+                <div class="small">
+                    <div class="mb-1"><strong>Username:</strong> <code>@_username</code></div>
+                    <div class="mb-1"><strong>Họ tên:</strong> @_fullName</div>
+                    <div class="mb-1"><strong>Nhóm:</strong> <span class="badge bg-secondary">@_groupCode</span></div>
+                    <div class="mb-1"><strong>PIN:</strong>
+                        @if (_hasPin)
+                        {
+                            <span class="badge bg-success"><i class="bi bi-check"></i> Đã thiết lập</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Chưa có</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="alert alert-info small mt-3 py-2">
+            <i class="bi bi-shield-lock"></i>
+            <strong>Về PIN:</strong> PIN là 4-6 chữ số, dùng để xác nhận các thao tác nhạy cảm như <em>thay đổi giá trị default của PartMaster</em>. Không dùng để login. Nên đặt PIN khác password.
+        </div>
+    </div>
+
+    <!-- Đổi password -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h6 class="text-secondary"><i class="bi bi-key"></i> Đổi Password</h6>
+
+                @if (!string.IsNullOrEmpty(_pwSuccess))
+                {
+                    <div class="alert alert-success py-1 small mb-2">@_pwSuccess</div>
+                }
+                @if (!string.IsNullOrEmpty(_pwError))
+                {
+                    <div class="alert alert-danger py-1 small mb-2">@_pwError</div>
+                }
+
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Password cũ</label>
+                    <input type="password" class="form-control form-control-sm" @bind="_oldPassword" autocomplete="current-password" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Password mới <span class="text-muted">(tối thiểu 6 ký tự)</span></label>
+                    <input type="password" class="form-control form-control-sm" @bind="_newPassword" autocomplete="new-password" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Nhập lại password mới</label>
+                    <input type="password" class="form-control form-control-sm" @bind="_newPasswordConfirm" autocomplete="new-password" />
+                </div>
+                <button class="btn btn-sm btn-primary w-100" @onclick="ChangePasswordAsync" disabled="@_savingPw">
+                    @(_savingPw ? "Đang lưu..." : "Đổi Password")
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Set / Đổi PIN -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h6 class="text-secondary">
+                    <i class="bi bi-123"></i>
+                    @(_hasPin ? "Đổi PIN" : "Thiết lập PIN")
+                </h6>
+
+                @if (!string.IsNullOrEmpty(_pinSuccess))
+                {
+                    <div class="alert alert-success py-1 small mb-2">@_pinSuccess</div>
+                }
+                @if (!string.IsNullOrEmpty(_pinError))
+                {
+                    <div class="alert alert-danger py-1 small mb-2">@_pinError</div>
+                }
+
+                @if (_hasPin)
+                {
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">PIN cũ</label>
+                        <input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+                               class="form-control form-control-sm" @bind="_oldPin" />
+                    </div>
+                }
+
+                <div class="mb-2">
+                    <label class="form-label small mb-1">PIN mới <span class="text-muted">(4-6 chữ số)</span></label>
+                    <input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+                           class="form-control form-control-sm" @bind="_newPin" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Nhập lại PIN mới</label>
+                    <input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+                           class="form-control form-control-sm" @bind="_newPinConfirm" />
+                </div>
+                <button class="btn btn-sm btn-warning w-100" @onclick="SetPinAsync" disabled="@_savingPin">
+                    @(_savingPin ? "Đang lưu..." : (_hasPin ? "Đổi PIN" : "Thiết lập PIN"))
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _userId;
+    private string _username = "";
+    private string _fullName = "";
+    private string _groupCode = "";
+    private bool _hasPin;
+
+    // Password change
+    private string _oldPassword = "";
+    private string _newPassword = "";
+    private string _newPasswordConfirm = "";
+    private string? _pwError;
+    private string? _pwSuccess;
+    private bool _savingPw;
+
+    // PIN change
+    private string _oldPin = "";
+    private string _newPin = "";
+    private string _newPinConfirm = "";
+    private string? _pinError;
+    private string? _pinSuccess;
+    private bool _savingPin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _userId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        _username = authState.User.Identity?.Name ?? "";
+        _fullName = authState.User.FindFirst("FullName")?.Value ?? "";
+        _groupCode = authState.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "";
+        _hasPin = await Auth.HasPinAsync(_userId);
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _pwError = _pwSuccess = null;
+
+        if (_newPassword != _newPasswordConfirm)
+        {
+            _pwError = "Password mới nhập lại không khớp";
+            return;
+        }
+
+        _savingPw = true;
+        try
+        {
+            var (success, error) = await Auth.ChangePasswordAsync(_userId, _oldPassword, _newPassword);
+            if (success)
+            {
+                _pwSuccess = "Đã đổi password thành công";
+                _oldPassword = _newPassword = _newPasswordConfirm = "";
+            }
+            else
+            {
+                _pwError = error;
+            }
+        }
+        catch (Exception ex)
+        {
+            _pwError = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _savingPw = false;
+        }
+    }
+
+    private async Task SetPinAsync()
+    {
+        _pinError = _pinSuccess = null;
+
+        if (_newPin != _newPinConfirm)
+        {
+            _pinError = "PIN mới nhập lại không khớp";
+            return;
+        }
+
+        _savingPin = true;
+        try
+        {
+            var (success, error) = await Auth.SetPinAsync(_userId, _hasPin ? _oldPin : null, _newPin);
+            if (success)
+            {
+                _pinSuccess = _hasPin ? "Đã đổi PIN thành công" : "Đã thiết lập PIN thành công";
+                _hasPin = true;
+                _oldPin = _newPin = _newPinConfirm = "";
+            }
+            else
+            {
+                _pinError = error;
+            }
+        }
+        catch (Exception ex)
+        {
+            _pinError = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _savingPin = false;
+        }
+    }
+}

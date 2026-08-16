@@ -1,0 +1,119 @@
+/* ==== MES base ==== */
+:root {
+    --mes-sidebar-width: 220px;
+    --mes-sidebar-bg: #1e293b;
+    --mes-sidebar-color: #cbd5e1;
+    --mes-sidebar-active: #3b82f6;
+    --mes-topbar-h: 48px;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    background: #f8f9fa;
+    margin: 0;
+}
+
+/* ==== Layout ==== */
+.mes-layout { display: flex; min-height: 100vh; }
+.mes-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.mes-topbar { height: var(--mes-topbar-h); background: white; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: flex-end; padding: 0 1rem; }
+.mes-content { padding: 1.25rem; flex: 1; }
+
+/* ==== Sidebar ==== */
+.mes-sidebar { width: var(--mes-sidebar-width); background: var(--mes-sidebar-bg); color: var(--mes-sidebar-color); display: flex; flex-direction: column; flex-shrink: 0; }
+.mes-brand { padding: 1rem 1rem 0.75rem; font-size: 1.25rem; font-weight: 600; color: white; border-bottom: 1px solid #334155; }
+.mes-brand-sub { font-size: 0.7rem; font-weight: 400; color: #94a3b8; margin-top: 2px; }
+.mes-sidebar .nav { padding: 0.5rem; flex: 1; }
+.mes-sidebar .nav-link { color: var(--mes-sidebar-color); padding: 0.6rem 0.75rem; border-radius: 6px; margin-bottom: 2px; font-size: 0.9rem; }
+.mes-sidebar .nav-link:hover { background: #334155; color: white; }
+.mes-sidebar .nav-link.active { background: var(--mes-sidebar-active); color: white; }
+.mes-sidebar .nav-link i { margin-right: 8px; width: 16px; display: inline-block; }
+.mes-sidebar-foot { padding: 0.75rem; border-top: 1px solid #334155; font-size: 0.75rem; }
+
+/* ==== Login page ==== */
+.mes-login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1e293b 0%, #3b82f6 100%); padding: 1rem; }
+.mes-login-card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15); width: 100%; max-width: 380px; }
+.mes-login-brand { text-align: center; margin-bottom: 1.5rem; }
+.mes-login-brand i { font-size: 3rem; color: #3b82f6; }
+.mes-login-brand h1 { font-size: 1.75rem; margin: 0.25rem 0; color: #1e293b; }
+
+/* ==== Shortcut cards on Home ==== */
+.mes-shortcut { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; color: inherit; }
+.mes-shortcut:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08); }
+
+/* ==== Modal (custom, không dùng Bootstrap JS) ==== */
+.mes-modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: mesModalFadeIn 0.15s ease-out;
+}
+
+@keyframes mesModalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.mes-modal {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    animation: mesModalSlideIn 0.2s ease-out;
+}
+
+.mes-modal-lg {
+    max-width: 900px;
+}
+
+@keyframes mesModalSlideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.mes-modal-header {
+    padding: 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.mes-modal-body {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.mes-modal-footer {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ==== Utils ==== */
+.fw-500 { font-weight: 500; }
+.form-label.small { margin-bottom: 2px; }
+.form-control-sm, .form-select-sm { font-size: 0.85rem; }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .mes-sidebar { width: 60px; }
+    .mes-brand { font-size: 0; padding: 0.75rem; }
+    .mes-brand i { font-size: 1.5rem; }
+    .mes-brand-sub, .mes-sidebar-foot { display: none; }
+    .mes-sidebar .nav-link { text-align: center; padding: 0.75rem 0.25rem; font-size: 0; }
+    .mes-sidebar .nav-link i { margin: 0; font-size: 1.1rem; }
+}

@@ -1,0 +1,303 @@
+@page "/kh-plan/bulk-update-std"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject KhPlanService KhSvc
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Sửa STD hàng loạt - MES</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1"><i class="bi bi-file-earmark-excel"></i> Sửa STD hàng loạt (Excel)</h1>
+        <p class="text-muted small mb-0">Upload file Excel gồm 2 cột: <code>PO</code> và <code>STD mới</code>. Hệ thống cập nhật + lưu lịch sử, KHÔNG xóa dữ liệu cũ.</p>
+    </div>
+    <a href="/kh-plan" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Quay lại danh sách
+    </a>
+</div>
+
+@if (_lastResult != null)
+{
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle"></i>
+        <strong>Đã cập nhật thành công @_lastResult.UpdatedCount dòng.</strong>
+        Batch ID: <code>#@_lastResult.BatchId</code>
+        @if (_lastResult.NotFoundPOs.Any())
+        {
+            <div class="mt-2 small">
+                <span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Các PO không tìm thấy trong hệ thống (đã bỏ qua):</span>
+                <br />
+                @foreach (var po in _lastResult.NotFoundPOs)
+                {
+                    <code class="me-2">@po</code>
+                }
+            </div>
+        }
+        <div class="mt-2">
+            <a href="/kh-plan" class="btn btn-sm btn-primary">Về danh sách</a>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="Reset">Import file khác</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        <!-- Bước 1: Download template -->
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6><i class="bi bi-download"></i> Bước 1: Tải file mẫu</h6>
+                    <p class="small text-muted mb-2">File Excel mẫu với 2 cột PO và STD, có sẵn 3 dòng ví dụ.</p>
+                    <a href="/download/std-update-template.xlsx" class="btn btn-outline-primary btn-sm" target="_blank">
+                        <i class="bi bi-file-earmark-arrow-down"></i> Tải template Excel
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bước 2: Upload -->
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6><i class="bi bi-upload"></i> Bước 2: Upload file đã điền</h6>
+                    <p class="small text-muted mb-2">Chỉ chấp nhận file .xlsx. Tối đa 5MB.</p>
+                    <InputFile OnChange="OnFileSelected" class="form-control form-control-sm" accept=".xlsx" />
+                    @if (_uploading)
+                    {
+                        <div class="small text-muted mt-2"><i class="bi bi-hourglass"></i> Đang đọc file...</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_uploadError))
+    {
+        <div class="alert alert-danger mt-3 py-2">@_uploadError</div>
+    }
+
+    @if (_parseErrors.Any())
+    {
+        <div class="alert alert-warning mt-3 py-2">
+            <strong>Có lỗi khi đọc file:</strong>
+            <ul class="mb-0 small">
+                @foreach (var e in _parseErrors)
+                {
+                    <li>@e</li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_previewRows != null && _previewRows.Any())
+    {
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <strong><i class="bi bi-eye"></i> Bước 3: Xem lại thay đổi</strong>
+                    <span class="ms-2 small text-muted">
+                        @_previewRows.Count(r => r.Found) / @_previewRows.Count PO tìm thấy trong hệ thống
+                    </span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-bordered mb-0 small">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>#</th>
+                                <th>PO</th>
+                                <th>STD cũ (hiện tại)</th>
+                                <th>STD mới</th>
+                                <th>Chênh</th>
+                                <th>Trạng thái</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int i = 0; i < _previewRows.Count; i++)
+                            {
+                                var r = _previewRows[i];
+                                <tr class="@(r.Found ? "" : "table-danger")">
+                                    <td>@(i + 1)</td>
+                                    <td><code>@r.PurchaseOrder</code></td>
+                                    <td>@(r.CurrentStd ?? "-")</td>
+                                    <td><strong>@r.NewStd.ToString("dd/MM/yyyy")</strong></td>
+                                    <td>
+                                        @if (r.Found && DateTime.TryParse(r.CurrentStd, out var curStd))
+                                        {
+                                            var diff = (r.NewStd - curStd).Days;
+                                            if (diff > 0)
+                                            {
+                                                <span class="text-warning">+@diff ngày (lùi)</span>
+                                            }
+                                            else if (diff < 0)
+                                            {
+                                                <span class="text-primary">@diff ngày (đẩy sớm)</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">Không đổi</span>
+                                            }
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (r.Found)
+                                        {
+                                            <span class="badge bg-success">Có trong hệ thống</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-danger">PO không tồn tại</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer">
+                <div class="mb-2">
+                    <label class="form-label small mb-1"><strong>Bước 4:</strong> Nhập lý do cho toàn bộ batch <span class="text-danger">*</span></label>
+                    <textarea class="form-control form-control-sm" rows="2" @bind="_batchReason"
+                              placeholder="VD: Khách QuangMinh dời deadline batch tháng 10 do dịch chuyển line sản xuất..."></textarea>
+                    <div class="form-text small">Lý do này sẽ được gắn với TẤT CẢ dòng update. Ghi càng cụ thể càng dễ truy vết sau.</div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(_confirmError))
+                {
+                    <div class="alert alert-danger py-1 small mb-2">@_confirmError</div>
+                }
+
+                <div class="d-flex gap-2 justify-content-end">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="Reset">Hủy, chọn file khác</button>
+                    <button class="btn btn-sm btn-primary" @onclick="ConfirmAsync" disabled="@_saving">
+                        <i class="bi bi-check-lg"></i>
+                        @(_saving ? "Đang cập nhật..." : $"Xác nhận cập nhật {_previewRows.Count(r => r.Found)} dòng")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<BulkStdRow>? _previewRows;
+    private List<string> _parseErrors = new();
+    private string? _uploadError;
+    private bool _uploading;
+    private bool _saving;
+    private string _batchReason = "";
+    private string? _confirmError;
+    private BulkUpdateResult? _lastResult;
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        _parseErrors.Clear();
+        _previewRows = null;
+
+        try
+        {
+            _uploading = true;
+            var file = e.File;
+            if (file.Size > 5 * 1024 * 1024)
+            {
+                _uploadError = "File quá lớn (max 5MB)";
+                return;
+            }
+
+            using var stream = new MemoryStream();
+            await file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024).CopyToAsync(stream);
+            stream.Position = 0;
+
+            var rows = ExcelHelper.ParseStdUpdate(stream, out var errors);
+            _parseErrors = errors;
+
+            if (!rows.Any())
+            {
+                _uploadError = "Không đọc được dòng nào. Kiểm tra format file (cột PO và cột STD).";
+                return;
+            }
+
+            // Match with DB để hiển thị STD hiện tại
+            var pos = rows.Select(r => r.PurchaseOrder).Distinct().ToList();
+            var currentStds = await Db.KhPlanDetails
+                .Where(d => pos.Contains(d.PurchaseOrder))
+                .GroupBy(d => d.PurchaseOrder)
+                .Select(g => new { PO = g.Key, STD = g.Max(x => x.STD) })
+                .ToDictionaryAsync(x => x.PO, x => x.STD);
+
+            foreach (var r in rows)
+            {
+                if (currentStds.TryGetValue(r.PurchaseOrder, out var std))
+                {
+                    r.CurrentStd = std.ToString("yyyy-MM-dd");
+                    r.Found = true;
+                }
+                else
+                {
+                    r.Found = false;
+                }
+            }
+
+            _previewRows = rows;
+        }
+        catch (Exception ex)
+        {
+            _uploadError = "Lỗi đọc file: " + ex.Message;
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        _confirmError = null;
+        if (_previewRows == null || !_previewRows.Any(r => r.Found))
+        {
+            _confirmError = "Không có PO nào hợp lệ để update";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_batchReason) || _batchReason.Trim().Length < 5)
+        {
+            _confirmError = "Nhập lý do batch (tối thiểu 5 ký tự)";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var authState = await AuthState.GetAuthenticationStateAsync();
+            var userIdStr = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var userId = int.Parse(userIdStr ?? "0");
+
+            _lastResult = await KhSvc.BulkUpdateStdAsync(
+                _previewRows.Where(r => r.Found).ToList(),
+                userId,
+                _batchReason.Trim());
+        }
+        catch (Exception ex)
+        {
+            _confirmError = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Reset()
+    {
+        _previewRows = null;
+        _parseErrors.Clear();
+        _uploadError = null;
+        _confirmError = null;
+        _batchReason = "";
+        _lastResult = null;
+    }
+}
