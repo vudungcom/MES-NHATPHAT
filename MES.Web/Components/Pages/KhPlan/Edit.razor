@@ -1,4 +1,4 @@
-@page "/kh-plan/{Id:int}/edit"
+@page "/kh-plan/{Id:int}/detail/{DetailId:int}/edit"
 @attribute [Authorize]
 @rendermode InteractiveServer
 @using MES.Web.Components.Shared
@@ -10,7 +10,7 @@
 
 <PageTitle>Sửa phiếu KH - MES</PageTitle>
 
-@if (_plan == null)
+@if (_plan == null || _detailForm == null)
 {
     <p><em>Đang tải...</em></p>
 }
@@ -22,10 +22,14 @@ else
             <p class="text-muted mb-0 small">
                 <i class="bi bi-calendar"></i> Ngày lập: @_plan.PlanDate.ToString("dd/MM/yyyy") ·
                 <i class="bi bi-building"></i> @_plan.Customer?.CustomerName
+                @if (!string.IsNullOrEmpty(_detailForm.OldPurchaseOrder))
+                {
+                    <span>· Tách từ PO cũ <code>@_detailForm.OldPurchaseOrder</code></span>
+                }
             </p>
         </div>
         <div class="d-flex gap-2">
-            <a href="@($"/kh-plan/{_plan.KhPlanId}")" class="btn btn-outline-secondary">
+            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detailForm.KhPlanDetailId}")" class="btn btn-outline-secondary">
                 <i class="bi bi-x"></i> Hủy (không lưu)
             </a>
             <button class="btn btn-primary" @onclick="AttemptSaveAsync" disabled="@_saving">
@@ -42,8 +46,8 @@ else
 
     <div class="alert alert-warning small py-2">
         <i class="bi bi-exclamation-triangle"></i>
-        <strong>Lưu ý:</strong> Không sửa được <strong>Số phiếu / PO / Part No / Khách hàng / Ngày lập</strong> (định danh, sửa sẽ loạn truy vết).
-        Mọi thay đổi khác sẽ được ghi vào lịch sử với lý do bạn nhập ở cuối trang.
+        <strong>Lưu ý:</strong> Không sửa được <strong>Số phiếu / PO / Part No / Khách hàng / Ngày lập</strong>.
+        Bắt buộc nhập lý do ở cuối trang.
     </div>
 
     <div class="card mb-3">
@@ -74,117 +78,110 @@ else
         </div>
     </div>
 
-    <h6 class="text-secondary mb-2"><i class="bi bi-list-check"></i> Chi tiết (@_details.Count Part)</h6>
-
-    @for (int i = 0; i < _details.Count; i++)
-    {
-        var idx = i;
-        var d = _details[idx];
-        <div class="card mb-2">
-            <div class="card-body">
-                <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
-                    <div>
-                        <strong>Part @d.LineNo</strong>
-                        <span class="badge bg-secondary ms-2">@d.Status</span>
-                        @if (!string.IsNullOrEmpty(d.OldPurchaseOrder))
-                        {
-                            <span class="badge bg-info ms-1" title="Tách từ PO cũ">
-                                <i class="bi bi-diagram-3"></i> Old PO: <code>@d.OldPurchaseOrder</code>
-                            </span>
-                        }
-                    </div>
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
+                <div>
+                    <strong>Chi tiết Part</strong>
+                    <span class="badge bg-secondary ms-2">@_detailForm.Status</span>
+                    @if (!string.IsNullOrEmpty(_detailForm.OldPurchaseOrder))
+                    {
+                        <span class="badge bg-info ms-1" title="Tách từ PO cũ">
+                            <i class="bi bi-diagram-3"></i> Old PO: <code>@_detailForm.OldPurchaseOrder</code>
+                        </span>
+                    }
                 </div>
+            </div>
 
-                <p class="small text-secondary fw-500 mb-2">A. Thông tin Part từ PO khách</p>
-                <div class="row g-2 mb-2">
-                    <div class="col-md-3">
-                        <label class="form-label small text-muted">PO <i class="bi bi-lock"></i></label>
-                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.PurchaseOrder" readonly />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small text-muted">Part No <i class="bi bi-lock"></i></label>
-                        <input class="form-control form-control-sm font-monospace bg-light" value="@d.PartNo" readonly />
-                    </div>
-                    <div class="col-md-2">
-                        <label class="form-label small">SL <span class="text-danger">*</span></label>
-                        <input type="number" step="1" min="1" class="form-control form-control-sm text-end" @bind="d.Quantity" />
-                    </div>
-                    <div class="col-md-1">
-                        <label class="form-label small">Đvị</label>
-                        <select class="form-select form-select-sm" @bind="d.Unit">
-                            <option>EA</option><option>PCS</option><option>SET</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small">STD (deadline) <span class="text-danger">*</span></label>
-                        <input type="date" class="form-control form-control-sm" @bind="d.STD" />
-                    </div>
+            <p class="small text-secondary fw-500 mb-2">A. Thông tin Part từ PO khách</p>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">PO <i class="bi bi-lock"></i></label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detailForm.PurchaseOrder" readonly />
                 </div>
-
-                <div class="row g-2 mb-2">
-                    <div class="col-md-3">
-                        <label class="form-label small">Loại hàng</label>
-                        <input class="form-control form-control-sm" @bind="d.Type" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small">Ưu tiên</label>
-                        <input class="form-control form-control-sm" @bind="d.Priority" />
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label small">Ghi chú Hàng</label>
-                        <input class="form-control form-control-sm" @bind="d.PartNotes" />
-                    </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Part No <i class="bi bi-lock"></i></label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detailForm.PartNo" readonly />
                 </div>
-
-                <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (chọn từ dropdown hoặc gõ mới)</p>
-                <div class="row g-2 mb-2">
-                    <div class="col-md-3">
-                        <AttributePicker
-                            Label="Mã vật liệu"
-                            Attributes="GetAttrsFor(d.PartNo, AttrMaterial)"
-                            @bind-Value="d.Material"
-                            @bind-IsSetAsDefault="d.SetMaterialAsDefault" />
-                    </div>
-                    <div class="col-md-3">
-                        <AttributePicker
-                            Label="Cấu hình phôi (DxRxD)"
-                            Attributes="GetAttrsFor(d.PartNo, AttrMaterialConfig)"
-                            @bind-Value="d.MaterialConfig"
-                            @bind-IsSetAsDefault="d.SetMaterialConfigAsDefault" />
-                    </div>
-                    <div class="col-md-6">
-                        <AttributePicker
-                            Label="Ghi chú Phôi"
-                            Attributes="GetAttrsFor(d.PartNo, AttrMaterialNote)"
-                            @bind-Value="d.MaterialNotes"
-                            @bind-IsSetAsDefault="d.SetMaterialNoteAsDefault" />
-                    </div>
+                <div class="col-md-2">
+                    <label class="form-label small">SL <span class="text-danger">*</span></label>
+                    <input type="number" step="1" min="1" class="form-control form-control-sm text-end" @bind="_detailForm.Quantity" />
                 </div>
+                <div class="col-md-1">
+                    <label class="form-label small">Đvị</label>
+                    <select class="form-select form-select-sm" @bind="_detailForm.Unit">
+                        <option>EA</option><option>PCS</option><option>SET</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small">STD (deadline) <span class="text-danger">*</span></label>
+                    <input type="date" class="form-control form-control-sm" @bind="_detailForm.STD" />
+                </div>
+            </div>
 
-                <p class="small text-secondary fw-500 mb-2 mt-3">C. Thông tin nội bộ (không lấy từ PartMaster)</p>
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <label class="form-label small">Order VL</label>
-                        <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25" @bind="d.OrderVL" />
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size: 0.75rem;">(tự nhập)</span></label>
-                        <input class="form-control form-control-sm font-monospace" @bind="d.Location" placeholder="VD B1" />
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label small">Tình trạng phôi</label>
-                        <input class="form-control form-control-sm" @bind="d.MaterialCondition" />
-                    </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <label class="form-label small">Loại hàng</label>
+                    <input class="form-control form-control-sm" @bind="_detailForm.Type" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small">Ưu tiên</label>
+                    <input class="form-control form-control-sm" @bind="_detailForm.Priority" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small">Ghi chú Hàng</label>
+                    <input class="form-control form-control-sm" @bind="_detailForm.PartNotes" />
+                </div>
+            </div>
+
+            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (chọn từ dropdown hoặc gõ mới)</p>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <AttributePicker
+                        Label="Mã vật liệu"
+                        Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterial)"
+                        @bind-Value="_detailForm.Material"
+                        @bind-IsSetAsDefault="_detailForm.SetMaterialAsDefault" />
+                </div>
+                <div class="col-md-3">
+                    <AttributePicker
+                        Label="Cấu hình phôi (DxRxD)"
+                        Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterialConfig)"
+                        @bind-Value="_detailForm.MaterialConfig"
+                        @bind-IsSetAsDefault="_detailForm.SetMaterialConfigAsDefault" />
+                </div>
+                <div class="col-md-6">
+                    <AttributePicker
+                        Label="Ghi chú Phôi"
+                        Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterialNote)"
+                        @bind-Value="_detailForm.MaterialNotes"
+                        @bind-IsSetAsDefault="_detailForm.SetMaterialNoteAsDefault" />
+                </div>
+            </div>
+
+            <p class="small text-secondary fw-500 mb-2 mt-3">C. Thông tin nội bộ (không lấy từ PartMaster)</p>
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="form-label small">Order VL</label>
+                    <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25" @bind="_detailForm.OrderVL" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size: 0.75rem;">(tự nhập)</span></label>
+                    <input class="form-control form-control-sm font-monospace" @bind="_detailForm.Location" placeholder="VD B1" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small">Tình trạng phôi</label>
+                    <input class="form-control form-control-sm" @bind="_detailForm.MaterialCondition" />
                 </div>
             </div>
         </div>
-    }
+    </div>
 
     <div class="card mb-3 border-danger">
         <div class="card-body">
             <h6 class="text-danger mb-2"><i class="bi bi-chat-left-text"></i> Lý do sửa <span class="text-danger">*</span> (BẮT BUỘC)</h6>
             <textarea class="form-control form-control-sm" rows="2" @bind="_reason"
-                      placeholder="VD: Khách yêu cầu tăng SL / Vật tư báo phôi về sớm / Đổi Vị trí kho theo yêu cầu..."></textarea>
+                      placeholder="VD: Khách yêu cầu tăng SL / Vật tư báo phôi về sớm / Đổi Vị trí kho..."></textarea>
             <div class="form-text small">Lý do này sẽ được ghi vào lịch sử của TẤT CẢ field bị thay đổi trong lần Save này.</div>
         </div>
     </div>
@@ -199,16 +196,17 @@ else
     OnCancelled="OnPinCancelled" />
 
 @code {
-    [Parameter] public int Id { get; set; }
+    [Parameter] public int Id { get; set; }        // KhPlanId
+    [Parameter] public int DetailId { get; set; }  // KhPlanDetailId
 
     private const string AttrMaterial = "Material";
     private const string AttrMaterialConfig = "MaterialConfig";
     private const string AttrMaterialNote = "MaterialNote";
 
     private KhPlan? _plan;
+    private DetailForm? _detailForm;
     private string? _planNotes;
     private DateTime? _receivedDate;
-    private List<DetailForm> _details = new();
     private Dictionary<string, PartMaster> _partLookup = new();
     private Dictionary<string, Dictionary<string, List<PartMasterAttribute>>> _attrsCache = new();
 
@@ -225,42 +223,42 @@ else
         var authState = await AuthState.GetAuthenticationStateAsync();
         _currentUserId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
 
-        _plan = await KhSvc.GetByIdAsync(Id);
-        if (_plan == null) return;
+        var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
+        if (plan == null || detail == null || plan.KhPlanId != Id) return;
 
+        _plan = plan;
         _planNotes = _plan.Notes;
         _receivedDate = _plan.ReceivedDate;
 
-        var partNos = _plan.Details.Select(x => x.PartNo).Distinct().ToList();
-        var parts = await Db.PartMasters.Where(p => partNos.Contains(p.PartNo)).ToListAsync();
-        _partLookup = parts.ToDictionary(p => p.PartNo, p => p);
-
-        foreach (var pm in parts)
+        // Load PartMaster + attrs
+        var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
+        if (pm != null)
         {
+            _partLookup[pm.PartNo] = pm;
             _attrsCache[pm.PartNo] = await PartSvc.GetAttributesGroupedAsync(pm.PartId);
         }
 
-        _details = _plan.Details.OrderBy(x => x.LineNo).Select(d => new DetailForm
+        _detailForm = new DetailForm
         {
-            KhPlanDetailId = d.KhPlanDetailId,
-            LineNo = d.LineNo,
-            PartNo = d.PartNo,
-            PurchaseOrder = d.PurchaseOrder,
-            OldPurchaseOrder = d.OldPurchaseOrder,
-            Quantity = d.Quantity,
-            Unit = d.Unit,
-            STD = d.STD,
-            Type = d.Type,
-            Priority = d.Priority,
-            Material = d.Material,
-            MaterialConfig = d.MaterialConfig,
-            Location = d.Location,
-            MaterialNotes = d.MaterialNotes,
-            OrderVL = d.OrderVL,
-            MaterialCondition = d.MaterialCondition,
-            PartNotes = d.PartNotes,
-            Status = d.Status
-        }).ToList();
+            KhPlanDetailId = detail.KhPlanDetailId,
+            LineNo = detail.LineNo,
+            PartNo = detail.PartNo,
+            PurchaseOrder = detail.PurchaseOrder,
+            OldPurchaseOrder = detail.OldPurchaseOrder,
+            Quantity = detail.Quantity,
+            Unit = detail.Unit,
+            STD = detail.STD,
+            Type = detail.Type,
+            Priority = detail.Priority,
+            Material = detail.Material,
+            MaterialConfig = detail.MaterialConfig,
+            Location = detail.Location,
+            MaterialNotes = detail.MaterialNotes,
+            OrderVL = detail.OrderVL,
+            MaterialCondition = detail.MaterialCondition,
+            PartNotes = detail.PartNotes,
+            Status = detail.Status
+        };
     }
 
     private List<PartMasterAttribute>? GetAttrsFor(string partNo, string attrType)
@@ -279,9 +277,10 @@ else
             _error = "BẮT BUỘC nhập lý do sửa (tối thiểu 3 ký tự)";
             return;
         }
-        foreach (var d in _details)
+        if (_detailForm == null || _detailForm.Quantity <= 0)
         {
-            if (d.Quantity <= 0) { _error = $"Part {d.LineNo}: SL phải > 0"; return; }
+            _error = "SL phải > 0";
+            return;
         }
 
         _pendingDefaultChanges = CollectDefaultChanges();
@@ -299,32 +298,30 @@ else
     private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
     {
         var changes = new List<PinConfirmModal.DefaultChangeInfo>();
+        if (_detailForm == null || string.IsNullOrEmpty(_detailForm.PartNo)) return changes;
 
-        foreach (var d in _details)
+        var d = _detailForm;
+        var partAttrs = _attrsCache.GetValueOrDefault(d.PartNo);
+
+        void Check(string attrType, string? newValue, bool setAsDefault)
         {
-            if (string.IsNullOrEmpty(d.PartNo)) continue;
-            var partAttrs = _attrsCache.GetValueOrDefault(d.PartNo);
+            if (!setAsDefault) return;
+            if (string.IsNullOrWhiteSpace(newValue)) return;
+            var currentDefault = partAttrs?.GetValueOrDefault(attrType)?.FirstOrDefault(a => a.IsDefault)?.Value;
+            if (currentDefault == newValue) return;
 
-            void Check(string attrType, string? newValue, bool setAsDefault)
+            changes.Add(new PinConfirmModal.DefaultChangeInfo
             {
-                if (!setAsDefault) return;
-                if (string.IsNullOrWhiteSpace(newValue)) return;
-                var currentDefault = partAttrs?.GetValueOrDefault(attrType)?.FirstOrDefault(a => a.IsDefault)?.Value;
-                if (currentDefault == newValue) return;
-
-                changes.Add(new PinConfirmModal.DefaultChangeInfo
-                {
-                    PartNo = d.PartNo,
-                    AttributeType = attrType,
-                    OldValue = currentDefault,
-                    NewValue = newValue
-                });
-            }
-
-            Check(AttrMaterial, d.Material, d.SetMaterialAsDefault);
-            Check(AttrMaterialConfig, d.MaterialConfig, d.SetMaterialConfigAsDefault);
-            Check(AttrMaterialNote, d.MaterialNotes, d.SetMaterialNoteAsDefault);
+                PartNo = d.PartNo,
+                AttributeType = attrType,
+                OldValue = currentDefault,
+                NewValue = newValue
+            });
         }
+
+        Check(AttrMaterial, d.Material, d.SetMaterialAsDefault);
+        Check(AttrMaterialConfig, d.MaterialConfig, d.SetMaterialConfigAsDefault);
+        Check(AttrMaterialNote, d.MaterialNotes, d.SetMaterialNoteAsDefault);
 
         return changes;
     }
@@ -346,7 +343,6 @@ else
         _saving = true;
         try
         {
-            // Update KhPlan (Notes + ReceivedDate)
             if (_plan != null)
             {
                 var planEntity = await Db.KhPlans.FirstAsync(x => x.KhPlanId == _plan.KhPlanId);
@@ -354,10 +350,9 @@ else
                 if (planEntity.ReceivedDate != _receivedDate) planEntity.ReceivedDate = _receivedDate;
             }
 
-            // Add new attribute values (KHÔNG Location)
-            foreach (var d in _details)
+            var d = _detailForm!;
+            if (_partLookup.TryGetValue(d.PartNo, out var pm))
             {
-                if (!_partLookup.TryGetValue(d.PartNo, out var pm)) continue;
                 await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
                 await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
                 await MaybeAddNewValue(pm.PartId, AttrMaterialNote, d.MaterialNotes);
@@ -367,34 +362,30 @@ else
             {
                 foreach (var chg in _pendingDefaultChanges)
                 {
-                    var pm = _partLookup[chg.PartNo];
-                    await PartSvc.SetAsDefaultAsync(pm.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
+                    var p = _partLookup[chg.PartNo];
+                    await PartSvc.SetAsDefaultAsync(p.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
                 }
             }
 
-            // Update từng detail
-            foreach (var d in _details)
+            var newValues = new KhPlanDetail
             {
-                var newValues = new KhPlanDetail
-                {
-                    Quantity = d.Quantity,
-                    Unit = d.Unit,
-                    STD = d.STD,
-                    Type = d.Type,
-                    Priority = d.Priority,
-                    Material = d.Material,
-                    MaterialConfig = d.MaterialConfig,
-                    Location = d.Location,
-                    MaterialNotes = d.MaterialNotes,
-                    OrderVL = d.OrderVL,
-                    MaterialCondition = d.MaterialCondition,
-                    PartNotes = d.PartNotes
-                };
-                await KhSvc.UpdateFullAsync(d.KhPlanDetailId, newValues, _currentUserId, _reason.Trim());
-            }
+                Quantity = d.Quantity,
+                Unit = d.Unit,
+                STD = d.STD,
+                Type = d.Type,
+                Priority = d.Priority,
+                Material = d.Material,
+                MaterialConfig = d.MaterialConfig,
+                Location = d.Location,
+                MaterialNotes = d.MaterialNotes,
+                OrderVL = d.OrderVL,
+                MaterialCondition = d.MaterialCondition,
+                PartNotes = d.PartNotes
+            };
+            await KhSvc.UpdateFullAsync(d.KhPlanDetailId, newValues, _currentUserId, _reason.Trim());
 
             await Db.SaveChangesAsync();
-            Nav.NavigateTo($"/kh-plan/{Id}");
+            Nav.NavigateTo($"/kh-plan/{Id}/detail/{DetailId}");
         }
         catch (Exception ex)
         {
@@ -410,7 +401,7 @@ else
     {
         if (string.IsNullOrWhiteSpace(value)) return;
         var exists = _attrsCache.Values
-            .SelectMany(d => d.GetValueOrDefault(attrType) ?? new())
+            .SelectMany(dict => dict.GetValueOrDefault(attrType) ?? new())
             .Any(a => a.PartId == partId && a.Value == value);
         if (exists) return;
         await PartSvc.AddValueAsync(partId, attrType, value, _currentUserId);

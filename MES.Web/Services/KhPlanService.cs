@@ -8,6 +8,9 @@ public class KhPlanService
 {
     private readonly AppDbContext _db;
 
+    // Format quantity: có thập phân thì hiện, không thì thôi (0.## = tối đa 2 chữ số thập phân)
+    private const string QtyFormat = "0.####";
+
     public KhPlanService(AppDbContext db)
     {
         _db = db;
@@ -47,6 +50,24 @@ public class KhPlanService
             .Include(x => x.CreatedByUser)
             .Include(x => x.Details)
             .FirstOrDefaultAsync(x => x.KhPlanId == id);
+    }
+
+    /// <summary>
+    /// Lấy 1 KhPlanDetail cùng thông tin phiếu cha, dùng cho View/Edit chỉ hiển thị 1 dòng.
+    /// Trả về (KhPlan header, KhPlanDetail cụ thể).
+    /// </summary>
+    public async Task<(KhPlan? Plan, KhPlanDetail? Detail)> GetDetailByIdAsync(int khPlanDetailId)
+    {
+        var detail = await _db.KhPlanDetails
+            .FirstOrDefaultAsync(x => x.KhPlanDetailId == khPlanDetailId);
+        if (detail == null) return (null, null);
+
+        var plan = await _db.KhPlans
+            .Include(x => x.Customer)
+            .Include(x => x.CreatedByUser)
+            .FirstOrDefaultAsync(x => x.KhPlanId == detail.KhPlanId);
+
+        return (plan, detail);
     }
 
     public async Task<List<KhPlan>> GetListAsync(int? customerId = null, string? status = null)
@@ -113,7 +134,7 @@ public class KhPlanService
         string? oldValue = fieldName switch
         {
             "STD" => detail.STD.ToString("yyyy-MM-dd"),
-            "Quantity" => detail.Quantity.ToString(),
+            "Quantity" => detail.Quantity.ToString(QtyFormat),
             "OrderVL" => detail.OrderVL,
             "Location" => detail.Location,
             "Type" => detail.Type,
@@ -183,7 +204,12 @@ public class KhPlanService
             changeCount++;
         }
 
-        if (d.Quantity != newValues.Quantity) { LogChange("Quantity", d.Quantity.ToString(), newValues.Quantity.ToString()); d.Quantity = newValues.Quantity; }
+        // Quantity: format decimal đẹp
+        if (d.Quantity != newValues.Quantity)
+        {
+            LogChange("Quantity", d.Quantity.ToString(QtyFormat), newValues.Quantity.ToString(QtyFormat));
+            d.Quantity = newValues.Quantity;
+        }
         if (d.Unit != newValues.Unit) { LogChange("Unit", d.Unit, newValues.Unit); d.Unit = newValues.Unit; }
         if (d.STD != newValues.STD) { LogChange("STD", d.STD.ToString("yyyy-MM-dd"), newValues.STD.ToString("yyyy-MM-dd")); d.STD = newValues.STD; }
         if ((d.Type ?? "") != (newValues.Type ?? "")) { LogChange("Type", d.Type, newValues.Type); d.Type = newValues.Type; }
@@ -207,11 +233,10 @@ public class KhPlanService
 
     /// <summary>
     /// Tách 1 KhPlanDetail thành N dòng mới. Xóa dòng gốc.
-    /// Chi tiết ràng buộc: xem doc trong Form-Logic-KhPlan.md
-    ///
-    /// FIX v0.5.1: Dùng detach + raw SQL DELETE để bypass EF FK tracking
-    /// (vì ChangeLog vẫn giữ KhPlanDetailId=sourceDetailId sau khi source bị xóa,
-    ///  EF Core coi đây là "severed relationship" và báo lỗi).
+    /// v0.5.2:
+    /// - Log SplitFrom tách rõ OldValue = "PO gốc (SL N)", NewValue = "PO mới (SL N)"
+    /// - Format số dùng QtyFormat (không lẻ .0000)
+    /// - Sau khi tách xong, RENUMBER LineNo toàn phiếu về 1, 2, 3... theo CreatedAt
     /// </summary>
     public async Task<List<int>> SplitPOAsync(
         int sourceDetailId,
@@ -229,7 +254,6 @@ public class KhPlanService
             .FirstOrDefaultAsync(x => x.KhPlanDetailId == sourceDetailId);
         if (source == null) throw new InvalidOperationException("Dòng gốc không tồn tại");
 
-        // Validation: tổng SL phải khớp
         var totalNewQty = newRows.Sum(r => r.Quantity);
         if (totalNewQty != source.Quantity)
             throw new InvalidOperationException(
@@ -253,7 +277,7 @@ public class KhPlanService
                 throw new InvalidOperationException($"PO {r.PurchaseOrder} đã tồn tại trong hệ thống");
         }
 
-        // Snapshot data từ source TRƯỚC KHI detach (dùng để tạo dòng mới)
+        // Snapshot data từ source
         var srcKhPlanId = source.KhPlanId;
         var srcPartNo = source.PartNo;
         var srcPO = source.PurchaseOrder;
@@ -288,7 +312,7 @@ public class KhPlanService
                 var newDetail = new KhPlanDetail
                 {
                     KhPlanId = srcKhPlanId,
-                    LineNo = ++maxLineNo,
+                    LineNo = ++maxLineNo,  // tạm, sẽ renumber ở cuối
                     PartNo = srcPartNo,
                     PurchaseOrder = r.PurchaseOrder.Trim(),
                     OldPurchaseOrder = srcPO,
@@ -311,14 +335,15 @@ public class KhPlanService
                 _db.KhPlanDetails.Add(newDetail);
                 await _db.SaveChangesAsync();
                 newDetailIds.Add(newDetail.KhPlanDetailId);
-                newIdList.Add($"{r.PurchaseOrder}={r.Quantity}");
+                newIdList.Add($"{r.PurchaseOrder}={r.Quantity.ToString(QtyFormat)}");
 
+                // Log SplitFrom cho dòng mới - tách rõ Old/New
                 _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
                 {
                     KhPlanDetailId = newDetail.KhPlanDetailId,
                     FieldName = "SplitFrom",
-                    OldValue = null,
-                    NewValue = $"{srcPO} (SL {srcQty}) → {r.PurchaseOrder} (SL {r.Quantity})",
+                    OldValue = $"{srcPO} (SL {srcQty.ToString(QtyFormat)})",
+                    NewValue = $"{r.PurchaseOrder} (SL {r.Quantity.ToString(QtyFormat)})",
                     ChangedBy = changedBy,
                     ChangedAt = DateTime.Now,
                     ChangeSource = "Manual",
@@ -326,13 +351,13 @@ public class KhPlanService
                 });
             }
 
-            // 2. Log cho dòng GỐC (trước khi xóa) - để truy vết
+            // 2. Log cho dòng gốc
             var splitInfo = string.Join(", ", newIdList);
             _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
             {
                 KhPlanDetailId = sourceDetailId,
                 FieldName = "SplitInto",
-                OldValue = $"{srcPO} (SL {srcQty})",
+                OldValue = $"{srcPO} (SL {srcQty.ToString(QtyFormat)})",
                 NewValue = splitInfo,
                 ChangedBy = changedBy,
                 ChangedAt = DateTime.Now,
@@ -341,8 +366,7 @@ public class KhPlanService
             });
             await _db.SaveChangesAsync();
 
-            // 3. FIX: Detach source + tất cả ChangeLog liên quan khỏi tracker
-            // để EF Core không phát hiện "severed relationship"
+            // 3. Detach source + log liên quan khỏi tracker
             _db.Entry(source).State = EntityState.Detached;
             var localLogs = _db.ChangeTracker.Entries<KhPlanDetailChangeLog>()
                 .Where(e => e.Entity.KhPlanDetailId == sourceDetailId)
@@ -352,12 +376,25 @@ public class KhPlanService
                 log.State = EntityState.Detached;
             }
 
-            // 4. Xóa source bằng raw SQL (bypass EF change tracker hoàn toàn)
-            // Yêu cầu: FK constraint FK_KhPlanDetailChangeLogs_KhPlanDetails đã bị drop
-            //          (chạy script fix-splitpo-fk.sql 1 lần)
+            // 4. Xóa source bằng raw SQL
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanDetails WHERE KhPlanDetailId = {0}",
                 sourceDetailId);
+
+            // 5. RENUMBER LineNo toàn phiếu (v0.5.2)
+            // Đảm bảo LineNo bắt đầu từ 1, tăng dần theo CreatedAt.
+            // Dùng [LineNo] bracket + <> thay != để tránh lỗi SQL parser
+            await _db.Database.ExecuteSqlRawAsync(@"
+                ;WITH cte AS (
+                    SELECT KhPlanDetailId,
+                           ROW_NUMBER() OVER (ORDER BY CreatedAt, KhPlanDetailId) AS NewLineNo
+                    FROM KhPlanDetails
+                    WHERE KhPlanId = {0}
+                )
+                UPDATE d SET d.[LineNo] = cte.NewLineNo
+                FROM KhPlanDetails d
+                INNER JOIN cte ON d.KhPlanDetailId = cte.KhPlanDetailId
+                WHERE d.[LineNo] <> cte.NewLineNo;", srcKhPlanId);
 
             await tx.CommitAsync();
             return newDetailIds;

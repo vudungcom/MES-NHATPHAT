@@ -80,10 +80,10 @@ else
                     <th>Old PO</th>
                     <th><strong>Part No</strong></th>
                     <th class="text-end">SL</th>
+                    <th>Đvị</th>
                     <th>STD</th>
                     <th>Loại</th>
                     <th>Ưu tiên</th>
-                    <th>Material</th>
                     <th>Cấu hình phôi</th>
                     <th>Ghi chú Hàng</th>
                     <th>Order VL</th>
@@ -96,7 +96,7 @@ else
                 @foreach (var r in Filtered)
                 {
                     <tr @ondblclick="() => OpenView(r)" style="cursor: pointer;" title="Double-click để xem chi tiết">
-                        <td><a href="@($"/kh-plan/{r.KhPlanId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
+                        <td><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
                         <td class="text-nowrap">@r.PlanDate.ToString("dd/MM/yy")</td>
                         <td class="text-nowrap">
                             @if (r.ReceivedDate.HasValue)
@@ -117,7 +117,8 @@ else
                             }
                         </td>
                         <td><code>@r.PartNo</code></td>
-                        <td class="text-end text-nowrap">@r.Quantity.ToString("N0") @r.Unit</td>
+                        <td class="text-end text-nowrap">@r.Quantity.ToString("0.####")</td>
+                        <td class="text-nowrap">@r.Unit</td>
                         <td class="text-nowrap">
                             @r.STD.ToString("dd/MM/yy")
                             @if (r.STD < DateTime.Today)
@@ -131,14 +132,13 @@ else
                         </td>
                         <td>@r.Type</td>
                         <td>@r.Priority</td>
-                        <td class="font-monospace text-truncate" style="max-width: 120px;" title="@r.Material">@r.Material</td>
                         <td class="font-monospace text-truncate" style="max-width: 100px;" title="@r.MaterialConfig">@r.MaterialConfig</td>
                         <td class="text-truncate" style="max-width: 140px;" title="@r.PartNotes">@r.PartNotes</td>
                         <td class="font-monospace">@r.OrderVL</td>
                         <td>@r.Location</td>
                         <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
                         <td @onclick:stopPropagation class="text-nowrap">
-                            <a class="btn btn-sm btn-outline-primary py-0 px-1" href="@($"/kh-plan/{r.KhPlanId}/edit")" title="Sửa phiếu">
+                            <a class="btn btn-sm btn-outline-primary py-0 px-1" href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}/edit")" title="Sửa dòng này">
                                 <i class="bi bi-pencil"></i>
                             </a>
                             <button class="btn btn-sm btn-outline-warning py-0 px-1" @onclick="() => OpenSplit(r)" title="Tách PO">
@@ -155,19 +155,15 @@ else
     </div>
 }
 
-@* ==== Modal Tách PO ==== *@
 <SplitPOModal
     IsOpen="_showSplitModal"
     Source="_splitSource"
     OnSplitDone="OnSplitDoneAsync"
     OnCancelled="CloseSplit" />
 
-@* ==== Modal xem lịch sử ==== *@
 @if (_history != null)
 {
-    @* Backdrop: KHÔNG có @onclick — click ra ngoài không đóng modal.
-       Chỉ có nút X ở header và nút "Đóng" ở footer mới đóng modal. *@
-    <div class="mes-modal-backdrop">
+    <div class="mes-modal-backdrop" @onclick="CloseHistory">
         <div class="mes-modal mes-modal-lg" @onclick:stopPropagation>
             <div class="mes-modal-header">
                 <h5 class="mb-0">
@@ -235,11 +231,9 @@ else
     private string _search = "";
     private string _statusFilter = "";
 
-    // Split modal
     private bool _showSplitModal;
     private KhPlanDetailRow? _splitSource;
 
-    // History modal
     private List<KhPlanDetailChangeLog>? _history;
     private KhPlanDetailRow? _historyRow;
 
@@ -279,9 +273,10 @@ else
         }
     }
 
+    /// <summary>v0.5.2: View 1 dòng cụ thể, không hiện các dòng khác cùng phiếu</summary>
     private void OpenView(KhPlanDetailRow row)
     {
-        Nav.NavigateTo($"/kh-plan/{row.KhPlanId}");
+        Nav.NavigateTo($"/kh-plan/{row.KhPlanId}/detail/{row.KhPlanDetailId}");
     }
 
     private void OpenSplit(KhPlanDetailRow row)
