@@ -21,6 +21,9 @@ public class Department
     [MaxLength(150)]
     public string? ManagerName { get; set; }
 
+    [MaxLength(500)]
+    public string? AvatarUrl { get; set; }
+
     public int? ParentId { get; set; }
 
     public int Level { get; set; } = 1;

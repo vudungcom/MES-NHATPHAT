@@ -37,6 +37,8 @@ builder.Services.AddScoped<KhPlanService>();
 builder.Services.AddScoped<PartMasterService>();
 builder.Services.AddScoped<ThietBiService>();
 builder.Services.AddScoped<DepartmentService>();
+builder.Services.AddScoped<DoGaService>();
+builder.Services.AddScoped<StandardWtsTaskService>();
 // Luot 6B - Part Master process step services
 builder.Services.AddScoped<PartMachiningService>();
 builder.Services.AddScoped<PartTaroService>();

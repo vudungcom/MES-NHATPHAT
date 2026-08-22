@@ -3,27 +3,63 @@
 @rendermode InteractiveServer
 @using MES.Web.Data.Entities
 @using System.Security.Claims
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.AspNetCore.Components.Forms
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.DepartmentService DeptSvc
+@inject IWebHostEnvironment Env
+@inject IJSRuntime JS
 
 <PageTitle>Sơ đồ tổ chức - MES</PageTitle>
 
-<div class="container-fluid pt-3 pb-5">
+<div class="container-fluid pt-3 pb-5" @onclick="DongContextMenu">
     <!-- Header -->
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             <h2 style="font-weight: bold; color: #1e293b;">Sơ đồ tổ chức</h2>
-            <p class="text-muted mb-0">Cơ cấu 30 phòng ban, bộ phận & tổ nhóm sản xuất. <b>Click vào từng ô</b> để xem/sửa người phụ trách.</p>
+            <p class="text-muted mb-0">
+                Cơ cấu phòng ban & tổ nhóm. <b>Click ảnh</b> để phóng to, <b>Click khối</b> để sửa, <b>Chuột phải</b> để thêm nhánh.
+            </p>
         </div>
-        <div class="btn-group" role="group">
-            <button type="button" class="btn btn-sm @(isVisualView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isVisualView = true">
-                <i class="bi bi-diagram-3"></i> Sơ đồ khối
+        <div class="d-flex gap-2">
+            <!-- NÚT XUẤT EXCEL -->
+            <button type="button" class="btn btn-outline-success btn-sm" @onclick="XuatExcelAsync" disabled="@isExporting">
+                @if (isExporting)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                    <span>Đang xuất...</span>
+                }
+                else
+                {
+                    <i class="bi bi-file-earmark-excel me-1"></i>
+                    <span>Xuất Excel</span>
+                }
             </button>
-            <button type="button" class="btn btn-sm @(!isVisualView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isVisualView = false">
-                <i class="bi bi-list-ul"></i> Dạng danh sách
+
+            <!-- Nút Thêm vị trí mới -->
+            <button type="button" class="btn btn-success btn-sm" @onclick="() => MoPopupThemTuDo()">
+                <i class="bi bi-plus-lg"></i> Thêm vị trí mới
             </button>
+
+            <!-- Nhóm nút chuyển chế độ xem -->
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-sm @(isVisualView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isVisualView = true">
+                    <i class="bi bi-diagram-3"></i> Sơ đồ khối
+                </button>
+                <button type="button" class="btn btn-sm @(!isVisualView ? "btn-primary" : "btn-outline-primary")" @onclick="() => isVisualView = false">
+                    <i class="bi bi-list-ul"></i> Dạng danh sách
+                </button>
+            </div>
         </div>
     </div>
+
+    @if (!string.IsNullOrEmpty(thongBaoLoi))
+    {
+        <div class="alert alert-danger py-2 small">
+            <i class="bi bi-exclamation-triangle"></i> @thongBaoLoi
+            <button type="button" class="btn-close float-end" @onclick="() => thongBaoLoi = string.Empty"></button>
+        </div>
+    }
 
     @if (isLoading)
     {
@@ -34,179 +70,74 @@
     }
     else if (isVisualView)
     {
-        <!-- SƠ ĐỒ KHỐI TRỰC QUAN (VISUAL ORG CHART) -->
-        <div class="org-chart-scroll-wrapper shadow-sm p-4 bg-white rounded border">
-            
-            <!-- TẦNG 1: GIÁM ĐỐC -->
-            @{ var gd = GetDept(1); }
-            @if (gd != null)
-            {
-                <div class="d-flex justify-content-center">
-                    @RenderOrgNode(gd, "org-node-gd")
-                </div>
-            }
-
-            <div class="tree-line-v"></div>
-
-            <!-- TẦNG 2: 3 PHÒNG BAN CHÍNH -->
-            <div class="d-flex justify-content-center align-items-start gap-4 mb-2">
-                <!-- Phòng Hành chính -->
-                <div>
-                    @{ var hc = GetDept(2); }
-                    @if (hc != null) { @RenderOrgNode(hc) }
-                </div>
-
-                <!-- Phòng Sản Xuất -->
-                <div>
-                    @{ var sx = GetDept(3); }
-                    @if (sx != null) { @RenderOrgNode(sx, "org-node-sx") }
-                </div>
-
-                <!-- Phòng Kế toán -->
-                <div>
-                    @{ var kt = GetDept(4); }
-                    @if (kt != null) { @RenderOrgNode(kt) }
-                </div>
-            </div>
-
-            <div class="tree-line-v"></div>
-
-            <!-- TẦNG 3 & 4 & 5: 3 NHÁNH DƯỚI PHÒNG SẢN XUẤT -->
-            <div class="d-flex justify-content-center align-items-start gap-3">
+        <!-- SƠ ĐỒ KHỐI TRỰC QUAN -->
+        <div class="org-chart-scroll-wrapper shadow-sm bg-white rounded border p-4">
+            <div class="org-chart-canvas">
                 
-                <!-- ================= NHÁNH 1: GIA CÔNG ================= -->
-                <div class="branch-box p-3 rounded border">
-                    @{ var ppGc = GetDept(5); }
-                    @if (ppGc != null)
+                <!-- TẦNG 1: BAN GIÁM ĐỐC -->
+                @{ var rootNodes = DanhSachDept.Where(d => d.ParentId == null || d.Level == 1).ToList(); }
+                <div class="d-flex justify-content-center gap-3">
+                    @foreach (var r in rootNodes)
                     {
-                        <div class="d-flex justify-content-center mb-3">
-                            @RenderOrgNode(ppGc, "org-node-pp")
-                        </div>
+                        @RenderOrgNode(r, "org-node-gd")
                     }
-
-                    <!-- 4 CỘT SONG SONG: KỸ THUẬT | CƠ ĐIỆN | GC TIỆN | GC PHAY -->
-                    <div class="d-flex align-items-start gap-2">
-                        <!-- Cột 1: BP Kỹ thuật -->
-                        <div class="col-stack">
-                            @{ var bpKt = GetDept(8); }
-                            @if (bpKt != null) { @RenderOrgNode(bpKt) }
-                        </div>
-
-                        <!-- Cột 2: BP Cơ điện -->
-                        <div class="col-stack">
-                            @{ var bpCd = GetDept(9); }
-                            @if (bpCd != null) { @RenderOrgNode(bpCd) }
-                        </div>
-
-                        <!-- Cột 3: BP GC Tiện + 2 Nhóm Tiện -->
-                        <div class="col-stack">
-                            @{ var bpTien = GetDept(10); }
-                            @if (bpTien != null) { @RenderOrgNode(bpTien) }
-                            <div class="sub-stack mt-2">
-                                @foreach (var id in new[] { 12, 13 })
-                                {
-                                    var nhom = GetDept(id);
-                                    if (nhom != null)
-                                    {
-                                        <div class="mb-2">@RenderOrgNode(nhom, "org-node-group")</div>
-                                    }
-                                }
-                            </div>
-                        </div>
-
-                        <!-- Cột 4: BP GC Phay + 4 Nhóm Phay -->
-                        <div class="col-stack">
-                            @{ var bpPhay = GetDept(11); }
-                            @if (bpPhay != null) { @RenderOrgNode(bpPhay) }
-                            <div class="sub-stack mt-2">
-                                @foreach (var id in new[] { 14, 15, 16, 17 })
-                                {
-                                    var nhom = GetDept(id);
-                                    if (nhom != null)
-                                    {
-                                        <div class="mb-2">@RenderOrgNode(nhom, "org-node-group")</div>
-                                    }
-                                }
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
-                <!-- ================= NHÁNH 2: CHẤT LƯỢNG & HTSP ================= -->
-                <div class="branch-box p-3 rounded border">
-                    @{ var ppCl = GetDept(6); }
-                    @if (ppCl != null)
+                <div class="tree-line-v"></div>
+
+                <!-- TẦNG 2: KHỐI PHÒNG BAN CHỨC NĂNG -->
+                @{ var level2Nodes = DanhSachDept.Where(d => d.Level == 2).ToList(); }
+                <div class="d-flex justify-content-center align-items-start gap-4 mb-2">
+                    @foreach (var l2 in level2Nodes)
                     {
-                        <div class="d-flex justify-content-center mb-3">
-                            @RenderOrgNode(ppCl, "org-node-pp")
+                        <div>
+                            @RenderOrgNode(l2, l2.DepartmentCode == "PHONG_SX" ? "org-node-sx" : "")
                         </div>
                     }
-
-                    <!-- 2 CỘT SONG SONG: BP HTSP | BP KCS -->
-                    <div class="d-flex align-items-start gap-2">
-                        <!-- Cột 1: BP HTSP + 3 Nhóm -->
-                        <div class="col-stack">
-                            @{ var bpHtsp = GetDept(18); }
-                            @if (bpHtsp != null) { @RenderOrgNode(bpHtsp) }
-                            <div class="sub-stack mt-2">
-                                @foreach (var id in new[] { 20, 21, 22 })
-                                {
-                                    var nhom = GetDept(id);
-                                    if (nhom != null)
-                                    {
-                                        <div class="mb-2">@RenderOrgNode(nhom, "org-node-group")</div>
-                                    }
-                                }
-                            </div>
-                        </div>
-
-                        <!-- Cột 2: BP KCS + 4 Nhóm -->
-                        <div class="col-stack">
-                            @{ var bpKcs = GetDept(19); }
-                            @if (bpKcs != null) { @RenderOrgNode(bpKcs) }
-                            <div class="sub-stack mt-2">
-                                @foreach (var id in new[] { 23, 24, 25, 26 })
-                                {
-                                    var nhom = GetDept(id);
-                                    if (nhom != null)
-                                    {
-                                        <div class="mb-2">@RenderOrgNode(nhom, "org-node-group")</div>
-                                    }
-                                }
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
-                <!-- ================= NHÁNH 3: QLSX ================= -->
-                <div class="branch-box p-3 rounded border">
-                    @{ var ppQlsx = GetDept(7); }
-                    @if (ppQlsx != null)
+                <div class="tree-line-v"></div>
+
+                <!-- TẦNG 3, 4, 5: CƠ CẤU PHÒNG SẢN XUẤT -->
+                @{ var level3Branches = DanhSachDept.Where(d => d.ParentId == 3).ToList(); }
+                <div class="d-flex justify-content-center align-items-start gap-3">
+                    @foreach (var pp in level3Branches)
                     {
-                        <div class="d-flex justify-content-center mb-3">
-                            @RenderOrgNode(ppQlsx, "org-node-pp")
+                        <div class="branch-box p-3 rounded border">
+                            <div class="d-flex justify-content-center mb-3">
+                                @RenderOrgNode(pp, "org-node-pp")
+                            </div>
+
+                            @{ var bpList = GetChildren(pp.DepartmentId); }
+                            <div class="d-flex align-items-start gap-2">
+                                @foreach (var bp in bpList)
+                                {
+                                    <div class="col-stack">
+                                        @RenderOrgNode(bp)
+
+                                        @{ var nhomList = GetChildren(bp.DepartmentId); }
+                                        @if (nhomList.Any())
+                                        {
+                                            <div class="sub-stack mt-2">
+                                                @foreach (var nhom in nhomList)
+                                                {
+                                                    <div class="mb-2">
+                                                        @RenderOrgNode(nhom, "org-node-group")
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+
+                                        <button class="btn btn-sm btn-outline-dashed mt-1" 
+                                                title="Thêm nhóm/nhân viên trực thuộc @bp.DepartmentName"
+                                                @onclick="() => MoPopupThemNhanh(bp, isChild: true)">
+                                            <i class="bi bi-plus"></i> Thêm dưới
+                                        </button>
+                                    </div>
+                                }
+                            </div>
                         </div>
                     }
-
-                    <!-- 4 CỘT SONG SONG: VPSX | KHO | KHSX | BẢO TRÌ -->
-                    <div class="d-flex align-items-start gap-2">
-                        <div class="col-stack">
-                            @{ var bpVpsx = GetDept(27); }
-                            @if (bpVpsx != null) { @RenderOrgNode(bpVpsx) }
-                        </div>
-                        <div class="col-stack">
-                            @{ var bpKho = GetDept(28); }
-                            @if (bpKho != null) { @RenderOrgNode(bpKho) }
-                        </div>
-                        <div class="col-stack">
-                            @{ var bpKhsx = GetDept(29); }
-                            @if (bpKhsx != null) { @RenderOrgNode(bpKhsx) }
-                        </div>
-                        <div class="col-stack">
-                            @{ var bpBt = GetDept(30); }
-                            @if (bpBt != null) { @RenderOrgNode(bpBt) }
-                        </div>
-                    </div>
                 </div>
 
             </div>
@@ -214,7 +145,7 @@
     }
     else
     {
-        <!-- BẢNG DANH SÁCH CHI TIẾT (TABLE VIEW) -->
+        <!-- CHẾ ĐỘ BẢNG DANH SÁCH -->
         <div class="card shadow-sm border-0">
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -222,19 +153,31 @@
                         <thead style="background-color: #f8fafc;">
                             <tr>
                                 <th style="width: 50px;" class="text-center">ID</th>
-                                <th style="width: 140px;">Mã</th>
+                                <th style="width: 60px;" class="text-center">Ảnh</th>
+                                <th style="width: 130px;">Mã</th>
                                 <th>Tên Phòng ban / Bộ phận / Nhóm</th>
                                 <th>Chức vụ</th>
                                 <th style="color: #dc2626;">Người phụ trách</th>
-                                <th class="text-center" style="width: 80px;">Cấp</th>
-                                <th class="text-center" style="width: 120px;">Thao tác</th>
+                                <th>Cấp trên trực tiếp</th>
+                                <th class="text-center" style="width: 140px;">Thao tác</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach (var d in DanhSachDept)
                             {
+                                var parent = DanhSachDept.FirstOrDefault(p => p.DepartmentId == d.ParentId);
                                 <tr>
                                     <td class="text-center">@d.DepartmentId</td>
+                                    <td class="text-center">
+                                        @if (!string.IsNullOrEmpty(d.AvatarUrl))
+                                        {
+                                            <img src="@d.AvatarUrl" class="table-avatar" alt="Avatar" @onclick="() => MoXemAnhLon(d)" title="Click để phóng to ảnh" />
+                                        }
+                                        else
+                                        {
+                                            <div class="table-avatar-placeholder"><i class="bi bi-person"></i></div>
+                                        }
+                                    </td>
                                     <td class="font-monospace small">@d.DepartmentCode</td>
                                     <td>
                                         <span style="margin-left: @((d.Level - 1) * 20)px;">
@@ -244,13 +187,16 @@
                                     </td>
                                     <td><span class="badge bg-light text-dark border">@d.RoleTitle</span></td>
                                     <td class="fw-bold text-danger">@(string.IsNullOrEmpty(d.ManagerName) ? "(Chưa phân công)" : d.ManagerName)</td>
-                                    <td class="text-center"><span class="badge bg-secondary">Cấp @d.Level</span></td>
+                                    <td class="small text-muted">@(parent != null ? parent.DepartmentName : "(Gốc)")</td>
                                     <td class="text-center">
                                         <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa" @onclick="() => MoPopupSua(d)">
                                             <i class="bi bi-pencil"></i>
                                         </button>
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Lịch sử" @onclick="() => MoPopupLichSu(d)">
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử" @onclick="() => MoPopupLichSu(d)">
                                             <i class="bi bi-clock-history"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa" @onclick="() => MoPopupXoa(d)">
+                                            <i class="bi bi-trash"></i>
                                         </button>
                                     </td>
                                 </tr>
@@ -263,11 +209,15 @@
     }
 </div>
 
-<!-- Render Fragment cho 1 Node Khối Sơ Đồ -->
+<!-- Render 1 Node Khối Sơ Đồ -->
 @code {
     RenderFragment RenderOrgNode(Department dept, string customClass = "") => __builder =>
     {
-        <div class="org-node @customClass" @onclick="() => MoPopupSua(dept)" title="Click để chỉnh sửa người phụ trách">
+        <div class="org-node @customClass" 
+             @onclick="() => MoPopupSua(dept)" 
+             @oncontextmenu="(e) => MoContextMenu(e, dept)" 
+             @oncontextmenu:preventDefault="true"
+             title="Click vào khối để sửa | Click vào ảnh để phóng to | Click phải để thêm nhánh">
             <div class="org-node-header">
                 <div class="org-title">@dept.DepartmentName</div>
                 @if (!string.IsNullOrEmpty(dept.RoleTitle))
@@ -279,17 +229,189 @@
                 @if (!string.IsNullOrEmpty(dept.ManagerName))
                 {
                     <div class="org-manager">@dept.ManagerName</div>
+                    <div class="org-avatar-container" 
+                         @onclick:stopPropagation="true" 
+                         @onclick="() => MoXemAnhLon(dept)">
+                        @if (!string.IsNullOrEmpty(dept.AvatarUrl))
+                        {
+                            <img src="@dept.AvatarUrl" alt="Avatar" class="org-avatar-img" title="Click để xem ảnh lớn" />
+                        }
+                        else
+                        {
+                            <div class="org-avatar-placeholder" title="Chưa có ảnh (Click khối để thêm ảnh)">
+                                <i class="bi bi-person-fill"></i>
+                            </div>
+                        }
+                    </div>
                 }
                 else
                 {
                     <div class="org-manager text-muted fst-italic" style="font-size: 0.72rem;">(Chưa phân công)</div>
+                    <div class="org-avatar-container">
+                        <div class="org-avatar-placeholder opacity-50">
+                            <i class="bi bi-person-dash"></i>
+                        </div>
+                    </div>
                 }
             </div>
         </div>
     };
 }
 
-<!-- Modal Sửa Người Phụ Trách -->
+<!-- MODAL PHÓNG TO ẢNH (LIGHTBOX PREVIEW) -->
+@if (isHienThiXemAnhLon && deptXemAnh != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px);" tabindex="-1" @onclick="DongXemAnhLon">
+        <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+            <div class="modal-content shadow-lg border-0" style="border-radius: 12px; overflow: hidden;">
+                <div class="modal-header bg-primary text-white py-2">
+                    <h6 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-person-bounding-box me-1"></i> Thông tin nhân sự: @deptXemAnh.ManagerName
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="DongXemAnhLon"></button>
+                </div>
+                <div class="modal-body text-center p-4 bg-white">
+                    <div class="mb-3">
+                        @if (!string.IsNullOrEmpty(deptXemAnh.AvatarUrl))
+                        {
+                            <img src="@deptXemAnh.AvatarUrl" alt="Ảnh lớn" class="lightbox-big-img" />
+                        }
+                        else
+                        {
+                            <div class="lightbox-no-img">
+                                <i class="bi bi-person-fill" style="font-size: 5rem; color: #94a3b8;"></i>
+                                <div class="text-muted small mt-2">Vị trí này chưa có ảnh đại diện</div>
+                            </div>
+                        }
+                    </div>
+                    <h5 class="fw-bold text-danger mb-1">@deptXemAnh.ManagerName</h5>
+                    <div class="text-primary fw-bold small mb-1">@deptXemAnh.RoleTitle</div>
+                    <div class="text-muted small">Đơn vị: <b>@deptXemAnh.DepartmentName</b> (@deptXemAnh.DepartmentCode)</div>
+                </div>
+                <div class="modal-footer bg-light py-2 justify-content-between">
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => { DongXemAnhLon(); MoPopupSua(deptXemAnh); }">
+                        <i class="bi bi-pencil-square"></i> Đổi ảnh / Cập nhật
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongXemAnhLon">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- CONTEXT MENU (CHUỘT PHẢI) -->
+@if (isContextMenuOpen && contextDept != null)
+{
+    <div class="custom-context-menu shadow" style="top: @(contextMenuY)px; left: @(contextMenuX)px;" @onclick:stopPropagation="true">
+        <div class="context-header px-3 py-2 bg-light border-bottom">
+            <div class="fw-bold small text-primary text-truncate">@contextDept.DepartmentName</div>
+            <div class="text-muted" style="font-size: 0.75rem;">@contextDept.RoleTitle: @contextDept.ManagerName</div>
+        </div>
+        @if (!string.IsNullOrEmpty(contextDept.AvatarUrl))
+        {
+            <button class="context-item text-dark" @onclick="() => { DongContextMenu(); MoXemAnhLon(contextDept); }">
+                <i class="bi bi-arrows-fullscreen me-2 text-info"></i> <b>Xem ảnh phóng to</b>
+            </button>
+            <hr class="my-1" />
+        }
+        <button class="context-item text-success" @onclick="() => { DongContextMenu(); MoPopupThemNhanh(contextDept, isChild: true); }">
+            <i class="bi bi-arrow-down-square-fill me-2"></i> <b>Tạo nhánh dưới mới</b>
+        </button>
+        <button class="context-item text-primary" @onclick="() => { DongContextMenu(); MoPopupThemNhanh(contextDept, isChild: false); }">
+            <i class="bi bi-arrow-right-square-fill me-2"></i> <b>Tạo nhánh ngang mới</b>
+        </button>
+        <hr class="my-1" />
+        <button class="context-item" @onclick="() => { DongContextMenu(); MoPopupSua(contextDept); }">
+            <i class="bi bi-pencil-square me-2 text-primary"></i> Sửa thông tin / Đổi ảnh & nhân sự
+        </button>
+        <button class="context-item" @onclick="() => { DongContextMenu(); MoPopupLichSu(contextDept); }">
+            <i class="bi bi-clock-history me-2 text-secondary"></i> Xem lịch sử điều động
+        </button>
+        <button class="context-item text-danger" @onclick="() => { DongContextMenu(); MoPopupXoa(contextDept); }">
+            <i class="bi bi-trash me-2"></i> Xóa vị trí này
+        </button>
+    </div>
+}
+
+<!-- Modal 1: Thêm vị trí mới -->
+@if (isHienThiPopupThem)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-plus-circle"></i> Thêm vị trí / bộ phận mới</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupThem"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Thuộc cấp trên</label>
+                        <select class="form-select form-select-sm" @bind="deptMoi.ParentId">
+                            <option value="">-- Không có (Cấp cao nhất) --</option>
+                            @foreach (var d in DanhSachDept)
+                            {
+                                <option value="@d.DepartmentId">@d.DepartmentName (@d.DepartmentCode)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-5">
+                            <label class="form-label small fw-bold mb-1">Mã vị trí <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm text-uppercase" autocomplete="off" @bind="deptMoi.DepartmentCode" placeholder="VD: NHOM_PHAY_5..." />
+                        </div>
+                        <div class="col-7">
+                            <label class="form-label small fw-bold mb-1">Tên vị trí / nhóm <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.DepartmentName" placeholder="VD: NHÓM PHAY 5..." />
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Chức danh</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.RoleTitle" placeholder="VD: Trưởng nhóm, Nhân viên..." />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Người phụ trách (Mã NV & Họ tên) <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.ManagerName" placeholder="VD: 199 Nguyễn Văn A..." />
+                    </div>
+
+                    <div class="mb-3 p-2 bg-light rounded border">
+                        <label class="form-label small fw-bold mb-1 d-block"><i class="bi bi-camera"></i> Ảnh đại diện nhân viên</label>
+                        <div class="d-flex align-items-center gap-3">
+                            @if (!string.IsNullOrEmpty(deptMoi.AvatarUrl))
+                            {
+                                <img src="@deptMoi.AvatarUrl" class="upload-preview-img" alt="Preview" />
+                            }
+                            else
+                            {
+                                <div class="upload-preview-placeholder"><i class="bi bi-image"></i></div>
+                            }
+                            <div class="flex-grow-1">
+                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: false))" accept="image/*" class="form-control form-control-sm" />
+                                <div class="text-muted" style="font-size: 0.72rem;">Định dạng: JPG, PNG (tối đa 5MB)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
+                        <label class="form-label text-danger fw-bold small mb-1"><i class="bi bi-shield-lock"></i> Nhập PIN xác nhận *</label>
+                        <input type="password" class="form-control form-control-sm" autocomplete="new-password" @bind="pinXacNhan" placeholder="Nhập PIN của bạn..." />
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupThem" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-success" @onclick="LuuThemDeptAsync" disabled="@isProcessing">
+                        @(isProcessing ? "Đang lưu..." : "Lưu vị trí mới")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 2: Sửa vị trí -->
 @if (isHienThiPopupSua && deptDangSua != null)
 {
     <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
@@ -297,24 +419,68 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title fw-bold text-primary">
-                        <i class="bi bi-person-badge"></i> Điều chỉnh nhân sự: @deptDangSua.DepartmentName
+                        <i class="bi bi-pencil-square"></i> Điều chỉnh vị trí: @deptDangSua.DepartmentName
                     </h5>
                     <button type="button" class="btn-close" @onclick="DongPopupSua"></button>
                 </div>
                 <div class="modal-body">
                     <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Thuộc cấp trên</label>
+                        <select class="form-select form-select-sm" @bind="deptDangSua.ParentId">
+                            <option value="">-- Không có (Cấp cao nhất) --</option>
+                            @foreach (var d in DanhSachDept.Where(x => x.DepartmentId != deptDangSua.DepartmentId))
+                            {
+                                <option value="@d.DepartmentId">@d.DepartmentName (@d.DepartmentCode)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-5">
+                            <label class="form-label small fw-bold mb-1">Mã đơn vị</label>
+                            <input type="text" class="form-control form-control-sm text-uppercase" @bind="deptDangSua.DepartmentCode" />
+                        </div>
+                        <div class="col-7">
+                            <label class="form-label small fw-bold mb-1">Tên đơn vị / nhóm</label>
+                            <input type="text" class="form-control form-control-sm" @bind="deptDangSua.DepartmentName" />
+                        </div>
+                    </div>
+                    <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Chức danh</label>
                         <input type="text" class="form-control form-control-sm" @bind="deptDangSua.RoleTitle" placeholder="VD: Trưởng phòng, Trưởng nhóm..." />
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold mb-1">Họ tên & Mã nhân viên</label>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">
+                            Người phụ trách (Mã NV & Họ tên)
+                            @if (deptDangSua.ManagerName?.Trim() != tenGocLucMoPopup)
+                            {
+                                <span class="badge bg-warning text-dark ms-1">Đã đổi người $\rightarrow$ Bắt buộc tải ảnh mới</span>
+                            }
+                        </label>
                         <input type="text" class="form-control form-control-sm" @bind="deptDangSua.ManagerName" placeholder="VD: 016 Đỗ Văn Phúc..." />
+                    </div>
+
+                    <div class="mb-3 p-2 bg-light rounded border">
+                        <label class="form-label small fw-bold mb-1 d-block"><i class="bi bi-camera"></i> Ảnh đại diện nhân viên</label>
+                        <div class="d-flex align-items-center gap-3">
+                            @if (!string.IsNullOrEmpty(deptDangSua.AvatarUrl))
+                            {
+                                <img src="@deptDangSua.AvatarUrl" class="upload-preview-img" alt="Preview" />
+                            }
+                            else
+                            {
+                                <div class="upload-preview-placeholder"><i class="bi bi-image"></i></div>
+                            }
+                            <div class="flex-grow-1">
+                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: true))" accept="image/*" class="form-control form-control-sm" />
+                                <div class="text-muted" style="font-size: 0.72rem;">Tải ảnh chân dung mới để cập nhật</div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
                         <div class="mb-2">
                             <label class="form-label small fw-bold mb-1">Lý do điều động / thay đổi</label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Bổ nhiệm mới / Luân chuyển nhân sự..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Bổ nhiệm mới / Thay ảnh nhân sự..." />
                         </div>
                         <div>
                             <label class="form-label text-danger fw-bold small mb-1"><i class="bi bi-shield-lock"></i> Nhập PIN xác nhận *</label>
@@ -327,8 +493,11 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-auto" @onclick="() => { DongPopupSua(); MoPopupLichSu(deptDangSua); }">
-                        <i class="bi bi-clock-history"></i> Xem lịch sử
+                    <button type="button" class="btn btn-sm btn-outline-danger me-auto" @onclick="() => { DongPopupSua(); MoPopupXoa(deptDangSua); }">
+                        <i class="bi bi-trash"></i> Xóa vị trí
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => { DongPopupSua(); MoPopupLichSu(deptDangSua); }">
+                        <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupSua" disabled="@isProcessing">Hủy</button>
                     <button type="button" class="btn btn-sm btn-primary" @onclick="LuuSuaDeptAsync" disabled="@isProcessing">
@@ -340,11 +509,52 @@
     </div>
 }
 
-<!-- Modal Xem Lịch Sử Thay Đổi Nhân Sự -->
+<!-- Modal 3: Xác nhận xóa -->
+@if (isHienThiPopupXoa && deptCanXoa != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-danger"><i class="bi bi-trash3"></i> Xác nhận xóa vị trí</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupXoa"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3 small">
+                        <i class="bi bi-info-circle"></i> Bạn có chắc chắn muốn xóa vị trí <b>@deptCanXoa.DepartmentName</b> khỏi sơ đồ tổ chức?
+                    </div>
+                    <div style="border: 1px solid #dc3545; border-radius: 6px; padding: 15px;">
+                        <label class="form-label text-danger fw-bold small mb-2">
+                            <i class="bi bi-shield-lock"></i> Nhập PIN của bạn *
+                        </label>
+                        <input type="password" 
+                               class="form-control" 
+                               autocomplete="new-password"
+                               @bind="pinXacNhan" 
+                               placeholder="Nhập PIN để xác nhận xóa..." 
+                               disabled="@isProcessing" />
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="DongPopupXoa" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-danger" @onclick="XacNhanXoaDeptAsync" disabled="@isProcessing">
+                        @(isProcessing ? "Đang kiểm tra..." : "Xác nhận xóa")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 4: Lịch sử -->
 @if (isHienThiPopupLichSu && deptDangXem != null)
 {
     <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width: 850px;">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title fw-bold"><i class="bi bi-clock-history text-secondary"></i> Lịch sử điều động: @deptDangXem.DepartmentName</h5>
@@ -399,7 +609,18 @@
 <style>
     .org-chart-scroll-wrapper {
         overflow-x: auto;
+        overflow-y: auto;
         min-height: 650px;
+        text-align: left;
+    }
+
+    .org-chart-canvas {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        width: max-content;
+        min-width: 100%;
+        padding-bottom: 30px;
     }
 
     .branch-box {
@@ -408,8 +629,8 @@
     }
 
     .col-stack {
-        width: 155px;
-        min-width: 155px;
+        width: 160px;
+        min-width: 160px;
         display: flex;
         flex-direction: column;
     }
@@ -422,17 +643,19 @@
     /* Node Org Chart */
     .org-node {
         width: 100%;
-        border-radius: 5px;
+        border-radius: 6px;
         overflow: hidden;
         border: 1px solid #1e70bf;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         cursor: pointer;
         transition: transform 0.15s ease, box-shadow 0.15s ease;
         background: white;
+        user-select: none;
     }
     .org-node:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.18);
+        border-color: #0284c7;
     }
     .org-node-header {
         background-color: #2b7bc4;
@@ -451,7 +674,7 @@
     }
     .org-node-body {
         background-color: #ffffff;
-        padding: 4px;
+        padding: 6px 4px;
         text-align: center;
     }
     .org-manager {
@@ -459,34 +682,107 @@
         font-weight: 700;
         font-size: 0.78rem;
         line-height: 1.2;
+        margin-bottom: 4px;
     }
 
-    /* Màu sắc từng cấp bậc */
-    .org-node-gd {
-        width: 180px;
+    /* Avatar & Lightbox */
+    .org-avatar-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: zoom-in;
     }
-    .org-node-gd .org-node-header {
-        background-color: #1e40af;
+    .org-avatar-img {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 2px solid #2b7bc4;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        background-color: #f1f5f9;
+        transition: transform 0.15s ease;
     }
-
-    .org-node-sx {
-        width: 180px;
-    }
-
-    .org-node-pp .org-node-header {
-        background-color: #0284c7;
-    }
-    .org-node-pp {
+    .org-avatar-img:hover {
+        transform: scale(1.15);
         border-color: #0284c7;
-        width: 200px;
+    }
+    .org-avatar-placeholder {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 1px dashed #94a3b8;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        color: #94a3b8;
+        background-color: #f8fafc;
     }
 
-    .org-node-group .org-node-header {
-        background-color: #475569;
+    /* Lightbox Preview */
+    .lightbox-big-img {
+        max-width: 100%;
+        max-height: 380px;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        object-fit: contain;
     }
-    .org-node-group {
-        border-color: #475569;
+    .lightbox-no-img {
+        padding: 40px;
+        background-color: #f8fafc;
+        border-radius: 8px;
+        border: 1px dashed #cbd5e1;
     }
+
+    .upload-preview-img {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 2px solid #10b981;
+    }
+    .upload-preview-placeholder {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        border: 1px dashed #cbd5e1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.4rem;
+        color: #94a3b8;
+        background-color: #ffffff;
+    }
+    .table-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid #cbd5e1;
+        cursor: zoom-in;
+    }
+    .table-avatar-placeholder {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1px dashed #cbd5e1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        color: #94a3b8;
+    }
+
+    .org-node-gd { width: 180px; }
+    .org-node-gd .org-node-header { background-color: #1e40af; }
+
+    .org-node-sx { width: 180px; }
+
+    .org-node-pp .org-node-header { background-color: #0284c7; }
+    .org-node-pp { border-color: #0284c7; width: 200px; }
+
+    .org-node-group .org-node-header { background-color: #475569; }
+    .org-node-group { border-color: #475569; }
 
     .tree-line-v {
         width: 2px;
@@ -494,26 +790,85 @@
         background-color: #94a3b8;
         margin: 0 auto;
     }
+
+    .btn-outline-dashed {
+        border: 1px dashed #94a3b8;
+        color: #64748b;
+        font-size: 0.75rem;
+        padding: 2px 4px;
+        border-radius: 4px;
+        background-color: #ffffff;
+    }
+    .btn-outline-dashed:hover {
+        background-color: #f1f5f9;
+        color: #0f172a;
+        border-color: #475569;
+    }
+
+    /* Context Menu */
+    .custom-context-menu {
+        position: fixed;
+        z-index: 1060;
+        background: white;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        width: 260px;
+        padding: 4px 0;
+    }
+    .context-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 7px 14px;
+        border: none;
+        background: none;
+        font-size: 0.83rem;
+        color: #1e293b;
+    }
+    .context-item:hover {
+        background-color: #f1f5f9;
+    }
 </style>
 
 @code {
     private bool isLoading = true;
     private bool isVisualView = true;
     private bool isProcessing = false;
+    private bool isExporting = false;
     private bool isLoadingLogs = false;
     private int currentUserId;
 
     private List<Department> DanhSachDept = new List<Department>();
     private List<DepartmentChangeLog> danhSachLog = new List<DepartmentChangeLog>();
 
+    // Context Menu
+    private bool isContextMenuOpen = false;
+    private double contextMenuX = 0;
+    private double contextMenuY = 0;
+    private Department? contextDept = null;
+
+    // Popups
     private Department? deptDangSua = null;
     private Department? deptDangXem = null;
+    private Department? deptCanXoa = null;
+    private Department deptMoi = new Department();
+
+    private bool isHienThiPopupThem = false;
     private bool isHienThiPopupSua = false;
     private bool isHienThiPopupLichSu = false;
+    private bool isHienThiPopupXoa = false;
+
+    // Xem ảnh lớn (Lightbox)
+    private bool isHienThiXemAnhLon = false;
+    private Department? deptXemAnh = null;
 
     private string pinXacNhan = "";
     private string lyDoSua = "";
     private string loiPopup = "";
+    private string thongBaoLoi = "";
+
+    private string tenGocLucMoPopup = "";
+    private bool isNewAvatarUploaded = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -529,8 +884,168 @@
         isLoading = false;
     }
 
-    private Department? GetDept(int id) => DanhSachDept.FirstOrDefault(d => d.DepartmentId == id);
+    private List<Department> GetChildren(int parentId) => 
+        DanhSachDept.Where(d => d.ParentId == parentId).OrderBy(d => d.DisplayOrder).ToList();
 
+    // Xuất Excel
+    private async Task XuatExcelAsync()
+    {
+        try
+        {
+            isExporting = true;
+            var fileBytes = await DeptSvc.ExportExcelAsync();
+            var base64 = Convert.ToBase64String(fileBytes);
+            var fileName = $"SoDoToChuc_NhatPhat_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
+
+            await JS.InvokeVoidAsync("eval", $@"
+                (function() {{
+                    const a = document.createElement('a');
+                    a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}';
+                    a.download = '{fileName}';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }})();
+            ");
+        }
+        catch (Exception ex)
+        {
+            thongBaoLoi = "Lỗi khi xuất file Excel: " + ex.Message;
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    // Mở Lightbox xem ảnh lớn
+    private void MoXemAnhLon(Department dept)
+    {
+        deptXemAnh = dept;
+        isHienThiXemAnhLon = true;
+    }
+    private void DongXemAnhLon() { isHienThiXemAnhLon = false; deptXemAnh = null; }
+
+    // Context Menu
+    private void MoContextMenu(MouseEventArgs e, Department dept)
+    {
+        contextDept = dept;
+        contextMenuX = e.ClientX;
+        contextMenuY = e.ClientY;
+        isContextMenuOpen = true;
+    }
+    private void DongContextMenu() { isContextMenuOpen = false; }
+
+    // Upload Avatar
+    private async Task XuLyTaiAnh(InputFileChangeEventArgs e, bool isEdit)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        if (file.Size > 5 * 1024 * 1024)
+        {
+            loiPopup = "Kích thước ảnh vượt quá 5MB!";
+            return;
+        }
+
+        try
+        {
+            var folderPath = Path.Combine(Env.WebRootPath ?? "wwwroot", "uploads", "avatars");
+            if (!Directory.Exists(folderPath))
+            {
+                Directory.CreateDirectory(folderPath);
+            }
+
+            var ext = Path.GetExtension(file.Name);
+            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+
+            var randomCode = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var fileName = $"nv_{DateTime.Now:yyyyMMddHHmmss}_{randomCode}{ext}";
+            var fullPath = Path.Combine(folderPath, fileName);
+
+            using (var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024))
+            using (var fileStream = new FileStream(fullPath, FileMode.Create))
+            {
+                await stream.CopyToAsync(fileStream);
+            }
+
+            var relativeUrl = $"/uploads/avatars/{fileName}";
+            if (isEdit && deptDangSua != null)
+            {
+                deptDangSua.AvatarUrl = relativeUrl;
+                isNewAvatarUploaded = true;
+            }
+            else if (!isEdit)
+            {
+                deptMoi.AvatarUrl = relativeUrl;
+            }
+            loiPopup = "";
+        }
+        catch (Exception ex)
+        {
+            loiPopup = "Lỗi lưu file ảnh: " + ex.Message;
+        }
+    }
+
+    // Thêm
+    private void MoPopupThemTuDo()
+    {
+        deptMoi = new Department { DisplayOrder = 1 };
+        pinXacNhan = "";
+        loiPopup = "";
+        isHienThiPopupThem = true;
+    }
+
+    private void MoPopupThemNhanh(Department targetDept, bool isChild)
+    {
+        deptMoi = new Department();
+        if (isChild)
+        {
+            deptMoi.ParentId = targetDept.DepartmentId;
+            deptMoi.DepartmentCode = $"{targetDept.DepartmentCode}_SUB";
+            deptMoi.RoleTitle = targetDept.Level >= 4 ? "Nhân viên" : "Trưởng nhóm";
+        }
+        else
+        {
+            deptMoi.ParentId = targetDept.ParentId;
+            deptMoi.DepartmentCode = $"{targetDept.DepartmentCode}_NEW";
+            deptMoi.RoleTitle = targetDept.RoleTitle;
+        }
+
+        deptMoi.DisplayOrder = 1;
+        pinXacNhan = "";
+        loiPopup = "";
+        isHienThiPopupThem = true;
+    }
+
+    private void DongPopupThem() { isHienThiPopupThem = false; }
+
+    private async Task LuuThemDeptAsync()
+    {
+        if (string.IsNullOrWhiteSpace(pinXacNhan))
+        {
+            loiPopup = "Vui lòng nhập mã PIN xác nhận!";
+            return;
+        }
+
+        loiPopup = "";
+        isProcessing = true;
+
+        var result = await DeptSvc.CreateAsync(deptMoi, currentUserId, pinXacNhan);
+        if (result.Success)
+        {
+            DongPopupThem();
+            await LoadDataAsync();
+        }
+        else
+        {
+            loiPopup = result.Error ?? "Lỗi thêm vị trí mới.";
+        }
+
+        isProcessing = false;
+    }
+
+    // Sửa
     private void MoPopupSua(Department dept)
     {
         deptDangSua = new Department
@@ -540,10 +1055,13 @@
             DepartmentName = dept.DepartmentName,
             RoleTitle = dept.RoleTitle,
             ManagerName = dept.ManagerName,
+            AvatarUrl = dept.AvatarUrl,
             ParentId = dept.ParentId,
             Level = dept.Level,
             DisplayOrder = dept.DisplayOrder
         };
+        tenGocLucMoPopup = dept.ManagerName?.Trim() ?? "";
+        isNewAvatarUploaded = false;
         pinXacNhan = "";
         lyDoSua = "";
         loiPopup = "";
@@ -563,13 +1081,13 @@
         loiPopup = "";
         isProcessing = true;
 
-        var result = await DeptSvc.UpdateManagerAsync(
-            deptDangSua.DepartmentId, 
-            deptDangSua.ManagerName, 
-            deptDangSua.RoleTitle, 
+        var result = await DeptSvc.UpdateAsync(
+            deptDangSua, 
             lyDoSua, 
             currentUserId, 
-            pinXacNhan);
+            pinXacNhan, 
+            isNewAvatarUploaded, 
+            tenGocLucMoPopup);
 
         if (result.Success)
         {
@@ -584,6 +1102,43 @@
         isProcessing = false;
     }
 
+    // Xóa
+    private void MoPopupXoa(Department dept)
+    {
+        deptCanXoa = dept;
+        pinXacNhan = "";
+        loiPopup = "";
+        isHienThiPopupXoa = true;
+    }
+    private void DongPopupXoa() { isHienThiPopupXoa = false; deptCanXoa = null; }
+
+    private async Task XacNhanXoaDeptAsync()
+    {
+        if (deptCanXoa == null) return;
+        if (string.IsNullOrWhiteSpace(pinXacNhan))
+        {
+            loiPopup = "Vui lòng nhập mã PIN xác nhận!";
+            return;
+        }
+
+        loiPopup = "";
+        isProcessing = true;
+
+        var result = await DeptSvc.SoftDeleteAsync(deptCanXoa.DepartmentId, currentUserId, pinXacNhan);
+        if (result.Success)
+        {
+            DongPopupXoa();
+            await LoadDataAsync();
+        }
+        else
+        {
+            loiPopup = result.Error ?? "Lỗi xóa vị trí.";
+        }
+
+        isProcessing = false;
+    }
+
+    // Lịch sử
     private async Task MoPopupLichSu(Department dept)
     {
         deptDangXem = dept;

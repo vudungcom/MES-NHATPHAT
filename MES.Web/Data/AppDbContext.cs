@@ -27,6 +27,15 @@ public class AppDbContext : DbContext
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
 
+    // ==== Do Ga & Phu Kien module ====
+    public DbSet<DoGa> DoGas => Set<DoGa>();
+    public DbSet<DoGaMuonTraLog> DoGaMuonTraLogs => Set<DoGaMuonTraLog>();
+    public DbSet<DoGaChangeLog> DoGaChangeLogs => Set<DoGaChangeLog>();
+
+    // ==== Standard WTS Tasks module ====
+    public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();
+    public DbSet<StandardWtsTaskChangeLog> StandardWtsTaskChangeLogs => Set<StandardWtsTaskChangeLog>();
+
     // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) ====
     public DbSet<PartMachiningStep> PartMachiningSteps => Set<PartMachiningStep>();
     public DbSet<PartTaroStep> PartTaroSteps => Set<PartTaroStep>();
@@ -49,6 +58,15 @@ public class AppDbContext : DbContext
         mb.Entity<ThietBiChangeLog>().HasKey(x => x.ChangeId);
         mb.Entity<Department>().HasKey(x => x.DepartmentId);
         mb.Entity<DepartmentChangeLog>().HasKey(x => x.ChangeId);
+
+        // ==== Do Ga Primary Keys ====
+        mb.Entity<DoGa>().HasKey(x => x.DoGaId);
+        mb.Entity<DoGaMuonTraLog>().HasKey(x => x.TransactionId);
+        mb.Entity<DoGaChangeLog>().HasKey(x => x.ChangeId);
+
+        // ==== Standard WTS Primary Keys ====
+        mb.Entity<StandardWtsTask>().HasKey(x => x.TaskId);
+        mb.Entity<StandardWtsTaskChangeLog>().HasKey(x => x.ChangeId);
 
         // ==== Luot 6A - Explicit Primary Keys cho 6 bang moi ====
         mb.Entity<PartMachiningStep>().HasKey(x => x.StepId);
@@ -99,6 +117,40 @@ public class AppDbContext : DbContext
         mb.Entity<Department>().HasIndex(x => x.ParentId);
         mb.Entity<DepartmentChangeLog>().HasIndex(x => new { x.DepartmentId, x.ChangedAt });
         mb.Entity<DepartmentChangeLog>()
+            .HasOne(x => x.ChangedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.ChangedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== Do Ga & DoGa Logs ====
+        mb.Entity<DoGa>().HasIndex(x => x.TenDoGa);
+        mb.Entity<DoGa>().HasIndex(x => x.TrangThai);
+        mb.Entity<DoGa>().HasIndex(x => x.SanPhamSuDung);
+
+        mb.Entity<DoGaMuonTraLog>().HasIndex(x => new { x.DoGaId, x.NgayMuon });
+        mb.Entity<DoGaMuonTraLog>()
+            .HasOne(x => x.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.CreatedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<DoGaMuonTraLog>()
+            .HasOne(x => x.ReturnedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.ReturnedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<DoGaChangeLog>().HasIndex(x => new { x.DoGaId, x.ChangedAt });
+        mb.Entity<DoGaChangeLog>()
+            .HasOne(x => x.ChangedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.ChangedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== Standard WTS Tasks & Logs ====
+        mb.Entity<StandardWtsTask>().HasIndex(x => x.TaskCode).IsUnique();
+        mb.Entity<StandardWtsTask>().HasIndex(x => x.CategoryCode);
+        mb.Entity<StandardWtsTaskChangeLog>().HasIndex(x => new { x.TaskId, x.ChangedAt });
+        mb.Entity<StandardWtsTaskChangeLog>()
             .HasOne(x => x.ChangedByUser)
             .WithMany()
             .HasForeignKey(x => x.ChangedBy)

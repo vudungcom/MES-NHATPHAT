@@ -1,0 +1,513 @@
+@page "/wts-tieu-chuan"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using System.Security.Claims
+@inject AuthenticationStateProvider AuthState
+@inject MES.Web.Services.StandardWtsTaskService WtsSvc
+@inject IJSRuntime JS
+
+<PageTitle>Danh mục Công việc WTS Tiêu Chuẩn - MES</PageTitle>
+
+<div class="container-fluid pt-3 pb-5">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 style="font-weight: bold; color: #1e293b;">Danh mục Công việc WTS Tiêu Chuẩn</h2>
+            <p class="text-muted mb-0">
+                Master Data định hình nguyên công cho <b>Part Master</b> và là danh mục bắt buộc cho <b>chấm công WTS của công nhân</b>.
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-success btn-sm" @onclick="XuatExcelAsync" disabled="@isExporting">
+                @if (isExporting)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Đang xuất...</span>
+                }
+                else
+                {
+                    <i class="bi bi-file-earmark-excel me-1"></i>
+                    <span>Xuất Excel</span>
+                }
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" @onclick="MoPopupThem">
+                <i class="bi bi-plus-lg"></i> Thêm công việc mới
+            </button>
+        </div>
+    </div>
+
+    <!-- Filter & Search Bar -->
+    <div class="row g-2 mb-3">
+        <div class="col-md-5">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                <input type="text" 
+                       class="form-control" 
+                       placeholder="Tìm kiếm theo Mã công việc / Tên công việc..." 
+                       autocomplete="off"
+                       @bind-value="searchText" 
+                       @bind-value:event="oninput" />
+                @if (!string.IsNullOrEmpty(searchText))
+                {
+                    <button class="btn btn-outline-secondary" @onclick="() => searchText = string.Empty">
+                        <i class="bi bi-x"></i>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="col-md-4">
+            <select class="form-select form-select-sm" @bind="filterCategory">
+                <option value="">-- Tất cả Nhóm công việc (6 nhóm) --</option>
+                <option value="TARO">🔹 Công việc nhóm Taro</option>
+                <option value="BAVIA">🔹 Công việc nhóm Bavia</option>
+                <option value="RUA">🔹 Công việc nhóm Rửa</option>
+                <option value="KCS">🔹 Công việc nhóm Kiểm tra (KCS)</option>
+                <option value="DONG_GOI">🔹 Công việc nhóm Đóng gói</option>
+                <option value="KT_NC">🔹 Kiểm tra trong gia công (NC1-NC10)</option>
+            </select>
+        </div>
+        <div class="col-md-3 text-end align-self-center text-muted small">
+            Hiển thị <b>@DanhSachHienThi.Count</b> / @DanhSachGoc.Count công việc
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(thongBaoLoi))
+    {
+        <div class="alert alert-danger py-2 small mb-3">
+            <i class="bi bi-exclamation-triangle"></i> @thongBaoLoi
+            <button type="button" class="btn-close float-end" @onclick="() => thongBaoLoi = string.Empty"></button>
+        </div>
+    }
+
+    <!-- Bảng danh mục công việc -->
+    <div class="card shadow-sm border-0">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-bordered mb-0 align-middle">
+                    <thead style="background-color: #f8fafc;">
+                        <tr>
+                            <th style="width: 50px;" class="text-center">#</th>
+                            <th style="width: 190px;">Nhóm công đoạn</th>
+                            <th style="width: 120px;" class="text-center text-danger">Mã công việc</th>
+                            <th>Tên công việc tiêu chuẩn</th>
+                            <th style="width: 100px;" class="text-center">ĐVT</th>
+                            <th style="width: 110px;" class="text-center">Thứ tự</th>
+                            <th>Ghi chú</th>
+                            <th style="width: 130px;" class="text-center">Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (isLoading)
+                        {
+                            <tr><td colspan="8" class="text-center py-5 text-muted">Đang nạp danh mục công việc tiêu chuẩn...</td></tr>
+                        }
+                        else if (DanhSachHienThi.Any())
+                        {
+                            int stt = 1;
+                            foreach (var item in DanhSachHienThi)
+                            {
+                                <tr>
+                                    <td class="text-center text-muted small">@stt</td>
+                                    <td>
+                                        <span class="badge @GetBadgeClass(item.CategoryCode) px-2 py-1">@item.CategoryName</span>
+                                    </td>
+                                    <td class="text-center font-monospace fw-bold text-danger fs-6">@item.TaskCode</td>
+                                    <td class="fw-bold">@item.TaskName</td>
+                                    <td class="text-center small text-muted">@item.DefaultUnit</td>
+                                    <td class="text-center small text-muted">@item.DisplayOrder</td>
+                                    <td class="small text-muted">@item.GhiChu</td>
+                                    <td class="text-center">
+                                        <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa" @onclick="() => MoPopupSua(item)">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử thay đổi" @onclick="() => MoPopupLichSu(item)">
+                                            <i class="bi bi-clock-history"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa" @onclick="() => MoPopupXoa(item)">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                stt++;
+                            }
+                        }
+                        else
+                        {
+                            <tr><td colspan="8" class="text-center py-5 text-muted">Không tìm thấy công việc tiêu chuẩn phù hợp.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL THÊM / SỬA CÔNG VIỆC -->
+@if (isHienThiPopupSua && itemDangSua != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-primary">
+                        <i class="bi bi-pencil-square"></i> @(isThemMoi ? "Thêm mới công việc WTS tiêu chuẩn" : $"Sửa công việc: [{itemDangSua.TaskCode}]")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupSua"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Nhóm công đoạn <span class="text-danger">*</span></label>
+                        <select class="form-select form-select-sm" @bind="itemDangSua.CategoryCode">
+                            <option value="TARO">Công việc nhóm Taro</option>
+                            <option value="BAVIA">Công việc nhóm Bavia</option>
+                            <option value="RUA">Công việc nhóm Rửa</option>
+                            <option value="KCS">Công việc nhóm Kiểm tra (KCS)</option>
+                            <option value="DONG_GOI">Công việc nhóm Đóng gói</option>
+                            <option value="KT_NC">Công việc kiểm tra trong gia công (NC)</option>
+                        </select>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-5">
+                            <label class="form-label small fw-bold mb-1">Mã công việc <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm text-uppercase fw-bold text-danger" autocomplete="off" @bind="itemDangSua.TaskCode" placeholder="VD: 1T, 3V1, KM1..." />
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small fw-bold mb-1">Đơn vị tính</label>
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.DefaultUnit" placeholder="Chi tiết, Bộ..." />
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label small fw-bold mb-1">Thứ tự</label>
+                            <input type="number" class="form-control form-control-sm" @bind="itemDangSua.DisplayOrder" />
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Tên công việc tiêu chuẩn <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.TaskName" placeholder="VD: Làm vát đón, Kiểm tra ren..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold mb-1">Ghi chú</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.GhiChu" placeholder="VD: Hướng dẫn kỹ thuật..." />
+                    </div>
+
+                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
+                        @if (!isThemMoi)
+                        {
+                            <div class="mb-2">
+                                <label class="form-label small fw-bold mb-1">Lý do thay đổi</label>
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Cập nhật lại tên chuẩn..." />
+                            </div>
+                        }
+                        <div>
+                            <label class="form-label text-danger fw-bold small mb-1"><i class="bi bi-shield-lock"></i> Nhập PIN xác nhận *</label>
+                            <input type="password" class="form-control form-control-sm" autocomplete="new-password" @bind="pinXacNhan" placeholder="Nhập PIN của bạn..." />
+                        </div>
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupSua" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="LuuThongTinAsync" disabled="@isProcessing">
+                        @(isProcessing ? "Đang lưu..." : "Lưu công việc")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- MODAL LỊCH SỬ THAY ĐỔI -->
+@if (isHienThiPopupLichSu && itemDangXem != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-secondary">
+                        <i class="bi bi-clock-history"></i> Lịch sử công việc: <span class="text-danger">[@itemDangXem.TaskCode] @itemDangXem.TaskName</span>
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupLichSu"></button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingLogs)
+                    {
+                        <div class="text-center py-4">Đang tải lịch sử...</div>
+                    }
+                    else if (danhSachChangeLog.Any())
+                    {
+                        <table class="table table-sm table-bordered table-hover mb-0 align-middle">
+                            <thead style="background-color: #f8fafc;">
+                                <tr>
+                                    <th style="width: 140px;">Thời gian</th>
+                                    <th style="width: 110px;">Người sửa</th>
+                                    <th>Thông tin thay đổi</th>
+                                    <th>Giá trị cũ</th>
+                                    <th>Giá trị mới</th>
+                                    <th>Lý do</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var log in danhSachChangeLog)
+                                {
+                                    <tr>
+                                        <td class="small">@log.ChangedAt.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                                        <td class="small fw-bold">@(log.ChangedByUser?.Username ?? "System")</td>
+                                        <td class="small"><span class="badge bg-light text-dark border">@log.FieldName</span></td>
+                                        <td class="small text-muted">@log.OldValue</td>
+                                        <td class="small text-primary fw-bold">@log.NewValue</td>
+                                        <td class="small text-secondary">@log.Reason</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    else
+                    {
+                        <div class="text-center py-4 text-muted">Chưa có lịch sử thay đổi nào cho mục này.</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupLichSu">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- MODAL XÁC NHẬN XÓA -->
+@if (isHienThiPopupXoa && itemCanXoa != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-danger"><i class="bi bi-trash3"></i> Xác nhận xóa công việc tiêu chuẩn</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupXoa"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3 small">
+                        <i class="bi bi-info-circle"></i> Bạn có chắc chắn muốn xóa mã công việc <b>[@itemCanXoa.TaskCode] @itemCanXoa.TaskName</b> khỏi danh mục?
+                    </div>
+                    <div style="border: 1px solid #dc3545; border-radius: 6px; padding: 15px;">
+                        <label class="form-label text-danger fw-bold small mb-2"><i class="bi bi-shield-lock"></i> Nhập PIN của bạn *</label>
+                        <input type="password" class="form-control" autocomplete="new-password" @bind="pinXacNhan" placeholder="Nhập PIN để xác nhận xóa..." disabled="@isProcessing" />
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="DongPopupXoa" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-danger" @onclick="XacNhanXoaAsync" disabled="@isProcessing">
+                        @(isProcessing ? "Đang kiểm tra..." : "Xác nhận xóa")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isProcessing = false;
+    private bool isExporting = false;
+    private bool isLoadingLogs = false;
+    private int currentUserId;
+
+    private string searchText = "";
+    private string filterCategory = "";
+    private string thongBaoLoi = "";
+    private string loiPopup = "";
+
+    private List<StandardWtsTask> DanhSachGoc = new List<StandardWtsTask>();
+    private List<StandardWtsTaskChangeLog> danhSachChangeLog = new List<StandardWtsTaskChangeLog>();
+
+    private bool isHienThiPopupSua = false;
+    private bool isHienThiPopupLichSu = false;
+    private bool isHienThiPopupXoa = false;
+    private bool isThemMoi = false;
+
+    private StandardWtsTask? itemDangSua = null;
+    private StandardWtsTask? itemDangXem = null;
+    private StandardWtsTask? itemCanXoa = null;
+
+    private string lyDoSua = "";
+    private string pinXacNhan = "";
+
+    private List<StandardWtsTask> DanhSachHienThi => DanhSachGoc
+        .Where(x => 
+            (string.IsNullOrWhiteSpace(searchText) ||
+             x.TaskCode.Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+             x.TaskName.Contains(searchText, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(filterCategory) || x.CategoryCode == filterCategory)
+        ).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        DanhSachGoc = await WtsSvc.GetAllActiveAsync();
+        isLoading = false;
+    }
+
+    private string GetBadgeClass(string catCode) => catCode switch
+    {
+        "TARO" => "bg-primary text-white",
+        "BAVIA" => "bg-info text-dark",
+        "RUA" => "bg-success text-white",
+        "KCS" => "bg-danger text-white",
+        "DONG_GOI" => "bg-warning text-dark",
+        "KT_NC" => "bg-dark text-white",
+        _ => "bg-secondary text-white"
+    };
+
+    private void MoPopupThem()
+    {
+        itemDangSua = new StandardWtsTask
+        {
+            CategoryCode = "TARO",
+            DefaultUnit = "Chi tiết",
+            DisplayOrder = DanhSachGoc.Count + 1
+        };
+        isThemMoi = true;
+        pinXacNhan = "";
+        lyDoSua = "";
+        loiPopup = "";
+        isHienThiPopupSua = true;
+    }
+
+    private void MoPopupSua(StandardWtsTask item)
+    {
+        itemDangSua = new StandardWtsTask
+        {
+            TaskId = item.TaskId,
+            CategoryCode = item.CategoryCode,
+            CategoryName = item.CategoryName,
+            TaskCode = item.TaskCode,
+            TaskName = item.TaskName,
+            DefaultUnit = item.DefaultUnit,
+            StandardTimeSec = item.StandardTimeSec,
+            DisplayOrder = item.DisplayOrder,
+            GhiChu = item.GhiChu
+        };
+        isThemMoi = false;
+        pinXacNhan = "";
+        lyDoSua = "";
+        loiPopup = "";
+        isHienThiPopupSua = true;
+    }
+    private void DongPopupSua() { isHienThiPopupSua = false; itemDangSua = null; }
+
+    private async Task LuuThongTinAsync()
+    {
+        if (itemDangSua == null) return;
+        isProcessing = true;
+        loiPopup = "";
+
+        if (isThemMoi)
+        {
+            var result = await WtsSvc.CreateAsync(itemDangSua, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupSua();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi thêm công việc.";
+            }
+        }
+        else
+        {
+            var result = await WtsSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupSua();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi cập nhật.";
+            }
+        }
+        isProcessing = false;
+    }
+
+    private void MoPopupXoa(StandardWtsTask item)
+    {
+        itemCanXoa = item;
+        pinXacNhan = "";
+        loiPopup = "";
+        isHienThiPopupXoa = true;
+    }
+    private void DongPopupXoa() { isHienThiPopupXoa = false; itemCanXoa = null; }
+
+    private async Task XacNhanXoaAsync()
+    {
+        if (itemCanXoa == null) return;
+        isProcessing = true;
+        loiPopup = "";
+
+        var result = await WtsSvc.SoftDeleteAsync(itemCanXoa.TaskId, currentUserId, pinXacNhan);
+        if (result.Success)
+        {
+            DongPopupXoa();
+            await LoadDataAsync();
+        }
+        else
+        {
+            loiPopup = result.Error ?? "Lỗi xóa công việc.";
+        }
+        isProcessing = false;
+    }
+
+    private async Task MoPopupLichSu(StandardWtsTask item)
+    {
+        itemDangXem = item;
+        isHienThiPopupLichSu = true;
+        isLoadingLogs = true;
+        danhSachChangeLog = await WtsSvc.GetChangeLogsAsync(item.TaskId);
+        isLoadingLogs = false;
+    }
+    private void DongPopupLichSu() { isHienThiPopupLichSu = false; }
+
+    private async Task XuatExcelAsync()
+    {
+        try
+        {
+            isExporting = true;
+            var fileBytes = await WtsSvc.ExportExcelAsync(DanhSachHienThi);
+            var base64 = Convert.ToBase64String(fileBytes);
+            var fileName = $"DS_WTS_TieuChuan_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
+
+            await JS.InvokeVoidAsync("eval", $@"
+                (function() {{
+                    const a = document.createElement('a');
+                    a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}';
+                    a.download = '{fileName}';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }})();
+            ");
+        }
+        catch (Exception ex)
+        {
+            thongBaoLoi = "Lỗi khi xuất file Excel: " + ex.Message;
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+}
