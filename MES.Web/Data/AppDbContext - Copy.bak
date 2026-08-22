@@ -19,15 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<FileStorage> FileStorages => Set<FileStorage>();
     public DbSet<FileAttachment> FileAttachments => Set<FileAttachment>();
 
-    // ==== Thiet Bi module ====
-    public DbSet<ThietBi> ThietBis => Set<ThietBi>();
-    public DbSet<ThietBiChangeLog> ThietBiChangeLogs => Set<ThietBiChangeLog>();
-
-    // ==== So Do To Chuc module ====
-    public DbSet<Department> Departments => Set<Department>();
-    public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
-
-    // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) ====
+    // ==== Luot 6A - Part Master module ====
     public DbSet<PartMachiningStep> PartMachiningSteps => Set<PartMachiningStep>();
     public DbSet<PartTaroStep> PartTaroSteps => Set<PartTaroStep>();
     public DbSet<PartBaviaStep> PartBaviaSteps => Set<PartBaviaStep>();
@@ -45,10 +37,6 @@ public class AppDbContext : DbContext
         mb.Entity<StockTransaction>().HasKey(x => x.TransactionId);
         mb.Entity<FileStorage>().HasKey(x => x.StorageId);
         mb.Entity<FileAttachment>().HasKey(x => x.FileId);
-        mb.Entity<ThietBi>().HasKey(x => x.ThietBiId);
-        mb.Entity<ThietBiChangeLog>().HasKey(x => x.ChangeId);
-        mb.Entity<Department>().HasKey(x => x.DepartmentId);
-        mb.Entity<DepartmentChangeLog>().HasKey(x => x.ChangeId);
 
         // ==== Luot 6A - Explicit Primary Keys cho 6 bang moi ====
         mb.Entity<PartMachiningStep>().HasKey(x => x.StepId);
@@ -63,6 +51,7 @@ public class AppDbContext : DbContext
 
         // ==== PartMaster ====
         mb.Entity<PartMaster>().HasIndex(x => x.PartNo).IsUnique();
+        // Đã bỏ WeightPerEA_g precision (field không còn)
 
         // ==== PartMasterAttribute ====
         mb.Entity<PartMasterAttribute>().HasIndex(x => new { x.PartId, x.AttributeType, x.IsDefault });
@@ -84,26 +73,6 @@ public class AppDbContext : DbContext
         // ==== UserGroup ====
         mb.Entity<UserGroup>().HasIndex(x => x.GroupCode).IsUnique();
 
-        // ==== ThietBi ====
-        mb.Entity<ThietBi>().HasIndex(x => x.SoMay).IsUnique().HasFilter("[IsActive] = 1");
-
-        // ==== ThietBiChangeLog ====
-        mb.Entity<ThietBiChangeLog>().HasIndex(x => new { x.ThietBiId, x.ChangedAt });
-        mb.Entity<ThietBiChangeLog>()
-            .HasOne(x => x.ChangedByUser)
-            .WithMany()
-            .HasForeignKey(x => x.ChangedBy)
-            .OnDelete(DeleteBehavior.NoAction);
-
-        // ==== Department & DepartmentChangeLog ====
-        mb.Entity<Department>().HasIndex(x => x.ParentId);
-        mb.Entity<DepartmentChangeLog>().HasIndex(x => new { x.DepartmentId, x.ChangedAt });
-        mb.Entity<DepartmentChangeLog>()
-            .HasOne(x => x.ChangedByUser)
-            .WithMany()
-            .HasForeignKey(x => x.ChangedBy)
-            .OnDelete(DeleteBehavior.NoAction);
-
         // ==== KhPlan ====
         mb.Entity<KhPlan>().HasIndex(x => x.PlanNo).IsUnique();
         mb.Entity<KhPlan>().HasIndex(x => new { x.CustomerId, x.PlanDate });
@@ -113,6 +82,7 @@ public class AppDbContext : DbContext
         mb.Entity<KhPlanDetail>().HasIndex(x => x.PurchaseOrder);
         mb.Entity<KhPlanDetail>().HasIndex(x => x.PartNo);
         mb.Entity<KhPlanDetail>().Property(x => x.Quantity).HasPrecision(18, 4);
+        // Đã bỏ WeightPerEA_g precision (field không còn)
         mb.Entity<KhPlanDetail>()
             .HasOne(x => x.KhPlan)
             .WithMany(x => x.Details)
@@ -157,7 +127,11 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.StorageId)
             .OnDelete(DeleteBehavior.NoAction);
 
-        // ==== PartMachiningStep ====
+        // =====================================================================
+        // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) =====
+        // =====================================================================
+
+        // ==== PartMachiningStep (Quy trinh gia cong) ====
         mb.Entity<PartMachiningStep>().HasIndex(x => new { x.PartId, x.StepOrder });
         mb.Entity<PartMachiningStep>().HasIndex(x => new { x.PartId, x.IsActive });
         mb.Entity<PartMachiningStep>()
@@ -214,7 +188,7 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.UpdatedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
-        // ==== PartWashingStep ====
+        // ==== PartWashingStep (Quy trinh rua) ====
         mb.Entity<PartWashingStep>().HasIndex(x => new { x.PartId, x.StepOrder });
         mb.Entity<PartWashingStep>().HasIndex(x => new { x.PartId, x.IsActive });
         mb.Entity<PartWashingStep>()
@@ -233,7 +207,7 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.UpdatedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
-        // ==== PartInspectionStep ====
+        // ==== PartInspectionStep (Quy trinh kiem tra) ====
         mb.Entity<PartInspectionStep>().HasIndex(x => new { x.PartId, x.StepOrder });
         mb.Entity<PartInspectionStep>().HasIndex(x => new { x.PartId, x.IsActive });
         mb.Entity<PartInspectionStep>()
@@ -252,7 +226,9 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.UpdatedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
-        // ==== PartProcessStepChangeLog ====
+        // ==== PartProcessStepChangeLog (LOOSE reference - KHONG FK toi 5 bang step) ====
+        // Ly do: khi soft/hard delete step, log van giu duoc audit trail.
+        // Chi co 1 FK duy nhat toi Users(ChangedBy).
         mb.Entity<PartProcessStepChangeLog>().HasIndex(x => new { x.StepTable, x.StepId, x.ChangedAt });
         mb.Entity<PartProcessStepChangeLog>().HasIndex(x => new { x.PartId, x.ChangedAt });
         mb.Entity<PartProcessStepChangeLog>()

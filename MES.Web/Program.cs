@@ -35,6 +35,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<KhPlanService>();
 builder.Services.AddScoped<PartMasterService>();
+builder.Services.AddScoped<ThietBiService>();
+builder.Services.AddScoped<DepartmentService>();
 // Luot 6B - Part Master process step services
 builder.Services.AddScoped<PartMachiningService>();
 builder.Services.AddScoped<PartTaroService>();

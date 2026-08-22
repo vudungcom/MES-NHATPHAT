@@ -1,10 +1,7 @@
 <nav class="mes-sidebar">
-    <div class="mes-brand d-flex align-items-center p-3">
-        <img src="/images/Logo.jpg" alt="Logo" style="height: 34px; background: white; padding: 2px 4px; border-radius: 4px; margin-right: 10px;" />
-        <div>
-            <div style="font-weight: 700; font-size: 1.15rem; line-height: 1.1; color: white;">MES</div>
-            <div class="mes-brand-sub" style="font-size: 0.7rem; color: #94a3b8;">Prototype v0.1</div>
-        </div>
+    <div class="mes-brand">
+        <i class="bi bi-boxes"></i> MES
+        <div class="mes-brand-sub">Prototype v0.1</div>
     </div>
 
     <ul class="nav flex-column">
@@ -36,18 +33,6 @@
         <li class="nav-item">
             <NavLink class="nav-link" href="/hieu-suat-cong-nhan">
                 <i class="bi bi-people"></i> Hiệu suất công nhân
-            </NavLink>
-        </li>
-        
-        <!-- 2 Tab thêm mới -->
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/so-do-to-chuc">
-                <i class="bi bi-diagram-3"></i> Sơ đồ tổ chức
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/thiet-bi">
-                <i class="bi bi-wrench"></i> Danh sách thiết bị
             </NavLink>
         </li>
     </ul>

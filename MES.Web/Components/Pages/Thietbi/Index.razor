@@ -1,0 +1,794 @@
+@page "/thiet-bi"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using System.Security.Claims
+@inject AuthenticationStateProvider AuthState
+@inject MES.Web.Services.ThietBiService ThietBiSvc
+
+<PageTitle>Danh sách thiết bị - MES</PageTitle>
+
+<div class="container-fluid pt-3">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 style="font-weight: bold; color: #1e293b;">Danh sách thiết bị</h2>
+            <p class="text-muted mb-0">Mỗi dòng = 1 Thiết bị. <b>Double-click</b> để xem chi tiết. Bấm nút Sửa / Lịch sử / Xóa để thao tác.</p>
+        </div>
+        <button class="btn btn-primary" style="border-radius: 6px; font-weight: 500;" @onclick="MoPopupThem">
+            <i class="bi bi-plus-lg"></i> Thêm thiết bị mới
+        </button>
+    </div>
+
+    <!-- Thanh Search & Filter -->
+    <div class="row mb-3">
+        <div class="col-md-5">
+            <div class="input-group">
+                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                <input type="text" 
+                       class="form-control" 
+                       placeholder="Tìm theo Số máy / Tên máy / Mã máy / Lý do hỏng..." 
+                       autocomplete="off"
+                       @bind-value="searchText" 
+                       @bind-value:event="oninput" />
+                @if (!string.IsNullOrEmpty(searchText))
+                {
+                    <button class="btn btn-outline-secondary" @onclick="() => searchText = string.Empty">
+                        <i class="bi bi-x"></i>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="col-md-2">
+            <select class="form-select" @bind="filterBoPhan">
+                <option value="">-- Tất cả Bộ phận --</option>
+                @foreach (var bp in DanhSachGoc.Select(x => x.BoPhan).Distinct().Where(x => !string.IsNullOrEmpty(x)))
+                {
+                    <option value="@bp">@bp</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <select class="form-select" @bind="filterLoaiMay">
+                <option value="">-- Tất cả Loại máy --</option>
+                @foreach (var lm in DanhSachGoc.Select(x => x.LoaiMay).Distinct().Where(x => !string.IsNullOrEmpty(x)))
+                {
+                    <option value="@lm">@lm</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2 text-end align-self-center text-muted" style="font-size: 0.9rem;">
+            Hiển thị @DanhSachHienThi.Count / @DanhSachGoc.Count Máy
+        </div>
+    </div>
+
+    <!-- Cảnh báo lỗi chung -->
+    @if (!string.IsNullOrEmpty(thongBaoLoi))
+    {
+        <div class="alert alert-danger py-2">
+            <i class="bi bi-exclamation-triangle"></i> @thongBaoLoi
+            <button type="button" class="btn-close float-end" @onclick="() => thongBaoLoi = string.Empty"></button>
+        </div>
+    }
+
+    <!-- Bảng Dữ Liệu -->
+    <div class="table-responsive" style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <table class="table table-hover table-bordered mb-0">
+            <thead style="background-color: #f8f9fa;">
+                <tr>
+                    <th style="width: 45px;" class="text-center">#</th>
+                    <th>Bộ phận</th>
+                    <th style="color: #d81b60;">Số máy (ID)</th>
+                    <th>Tên Máy (Hiệu)</th>
+                    <th>Mã máy (Model)</th>
+                    <th>Loại máy</th>
+                    <th class="text-center" style="width: 110px;">Trạng thái</th>
+                    <th style="color: #c2410c;">Lý do dừng / hỏng</th>
+                    <th class="text-center" style="color: #c2410c; width: 175px;">Thời gian bắt đầu dừng</th>
+                    <th class="text-center" style="width: 140px;">Thao tác</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (isLoading)
+                {
+                    <tr><td colspan="10" class="text-center py-4">Đang tải dữ liệu...</td></tr>
+                }
+                else if (DanhSachHienThi.Any())
+                {
+                    int stt = 1;
+                    foreach (var may in DanhSachHienThi)
+                    {
+                        <tr @ondblclick="() => MoPopupView(may)" style="cursor: pointer;" title="Double-click để xem chi tiết">
+                            <td class="text-center align-middle">@stt</td>
+                            <td class="align-middle">@may.BoPhan</td>
+                            <td class="align-middle fw-bold" style="color: #d81b60;">@may.SoMay</td>
+                            <td class="align-middle">@may.TenMay</td>
+                            <td class="align-middle">@may.MaMay</td>
+                            <td class="align-middle">@may.LoaiMay</td>
+                            <td class="text-center align-middle">
+                                @if (may.TrangThai == "Hoạt động") { <span class="badge bg-success">@may.TrangThai</span> }
+                                else if (may.TrangThai == "Bảo trì") { <span class="badge bg-warning text-dark">@may.TrangThai</span> }
+                                else if (may.TrangThai == "Báo hỏng") { <span class="badge bg-danger">@may.TrangThai</span> }
+                                else { <span class="badge bg-secondary">@may.TrangThai</span> }
+                            </td>
+                            <!-- Cột Lý do dừng / hỏng -->
+                            <td class="align-middle">
+                                @if (may.TrangThai != "Hoạt động" && !string.IsNullOrWhiteSpace(may.LyDoHienTai))
+                                {
+                                    <span class="text-danger fw-semibold">
+                                        <i class="bi bi-exclamation-circle me-1"></i>@may.LyDoHienTai
+                                    </span>
+                                }
+                                else if (may.TrangThai != "Hoạt động")
+                                {
+                                    <span class="text-muted fst-italic small">Chưa ghi lý do</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
+                            <!-- Cột Thời gian bắt đầu dừng (Định dạng: HH:mm dd/MM/yyyy) -->
+                            <td class="text-center align-middle text-nowrap">
+                                @if (may.TrangThai != "Hoạt động" && may.ThoiGianDungTu.HasValue)
+                                {
+                                    <span class="text-danger small fw-bold">
+                                        <i class="bi bi-clock me-1"></i>@may.ThoiGianDungTu.Value.ToString("HH:mm dd/MM/yyyy")
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
+                            <td class="text-center align-middle text-nowrap" @onclick:stopPropagation="true">
+                                <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa" @onclick="() => MoPopupSua(may)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử trạng thái" @onclick="() => MoPopupLichSu(may)">
+                                    <i class="bi bi-clock-history"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa" @onclick="() => MoPopupXoa(may)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        stt++;
+                    }
+                }
+                else
+                {
+                    <tr><td colspan="10" class="text-center py-4 text-muted">Không tìm thấy dữ liệu máy móc.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal 1: Xem chi tiết -->
+@if (isHienThiPopupView && mayDangXem != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold text-primary"><i class="bi bi-info-circle"></i> Chi tiết thiết bị: @mayDangXem.SoMay</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupView"></button>
+                </div>
+                <div class="modal-body">
+                    <table class="table table-sm table-bordered mb-0">
+                        <tbody>
+                            <tr>
+                                <th style="width: 140px; background-color: #f8f9fa;">Số máy (ID)</th>
+                                <td class="fw-bold text-danger">@mayDangXem.SoMay</td>
+                            </tr>
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Bộ phận</th>
+                                <td>@mayDangXem.BoPhan</td>
+                            </tr>
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Tên máy (Hiệu)</th>
+                                <td>@mayDangXem.TenMay</td>
+                            </tr>
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Mã máy (Model)</th>
+                                <td>@mayDangXem.MaMay</td>
+                            </tr>
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Loại máy</th>
+                                <td>@mayDangXem.LoaiMay</td>
+                            </tr>
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Trạng thái</th>
+                                <td>
+                                    @if (mayDangXem.TrangThai == "Hoạt động") { <span class="badge bg-success">@mayDangXem.TrangThai</span> }
+                                    else if (mayDangXem.TrangThai == "Bảo trì") { <span class="badge bg-warning text-dark">@mayDangXem.TrangThai</span> }
+                                    else if (mayDangXem.TrangThai == "Báo hỏng") { <span class="badge bg-danger">@mayDangXem.TrangThai</span> }
+                                    else { <span class="badge bg-secondary">@mayDangXem.TrangThai</span> }
+                                </td>
+                            </tr>
+                            @if (mayDangXem.TrangThai != "Hoạt động" && !string.IsNullOrEmpty(mayDangXem.LyDoHienTai))
+                            {
+                                <tr>
+                                    <th style="background-color: #fff1f2;" class="text-danger">Lý do dừng</th>
+                                    <td class="text-danger fw-bold">@mayDangXem.LyDoHienTai</td>
+                                </tr>
+                            }
+                            @if (mayDangXem.TrangThai != "Hoạt động" && mayDangXem.ThoiGianDungTu.HasValue)
+                            {
+                                <tr>
+                                    <th style="background-color: #fff1f2;" class="text-danger">Dừng từ lúc</th>
+                                    <td class="text-danger fw-bold">@mayDangXem.ThoiGianDungTu.Value.ToString("HH:mm:ss dd/MM/yyyy")</td>
+                                </tr>
+                            }
+                            <tr>
+                                <th style="background-color: #f8f9fa;">Ngày khởi tạo</th>
+                                <td>@mayDangXem.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => { DongPopupView(); MoPopupLichSu(mayDangXem); }">
+                        <i class="bi bi-clock-history"></i> Lịch sử
+                    </button>
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="() => ChuyenSangSua(mayDangXem)">
+                        <i class="bi bi-pencil"></i> Sửa thiết bị
+                    </button>
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupView">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 2: Sửa Thiết Bị -->
+@if (isHienThiPopupSua && mayDangSua != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square text-primary"></i> Sửa thông tin thiết bị: @mayDangSua.SoMay</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupSua"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Bộ phận</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.BoPhan" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Số máy (Mã ID) <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.SoMay" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Tên máy (Thương hiệu)</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.TenMay" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Mã máy (Model)</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.MaMay" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Loại máy</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.LoaiMay" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small mb-1 fw-bold">Trạng thái vận hành</label>
+                        <select class="form-select form-select-sm fw-bold" @onchange="OnStatusChanged">
+                            <option value="Hoạt động" selected="@(mayDangSua.TrangThai == "Hoạt động")">Hoạt động</option>
+                            <option value="Báo hỏng" selected="@(mayDangSua.TrangThai == "Báo hỏng")">Báo hỏng</option>
+                            <option value="Bảo trì" selected="@(mayDangSua.TrangThai == "Bảo trì")">Bảo trì</option>
+                            <option value="Tạm dừng" selected="@(mayDangSua.TrangThai == "Tạm dừng")">Tạm dừng</option>
+                        </select>
+                    </div>
+
+                    <!-- Khung ghi nhận Downtime 2 pha -->
+                    @if (mayDangSua.TrangThai != "Hoạt động" || trangThaiGocLucMoPopup != "Hoạt động")
+                    {
+                        <div class="mb-3" style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold text-warning-emphasis small"><i class="bi bi-stopwatch"></i> Ghi nhận thời gian sự cố</span>
+                                @if (isDangBaoHong)
+                                {
+                                    <span class="badge bg-danger small">Pha 1: Đang dừng / Chưa khắc phục</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success small">Pha 2: Khắc phục xong & Chốt giờ</span>
+                                }
+                            </div>
+                            
+                            <div class="row g-2 mb-2">
+                                <div class="col-6">
+                                    <label class="form-label small mb-1">Bắt đầu dừng / hỏng</label>
+                                    <input type="datetime-local" 
+                                           class="form-control form-control-sm @(isLoiThoiGianBatDau ? "is-invalid" : "")" 
+                                           max="@maxDateTimeAllowed"
+                                           @bind="thoiGianBatDau" />
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small mb-1">Khắc phục xong</label>
+                                    <input type="datetime-local" 
+                                           class="form-control form-control-sm @(isLoiThoiGianKetThuc ? "is-invalid" : "")" 
+                                           disabled="@isDangBaoHong"
+                                           max="@maxDateTimeAllowed"
+                                           @bind="thoiGianKetThuc" />
+                                </div>
+                            </div>
+
+                            @if (isLoiThoiGianBatDau)
+                            {
+                                <div class="text-danger small fw-bold"><i class="bi bi-exclamation-triangle"></i> Thời gian bắt đầu không được ở tương lai!</div>
+                            }
+                            else if (isLoiThoiGianKetThuc)
+                            {
+                                <div class="text-danger small fw-bold"><i class="bi bi-exclamation-triangle"></i> Thời gian khắc phục không được ở tương lai hoặc nhỏ hơn giờ bắt đầu!</div>
+                            }
+                            else if (isDangBaoHong)
+                            {
+                                <div class="text-muted small italic">
+                                    <i class="bi bi-info-circle"></i> Ô <i>"Khắc phục xong"</i> đang để trống. Khi sửa xong và chuyển về <b>Hoạt động</b>, hệ thống sẽ tự động chốt giờ.
+                                </div>
+                            }
+                            else if (thoiGianBatDau.HasValue && thoiGianKetThuc.HasValue && thoiGianKetThuc.Value >= thoiGianBatDau.Value)
+                            {
+                                var minutes = (int)Math.Round((thoiGianKetThuc.Value - thoiGianBatDau.Value).TotalMinutes);
+                                <div class="text-success small fw-bold mt-1">
+                                    <i class="bi bi-check-circle-fill"></i> Đã tính tổng thời gian dừng: @minutes phút (@((minutes / 60.0).ToString("0.0")) giờ)
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold mb-1">Lý do thay đổi / Nguyên nhân sự cố</label>
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Gãy dao, Cháy motor, Thay linh kiện..." />
+                        </div>
+                        <div>
+                            <label class="form-label text-danger fw-bold small mb-1"><i class="bi bi-shield-lock"></i> Nhập PIN xác nhận *</label>
+                            <input type="password" class="form-control form-control-sm" autocomplete="new-password" @bind="pinXacNhan" placeholder="Nhập PIN của bạn..." />
+                        </div>
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupSua" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="LuuSuaThietBiAsync" disabled="@(isProcessing || isLoiThoiGianBatDau || isLoiThoiGianKetThuc)">
+                        @(isProcessing ? "Đang lưu..." : "Lưu thay đổi")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 3: Xem Lịch Sử Trạng Thái & Thay Đổi -->
+@if (isHienThiPopupLichSu && mayDangXem != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-clock-history text-secondary"></i> Lịch sử thay đổi & vận hành: @mayDangXem.SoMay</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupLichSu"></button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingLogs)
+                    {
+                        <div class="text-center py-4">Đang tải lịch sử...</div>
+                    }
+                    else if (danhSachLog.Any())
+                    {
+                        <table class="table table-sm table-bordered table-hover">
+                            <thead style="background-color: #f1f5f9;">
+                                <tr>
+                                    <th style="width: 140px;">Thời gian ghi</th>
+                                    <th style="width: 100px;">Người ghi</th>
+                                    <th>Thông tin thay đổi</th>
+                                    <th>Giá trị cũ</th>
+                                    <th>Giá trị mới</th>
+                                    <th style="width: 180px;">Thời gian dừng máy</th>
+                                    <th class="text-center" style="width: 100px;">Tổng dừng</th>
+                                    <th>Lý do / Nguyên nhân</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var log in danhSachLog)
+                                {
+                                    <tr>
+                                        <td class="small align-middle">@log.ChangedAt.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                                        <td class="small align-middle fw-bold">@(log.ChangedByUser?.Username ?? "System")</td>
+                                        <td class="small align-middle"><span class="badge bg-light text-dark border">@log.FieldName</span></td>
+                                        <td class="small align-middle text-muted">@log.OldValue</td>
+                                        <td class="small align-middle text-primary fw-bold">@log.NewValue</td>
+                                        <td class="small align-middle">
+                                            @if (log.ThoiGianBatDau.HasValue)
+                                            {
+                                                <div><i class="bi bi-play-circle text-danger"></i> @log.ThoiGianBatDau.Value.ToString("HH:mm dd/MM/yyyy")</div>
+                                                @if (log.ThoiGianKetThuc.HasValue)
+                                                {
+                                                    <div><i class="bi bi-check-circle text-success"></i> @log.ThoiGianKetThuc.Value.ToString("HH:mm dd/MM/yyyy")</div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-danger">Chưa khắc phục xong</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td class="small align-middle text-center fw-bold">
+                                            @if (log.SoPhutDung.HasValue)
+                                            {
+                                                <span class="badge bg-warning text-dark">@log.SoPhutDung p</span>
+                                            }
+                                            else if (log.ThoiGianBatDau.HasValue && !log.ThoiGianKetThuc.HasValue)
+                                            {
+                                                <span class="text-danger small font-monospace">Đang dừng...</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td class="small align-middle text-secondary">@log.Reason</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    else
+                    {
+                        <div class="text-center py-4 text-muted">Chưa có lịch sử thay đổi nào cho thiết bị này.</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupLichSu">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 4: Thêm Thiết Bị Mới -->
+@if (isHienThiPopupThem)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Thêm thiết bị mới</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupThem"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small">Bộ phận</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.BoPhan" placeholder="VD: GC thô, Taro, Phay CNC..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Số máy (Mã ID quản lý) <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.SoMay" placeholder="VD: C01, H01, P01..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Tên Máy (Thương hiệu)</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.TenMay" placeholder="VD: AMADA, TAIKAN, OKUMA..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Mã máy (Model)</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.MaMay" placeholder="VD: T-V856S, SPH-30C..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Loại máy</label>
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.LoaiMay" placeholder="VD: Phay CNC, Tiện CNC, Taro điện..." />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupThem" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="LuuMayMoiAsync" disabled="@isProcessing">
+                        @(isProcessing ? "Đang lưu..." : "Lưu dữ liệu")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 5: Xác Nhận Xóa -->
+@if (isHienThiPopupXoa && mayCanXoa != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-trash3 text-danger"></i> Xác nhận xóa thiết bị</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupXoa"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning mb-3 small">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Lưu ý:</strong> Thiết bị <b>@mayCanXoa.SoMay</b> sẽ được ẩn khỏi hệ thống.
+                    </div>
+                    <div style="border: 1px solid #dc3545; border-radius: 6px; padding: 15px;">
+                        <label class="form-label text-danger fw-bold small mb-2">
+                            <i class="bi bi-shield-lock"></i> Nhập PIN của bạn *
+                        </label>
+                        <input type="password" 
+                               class="form-control" 
+                               autocomplete="new-password"
+                               @bind="pinXacNhan" 
+                               placeholder="Nhập PIN để xác nhận xóa..." 
+                               disabled="@isProcessing" />
+                        @if (!string.IsNullOrEmpty(loiPopup))
+                        {
+                            <div class="text-danger mt-2 fw-bold" style="font-size: 0.85rem;">@loiPopup</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="DongPopupXoa" disabled="@isProcessing">Hủy</button>
+                    <button type="button" class="btn btn-danger" @onclick="XacNhanXoaMayAsync" disabled="@isProcessing">
+                        @if(isProcessing) {
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            <span> Đang kiểm tra...</span>
+                        } else {
+                            <i class="bi bi-trash"></i> <span> Xác nhận xóa</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string searchText = "";
+    private string filterBoPhan = "";
+    private string filterLoaiMay = "";
+    private string thongBaoLoi = "";
+    private string loiPopup = "";
+    
+    private bool isLoading = true;
+    private bool isProcessing = false;
+    private bool isLoadingLogs = false;
+    private int currentUserId;
+
+    private List<ThietBi> DanhSachGoc = new List<ThietBi>();
+    private List<ThietBiChangeLog> danhSachLog = new List<ThietBiChangeLog>();
+
+    // Popups
+    private bool isHienThiPopupView = false;
+    private bool isHienThiPopupSua = false;
+    private bool isHienThiPopupLichSu = false;
+    private bool isHienThiPopupThem = false;
+    private bool isHienThiPopupXoa = false;
+
+    private ThietBi? mayDangXem = null;
+    private ThietBi? mayDangSua = null;
+    private ThietBi? mayCanXoa = null;
+    private ThietBi mayMoi = new ThietBi();
+
+    private string pinXacNhan = "";
+    private string lyDoSua = "";
+    private string trangThaiGocLucMoPopup = "Hoạt động";
+    private bool isDangBaoHong => mayDangSua != null && mayDangSua.TrangThai != "Hoạt động";
+    private string maxDateTimeAllowed => DateTime.Now.ToString("yyyy-MM-ddTHH:mm");
+    
+    private DateTime? thoiGianBatDau = null;
+    private DateTime? thoiGianKetThuc = null;
+
+    private bool isLoiThoiGianBatDau => thoiGianBatDau.HasValue && thoiGianBatDau.Value > DateTime.Now;
+    private bool isLoiThoiGianKetThuc => 
+        (thoiGianKetThuc.HasValue && thoiGianKetThuc.Value > DateTime.Now) ||
+        (thoiGianBatDau.HasValue && thoiGianKetThuc.HasValue && thoiGianKetThuc.Value < thoiGianBatDau.Value);
+
+    private List<ThietBi> DanhSachHienThi => DanhSachGoc
+        .Where(m => 
+            (string.IsNullOrWhiteSpace(searchText) || 
+             (m.SoMay != null && m.SoMay.Contains(searchText, StringComparison.OrdinalIgnoreCase)) || 
+             (m.TenMay != null && m.TenMay.Contains(searchText, StringComparison.OrdinalIgnoreCase)) ||
+             (m.MaMay != null && m.MaMay.Contains(searchText, StringComparison.OrdinalIgnoreCase)) ||
+             (m.LyDoHienTai != null && m.LyDoHienTai.Contains(searchText, StringComparison.OrdinalIgnoreCase))) &&
+            (string.IsNullOrWhiteSpace(filterBoPhan) || m.BoPhan == filterBoPhan) &&
+            (string.IsNullOrWhiteSpace(filterLoaiMay) || m.LoaiMay == filterLoaiMay)
+        ).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        DanhSachGoc = await ThietBiSvc.GetAllActiveAsync();
+        isLoading = false;
+    }
+
+    private void MoPopupView(ThietBi may)
+    {
+        mayDangXem = may;
+        isHienThiPopupView = true;
+    }
+    private void DongPopupView() { isHienThiPopupView = false; }
+
+    private void ChuyenSangSua(ThietBi may)
+    {
+        DongPopupView();
+        _ = MoPopupSua(may);
+    }
+
+    private async Task MoPopupSua(ThietBi may)
+    {
+        mayDangSua = new ThietBi
+        {
+            ThietBiId = may.ThietBiId,
+            SoMay = may.SoMay,
+            BoPhan = may.BoPhan,
+            MaMay = may.MaMay,
+            TenMay = may.TenMay,
+            LoaiMay = may.LoaiMay,
+            TrangThai = may.TrangThai
+        };
+        trangThaiGocLucMoPopup = may.TrangThai;
+        pinXacNhan = "";
+        lyDoSua = "";
+        loiPopup = "";
+
+        if (may.TrangThai != "Hoạt động")
+        {
+            var openIncident = await ThietBiSvc.GetLatestOpenIncidentAsync(may.ThietBiId);
+            thoiGianBatDau = openIncident?.ThoiGianBatDau ?? DateTime.Now;
+            thoiGianKetThuc = null;
+        }
+        else
+        {
+            thoiGianBatDau = null;
+            thoiGianKetThuc = null;
+        }
+
+        isHienThiPopupSua = true;
+    }
+    private void DongPopupSua() { isHienThiPopupSua = false; mayDangSua = null; }
+
+    private async Task OnStatusChanged(ChangeEventArgs e)
+    {
+        if (mayDangSua == null) return;
+        var newStatus = e.Value?.ToString() ?? "Hoạt động";
+        mayDangSua.TrangThai = newStatus;
+
+        if (newStatus != "Hoạt động")
+        {
+            if (!thoiGianBatDau.HasValue) thoiGianBatDau = DateTime.Now;
+            thoiGianKetThuc = null;
+        }
+        else
+        {
+            if (trangThaiGocLucMoPopup != "Hoạt động")
+            {
+                var openIncident = await ThietBiSvc.GetLatestOpenIncidentAsync(mayDangSua.ThietBiId);
+                thoiGianBatDau = openIncident?.ThoiGianBatDau ?? DateTime.Now.AddHours(-1);
+                thoiGianKetThuc = DateTime.Now;
+            }
+            else
+            {
+                thoiGianBatDau = null;
+                thoiGianKetThuc = null;
+            }
+        }
+    }
+
+    private async Task LuuSuaThietBiAsync()
+    {
+        if (mayDangSua == null) return;
+        if (isLoiThoiGianBatDau || isLoiThoiGianKetThuc)
+        {
+            loiPopup = "Thời gian không hợp lệ (không được ở tương lai hoặc kết thúc trước bắt đầu)!";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(pinXacNhan))
+        {
+            loiPopup = "Vui lòng nhập mã PIN!";
+            return;
+        }
+
+        loiPopup = "";
+        isProcessing = true;
+
+        var result = await ThietBiSvc.UpdateAsync(mayDangSua, lyDoSua, thoiGianBatDau, thoiGianKetThuc, currentUserId, pinXacNhan);
+        if (result.Success)
+        {
+            DongPopupSua();
+            await LoadDataAsync();
+        }
+        else
+        {
+            loiPopup = result.Error ?? "Lỗi cập nhật thiết bị.";
+        }
+
+        isProcessing = false;
+    }
+
+    private async Task MoPopupLichSu(ThietBi may)
+    {
+        mayDangXem = may;
+        isHienThiPopupLichSu = true;
+        isLoadingLogs = true;
+        danhSachLog = await ThietBiSvc.GetChangeLogsAsync(may.ThietBiId);
+        isLoadingLogs = false;
+    }
+    private void DongPopupLichSu() { isHienThiPopupLichSu = false; }
+
+    private void MoPopupThem() 
+    { 
+        mayMoi = new ThietBi { TrangThai = "Hoạt động" }; 
+        thongBaoLoi = string.Empty;
+        isHienThiPopupThem = true; 
+    }
+    private void DongPopupThem() { isHienThiPopupThem = false; }
+
+    private async Task LuuMayMoiAsync()
+    {
+        isProcessing = true;
+        thongBaoLoi = string.Empty;
+        
+        var result = await ThietBiSvc.CreateAsync(mayMoi, currentUserId);
+        if (result.Success)
+        {
+            isHienThiPopupThem = false;
+            await LoadDataAsync();
+        }
+        else
+        {
+            thongBaoLoi = result.Error ?? "Lỗi không xác định";
+            isHienThiPopupThem = false;
+        }
+        
+        isProcessing = false;
+    }
+
+    private void MoPopupXoa(ThietBi may)
+    {
+        mayCanXoa = may;
+        pinXacNhan = "";
+        loiPopup = "";
+        isProcessing = false;
+        thongBaoLoi = string.Empty;
+        isHienThiPopupXoa = true;
+    }
+    private void DongPopupXoa() { isHienThiPopupXoa = false; mayCanXoa = null; }
+
+    private async Task XacNhanXoaMayAsync()
+    {
+        if (string.IsNullOrWhiteSpace(pinXacNhan))
+        {
+            loiPopup = "Vui lòng nhập mã PIN!";
+            return;
+        }
+
+        loiPopup = "";
+        isProcessing = true;
+
+        var result = await ThietBiSvc.SoftDeleteAsync(mayCanXoa!.ThietBiId, currentUserId, pinXacNhan);
+        if (result.Success)
+        {
+            DongPopupXoa();
+            await LoadDataAsync();
+        }
+        else
+        {
+            loiPopup = result.Error ?? "Lỗi hệ thống";
+        }
+
+        isProcessing = false;
+    }
+}
