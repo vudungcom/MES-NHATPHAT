@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MES.Web.Data;
 using MES.Web.Data.Entities;
@@ -5,29 +6,23 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MES.Web.Services;
 
-/// <summary>
-/// Service quản lý bảng công đoạn "Quy trình Bavia" (PartBaviaSteps).
-/// Vùng C — nhóm FINISHING Leader (hoặc ADMIN) mới được sửa/thêm/xóa.
-/// </summary>
 public class PartBaviaService
 {
     private readonly AppDbContext _db;
     private const string TableTag = ProcessStepTable.Bavia;
     private const PartMasterArea Area = PartMasterArea.C_HoanThienSP;
-    private const string RequiredGroup = PartMasterPermissionHelper.GroupFinishing;
 
     public PartBaviaService(AppDbContext db)
     {
         _db = db;
     }
 
-    // ==== READ ====
-
     public async Task<List<PartBaviaStep>> GetActiveByPartAsync(int partId)
     {
         return await _db.PartBaviaSteps
             .Where(s => s.PartId == partId && s.IsActive)
             .OrderBy(s => s.StepOrder)
+            .ThenBy(s => s.NC)
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
@@ -40,33 +35,12 @@ public class PartBaviaService
             .Where(s => s.PartId == partId)
             .OrderByDescending(s => s.IsActive)
             .ThenBy(s => s.StepOrder)
+            .ThenBy(s => s.NC)
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
             .ToListAsync();
     }
-
-    public async Task<PartBaviaStep?> GetByIdAsync(long stepId)
-    {
-        return await _db.PartBaviaSteps
-            .Include(s => s.Part)
-            .Include(s => s.CreatedByUser)
-            .Include(s => s.UpdatedByUser)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.StepId == stepId);
-    }
-
-    public async Task<List<PartProcessStepChangeLog>> GetHistoryAsync(long stepId)
-    {
-        return await _db.PartProcessStepChangeLogs
-            .Where(l => l.StepTable == TableTag && l.StepId == stepId)
-            .OrderByDescending(l => l.ChangedAt)
-            .Include(l => l.ChangedByUser)
-            .AsNoTracking()
-            .ToListAsync();
-    }
-
-    // ==== WRITE ====
 
     public async Task<long> AddAsync(int partId, PartBaviaStep newStep, int userId, string reason)
     {
@@ -91,7 +65,7 @@ public class PartBaviaService
 
         var snapshot = JsonSerializer.Serialize(new
         {
-            newStep.StepOrder, newStep.NC, newStep.StepName
+            newStep.StepOrder, newStep.NC, newStep.StepName, newStep.StandardTime, newStep.IsBackup, newStep.ParentNC
         });
         _db.PartProcessStepChangeLogs.Add(BuildLog(
             newStep.StepId, partId, ProcessStepAction.Created, null, snapshot, userId, reason));
@@ -106,22 +80,25 @@ public class PartBaviaService
         await EnsurePermissionAsync(userId);
 
         var existing = await _db.PartBaviaSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
-        if (existing == null)
-            throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
-        if (!existing.IsActive)
-            throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
+        if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
+        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
 
         var pid = existing.PartId;
         var changedCount = 0;
         var now = DateTime.Now;
 
-        changedCount += LogStringDiff("NC",       existing.NC,       updated.NC,       stepId, pid, userId, reason, now);
-        changedCount += LogStringDiff("StepName", existing.StepName, updated.StepName, stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("NC",           existing.NC,           updated.NC,           stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("StepName",     existing.StepName,     updated.StepName,     stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("ParentNC",     existing.ParentNC,     updated.ParentNC,     stepId, pid, userId, reason, now);
+        changedCount += LogDecimalDiff("StandardTime", existing.StandardTime, updated.StandardTime, stepId, pid, userId, reason, now);
 
         if (changedCount == 0) return;
 
         existing.NC = updated.NC;
         existing.StepName = updated.StepName;
+        existing.StandardTime = updated.StandardTime;
+        existing.IsBackup = updated.IsBackup;
+        existing.ParentNC = updated.ParentNC;
         existing.UpdatedBy = userId;
         existing.UpdatedAt = now;
 
@@ -166,34 +143,22 @@ public class PartBaviaService
         await _db.SaveChangesAsync();
     }
 
-    // ==== PRIVATE ====
-
     private static void ValidateReason(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
             throw new ArgumentException("Lý do phải có ít nhất 3 ký tự", nameof(reason));
     }
 
-private async Task EnsurePermissionAsync(int userId)
+    private async Task EnsurePermissionAsync(int userId)
     {
-        var user = await _db.Users
-            .Include(u => u.Group)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.UserId == userId);
+        var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
+        if (user == null || !user.IsActive) throw new UnauthorizedAccessException("User không hợp lệ hoặc đã bị khóa");
 
-        if (user == null) throw new UnauthorizedAccessException("User không tồn tại");
-        if (!user.IsActive) throw new UnauthorizedAccessException("User đã bị khóa");
-
-        var groupCode = user.Group?.GroupCode;
-        // Bỏ user.Role, truyền null
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
-            throw new UnauthorizedAccessException(
-                $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
-                $"Chỉ ADMIN hoặc {RequiredGroup} Leader mới được sửa.");
+        if (!PartMasterPermissionHelper.CanEditArea(user.Group, Area))
+            throw new UnauthorizedAccessException($"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)} (PART_HTSP).");
     }
 
-    private int LogStringDiff(string field, string? oldVal, string? newVal,
-        long stepId, int partId, int userId, string reason, DateTime now)
+    private int LogStringDiff(string field, string? oldVal, string? newVal, long stepId, int partId, int userId, string reason, DateTime now)
     {
         if (string.Equals(oldVal ?? "", newVal ?? "", StringComparison.Ordinal)) return 0;
         _db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
@@ -205,8 +170,20 @@ private async Task EnsurePermissionAsync(int userId)
         return 1;
     }
 
-    private static PartProcessStepChangeLog BuildLog(long stepId, int partId, string fieldName,
-        string? oldValue, string? newValue, int userId, string reason)
+    private int LogDecimalDiff(string field, decimal? oldVal, decimal? newVal, long stepId, int partId, int userId, string reason, DateTime now)
+    {
+        if (oldVal == newVal) return 0;
+        _db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+        {
+            StepTable = TableTag, StepId = stepId, PartId = partId,
+            FieldName = field, OldValue = oldVal?.ToString(CultureInfo.InvariantCulture),
+            NewValue = newVal?.ToString(CultureInfo.InvariantCulture),
+            ChangedBy = userId, ChangedAt = now, Reason = reason
+        });
+        return 1;
+    }
+
+    private static PartProcessStepChangeLog BuildLog(long stepId, int partId, string fieldName, string? oldValue, string? newValue, int userId, string reason)
     {
         return new PartProcessStepChangeLog
         {

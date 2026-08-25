@@ -6,20 +6,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MES.Web.Services;
 
-public class PartWashingService
+public class PartPackagingService
 {
     private readonly AppDbContext _db;
-    private const string TableTag = ProcessStepTable.Washing;
-    private const PartMasterArea Area = PartMasterArea.C_HoanThienSP;
+    private const string TableTag = "Packaging";
+    private const PartMasterArea Area = PartMasterArea.E_DongGoi;
 
-    public PartWashingService(AppDbContext db)
+    public PartPackagingService(AppDbContext db)
     {
         _db = db;
     }
 
-    public async Task<List<PartWashingStep>> GetActiveByPartAsync(int partId)
+    public async Task<List<PartPackagingStep>> GetActiveByPartAsync(int partId)
     {
-        return await _db.PartWashingSteps
+        return await _db.PartPackagingSteps
             .Where(s => s.PartId == partId && s.IsActive)
             .OrderBy(s => s.StepOrder)
             .ThenBy(s => s.NC)
@@ -29,9 +29,9 @@ public class PartWashingService
             .ToListAsync();
     }
 
-    public async Task<List<PartWashingStep>> GetAllByPartAsync(int partId)
+    public async Task<List<PartPackagingStep>> GetAllByPartAsync(int partId)
     {
-        return await _db.PartWashingSteps
+        return await _db.PartPackagingSteps
             .Where(s => s.PartId == partId)
             .OrderByDescending(s => s.IsActive)
             .ThenBy(s => s.StepOrder)
@@ -42,12 +42,12 @@ public class PartWashingService
             .ToListAsync();
     }
 
-    public async Task<long> AddAsync(int partId, PartWashingStep newStep, int userId, string reason)
+    public async Task<long> AddAsync(int partId, PartPackagingStep newStep, int userId, string reason)
     {
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
-        var maxOrder = await _db.PartWashingSteps
+        var maxOrder = await _db.PartPackagingSteps
             .Where(s => s.PartId == partId)
             .MaxAsync(s => (int?)s.StepOrder) ?? 0;
 
@@ -60,7 +60,7 @@ public class PartWashingService
         newStep.UpdatedAt = null;
         newStep.IsActive = true;
 
-        _db.PartWashingSteps.Add(newStep);
+        _db.PartPackagingSteps.Add(newStep);
         await _db.SaveChangesAsync();
 
         var snapshot = JsonSerializer.Serialize(new
@@ -74,12 +74,12 @@ public class PartWashingService
         return newStep.StepId;
     }
 
-    public async Task UpdateAsync(long stepId, PartWashingStep updated, int userId, string reason)
+    public async Task UpdateAsync(long stepId, PartPackagingStep updated, int userId, string reason)
     {
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
-        var existing = await _db.PartWashingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
+        var existing = await _db.PartPackagingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
 
@@ -110,7 +110,7 @@ public class PartWashingService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
-        var existing = await _db.PartWashingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
+        var existing = await _db.PartPackagingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
         if (!existing.IsActive) throw new InvalidOperationException("Dòng này đã bị xóa trước đó");
 
@@ -129,7 +129,7 @@ public class PartWashingService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
-        var existing = await _db.PartWashingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
+        var existing = await _db.PartPackagingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
         if (existing.IsActive) throw new InvalidOperationException("Dòng đang active, không cần khôi phục");
 
@@ -151,11 +151,20 @@ public class PartWashingService
 
     private async Task EnsurePermissionAsync(int userId)
     {
-        var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
-        if (user == null || !user.IsActive) throw new UnauthorizedAccessException("User không hợp lệ hoặc đã bị khóa");
+        var user = await _db.Users
+            .Include(u => u.Group)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == userId);
+
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAccessException("User không tồn tại hoặc đã bị khóa.");
 
         if (!PartMasterPermissionHelper.CanEditArea(user.Group, Area))
-            throw new UnauthorizedAccessException($"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)} (PART_HTSP).");
+        {
+            throw new UnauthorizedAccessException(
+                $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
+                $"Vui lòng liên hệ Admin để được cấp quyền trên Ma trận RBAC.");
+        }
     }
 
     private int LogStringDiff(string field, string? oldVal, string? newVal, long stepId, int partId, int userId, string reason, DateTime now)

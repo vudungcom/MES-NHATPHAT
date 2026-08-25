@@ -8,8 +8,7 @@ namespace MES.Web.Services;
 
 /// <summary>
 /// Service quản lý bảng công đoạn "Quy trình gia công" (PartMachiningSteps).
-/// Vùng B — nhóm TECHNICAL Leader (hoặc ADMIN) mới được sửa/thêm/xóa.
-/// Mọi thao tác ghi log vào PartProcessStepChangeLogs với Reason bắt buộc.
+/// Vùng B — Được bảo vệ độc lập bằng quyền PART_GC trên Ma trận phân quyền.
 /// </summary>
 public class PartMachiningService
 {
@@ -22,11 +21,6 @@ public class PartMachiningService
         _db = db;
     }
 
-    // ================================================================
-    // READ
-    // ================================================================
-
-    /// <summary>Lấy tất cả dòng đang active (IsActive=1) của 1 Part, sắp theo StepOrder.</summary>
     public async Task<List<PartMachiningStep>> GetActiveByPartAsync(int partId)
     {
         return await _db.PartMachiningSteps
@@ -39,7 +33,6 @@ public class PartMachiningService
             .ToListAsync();
     }
 
-    /// <summary>Lấy tất cả dòng của 1 Part (cả đã xóa), active lên trên.</summary>
     public async Task<List<PartMachiningStep>> GetAllByPartAsync(int partId)
     {
         return await _db.PartMachiningSteps
@@ -63,7 +56,6 @@ public class PartMachiningService
             .FirstOrDefaultAsync(s => s.StepId == stepId);
     }
 
-    /// <summary>Lấy lịch sử thay đổi của 1 dòng công đoạn.</summary>
     public async Task<List<PartProcessStepChangeLog>> GetHistoryAsync(long stepId)
     {
         return await _db.PartProcessStepChangeLogs
@@ -73,10 +65,6 @@ public class PartMachiningService
             .AsNoTracking()
             .ToListAsync();
     }
-
-    // ================================================================
-    // WRITE — enforce permission + ghi log
-    // ================================================================
 
     public async Task<long> AddAsync(int partId, PartMachiningStep newStep, int userId, string reason)
     {
@@ -99,7 +87,6 @@ public class PartMachiningService
         _db.PartMachiningSteps.Add(newStep);
         await _db.SaveChangesAsync();
 
-        // Ghi log snapshot dữ liệu
         var snapshot = JsonSerializer.Serialize(new
         {
             newStep.StepOrder, newStep.NC, newStep.Drawing,
@@ -224,16 +211,15 @@ public class PartMachiningService
             .AsNoTracking()
             .FirstOrDefaultAsync(u => u.UserId == userId);
 
-        if (user == null)
-            throw new UnauthorizedAccessException("User không tồn tại");
-        if (!user.IsActive)
-            throw new UnauthorizedAccessException("User đã bị khóa");
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAccessException("User không tồn tại hoặc đã bị khóa");
 
-        var groupCode = user.Group?.GroupCode;
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
+        if (!PartMasterPermissionHelper.CanEditArea(user.Group, Area))
+        {
             throw new UnauthorizedAccessException(
                 $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
-                $"Chỉ ADMIN hoặc nhóm Kỹ thuật (PART_GC) mới được sửa.");
+                $"Vui lòng liên hệ Admin để được cấp quyền trên Ma trận RBAC.");
+        }
     }
 
     private int LogStringDiff(string field, string? oldVal, string? newVal,

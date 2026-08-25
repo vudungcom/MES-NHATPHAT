@@ -1,6 +1,7 @@
 @page "/part-master/detail"
 @attribute [Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
 @using MES.Web.Components.Shared
 @using MES.Web.Data.Entities
 @using MES.Web.Services
@@ -11,6 +12,9 @@
 @inject PartBaviaService BaviaSvc
 @inject PartWashingService WashingSvc
 @inject PartInspectionService InspectionSvc
+@inject PartPackagingService PackagingSvc
+@inject StandardWtsTaskService WtsSvc
+@inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
@@ -18,17 +22,22 @@
 
 @if (_loading)
 {
-    <p><em>Đang tải...</em></p>
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải dữ liệu...</div>
 }
 else if (_part == null)
 {
-    <div class="alert alert-danger">
-        <i class="bi bi-exclamation-triangle"></i>
-        Không tìm thấy Part với Part No: <code>@PartNo</code>
+    <div class="alert alert-danger shadow-sm">
+        <i class="bi bi-exclamation-triangle-fill"></i> Không tìm thấy Part No: <code>@PartNo</code>
     </div>
-    <a href="/part-master" class="btn btn-outline-primary">
-        <i class="bi bi-arrow-left"></i> Về trang Part Master
-    </a>
+    <a href="/part-master" class="btn btn-outline-primary"><i class="bi bi-arrow-left"></i> Quay lại</a>
+}
+else if (!CanViewAnyArea)
+{
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p>Tài khoản của bạn chưa được cấp quyền xem bất kỳ vùng nào của <b>Part Master</b> trên Ma trận phân quyền.</p>
+    </div>
+    <a href="/part-master" class="btn btn-outline-primary"><i class="bi bi-arrow-left"></i> Quay lại</a>
 }
 else
 {
@@ -36,30 +45,22 @@ else
     <div class="d-flex justify-content-between align-items-start mb-3">
         <div>
             <h1 class="mb-1">
-                <code>@_part.PartNo</code>
+                <code class="text-primary">@_part.PartNo</code>
                 @if (!string.IsNullOrEmpty(_part.PartName))
                 {
                     <span class="text-muted fs-4"> — @_part.PartName</span>
                 }
             </h1>
             <div class="small text-muted">
-                <i class="bi bi-building"></i> Khách hàng:
-                <strong>@(_part.Customer?.CustomerName ?? "—")</strong>
-                <span class="ms-3">
-                    <i class="bi bi-person-badge"></i> Bạn:
-                    <span class="badge bg-secondary">@(_ctx?.DisplayRoleBadge ?? "?")</span>
-                </span>
+                <i class="bi bi-building"></i> Khách hàng: <strong class="text-dark">@(_part.Customer?.CustomerName ?? "—")</strong>
             </div>
         </div>
         <div class="d-flex gap-2">
-            <a href="/part-master" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left"></i> Quay lại
-            </a>
+            <a href="/part-master" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Quay lại</a>
             @if (CanEditAnyArea)
             {
-                <button class="btn btn-primary" @onclick="TrySaveAsync" disabled="@_saving">
-                    <i class="bi bi-save"></i>
-                    @(_saving ? "Đang lưu..." : "Lưu tất cả")
+                <button class="btn btn-primary shadow-sm" @onclick="TrySaveAsync" disabled="@(_saving || !HasUnsavedChanges)">
+                    <i class="bi bi-save"></i> @(_saving ? "Đang lưu..." : "Lưu tất cả thay đổi")
                 </button>
             }
         </div>
@@ -67,147 +68,124 @@ else
 
     @if (!CanEditAnyArea)
     {
-        <div class="alert alert-info py-2 small mb-3">
-            <i class="bi bi-info-circle"></i>
-            Bạn chỉ có quyền xem. Để sửa cần ADMIN hoặc nhóm có quyền sửa tương ứng trên Ma trận RBAC.
+        <div class="alert alert-warning py-2 small mb-3 border-0 shadow-sm">
+            <i class="bi bi-shield-lock-fill text-warning me-2"></i> Bạn đang ở chế độ <b>Chỉ xem (Read-only)</b>. Cần cấu hình Ma trận RBAC để cấp quyền sửa.
         </div>
     }
 
     @if (CanEditAnyArea)
     {
         <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" id="chkShowDeleted"
-                   @bind="_showDeleted" @bind:after="ReloadDeletedAsync" />
-            <label class="form-check-label small" for="chkShowDeleted">
-                Hiện dòng đã xóa (để xem hoặc khôi phục)
-            </label>
+            <input class="form-check-input" type="checkbox" id="chkShowDeleted" @bind="_showDeleted" @bind:after="ReloadDeletedAsync" />
+            <label class="form-check-label small fw-bold text-muted" for="chkShowDeleted">Hiển thị lịch sử các dòng công đoạn đã xóa (Soft-deleted)</label>
         </div>
     }
 
     @* ==================== VÙNG A ==================== *@
-    <div class="card mb-4">
-        <div class="card-header bg-info text-white fw-bold">
-            <i class="bi bi-stars"></i> A. Kế hoạch nhập
-            @if (!_canEditA)
-            {
-                <span class="badge bg-light text-dark ms-2">Chỉ xem</span>
-            }
-        </div>
-        <div class="card-body">
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <label class="form-label small mb-1">Tên chi tiết</label>
-                    <input class="form-control form-control-sm" @bind="_partName"
-                           disabled="@(!_canEditA)"
-                           placeholder="Tên đầy đủ của chi tiết" />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small mb-1">Mã VL (Material)</label>
-                    <AttributePicker Label="" Placeholder="VD: SS400"
-                                     Attributes="@(_attrGroups.GetValueOrDefault("Material"))"
-                                     @bind-Value="_material"
-                                     @bind-IsSetAsDefault="_setDefaultMaterial" />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small mb-1">Cấu hình phôi (Material Config)</label>
-                    <AttributePicker Label="" Placeholder="VD: 100x50x20"
-                                     Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))"
-                                     @bind-Value="_materialConfig"
-                                     @bind-IsSetAsDefault="_setDefaultConfig" />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small mb-1">Ghi chú phôi</label>
-                    <AttributePicker Label="" Placeholder="Ghi chú"
-                                     Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))"
-                                     @bind-Value="_materialNote"
-                                     @bind-IsSetAsDefault="_setDefaultNote" />
+    @if (_canViewA)
+    {
+        <div class="card mb-4 border-0 shadow-sm">
+            <div class="card-header text-white fw-bold d-flex justify-content-between align-items-center" style="background-color: #0ea5e9;">
+                <span><i class="bi bi-info-square"></i> A. Kế hoạch nhập</span>
+                @if (!_canEditA) { <span class="badge bg-light text-dark">Chỉ xem</span> }
+            </div>
+            <div class="card-body bg-light">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Tên chi tiết</label>
+                        <input class="form-control form-control-sm" @bind="_partName" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
+                        <AttributePicker Label="" Placeholder="VD: SS400, AL6061..." Attributes="@(_attrGroups.GetValueOrDefault("Material"))" @bind-Value="_material" @bind-IsSetAsDefault="_setDefaultMaterial" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Cấu hình phôi (Material Config)</label>
+                        <AttributePicker Label="" Placeholder="VD: B12x82x97..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))" @bind-Value="_materialConfig" @bind-IsSetAsDefault="_setDefaultConfig" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Ghi chú phôi</label>
+                        <AttributePicker Label="" Placeholder="Nhập ghi chú bổ sung..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))" @bind-Value="_materialNote" @bind-IsSetAsDefault="_setDefaultNote" />
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    }
 
-    @* ==================== VÙNG B: Machining ==================== *@
-    <div class="card mb-4">
-        <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
-            <span>
-                <i class="bi bi-gear-wide-connected"></i> B. Quy trình gia công (@ActiveMachiningCount)
-                @if (!_canEditB) { <span class="badge bg-light text-dark ms-2">Chỉ xem</span> }
-            </span>
-            @if (_canEditB)
-            {
-                <button class="btn btn-sm btn-light" @onclick="AddMachiningRow">
-                    <i class="bi bi-plus-lg"></i> Thêm dòng chính thức
-                </button>
-            }
-        </div>
-        <div class="card-body p-0">
-            @if (_machiningEdits.Count == 0)
-            {
-                <div class="p-3 text-muted small"><em>Chưa có công đoạn nào. Bấm "Thêm dòng" để bắt đầu.</em></div>
-            }
-            else
-            {
+    @* ==================== VÙNG B: QUY TRÌNH GIA CÔNG ==================== *@
+    @if (_canViewB)
+    {
+        <div class="card mb-4 border-0 shadow-sm">
+            <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-gear-wide-connected"></i> B. Quy trình gia công (@ActiveMachiningCount)
+                    @if (!_canEditB) { <span class="badge bg-light text-dark ms-2">Chỉ xem</span> }
+                </span>
+                @if (_canEditB)
+                {
+                    <button class="btn btn-sm btn-light text-primary fw-bold" @onclick="AddMachiningRow" title="Thêm dòng">
+                        <i class="bi bi-plus-lg"></i>
+                    </button>
+                }
+            </div>
+            <div class="card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-sm table-bordered align-middle mb-0" style="font-size: 0.75rem;">
                         <thead class="table-light">
-                            <tr>
+                            <tr class="text-center">
                                 <th style="width: 45px;">#</th>
-                                <th style="width: 105px;">NC *</th>
+                                <th style="width: 110px;">NC *</th>
                                 <th>Bản vẽ</th>
                                 <th>Máy đăng ký</th>
                                 <th>Máy đồng dạng</th>
                                 <th>Đồ gá</th>
                                 <th>Loại dao</th>
                                 <th>Máy bấm giờ</th>
-                                <th class="text-end" style="width: 65px;">T.Gá lắp</th>
-                                <th class="text-end" style="width: 65px;">T.Gia công</th>
-                                <th class="text-end" style="width: 65px;">T.Kiểm tra</th>
-                                <th class="text-end" style="width: 65px;">T.Chuẩn bị</th>
-                                <th class="text-end" style="width: 65px;">T.Chạy thử</th>
-                                @if (_canEditB) { <th style="width: 80px;" class="text-center">Thao tác</th> }
+                                <th style="width: 65px;">T.Gá lắp</th>
+                                <th style="width: 65px;">T.Gia công</th>
+                                <th style="width: 65px;">T.Kiểm tra</th>
+                                <th style="width: 65px;">T.Chuẩn bị</th>
+                                <th style="width: 65px;">T.Chạy thử</th>
+                                @if (_canEditB) { <th style="width: 80px;">Thao tác</th> }
                             </tr>
                         </thead>
                         <tbody>
+                            @if (_machiningEdits.Count == 0)
+                            {
+                                <tr><td colspan="14" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình gia công.</em></td></tr>
+                            }
                             @foreach (var (edit, idx) in _machiningEdits.Select((e, i) => (e, i)))
                             {
                                 <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
-                                    <td>
+                                    <td class="text-center">
                                         @(idx + 1)@StateBadge(edit)
-                                        @if (edit.IsBackup)
-                                        {
-                                            <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;" title="Phương án dự phòng cho @edit.ParentNC">DP</span>
-                                        }
+                                        @if (edit.IsBackup) { <span class="badge bg-warning text-dark mt-1" style="font-size: 0.65rem;">Dự phòng</span> }
                                     </td>
                                     <td>
                                         <div class="d-flex align-items-center">
-                                            @if (edit.IsBackup)
-                                            {
-                                                <i class="bi bi-arrow-return-right text-warning me-1" title="Dự phòng cho @edit.ParentNC"></i>
-                                            }
-                                            <input class="form-control form-control-sm @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")" 
-                                                   @bind="edit.NC" disabled="@RowLocked(edit)" placeholder="Mã NC..." />
+                                            @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                            <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")" @bind="edit.NC" disabled="@(!_canEditB || RowLocked(edit))" />
                                         </div>
                                     </td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@RowLocked(edit)" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.MachineRegistered" placeholder="VD: PHAY08..." disabled="@RowLocked(edit)" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.MachineAlternative" placeholder="VD: P04, P05..." disabled="@RowLocked(edit)" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.FixtureType" placeholder="VD: VJ45..." disabled="@RowLocked(edit)" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.ToolType" placeholder="Loại dao cụ..." disabled="@RowLocked(edit)" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.TimingMachine" placeholder="Máy bấm giờ..." disabled="@RowLocked(edit)" /></td>
-                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.SetupTime" disabled="@RowLocked(edit)" /></td>
-                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.MachiningTime" disabled="@RowLocked(edit)" /></td>
-                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.InspectionTime" disabled="@RowLocked(edit)" /></td>
-                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.PreparationTime" disabled="@RowLocked(edit)" /></td>
-                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.TrialRunTime" disabled="@RowLocked(edit)" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineRegistered" placeholder="VD: PHAY08" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineAlternative" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.FixtureType" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.ToolType" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input class="form-control form-control-sm" @bind="edit.TimingMachine" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.SetupTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.MachiningTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.InspectionTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.PreparationTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.TrialRunTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
                                     @if (_canEditB)
                                     {
                                         <td class="text-center text-nowrap">
-                                            <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" type="button" 
-                                                    title="Tạo phương án dự phòng (NC-DP) từ dòng này" 
-                                                    @onclick="() => AddMachiningBackupRow(edit)">
+                                            <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Thêm phương án chạy máy dự phòng" 
+                                                    @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, MachineAlternative = edit.MachineAlternative, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
                                                 <i class="bi bi-diagram-3"></i>
                                             </button>
-                                            @RowActionButton(edit, () => MachiningToggleDelete(edit))
+                                            @RowActionButton(edit, () => ToggleDelete(edit, _machiningEdits))
                                         </td>
                                     }
                                 </tr>
@@ -215,237 +193,347 @@ else
                         </tbody>
                     </table>
                 </div>
-            }
+            </div>
         </div>
-    </div>
+    }
 
-    @* ==================== VÙNG C: Hoàn thiện SP ==================== *@
-    <div class="row g-3 mb-4">
-        @* C.1 Taro *@
-        <div class="col-lg-4">
-            <div class="card h-100">
-                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-nut"></i> C.1 Taro (@ActiveTaroCount)</span>
-                    @if (_canEditC)
-                    {
-                        <button class="btn btn-sm btn-light" @onclick="AddTaroRow">
-                            <i class="bi bi-plus-lg"></i>
-                        </button>
-                    }
-                </div>
-                <div class="card-body p-0">
-                    @if (_taroEdits.Count == 0)
-                    {
-                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
-                    }
-                    else
-                    {
-                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 60px;">NC *</th>
-                                    <th>Tên công đoạn</th>
-                                    <th class="text-end" style="width: 80px;">T.Chuẩn</th>
-                                    @if (_canEditC) { <th style="width: 40px;"></th> }
-                                </tr>
+    @* ==================== VÙNG C: HOÀN THIỆN SP ==================== *@
+    @if (_canViewC)
+    {
+        <div class="row g-3 mb-4">
+            @* C.1 Taro *@
+            <div class="col-lg-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="bi bi-nut"></i> C.1 Taro (@ActiveTaroCount)
+                            @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
+                        </span>
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _taroEdits.Add(new TaroEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light text-center">
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
+                                @if (_taroEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _taroEdits)
                                 {
-                                    <tr class="@RowCssClass(edit)">
-                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
-                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
-                                        <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@RowLocked(edit)" /></td>
+                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            {
+                                                <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _taroTasks)">
+                                                    <option value="">-- Chọn WTS Taro --</option>
+                                                    @foreach (var t in _taroTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
+                                            }
+                                        </td>
+                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
-                                            <td class="text-center">@RowActionButton(edit, () => TaroToggleDelete(edit))</td>
+                                            <td class="text-center text-nowrap">
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                        @onclick="() => AddBackupRow(_taroEdits, edit, (nc, parent) => new TaroEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
+                                                    <i class="bi bi-diagram-3"></i>
+                                                </button>
+                                                @RowActionButton(edit, () => ToggleDelete(edit, _taroEdits))
+                                            </td>
                                         }
                                     </tr>
                                 }
                             </tbody>
                         </table>
-                    }
+                    </div>
                 </div>
             </div>
-        </div>
 
-        @* C.2 Bavia *@
-        <div class="col-lg-4">
-            <div class="card h-100">
-                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-scissors"></i> C.2 Bavia (@ActiveBaviaCount)</span>
-                    @if (_canEditC)
-                    {
-                        <button class="btn btn-sm btn-light" @onclick="AddBaviaRow">
-                            <i class="bi bi-plus-lg"></i>
-                        </button>
-                    }
-                </div>
-                <div class="card-body p-0">
-                    @if (_baviaEdits.Count == 0)
-                    {
-                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
-                    }
-                    else
-                    {
-                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 60px;">NC *</th>
-                                    <th>Tên công đoạn</th>
-                                    @if (_canEditC) { <th style="width: 40px;"></th> }
-                                </tr>
+            @* C.2 Bavia *@
+            <div class="col-lg-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="bi bi-scissors"></i> C.2 Bavia (@ActiveBaviaCount)
+                            @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
+                        </span>
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _baviaEdits.Add(new BaviaEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light text-center">
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
+                                @if (_baviaEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _baviaEdits)
                                 {
-                                    <tr class="@RowCssClass(edit)">
-                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
-                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            {
+                                                <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _baviaTasks)">
+                                                    <option value="">-- Chọn WTS Bavia --</option>
+                                                    @foreach (var t in _baviaTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
+                                            }
+                                        </td>
+                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
-                                            <td class="text-center">@RowActionButton(edit, () => BaviaToggleDelete(edit))</td>
+                                            <td class="text-center text-nowrap">
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                        @onclick="() => AddBackupRow(_baviaEdits, edit, (nc, parent) => new BaviaEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
+                                                    <i class="bi bi-diagram-3"></i>
+                                                </button>
+                                                @RowActionButton(edit, () => ToggleDelete(edit, _baviaEdits))
+                                            </td>
                                         }
                                     </tr>
                                 }
                             </tbody>
                         </table>
-                    }
+                    </div>
                 </div>
             </div>
-        </div>
 
-        @* C.3 Rửa *@
-        <div class="col-lg-4">
-            <div class="card h-100">
-                <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-droplet"></i> C.3 Rửa (@ActiveWashingCount)</span>
-                    @if (_canEditC)
-                    {
-                        <button class="btn btn-sm btn-light" @onclick="AddWashingRow">
-                            <i class="bi bi-plus-lg"></i>
-                        </button>
-                    }
-                </div>
-                <div class="card-body p-0">
-                    @if (_washingEdits.Count == 0)
-                    {
-                        <div class="p-3 text-muted small"><em>Chưa có.</em></div>
-                    }
-                    else
-                    {
-                        <table class="table table-sm mb-0" style="font-size: 0.75rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 60px;">NC *</th>
-                                    <th>Tên công đoạn</th>
-                                    @if (_canEditC) { <th style="width: 40px;"></th> }
-                                </tr>
+            @* C.3 Rửa *@
+            <div class="col-lg-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="bi bi-droplet"></i> C.3 Rửa (@ActiveWashingCount)
+                            @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
+                        </span>
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _washingEdits.Add(new WashingEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
+                            <thead class="table-light text-center">
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
+                                @if (_washingEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _washingEdits)
                                 {
-                                    <tr class="@RowCssClass(edit)">
-                                        <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
-                                        <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            {
+                                                <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _washingTasks)">
+                                                    <option value="">-- Chọn WTS Rửa --</option>
+                                                    @foreach (var t in _washingTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
+                                            }
+                                        </td>
+                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
-                                            <td class="text-center">@RowActionButton(edit, () => WashingToggleDelete(edit))</td>
+                                            <td class="text-center text-nowrap">
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                        @onclick="() => AddBackupRow(_washingEdits, edit, (nc, parent) => new WashingEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
+                                                    <i class="bi bi-diagram-3"></i>
+                                                </button>
+                                                @RowActionButton(edit, () => ToggleDelete(edit, _washingEdits))
+                                            </td>
                                         }
                                     </tr>
                                 }
                             </tbody>
                         </table>
-                    }
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    }
 
-    @* ==================== VÙNG D: Kiểm tra ==================== *@
-    <div class="card mb-4">
-        <div class="card-header bg-warning text-dark fw-bold d-flex justify-content-between align-items-center">
-            <span>
-                <i class="bi bi-search"></i> D. Kiểm tra (@ActiveInspectionCount)
-                @if (!_canEditD) { <span class="badge bg-dark text-white ms-2">Chỉ xem</span> }
-            </span>
-            @if (_canEditD)
-            {
-                <button class="btn btn-sm btn-dark" @onclick="AddInspectionRow">
-                    <i class="bi bi-plus-lg"></i> Thêm dòng
-                </button>
-            }
-        </div>
-        <div class="card-body p-0">
-            @if (_inspectionEdits.Count == 0)
-            {
-                <div class="p-3 text-muted small"><em>Chưa có công đoạn nào.</em></div>
-            }
-            else
-            {
-                <table class="table table-sm mb-0" style="font-size: 0.8rem;">
+    @* ==================== VÙNG D: KIỂM TRA KCS ==================== *@
+    @if (_canViewD)
+    {
+        <div class="card mb-4 border-0 shadow-sm" style="border-top: 4px solid #eab308;">
+            <div class="card-header bg-warning text-dark fw-bold d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-search"></i> D. Kiểm tra chất lượng (KCS) (@ActiveInspectionCount)
+                    @if (!_canEditD) { <span class="badge bg-dark text-white ms-2">Chỉ xem</span> }
+                </span>
+                @if (_canEditD) { <button class="btn btn-sm btn-dark" @onclick="() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 80px;">NC *</th>
-                            <th>Tên công đoạn</th>
-                            @if (_canEditD) { <th style="width: 50px;"></th> }
+                            <th style="width: 120px;" class="text-center">NC *</th>
+                            <th>Nội dung công việc (WTS Chuẩn)</th>
+                            <th class="text-end" style="width: 120px;">T.Chuẩn (phút)</th>
+                            @if (_canEditD) { <th style="width: 80px;" class="text-center">Thao tác</th> }
                         </tr>
                     </thead>
                     <tbody>
+                        @if (_inspectionEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình kiểm tra KCS.</em></td></tr> }
                         @foreach (var edit in _inspectionEdits)
                         {
-                            <tr class="@RowCssClass(edit)">
-                                <td><input class="form-control form-control-sm" @bind="edit.NC" disabled="@RowLocked(edit)" /></td>
-                                <td><input class="form-control form-control-sm" @bind="edit.StepName" disabled="@RowLocked(edit)" /></td>
+                            <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
+                                <td>
+                                    <div class="d-flex align-items-center justify-content-center">
+                                        @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                        <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-warning")" value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditD || RowLocked(edit))" />
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (edit.State == EditState.New && !edit.IsBackup && _canEditD)
+                                    {
+                                        <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _inspectionTasks)">
+                                            <option value="">-- Chọn công việc Kiểm tra từ danh mục --</option>
+                                            @foreach (var t in _inspectionTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditD || RowLocked(edit))" title="@edit.StepName" />
+                                    }
+                                </td>
+                                <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditD || RowLocked(edit))" /></td>
                                 @if (_canEditD)
                                 {
-                                    <td class="text-center">@RowActionButton(edit, () => InspectionToggleDelete(edit))</td>
+                                    <td class="text-center text-nowrap">
+                                        <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
+                                                @onclick="() => AddBackupRow(_inspectionEdits, edit, (nc, parent) => new InspectionEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
+                                            <i class="bi bi-diagram-3"></i>
+                                        </button>
+                                        @RowActionButton(edit, () => ToggleDelete(edit, _inspectionEdits))
+                                    </td>
                                 }
                             </tr>
                         }
                     </tbody>
                 </table>
-            }
+            </div>
         </div>
-    </div>
+    }
+
+    @* ==================== VÙNG E: ĐÓNG GÓI ==================== *@
+    @if (_canViewE)
+    {
+        <div class="card mb-4 border-0 shadow-sm" style="border-top: 4px solid #8b5cf6;">
+            <div class="card-header text-white fw-bold d-flex justify-content-between align-items-center" style="background-color: #8b5cf6;">
+                <span>
+                    <i class="bi bi-box-seam"></i> E. Quy trình Đóng gói (@ActivePackagingCount)
+                    @if (!_canEditE) { <span class="badge bg-light text-dark ms-2">Chỉ xem</span> }
+                </span>
+                @if (_canEditE) { <button class="btn btn-sm btn-light text-primary fw-bold" @onclick="() => _packagingEdits.Add(new PackagingEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 120px;" class="text-center">NC *</th>
+                            <th>Nội dung đóng gói (WTS Chuẩn)</th>
+                            <th class="text-end" style="width: 120px;">T.Chuẩn (phút)</th>
+                            @if (_canEditE) { <th style="width: 80px;" class="text-center">Thao tác</th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (_packagingEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình đóng gói.</em></td></tr> }
+                        @foreach (var edit in _packagingEdits)
+                        {
+                            <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)">
+                                <td>
+                                    <div class="d-flex align-items-center justify-content-center">
+                                        @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
+                                        <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-primary")" value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditE || RowLocked(edit))" />
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (edit.State == EditState.New && !edit.IsBackup && _canEditE)
+                                    {
+                                        <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _packagingTasks)">
+                                            <option value="">-- Chọn công việc Đóng gói từ danh mục --</option>
+                                            @foreach (var t in _packagingTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditE || RowLocked(edit))" title="@edit.StepName" />
+                                    }
+                                </td>
+                                <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditE || RowLocked(edit))" /></td>
+                                @if (_canEditE)
+                                {
+                                    <td class="text-center text-nowrap">
+                                        <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
+                                                @onclick="() => AddBackupRow(_packagingEdits, edit, (nc, parent) => new PackagingEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
+                                            <i class="bi bi-diagram-3"></i>
+                                        </button>
+                                        @RowActionButton(edit, () => ToggleDelete(edit, _packagingEdits))
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
 
     @* ==================== REASON + SAVE ==================== *@
     @if (CanEditAnyArea)
     {
-        <div class="card mb-4 border-danger">
+        <div class="card mb-5 border-danger shadow-sm">
             <div class="card-header bg-danger text-white fw-bold">
-                <i class="bi bi-pencil-square"></i> Lý do thay đổi <span class="text-warning">*</span> (bắt buộc khi Save)
+                <i class="bi bi-pencil-square"></i> Xác nhận & Lý do thay đổi <span class="text-warning">*</span>
             </div>
-            <div class="card-body">
-                <textarea class="form-control" @bind="_reason" rows="2"
-                          placeholder="VD: Cập nhật loại dao và thời gian chạy thử cho máy mới, bổ sung phương án gia công dự phòng..."></textarea>
-                <small class="text-muted">Tối thiểu 3 ký tự. Lý do sẽ được ghi nhận vào lịch sử PartProcessStepChangeLogs.</small>
+            <div class="card-body bg-light">
+                <textarea class="form-control border-danger" @bind="_reason" rows="2" placeholder="Nhập tóm tắt lý do sửa đổi (bắt buộc). VD: Thêm công đoạn rửa cho mã hàng mới, chỉnh lại thời gian chạy máy CNC..."></textarea>
+                <small class="text-muted mt-1 d-block"><i class="bi bi-info-circle"></i> Tối thiểu 3 ký tự. Dữ liệu sẽ được ký điện tử và lưu vào sổ Audit Trail.</small>
+                
+                @if (!string.IsNullOrEmpty(_saveResult))
+                {
+                    <div class="alert @(_saveHasError ? "alert-danger" : "alert-success") small mt-3 mb-0">
+                        <pre class="mb-0" style="white-space: pre-wrap; font-family: inherit;">@_saveResult</pre>
+                    </div>
+                }
             </div>
-        </div>
-
-        @if (!string.IsNullOrEmpty(_saveResult))
-        {
-            <div class="alert @(_saveHasError ? "alert-danger" : "alert-success") small">
-                <pre class="mb-0" style="white-space: pre-wrap; font-family: inherit;">@_saveResult</pre>
+            <div class="card-footer bg-white text-end py-3">
+                <a href="/part-master" class="btn btn-outline-secondary me-2">Hủy bỏ</a>
+                <button class="btn btn-primary px-4 fw-bold" @onclick="TrySaveAsync" disabled="@(_saving || !HasUnsavedChanges)">
+                    <i class="bi bi-save me-1"></i> @(_saving ? "Đang lưu..." : "LƯU TẤT CẢ THAY ĐỔI")
+                </button>
             </div>
-        }
-
-        <div class="d-flex gap-2 mb-4">
-            <button class="btn btn-primary btn-lg" @onclick="TrySaveAsync" disabled="@_saving">
-                <i class="bi bi-save"></i>
-                @(_saving ? "Đang lưu..." : "Lưu tất cả thay đổi")
-            </button>
-            <a href="/part-master" class="btn btn-outline-secondary btn-lg">Hủy, về danh sách</a>
         </div>
     }
 }
 
-<PinConfirmModal IsOpen="_showPinModal"
-                 Title="Xác nhận đổi giá trị default"
-                 Description="Bạn đang đổi giá trị default của Part Master. Cần nhập PIN để xác nhận."
-                 Changes="@_pendingDefaultChanges"
-                 OnConfirmed="OnPinConfirmed"
-                 OnCancelled="OnPinCancelled" />
+<PinConfirmModal IsOpen="_showPinModal" Title="Xác nhận đổi Master Data" Description="Việc thay đổi tham số chuẩn sẽ ảnh hưởng đến các Kế hoạch trong tương lai. Vui lòng nhập mã PIN." Changes="@_pendingDefaultChanges" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
 
 @code {
     [SupplyParameterFromQuery(Name = "partNo")]
@@ -454,13 +542,42 @@ else
     private bool _loading = true;
     private bool _saving = false;
     private PartMaster? _part;
-    private UserContext? _ctx;
+    private int _currentUserId;
 
-    private bool _canEditA;
-    private bool _canEditB;
-    private bool _canEditC;
-    private bool _canEditD;
-    private bool CanEditAnyArea => _canEditA || _canEditB || _canEditC || _canEditD;
+    private bool _canViewA, _canViewB, _canViewC, _canViewD, _canViewE;
+    private bool _canEditA, _canEditB, _canEditC, _canEditD, _canEditE;
+
+    private bool CanViewAnyArea => _canViewA || _canViewB || _canViewC || _canViewD || _canViewE;
+    private bool CanEditAnyArea => _canEditA || _canEditB || _canEditC || _canEditD || _canEditE;
+
+    private bool HasUnsavedChanges
+    {
+        get
+        {
+            if (_canEditA)
+            {
+                if (_partName != _originalPartName) return true;
+                if (_material != _originalMaterial) return true;
+                if (_materialConfig != _originalConfig) return true;
+                if (_materialNote != _originalNote) return true;
+                if (_setDefaultMaterial || _setDefaultConfig || _setDefaultNote) return true;
+            }
+
+            if (_canEditB && _machiningEdits.Any(e => e.State != EditState.Unchanged)) return true;
+
+            if (_canEditC)
+            {
+                if (_taroEdits.Any(e => e.State != EditState.Unchanged)) return true;
+                if (_baviaEdits.Any(e => e.State != EditState.Unchanged)) return true;
+                if (_washingEdits.Any(e => e.State != EditState.Unchanged)) return true;
+            }
+
+            if (_canEditD && _inspectionEdits.Any(e => e.State != EditState.Unchanged)) return true;
+            if (_canEditE && _packagingEdits.Any(e => e.State != EditState.Unchanged)) return true;
+
+            return false;
+        }
+    }
 
     private string? _partName;
     private Dictionary<string, List<PartMasterAttribute>> _attrGroups = new();
@@ -480,19 +597,27 @@ else
     private List<BaviaEdit> _baviaEdits = new();
     private List<WashingEdit> _washingEdits = new();
     private List<InspectionEdit> _inspectionEdits = new();
+    private List<PackagingEdit> _packagingEdits = new();
+
+    private List<StandardWtsTask> _allWtsTasks = new();
+    private List<StandardWtsTask> _taroTasks = new();
+    private List<StandardWtsTask> _baviaTasks = new();
+    private List<StandardWtsTask> _washingTasks = new();
+    private List<StandardWtsTask> _inspectionTasks = new();
+    private List<StandardWtsTask> _packagingTasks = new();
 
     private int ActiveMachiningCount => _machiningEdits.Count(e => e.State != EditState.Deleted);
     private int ActiveTaroCount => _taroEdits.Count(e => e.State != EditState.Deleted);
     private int ActiveBaviaCount => _baviaEdits.Count(e => e.State != EditState.Deleted);
     private int ActiveWashingCount => _washingEdits.Count(e => e.State != EditState.Deleted);
     private int ActiveInspectionCount => _inspectionEdits.Count(e => e.State != EditState.Deleted);
+    private int ActivePackagingCount => _packagingEdits.Count(e => e.State != EditState.Deleted);
 
     private string _reason = string.Empty;
     private bool _showDeleted = false;
 
     private bool _showPinModal = false;
     private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
-
     private string _saveResult = string.Empty;
     private bool _saveHasError = false;
 
@@ -505,16 +630,46 @@ else
         }
 
         var auth = await AuthState.GetAuthenticationStateAsync();
-        var userIdStr = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (int.TryParse(userIdStr, out var uid))
+        var user = auth.User;
+        var userIdStr = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int.TryParse(userIdStr, out _currentUserId);
+
+        var isAdmin = user.IsInRole("ADMIN") 
+                   || user.FindFirst("GroupCode")?.Value == "ADMIN" 
+                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                   || user.Identity?.Name?.ToLower() == "admin";
+
+        if (isAdmin)
         {
-            _ctx = await PmSvc.GetUserContextAsync(uid);
+            _canViewA = _canViewB = _canViewC = _canViewD = _canViewE = true;
+            _canEditA = _canEditB = _canEditC = _canEditD = _canEditE = true;
+        }
+        else if (_currentUserId > 0)
+        {
+            var perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+            
+            _canViewA = perms.TryGetValue("PART_TAO_MOI", out var pvA) && pvA.CanView;
+            _canEditA = perms.TryGetValue("PART_TAO_MOI", out var pA) && pA.CanEdit;
+
+            _canViewB = perms.TryGetValue("PART_GC", out var pvB) && pvB.CanView;
+            _canEditB = perms.TryGetValue("PART_GC", out var pB) && pB.CanEdit;
+
+            _canViewC = perms.TryGetValue("PART_HTSP", out var pvC) && pvC.CanView;
+            _canEditC = perms.TryGetValue("PART_HTSP", out var pC) && pC.CanEdit;
+
+            _canViewD = perms.TryGetValue("PART_KCS", out var pvD) && pvD.CanView;
+            _canEditD = perms.TryGetValue("PART_KCS", out var pD) && pD.CanEdit;
+
+            _canViewE = perms.TryGetValue("PART_DONGGOI", out var pvE) && pvE.CanView;
+            _canEditE = perms.TryGetValue("PART_DONGGOI", out var pE) && pE.CanEdit;
         }
 
-        _canEditA = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.A_KeHoach);
-        _canEditB = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.B_Machining);
-        _canEditC = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.C_HoanThienSP);
-        _canEditD = PartMasterPermissionHelper.CanEditArea(_ctx?.GroupCode, _ctx?.Role, PartMasterArea.D_KiemTra);
+        _allWtsTasks = await WtsSvc.GetAllActiveAsync();
+        _taroTasks = _allWtsTasks.Where(t => t.CategoryCode == "TARO").ToList();
+        _baviaTasks = _allWtsTasks.Where(t => t.CategoryCode == "BAVIA").ToList();
+        _washingTasks = _allWtsTasks.Where(t => t.CategoryCode == "RUA").ToList();
+        _inspectionTasks = _allWtsTasks.Where(t => t.CategoryCode == "KCS" || t.CategoryCode == "KT_NC").ToList();
+        _packagingTasks = _allWtsTasks.Where(t => t.CategoryCode == "DONG_GOI").ToList();
 
         _part = await PmSvc.GetByPartNoAsync(PartNo);
         if (_part == null)
@@ -545,27 +700,31 @@ else
 
     private async Task ReloadStepsAsync()
     {
+        var pid = _part!.PartId;
         List<PartMachiningStep> mSteps;
         List<PartTaroStep> tSteps;
         List<PartBaviaStep> bSteps;
         List<PartWashingStep> wSteps;
         List<PartInspectionStep> iSteps;
+        List<PartPackagingStep> pSteps;
 
         if (_showDeleted)
         {
-            mSteps = await MachiningSvc.GetAllByPartAsync(_part!.PartId);
-            tSteps = await TaroSvc.GetAllByPartAsync(_part.PartId);
-            bSteps = await BaviaSvc.GetAllByPartAsync(_part.PartId);
-            wSteps = await WashingSvc.GetAllByPartAsync(_part.PartId);
-            iSteps = await InspectionSvc.GetAllByPartAsync(_part.PartId);
+            mSteps = await MachiningSvc.GetAllByPartAsync(pid);
+            tSteps = await TaroSvc.GetAllByPartAsync(pid);
+            bSteps = await BaviaSvc.GetAllByPartAsync(pid);
+            wSteps = await WashingSvc.GetAllByPartAsync(pid);
+            iSteps = await InspectionSvc.GetAllByPartAsync(pid);
+            pSteps = await PackagingSvc.GetAllByPartAsync(pid);
         }
         else
         {
-            mSteps = await MachiningSvc.GetActiveByPartAsync(_part!.PartId);
-            tSteps = await TaroSvc.GetActiveByPartAsync(_part.PartId);
-            bSteps = await BaviaSvc.GetActiveByPartAsync(_part.PartId);
-            wSteps = await WashingSvc.GetActiveByPartAsync(_part.PartId);
-            iSteps = await InspectionSvc.GetActiveByPartAsync(_part.PartId);
+            mSteps = await MachiningSvc.GetActiveByPartAsync(pid);
+            tSteps = await TaroSvc.GetActiveByPartAsync(pid);
+            bSteps = await BaviaSvc.GetActiveByPartAsync(pid);
+            wSteps = await WashingSvc.GetActiveByPartAsync(pid);
+            iSteps = await InspectionSvc.GetActiveByPartAsync(pid);
+            pSteps = await PackagingSvc.GetActiveByPartAsync(pid);
         }
 
         _machiningEdits = mSteps.Select(MachiningEdit.FromEntity).ToList();
@@ -573,6 +732,7 @@ else
         _baviaEdits = bSteps.Select(BaviaEdit.FromEntity).ToList();
         _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
         _inspectionEdits = iSteps.Select(InspectionEdit.FromEntity).ToList();
+        _packagingEdits = pSteps.Select(PackagingEdit.FromEntity).ToList();
     }
 
     private async Task ReloadDeletedAsync()
@@ -580,73 +740,52 @@ else
         await ReloadStepsAsync();
     }
 
-    // ================================================================
-    // ADD ROW & DỰ PHÒNG
-    // ================================================================
-    private void AddMachiningRow() => _machiningEdits.Add(new MachiningEdit { State = EditState.New, IsBackup = false });
-
-    private void AddMachiningBackupRow(MachiningEdit parentEdit)
+    private void AddMachiningRow()
     {
-        // Xác định mã gốc
-        var baseNC = !string.IsNullOrWhiteSpace(parentEdit.ParentNC)
-            ? parentEdit.ParentNC
-            : (parentEdit.NC?.Split("-DP-")[0].Trim() ?? "NC01");
+        _machiningEdits.Add(new MachiningEdit { State = EditState.New, IsBackup = false });
+    }
 
-        // Đếm số lượng dòng dự phòng hiện có của baseNC này
-        var existingDpCount = _machiningEdits
-            .Count(e => (e.ParentNC == baseNC || e.NC.StartsWith($"{baseNC}-DP-")) && e.NC != baseNC);
+    private void AddBackupRow<T>(List<T> list, T parent, Func<string, string, T> factory) where T : StepEditBase
+    {
+        var baseNC = !string.IsNullOrWhiteSpace(parent.ParentNC) ? parent.ParentNC : (parent.NC?.Split("-DP-")[0].Trim() ?? "NC");
+        if (string.IsNullOrWhiteSpace(baseNC) || baseNC == "NC") return;
 
-        var nextDpIndex = existingDpCount + 1;
-        var newNC = $"{baseNC}-DP-{nextDpIndex:D2}";
-
-        var newBackup = new MachiningEdit
+        var count = list.Count(e => (e.ParentNC == baseNC || (e.NC != null && e.NC.StartsWith($"{baseNC}-DP-"))) && e.NC != baseNC);
+        var newBackup = factory($"{baseNC}-DP-{count + 1:D2}", baseNC);
+        
+        var idx = list.IndexOf(parent);
+        if (idx >= 0)
         {
-            State = EditState.New,
-            NC = newNC,
-            ParentNC = baseNC,
-            IsBackup = true,
-            Drawing = parentEdit.Drawing,
-            FixtureType = parentEdit.FixtureType,
-            ToolType = parentEdit.ToolType,
-            MachineRegistered = "", // Để trống để nhập máy khác
-            MachineAlternative = parentEdit.MachineAlternative,
-            SetupTime = parentEdit.SetupTime,
-            MachiningTime = parentEdit.MachiningTime,
-            InspectionTime = parentEdit.InspectionTime,
-            PreparationTime = parentEdit.PreparationTime,
-            TrialRunTime = parentEdit.TrialRunTime
-        };
-
-        // Chèn vào ngay dưới dòng cha hoặc các dòng dự phòng trước đó của nó
-        var insertIdx = _machiningEdits.IndexOf(parentEdit);
-        if (insertIdx >= 0)
-        {
-            while (insertIdx + 1 < _machiningEdits.Count &&
-                   (_machiningEdits[insertIdx + 1].ParentNC == baseNC || _machiningEdits[insertIdx + 1].NC.StartsWith($"{baseNC}-DP-")))
+            while (idx + 1 < list.Count && list[idx + 1].NC != null && list[idx + 1].NC.StartsWith($"{baseNC}-DP-"))
             {
-                insertIdx++;
+                idx++;
             }
-            _machiningEdits.Insert(insertIdx + 1, newBackup);
+            list.Insert(idx + 1, newBackup);
         }
         else
         {
-            _machiningEdits.Add(newBackup);
+            list.Add(newBackup);
         }
     }
 
-    private void AddTaroRow() => _taroEdits.Add(new TaroEdit { State = EditState.New });
-    private void AddBaviaRow() => _baviaEdits.Add(new BaviaEdit { State = EditState.New });
-    private void AddWashingRow() => _washingEdits.Add(new WashingEdit { State = EditState.New });
-    private void AddInspectionRow() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New });
-
-    // ================================================================
-    // TOGGLE DELETE (soft)
-    // ================================================================
-    private void MachiningToggleDelete(MachiningEdit e) => ToggleDelete(e, _machiningEdits);
-    private void TaroToggleDelete(TaroEdit e) => ToggleDelete(e, _taroEdits);
-    private void BaviaToggleDelete(BaviaEdit e) => ToggleDelete(e, _baviaEdits);
-    private void WashingToggleDelete(WashingEdit e) => ToggleDelete(e, _washingEdits);
-    private void InspectionToggleDelete(InspectionEdit e) => ToggleDelete(e, _inspectionEdits);
+    private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
+    {
+        var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
+        if (task != null)
+        {
+            edit.NC = task.TaskCode;
+            edit.StepName = task.TaskName;
+            if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
+            {
+                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 2);
+            }
+        }
+        else
+        {
+            edit.NC = ""; 
+            edit.StepName = "";
+        }
+    }
 
     private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
     {
@@ -664,53 +803,58 @@ else
         }
     }
 
-    private string RowCssClass(StepEditBase e) => e.State switch
+    private string RowCssClass(StepEditBase e)
     {
-        EditState.New => "table-success",
-        EditState.Deleted => "table-secondary text-muted",
-        EditState.Restored => "table-info",
-        _ => ""
-    };
+        return e.State switch
+        {
+            EditState.New => "table-success",
+            EditState.Deleted => "table-secondary text-muted text-decoration-line-through",
+            EditState.Restored => "table-info",
+            _ => ""
+        };
+    }
 
-    private bool RowLocked(StepEditBase e) => e.State == EditState.Deleted;
+    private bool RowLocked(StepEditBase e)
+    {
+        return e.State == EditState.Deleted;
+    }
 
     private RenderFragment StateBadge(StepEditBase e) => builder =>
     {
-        var label = e.State switch
+        var (text, css) = e.State switch
         {
-            EditState.New => (" MỚI", "success"),
-            EditState.Deleted => (" ĐÃ XÓA", "secondary"),
-            EditState.Restored => (" KHÔI PHỤC", "info"),
-            _ => (null!, null!)
+            EditState.New => ("MỚI", "success"),
+            EditState.Deleted => ("ĐÃ XÓA", "secondary"),
+            EditState.Restored => ("KHÔI PHỤC", "info"),
+            _ => ((string?)null, (string?)null)
         };
-        if (label.Item1 == null) return;
-        builder.OpenElement(0, "span");
-        builder.AddAttribute(1, "class", $"badge bg-{label.Item2} ms-1");
-        builder.AddContent(2, label.Item1.Trim());
-        builder.CloseElement();
+
+        if (text != null)
+        {
+            builder.OpenElement(0, "span");
+            builder.AddAttribute(1, "class", $"badge bg-{css} ms-1");
+            builder.AddContent(2, text);
+            builder.CloseElement();
+        }
     };
 
     private RenderFragment RowActionButton(StepEditBase e, Action onClick) => builder =>
     {
-        var isDeleted = e.State == EditState.Deleted;
-        var title = isDeleted ? "Khôi phục" : "Xóa dòng";
-        var icon = isDeleted ? "bi-arrow-counterclockwise" : "bi-x-lg";
-        var cls = isDeleted ? "btn-outline-success" : "btn-outline-danger";
+        var isDel = e.State == EditState.Deleted;
+        var btnClass = isDel ? "btn-outline-success" : "btn-outline-danger";
+        var iconClass = isDel ? "bi-arrow-counterclockwise" : "bi-trash";
+        var title = isDel ? "Khôi phục" : "Xóa";
 
         builder.OpenElement(0, "button");
-        builder.AddAttribute(1, "class", $"btn btn-sm {cls} p-0 px-1");
-        builder.AddAttribute(2, "type", "button");
-        builder.AddAttribute(3, "title", title);
-        builder.AddAttribute(4, "onclick", EventCallback.Factory.Create(this, onClick));
-        builder.OpenElement(5, "i");
-        builder.AddAttribute(6, "class", $"bi {icon}");
+        builder.AddAttribute(1, "class", $"btn btn-sm {btnClass} p-0 px-1");
+        builder.AddAttribute(2, "title", title);
+        builder.AddAttribute(3, "onclick", EventCallback.Factory.Create(this, onClick));
+        builder.OpenElement(4, "i");
+        builder.AddAttribute(5, "class", $"bi {iconClass}");
         builder.CloseElement();
         builder.CloseElement();
     };
 
-    // ================================================================
-    // SAVE
-    // ================================================================
     private async Task TrySaveAsync()
     {
         _saveResult = string.Empty;
@@ -750,12 +894,18 @@ else
         var list = new List<PinConfirmModal.DefaultChangeInfo>();
         if (!_canEditA) return list;
 
-        if (_setDefaultMaterial && !string.IsNullOrWhiteSpace(_material) && _material != _originalMaterial)
+        if (_setDefaultMaterial && _material != _originalMaterial)
+        {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Material", OldValue = _originalMaterial, NewValue = _material! });
-        if (_setDefaultConfig && !string.IsNullOrWhiteSpace(_materialConfig) && _materialConfig != _originalConfig)
+        }
+        if (_setDefaultConfig && _materialConfig != _originalConfig)
+        {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialConfig", OldValue = _originalConfig, NewValue = _materialConfig! });
-        if (_setDefaultNote && !string.IsNullOrWhiteSpace(_materialNote) && _materialNote != _originalNote)
+        }
+        if (_setDefaultNote && _materialNote != _originalNote)
+        {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialNote", OldValue = _originalNote, NewValue = _materialNote! });
+        }
         return list;
     }
 
@@ -765,7 +915,6 @@ else
         var log = new List<string>();
         var errors = new List<string>();
         var reason = _reason.Trim();
-        var uid = _ctx!.UserId;
 
         try
         {
@@ -775,15 +924,18 @@ else
                 {
                     try
                     {
-                        await PmSvc.UpdatePartNameAsync(_part!.PartId, _partName, uid);
-                        log.Add("✓ Đã cập nhật Tên chi tiết");
+                        await PmSvc.UpdatePartNameAsync(_part!.PartId, _partName, _currentUserId);
+                        log.Add("✓ Cập nhật Tên chi tiết");
                     }
-                    catch (Exception ex) { errors.Add("✗ Tên chi tiết: " + ex.Message); }
+                    catch (Exception ex)
+                    {
+                        errors.Add("✗ Tên chi tiết: " + ex.Message);
+                    }
                 }
 
-                await TryAddAttrValue("Material", _material, uid, log, errors);
-                await TryAddAttrValue("MaterialConfig", _materialConfig, uid, log, errors);
-                await TryAddAttrValue("MaterialNote", _materialNote, uid, log, errors);
+                await TryAddAttrValue("Material", _material, _currentUserId, log, errors);
+                await TryAddAttrValue("MaterialConfig", _materialConfig, _currentUserId, log, errors);
+                await TryAddAttrValue("MaterialNote", _materialNote, _currentUserId, log, errors);
 
                 if (applyDefaultChanges)
                 {
@@ -791,51 +943,70 @@ else
                     {
                         try
                         {
-                            await PmSvc.SetAsDefaultAsync(_part!.PartId, chg.AttributeType, chg.NewValue, uid);
-                            log.Add($"✓ Đã đặt default {chg.AttributeType} = {chg.NewValue}");
+                            await PmSvc.SetAsDefaultAsync(_part!.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
+                            log.Add($"✓ Đặt default {chg.AttributeType} = {chg.NewValue}");
                         }
-                        catch (Exception ex) { errors.Add($"✗ Đặt default {chg.AttributeType}: {ex.Message}"); }
+                        catch (Exception ex)
+                        {
+                            errors.Add($"✗ Đặt default {chg.AttributeType}: {ex.Message}");
+                        }
                     }
                 }
             }
 
-            // VÙNG B: Machining
-            await SaveStepListAsync(_machiningEdits,
-                addFn: e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
-                updateFn: (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
-                deleteFn: id => MachiningSvc.SoftDeleteAsync(id, uid, reason),
-                restoreFn: id => MachiningSvc.RestoreAsync(id, uid, reason),
-                areaLabel: "Machining", log: log, errors: errors);
+            if (_canEditB)
+            {
+                await SaveStepListAsync(_machiningEdits,
+                    e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => MachiningSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => MachiningSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Machining", log, errors);
+            }
 
-            // VÙNG C: Taro / Bavia / Washing
-            await SaveStepListAsync(_taroEdits,
-                addFn: e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
-                updateFn: (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
-                deleteFn: id => TaroSvc.SoftDeleteAsync(id, uid, reason),
-                restoreFn: id => TaroSvc.RestoreAsync(id, uid, reason),
-                areaLabel: "Taro", log: log, errors: errors);
+            if (_canEditC)
+            {
+                await SaveStepListAsync(_taroEdits,
+                    e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => TaroSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => TaroSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Taro", log, errors);
 
-            await SaveStepListAsync(_baviaEdits,
-                addFn: e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
-                updateFn: (id, e) => BaviaSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
-                deleteFn: id => BaviaSvc.SoftDeleteAsync(id, uid, reason),
-                restoreFn: id => BaviaSvc.RestoreAsync(id, uid, reason),
-                areaLabel: "Bavia", log: log, errors: errors);
+                await SaveStepListAsync(_baviaEdits,
+                    e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => BaviaSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => BaviaSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => BaviaSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Bavia", log, errors);
 
-            await SaveStepListAsync(_washingEdits,
-                addFn: e => WashingSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
-                updateFn: (id, e) => WashingSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
-                deleteFn: id => WashingSvc.SoftDeleteAsync(id, uid, reason),
-                restoreFn: id => WashingSvc.RestoreAsync(id, uid, reason),
-                areaLabel: "Rửa", log: log, errors: errors);
+                await SaveStepListAsync(_washingEdits,
+                    e => WashingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => WashingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => WashingSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => WashingSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Rửa", log, errors);
+            }
 
-            // VÙNG D: Inspection
-            await SaveStepListAsync(_inspectionEdits,
-                addFn: e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), uid, reason),
-                updateFn: (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), uid, reason),
-                deleteFn: id => InspectionSvc.SoftDeleteAsync(id, uid, reason),
-                restoreFn: id => InspectionSvc.RestoreAsync(id, uid, reason),
-                areaLabel: "Kiểm tra", log: log, errors: errors);
+            if (_canEditD)
+            {
+                await SaveStepListAsync(_inspectionEdits,
+                    e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => InspectionSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => InspectionSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Kiểm tra", log, errors);
+            }
+
+            if (_canEditE)
+            {
+                await SaveStepListAsync(_packagingEdits,
+                    e => PackagingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
+                    (id, e) => PackagingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
+                    id => PackagingSvc.SoftDeleteAsync(id, _currentUserId, reason),
+                    id => PackagingSvc.RestoreAsync(id, _currentUserId, reason),
+                    "Đóng gói", log, errors);
+            }
         }
         finally
         {
@@ -843,16 +1014,19 @@ else
         }
 
         _saveHasError = errors.Count > 0;
-        var messages = new List<string>();
-        if (log.Count > 0) messages.Add("Thành công:\n" + string.Join("\n", log));
-        if (errors.Count > 0) messages.Add("Lỗi:\n" + string.Join("\n", errors));
-        if (messages.Count == 0) messages.Add("Không có thay đổi nào để lưu.");
-        _saveResult = string.Join("\n\n", messages);
+        var msg = new List<string>();
+        if (log.Count > 0) msg.Add("Thành công:\n" + string.Join("\n", log));
+        if (errors.Count > 0) msg.Add("Lỗi:\n" + string.Join("\n", errors));
+        if (msg.Count == 0) msg.Add("Không có thay đổi nào để lưu.");
+        
+        _saveResult = string.Join("\n\n", msg);
 
         if (log.Count > 0)
         {
             _reason = string.Empty;
-            _setDefaultMaterial = _setDefaultConfig = _setDefaultNote = false;
+            _setDefaultMaterial = false;
+            _setDefaultConfig = false;
+            _setDefaultNote = false;
             await LoadAllAsync();
         }
     }
@@ -862,52 +1036,49 @@ else
         if (string.IsNullOrWhiteSpace(value)) return;
         var attrs = _attrGroups.GetValueOrDefault(type);
         if (attrs != null && attrs.Any(a => a.Value == value && a.IsActive)) return;
+
         try
         {
             await PmSvc.AddValueAsync(_part!.PartId, type, value, uid);
-            log.Add($"✓ Đã thêm giá trị mới cho {type}: {value}");
+            log.Add($"✓ Thêm giá trị {type}: {value}");
         }
-        catch (Exception ex) { errors.Add($"✗ Thêm {type}: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            errors.Add($"✗ Thêm {type}: {ex.Message}");
+        }
     }
 
-    private async Task SaveStepListAsync<T>(List<T> edits,
-        Func<T, Task<long>> addFn,
-        Func<long, T, Task> updateFn,
-        Func<long, Task> deleteFn,
-        Func<long, Task> restoreFn,
-        string areaLabel, List<string> log, List<string> errors) where T : StepEditBase
+    private async Task SaveStepListAsync<T>(List<T> edits, Func<T, Task<long>> addFn, Func<long, T, Task> updateFn, Func<long, Task> deleteFn, Func<long, Task> restoreFn, string label, List<string> log, List<string> errors) where T : StepEditBase
     {
         foreach (var e in edits.ToList())
         {
             try
             {
-                switch (e.State)
+                if (e.State == EditState.New)
                 {
-                    case EditState.New:
-                        if (string.IsNullOrWhiteSpace(e.NC)) continue;
-                        var newId = await addFn(e);
-                        log.Add($"✓ [{areaLabel}] Thêm dòng NC={e.NC}, StepId={newId}");
-                        break;
-                    case EditState.Deleted when e.StepId > 0 && e.WasActiveInDb:
-                        await deleteFn(e.StepId);
-                        log.Add($"✓ [{areaLabel}] Xóa dòng NC={e.NC}, StepId={e.StepId}");
-                        break;
-                    case EditState.Restored when e.StepId > 0:
-                        await restoreFn(e.StepId);
-                        log.Add($"✓ [{areaLabel}] Khôi phục dòng NC={e.NC}, StepId={e.StepId}");
-                        break;
-                    default:
-                        if (e.StepId > 0 && e.State != EditState.Deleted && e.HasChanges)
-                        {
-                            await updateFn(e.StepId, e);
-                            log.Add($"✓ [{areaLabel}] Sửa dòng NC={e.NC}, StepId={e.StepId}");
-                        }
-                        break;
+                    if (string.IsNullOrWhiteSpace(e.NC)) continue;
+                    var id = await addFn(e);
+                    log.Add($"✓ [{label}] Thêm NC={e.NC}");
+                }
+                else if (e.State == EditState.Deleted && e.StepId > 0 && e.WasActiveInDb)
+                {
+                    await deleteFn(e.StepId);
+                    log.Add($"✓ [{label}] Xóa NC={e.NC}");
+                }
+                else if (e.State == EditState.Restored && e.StepId > 0)
+                {
+                    await restoreFn(e.StepId);
+                    log.Add($"✓ [{label}] Khôi phục NC={e.NC}");
+                }
+                else if (e.StepId > 0 && e.State != EditState.Deleted && e.HasChanges)
+                {
+                    await updateFn(e.StepId, e);
+                    log.Add($"✓ [{label}] Sửa NC={e.NC}");
                 }
             }
             catch (Exception ex)
             {
-                errors.Add($"✗ [{areaLabel}] NC={e.NC}: {ex.Message}");
+                errors.Add($"✗ [{label}] NC={e.NC}: {ex.Message}");
             }
         }
     }
@@ -918,9 +1089,17 @@ else
     {
         public long StepId { get; set; }
         public string NC { get; set; } = "";
+        public bool IsBackup { get; set; }
+        public string? ParentNC { get; set; }
         public EditState State { get; set; } = EditState.Unchanged;
         public bool WasActiveInDb { get; set; }
         public virtual bool HasChanges => true;
+    }
+
+    public abstract class SimpleStepEditBase : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public decimal? StandardTime { get; set; }
     }
 
     public class MachiningEdit : StepEditBase
@@ -931,93 +1110,175 @@ else
         public string? FixtureType { get; set; }
         public string? ToolType { get; set; }
         public string? TimingMachine { get; set; }
-        public bool IsBackup { get; set; }
-        public string? ParentNC { get; set; }
         public decimal? SetupTime { get; set; }
         public decimal? MachiningTime { get; set; }
         public decimal? InspectionTime { get; set; }
         public decimal? PreparationTime { get; set; }
         public decimal? TrialRunTime { get; set; }
 
-        public static MachiningEdit FromEntity(PartMachiningStep s) => new()
+        public static MachiningEdit FromEntity(PartMachiningStep s) => new MachiningEdit
         {
-            StepId = s.StepId, NC = s.NC, Drawing = s.Drawing,
-            MachineRegistered = s.MachineRegistered, MachineAlternative = s.MachineAlternative,
-            FixtureType = s.FixtureType, ToolType = s.ToolType, TimingMachine = s.TimingMachine,
-            IsBackup = s.IsBackup, ParentNC = s.ParentNC,
-            SetupTime = s.SetupTime, MachiningTime = s.MachiningTime,
-            InspectionTime = s.InspectionTime, PreparationTime = s.PreparationTime,
+            StepId = s.StepId,
+            NC = s.NC,
+            Drawing = s.Drawing,
+            MachineRegistered = s.MachineRegistered,
+            MachineAlternative = s.MachineAlternative,
+            FixtureType = s.FixtureType,
+            ToolType = s.ToolType,
+            TimingMachine = s.TimingMachine,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            SetupTime = s.SetupTime,
+            MachiningTime = s.MachiningTime,
+            InspectionTime = s.InspectionTime,
+            PreparationTime = s.PreparationTime,
             TrialRunTime = s.TrialRunTime,
             State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
             WasActiveInDb = s.IsActive
         };
 
-        public PartMachiningStep ToEntity() => new()
+        public PartMachiningStep ToEntity() => new PartMachiningStep
         {
-            StepId = StepId, NC = NC ?? "", Drawing = Drawing,
-            MachineRegistered = MachineRegistered, MachineAlternative = MachineAlternative,
-            FixtureType = FixtureType, ToolType = ToolType, TimingMachine = TimingMachine,
-            IsBackup = IsBackup, ParentNC = ParentNC,
-            SetupTime = SetupTime, MachiningTime = MachiningTime,
-            InspectionTime = InspectionTime, PreparationTime = PreparationTime,
+            StepId = StepId,
+            NC = NC ?? "",
+            Drawing = Drawing,
+            MachineRegistered = MachineRegistered,
+            MachineAlternative = MachineAlternative,
+            FixtureType = FixtureType,
+            ToolType = ToolType,
+            TimingMachine = TimingMachine,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC,
+            SetupTime = SetupTime,
+            MachiningTime = MachiningTime,
+            InspectionTime = InspectionTime,
+            PreparationTime = PreparationTime,
             TrialRunTime = TrialRunTime
         };
     }
 
-    public class TaroEdit : StepEditBase
+    public class TaroEdit : SimpleStepEditBase
     {
-        public string? StepName { get; set; }
-        public decimal? StandardTime { get; set; }
-        public static TaroEdit FromEntity(PartTaroStep s) => new()
+        public static TaroEdit FromEntity(PartTaroStep s) => new TaroEdit
         {
-            StepId = s.StepId, NC = s.NC, StepName = s.StepName, StandardTime = s.StandardTime,
-            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+            StepId = s.StepId,
+            NC = s.NC,
+            StepName = s.StepName,
+            StandardTime = s.StandardTime,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
         };
-        public PartTaroStep ToEntity() => new()
+
+        public PartTaroStep ToEntity() => new PartTaroStep
         {
-            StepId = StepId, NC = NC ?? "", StepName = StepName, StandardTime = StandardTime
+            StepId = StepId,
+            NC = NC,
+            StepName = StepName,
+            StandardTime = StandardTime,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC
         };
     }
 
-    public class BaviaEdit : StepEditBase
+    public class BaviaEdit : SimpleStepEditBase
     {
-        public string? StepName { get; set; }
-        public static BaviaEdit FromEntity(PartBaviaStep s) => new()
+        public static BaviaEdit FromEntity(PartBaviaStep s) => new BaviaEdit
         {
-            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
-            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+            StepId = s.StepId,
+            NC = s.NC,
+            StepName = s.StepName,
+            StandardTime = s.StandardTime,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
         };
-        public PartBaviaStep ToEntity() => new()
+
+        public PartBaviaStep ToEntity() => new PartBaviaStep
         {
-            StepId = StepId, NC = NC ?? "", StepName = StepName
+            StepId = StepId,
+            NC = NC,
+            StepName = StepName,
+            StandardTime = StandardTime,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC
         };
     }
 
-    public class WashingEdit : StepEditBase
+    public class WashingEdit : SimpleStepEditBase
     {
-        public string? StepName { get; set; }
-        public static WashingEdit FromEntity(PartWashingStep s) => new()
+        public static WashingEdit FromEntity(PartWashingStep s) => new WashingEdit
         {
-            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
-            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+            StepId = s.StepId,
+            NC = s.NC,
+            StepName = s.StepName,
+            StandardTime = s.StandardTime,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
         };
-        public PartWashingStep ToEntity() => new()
+
+        public PartWashingStep ToEntity() => new PartWashingStep
         {
-            StepId = StepId, NC = NC ?? "", StepName = StepName
+            StepId = StepId,
+            NC = NC,
+            StepName = StepName,
+            StandardTime = StandardTime,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC
         };
     }
 
-    public class InspectionEdit : StepEditBase
+    public class InspectionEdit : SimpleStepEditBase
     {
-        public string? StepName { get; set; }
-        public static InspectionEdit FromEntity(PartInspectionStep s) => new()
+        public static InspectionEdit FromEntity(PartInspectionStep s) => new InspectionEdit
         {
-            StepId = s.StepId, NC = s.NC, StepName = s.StepName,
-            State = s.IsActive ? EditState.Unchanged : EditState.Deleted, WasActiveInDb = s.IsActive
+            StepId = s.StepId,
+            NC = s.NC,
+            StepName = s.StepName,
+            StandardTime = s.StandardTime,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
         };
-        public PartInspectionStep ToEntity() => new()
+
+        public PartInspectionStep ToEntity() => new PartInspectionStep
         {
-            StepId = StepId, NC = NC ?? "", StepName = StepName
+            StepId = StepId,
+            NC = NC,
+            StepName = StepName,
+            StandardTime = StandardTime,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC
+        };
+    }
+
+    public class PackagingEdit : SimpleStepEditBase
+    {
+        public static PackagingEdit FromEntity(PartPackagingStep s) => new PackagingEdit
+        {
+            StepId = s.StepId,
+            NC = s.NC,
+            StepName = s.StepName,
+            StandardTime = s.StandardTime,
+            IsBackup = s.IsBackup,
+            ParentNC = s.ParentNC,
+            State = s.IsActive ? EditState.Unchanged : EditState.Deleted,
+            WasActiveInDb = s.IsActive
+        };
+
+        public PartPackagingStep ToEntity() => new PartPackagingStep
+        {
+            StepId = StepId,
+            NC = NC,
+            StepName = StepName,
+            StandardTime = StandardTime,
+            IsBackup = IsBackup,
+            ParentNC = ParentNC
         };
     }
 }

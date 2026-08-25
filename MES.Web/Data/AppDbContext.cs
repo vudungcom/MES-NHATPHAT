@@ -36,13 +36,16 @@ public class AppDbContext : DbContext
     public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();
     public DbSet<StandardWtsTaskChangeLog> StandardWtsTaskChangeLogs => Set<StandardWtsTaskChangeLog>();
 
-    // ==== Part Master process step tables ====
+    // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) ====
     public DbSet<PartMachiningStep> PartMachiningSteps => Set<PartMachiningStep>();
     public DbSet<PartTaroStep> PartTaroSteps => Set<PartTaroStep>();
     public DbSet<PartBaviaStep> PartBaviaSteps => Set<PartBaviaStep>();
     public DbSet<PartWashingStep> PartWashingSteps => Set<PartWashingStep>();
     public DbSet<PartInspectionStep> PartInspectionSteps => Set<PartInspectionStep>();
-    public DbSet<PartPackagingStep> PartPackagingSteps => Set<PartPackagingStep>(); // Vùng E mới
+    
+    // BỔ SUNG VÙNG E
+    public DbSet<PartPackagingStep> PartPackagingSteps => Set<PartPackagingStep>(); 
+    
     public DbSet<PartProcessStepChangeLog> PartProcessStepChangeLogs => Set<PartProcessStepChangeLog>();
 
     protected override void OnModelCreating(ModelBuilder mb)
@@ -69,13 +72,16 @@ public class AppDbContext : DbContext
         mb.Entity<StandardWtsTask>().HasKey(x => x.TaskId);
         mb.Entity<StandardWtsTaskChangeLog>().HasKey(x => x.ChangeId);
 
-        // ==== Process Step Explicit Primary Keys ====
+        // ==== Luot 6A - Explicit Primary Keys cho 6 bang moi ====
         mb.Entity<PartMachiningStep>().HasKey(x => x.StepId);
         mb.Entity<PartTaroStep>().HasKey(x => x.StepId);
         mb.Entity<PartBaviaStep>().HasKey(x => x.StepId);
         mb.Entity<PartWashingStep>().HasKey(x => x.StepId);
         mb.Entity<PartInspectionStep>().HasKey(x => x.StepId);
-        mb.Entity<PartPackagingStep>().HasKey(x => x.StepId); // Vùng E mới
+        
+        // BỔ SUNG PK VÙNG E
+        mb.Entity<PartPackagingStep>().HasKey(x => x.StepId);
+        
         mb.Entity<PartProcessStepChangeLog>().HasKey(x => x.ChangeId);
 
         // ==== Customer ====
@@ -306,7 +312,7 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.UpdatedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
-        // ==== PartPackagingStep (Vùng E) ====
+        // ==== BỔ SUNG: PartPackagingStep (Vùng E) ====
         mb.Entity<PartPackagingStep>().HasIndex(x => new { x.PartId, x.StepOrder });
         mb.Entity<PartPackagingStep>().HasIndex(x => new { x.PartId, x.IsActive });
         mb.Entity<PartPackagingStep>()

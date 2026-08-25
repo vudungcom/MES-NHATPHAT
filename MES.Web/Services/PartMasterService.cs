@@ -6,6 +6,7 @@ namespace MES.Web.Services;
 
 /// <summary>
 /// Quản lý PartMaster + PartMasterAttribute versioning.
+/// Phân quyền vùng A (PART_TAO_MOI) qua ma trận RBAC.
 /// </summary>
 public class PartMasterService
 {
@@ -53,6 +54,8 @@ public class PartMasterService
         string value,
         int createdBy)
     {
+        await EnsurePermissionAAsync(createdBy);
+
         var existing = await _db.PartMasterAttributes
             .FirstOrDefaultAsync(a => a.PartId == partId
                                    && a.AttributeType == attributeType
@@ -71,7 +74,7 @@ public class PartMasterService
         {
             PartId = partId,
             AttributeType = attributeType,
-            Value = value,
+            Value = value.Trim(),
             IsDefault = false,
             IsActive = true,
             CreatedBy = createdBy,
@@ -88,6 +91,8 @@ public class PartMasterService
         string value,
         int changedBy)
     {
+        await EnsurePermissionAAsync(changedBy);
+
         using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
@@ -111,7 +116,7 @@ public class PartMasterService
                 {
                     PartId = partId,
                     AttributeType = attributeType,
-                    Value = value,
+                    Value = value.Trim(),
                     IsActive = true,
                     CreatedBy = changedBy,
                     CreatedAt = DateTime.Now
@@ -141,6 +146,8 @@ public class PartMasterService
         int createdBy,
         string? partName = null)
     {
+        await EnsurePermissionAAsync(createdBy);
+
         var trimmedPartNo = partNo.Trim();
         if (string.IsNullOrEmpty(trimmedPartNo))
             throw new ArgumentException("Part No không được để trống", nameof(partNo));
@@ -182,25 +189,9 @@ public class PartMasterService
         return pm;
     }
 
-    /// <summary>
-    /// Cập nhật Tên chi tiết (PartMaster.PartName) — thuộc vùng A của Part Master.
-    /// </summary>
     public async Task UpdatePartNameAsync(int partId, string? newPartName, int userId)
     {
-        var user = await _db.Users
-            .Include(u => u.Group)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.UserId == userId);
-
-        if (user == null) throw new UnauthorizedAccessException("User không tồn tại");
-        if (!user.IsActive) throw new UnauthorizedAccessException("User đã bị khóa");
-
-        var groupCode = user.Group?.GroupCode;
-        // Truyền null cho role vì đã chuyển toàn bộ sang Group độc lập
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, PartMasterArea.A_KeHoach))
-            throw new UnauthorizedAccessException(
-                "Bạn không có quyền sửa vùng Kế hoạch nhập. " +
-                "Chỉ ADMIN hoặc PLANNING Leader mới được sửa Tên chi tiết.");
+        await EnsurePermissionAAsync(userId);
 
         var part = await _db.PartMasters.FirstOrDefaultAsync(p => p.PartId == partId);
         if (part == null)
@@ -210,6 +201,7 @@ public class PartMasterService
         if (part.PartName == trimmed) return;
 
         part.PartName = trimmed;
+        // Bỏ part.UpdatedAt và part.UpdatedBy vì class PartMaster không có
         await _db.SaveChangesAsync();
     }
 
@@ -234,13 +226,27 @@ public class PartMasterService
             UserId = user.UserId,
             FullName = user.FullName,
             GroupCode = user.Group?.GroupCode,
-            Role = null,
+            Role = user.Group?.GroupName,
             IsActive = user.IsActive
         };
     }
+
+    private async Task EnsurePermissionAAsync(int userId)
+    {
+        var user = await _db.Users
+            .Include(u => u.Group)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == userId);
+
+        if (user == null) throw new UnauthorizedAccessException("User không tồn tại");
+        if (!user.IsActive) throw new UnauthorizedAccessException("User đã bị khóa");
+
+        if (!PartMasterPermissionHelper.CanEditArea(user.Group, PartMasterArea.A_KeHoach))
+            throw new UnauthorizedAccessException(
+                "Bạn không có quyền sửa vùng Kế hoạch nhập (PART_TAO_MOI). Vui lòng liên hệ Admin để được cấp quyền.");
+    }
 }
 
-/// <summary>DTO chứa context user cho UI check permission.</summary>
 public class UserContext
 {
     public int UserId { get; set; }
@@ -255,7 +261,7 @@ public class UserContext
         {
             if (GroupCode == PartMasterPermissionHelper.GroupAdmin) return "ADMIN";
             if (string.IsNullOrEmpty(GroupCode)) return "?";
-            return GroupCode;
+            return string.IsNullOrEmpty(Role) ? GroupCode : $"{FullName} ({Role})";
         }
     }
 }
