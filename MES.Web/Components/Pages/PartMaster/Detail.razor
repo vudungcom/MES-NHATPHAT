@@ -29,25 +29,6 @@
         opacity: 1;
         filter: grayscale(0%);
     }
-
-    /* Chuẩn hóa chiều cao và căn phẳng hàng cho Vùng A */
-    .form-group-custom {
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-start;
-    }
-    .form-group-custom label {
-        height: 18px;
-        line-height: 18px;
-        margin-bottom: 4px;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-    }
-    .form-group-custom .form-control-sm,
-    .form-group-custom .attribute-picker-container {
-        height: 31px;
-    }
 </style>
 
 <PageTitle>@(_part?.PartNo ?? "Part Master") - Chi tiết</PageTitle>
@@ -122,27 +103,22 @@ else
                 @if (!_canEditA) { <span class="badge bg-light text-dark">Chỉ xem</span> }
             </div>
             <div class="card-body bg-light">
-                @* Hàng 1: Tên chi tiết & Mã VL *@
-                <div class="row g-3 mb-3">
-                    <div class="col-md-6 form-group-custom">
-                        <label class="form-label small fw-bold">Tên chi tiết</label>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Tên chi tiết</label>
                         <input class="form-control form-control-sm" @bind="_partName" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
                     </div>
-                    <div class="col-md-6 form-group-custom">
-                        <label class="form-label small fw-bold">Mã VL (Material)</label>
-                        <AttributePicker Label="" Placeholder="VD: SS400, AL6061..." Attributes="@(_attrGroups.GetValueOrDefault("Material"))" @bind-Value="_material" @bind-IsSetAsDefault="_setDefaultMaterial" />
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
+                        <AttributePicker Label="" Placeholder="VD: SS400, AL6061..." Attributes="@(_attrGroups.GetValueOrDefault("Material"))" @bind-Value="_material" @bind-IsSetAsDefault="_setDefaultMaterial" Disabled="@(!_canEditA)" />
                     </div>
-                </div>
-
-                @* Hàng 2: Cấu hình phôi & Ghi chú phôi *@
-                <div class="row g-3">
-                    <div class="col-md-6 form-group-custom">
-                        <label class="form-label small fw-bold">Cấu hình phôi (Material Config)</label>
-                        <AttributePicker Label="" Placeholder="VD: B12x82x97..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))" @bind-Value="_materialConfig" @bind-IsSetAsDefault="_setDefaultConfig" />
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Cấu hình phôi (Material Config)</label>
+                        <AttributePicker Label="" Placeholder="VD: B12x82x97..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))" @bind-Value="_materialConfig" @bind-IsSetAsDefault="_setDefaultConfig" Disabled="@(!_canEditA)" />
                     </div>
-                    <div class="col-md-6 form-group-custom">
-                        <label class="form-label small fw-bold">Ghi chú phôi</label>
-                        <AttributePicker Label="" Placeholder="Nhập ghi chú bổ sung..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))" @bind-Value="_materialNote" @bind-IsSetAsDefault="_setDefaultNote" />
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold mb-1">Ghi chú phôi</label>
+                        <AttributePicker Label="" Placeholder="Nhập ghi chú bổ sung..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))" @bind-Value="_materialNote" @bind-IsSetAsDefault="_setDefaultNote" Disabled="@(!_canEditA)" />
                     </div>
                 </div>
             </div>
@@ -172,7 +148,8 @@ else
                             <tr class="text-center">
                                 <th style="width: 45px;">#</th>
                                 <th style="width: 110px;">NC *</th>
-                                <th>Bản vẽ</th>
+                                @* Cột Bản vẽ tạm ẩn - mở lại khi cần *@
+                                @* <th>Bản vẽ</th> *@
                                 <th>Máy đăng ký</th>
                                 <th>Máy đồng dạng</th>
                                 <th>Đồ gá</th>
@@ -189,7 +166,7 @@ else
                         <tbody>
                             @if (_machiningEdits.Count == 0)
                             {
-                                <tr><td colspan="14" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình gia công.</em></td></tr>
+                                <tr><td colspan="13" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình gia công.</em></td></tr>
                             }
                             @foreach (var (edit, idx) in _machiningEdits.Select((e, i) => (e, i)))
                             {
@@ -204,7 +181,8 @@ else
                                             <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")" @bind="edit.NC" disabled="@(!_canEditB || RowLocked(edit))" />
                                         </div>
                                     </td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    @* Ô dữ liệu Bản vẽ tạm ẩn - mở lại khi cần *@
+                                    @* <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@(!_canEditB || RowLocked(edit))" /></td> *@
                                     <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineRegistered" placeholder="VD: PHAY08" disabled="@(!_canEditB || RowLocked(edit))" /></td>
                                     <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineAlternative" disabled="@(!_canEditB || RowLocked(edit))" /></td>
                                     <td><input class="form-control form-control-sm" @bind="edit.FixtureType" disabled="@(!_canEditB || RowLocked(edit))" /></td>
