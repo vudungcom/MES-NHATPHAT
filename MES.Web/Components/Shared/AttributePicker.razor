@@ -4,28 +4,24 @@
    Component 1 ô nhập cho 1 thuộc tính Part (Material, MaterialConfig, Location, MaterialNote).
    
    Hiển thị:
-   - Label
+   - Label (chỉ render khi có text)
    - Input text với datalist xổ list các giá trị đã có trong PartMasterAttribute
    - Nút mũi tên xổ list (visual cue)
    - Nếu user gõ giá trị khác default → warning nhỏ dưới ô + hiện checkbox "Đặt default mới"
    - Nếu tick checkbox → cha xử lý ghi lại pending change để hỏi PIN khi Save
-   
-   Cha (Create.razor) truyền vào:
-   - Attributes: list PartMasterAttribute của loại này cho Part này
-   - Value: giá trị hiện tại
-   - ValueChanged: 2-way binding
-   - IsSetAsDefault: user đã tick "đặt default"?
-   - IsSetAsDefaultChanged: 2-way binding
 *@
 
 <div>
-    <label class="form-label small mb-1">
-        @Label
-        @if (IsRequired)
-        {
-            <span class="text-danger">*</span>
-        }
-    </label>
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <label class="form-label small mb-1">
+            @Label
+            @if (IsRequired)
+            {
+                <span class="text-danger">*</span>
+            }
+        </label>
+    }
 
     @if (Attributes != null && Attributes.Any())
     {
@@ -35,7 +31,8 @@
                    list="@_datalistId"
                    @bind="_value"
                    @bind:after="OnValueChangedAsync"
-                   placeholder="@Placeholder" />
+                   placeholder="@Placeholder"
+                   disabled="@Disabled" />
             <i class="bi bi-chevron-down position-absolute"
                style="right: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; color: #999; pointer-events: none;"></i>
         </div>
@@ -52,10 +49,11 @@
         <input class="form-control form-control-sm"
                @bind="_value"
                @bind:after="OnValueChangedAsync"
-               placeholder="@Placeholder" />
+               placeholder="@Placeholder"
+               disabled="@Disabled" />
     }
 
-    @if (_isValueDifferentFromDefault && !string.IsNullOrEmpty(_value))
+    @if (_isValueDifferentFromDefault && !string.IsNullOrEmpty(_value) && !Disabled)
     {
         <div class="mt-1">
             <div class="small text-warning">
@@ -85,6 +83,7 @@
     [Parameter] public string Label { get; set; } = "";
     [Parameter] public string? Placeholder { get; set; }
     [Parameter] public bool IsRequired { get; set; }
+    [Parameter] public bool Disabled { get; set; }
     [Parameter] public List<PartMasterAttribute>? Attributes { get; set; }
 
     [Parameter] public string? Value { get; set; }

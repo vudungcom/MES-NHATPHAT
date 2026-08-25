@@ -14,7 +14,7 @@
 
 @if (_isLoading)
 {
-    <div class="text-center py-5"><span class="spinner-border"></span> Đang tải dữ liệu Part Master...</div>
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải dữ liệu Part Master...</div>
 }
 else if (!_canView)
 {
@@ -96,7 +96,8 @@ else
                     <tr>
                         <th style="width: 30px;"></th>
                         <th><strong>Part No</strong></th>
-                        <th>Tên chi tiết</th>
+                        @* Cột Tên chi tiết tạm ẩn - mở lại khi cần *@
+                        @* <th>Tên chi tiết</th> *@
                         <th>Khách hàng</th>
                         <th>Mã VL</th>
                         <th>Cấu hình phôi</th>
@@ -116,7 +117,7 @@ else
                             style="cursor: pointer;"
                             title="Double-click để mở trang chi tiết">
                             <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
-                                <button class="btn btn-sm btn-link p-0" @onclick="() => ToggleExpandAsync(row.PartId)"
+                                <button class="btn btn-sm btn-link p-0" @onclick="async () => await ToggleExpandAsync(row.PartId)"
                                         title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết inline")">
                                     @if (IsExpanded(row.PartId))
                                     {
@@ -129,7 +130,8 @@ else
                                 </button>
                             </td>
                             <td><code class="fw-bold">@row.PartNo</code></td>
-                            <td>@(row.PartName ?? "—")</td>
+                            @* Dữ liệu Tên chi tiết tạm ẩn - mở lại khi cần *@
+                            @* <td>@(row.PartName ?? "—")</td> *@
                             <td>@(row.CustomerName ?? "—")</td>
                             <td>@(row.Material ?? "—")</td>
                             <td>@(row.MaterialConfig ?? "—")</td>
@@ -150,7 +152,7 @@ else
                         @if (IsExpanded(row.PartId))
                         {
                             <tr>
-                                <td colspan="13" class="bg-light p-3">
+                                <td colspan="12" class="bg-light p-3">
                                     @if (_detailByPart.TryGetValue(row.PartId, out var detail))
                                     {
                                         @RenderExpandedDetail(row, detail)
@@ -200,10 +202,8 @@ else
         {
             var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
             
-            // Được xem Part Master nếu có quyền xem ở bất kỳ vùng Part Master nào
             _canView = perms.Values.Any(p => p.CanView);
 
-            // Được tạo Part mới nếu có quyền Sửa ở vùng PART_TAO_MOI
             if (perms.TryGetValue("PART_TAO_MOI", out var pTaoMoi))
             {
                 _canCreate = pTaoMoi.CanEdit;
