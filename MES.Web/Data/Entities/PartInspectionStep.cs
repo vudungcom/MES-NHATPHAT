@@ -1,4 +1,3 @@
-using MES.Web.Data.Entities;    // ← THÊM DÒNG NÀY
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -6,14 +5,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace MES.Web.Data.Entities;
 
 /// <summary>
-/// Bảng công đoạn "Quy trình Kiểm tra" trong Part Master.
-/// Nhóm Kiểm tra (INSPECTION) sửa. Leader thêm quyền xóa (soft delete).
-/// Mọi thao tác sửa cần PIN + ghi PartProcessStepChangeLog.
+/// Bảng công đoạn "Quy trình Kiểm tra" (Inspection - Vùng D) trong Part Master.
 /// </summary>
 [Table("PartInspectionSteps")]
 public class PartInspectionStep
 {
-    // PK khai báo trong AppDbContext.OnModelCreating bằng HasKey(x => x.StepId)
     public long StepId { get; set; }
 
     [Required]
@@ -25,14 +21,25 @@ public class PartInspectionStep
     [Required]
     public int StepOrder { get; set; }
 
-    /// <summary>Mã NC: '1K', '2K', '4K1', '4K2'...</summary>
+    /// <summary>Mã NC chuẩn từ WTS: '1K', '2K', '1K-DP-01'...</summary>
     [Required]
     [MaxLength(20)]
     public string NC { get; set; } = string.Empty;
 
-    /// <summary>Tên công đoạn (VD: Chuẩn bị, Kiểm tra bề mặt, Kiểm tra ren...).</summary>
+    /// <summary>Tên công đoạn chuẩn từ WTS Tiêu chuẩn.</summary>
     [MaxLength(500)]
     public string? StepName { get; set; }
+
+    /// <summary>Thời gian chuẩn (phút).</summary>
+    [Column(TypeName = "decimal(10,2)")]
+    public decimal? StandardTime { get; set; }
+
+    /// <summary>Đánh dấu là phương án dự phòng.</summary>
+    public bool IsBackup { get; set; } = false;
+
+    /// <summary>Mã NC gốc (VD: 1K).</summary>
+    [MaxLength(20)]
+    public string? ParentNC { get; set; }
 
     // Audit
     [Required]

@@ -10,8 +10,6 @@ namespace MES.Web.Services;
 /// Service quản lý bảng công đoạn "Quy trình gia công" (PartMachiningSteps).
 /// Vùng B — nhóm TECHNICAL Leader (hoặc ADMIN) mới được sửa/thêm/xóa.
 /// Mọi thao tác ghi log vào PartProcessStepChangeLogs với Reason bắt buộc.
-///
-/// PIN được verify ở UI layer trước khi gọi service (giống Split PO). Service chỉ enforce permission.
 /// </summary>
 public class PartMachiningService
 {
@@ -34,6 +32,7 @@ public class PartMachiningService
         return await _db.PartMachiningSteps
             .Where(s => s.PartId == partId && s.IsActive)
             .OrderBy(s => s.StepOrder)
+            .ThenBy(s => s.NC)
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
@@ -47,6 +46,7 @@ public class PartMachiningService
             .Where(s => s.PartId == partId)
             .OrderByDescending(s => s.IsActive)
             .ThenBy(s => s.StepOrder)
+            .ThenBy(s => s.NC)
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
@@ -78,16 +78,11 @@ public class PartMachiningService
     // WRITE — enforce permission + ghi log
     // ================================================================
 
-    /// <summary>
-    /// Thêm dòng mới. StepOrder tự tính = MAX + 1. Trả về StepId.
-    /// Log: FieldName='Created', NewValue = JSON snapshot toàn bộ field.
-    /// </summary>
     public async Task<long> AddAsync(int partId, PartMachiningStep newStep, int userId, string reason)
     {
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
-        // Auto tính StepOrder
         var maxOrder = await _db.PartMachiningSteps
             .Where(s => s.PartId == partId)
             .MaxAsync(s => (int?)s.StepOrder) ?? 0;
@@ -104,11 +99,12 @@ public class PartMachiningService
         _db.PartMachiningSteps.Add(newStep);
         await _db.SaveChangesAsync();
 
-        // Ghi log Created — snapshot data mới
+        // Ghi log snapshot dữ liệu
         var snapshot = JsonSerializer.Serialize(new
         {
             newStep.StepOrder, newStep.NC, newStep.Drawing,
             newStep.MachineRegistered, newStep.MachineAlternative, newStep.FixtureType,
+            newStep.ToolType, newStep.TimingMachine, newStep.IsBackup, newStep.ParentNC,
             newStep.SetupTime, newStep.MachiningTime, newStep.InspectionTime,
             newStep.PreparationTime, newStep.TrialRunTime
         });
@@ -120,10 +116,6 @@ public class PartMachiningService
         return newStep.StepId;
     }
 
-    /// <summary>
-    /// Cập nhật dòng. So sánh từng field — chỉ ghi log cho field thay đổi.
-    /// Reason áp dụng chung cho tất cả field bị sửa trong lần Save này.
-    /// </summary>
     public async Task UpdateAsync(long stepId, PartMachiningStep updated, int userId, string reason)
     {
         ValidateReason(reason);
@@ -144,19 +136,26 @@ public class PartMachiningService
         changedCount += LogStringDiff("MachineRegistered",  existing.MachineRegistered,  updated.MachineRegistered,  stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("MachineAlternative", existing.MachineAlternative, updated.MachineAlternative, stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("FixtureType",        existing.FixtureType,        updated.FixtureType,        stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("ToolType",           existing.ToolType,           updated.ToolType,           stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("TimingMachine",      existing.TimingMachine,      updated.TimingMachine,      stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("ParentNC",           existing.ParentNC,           updated.ParentNC,           stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("SetupTime",         existing.SetupTime,          updated.SetupTime,          stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("MachiningTime",     existing.MachiningTime,      updated.MachiningTime,      stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("InspectionTime",    existing.InspectionTime,     updated.InspectionTime,     stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("PreparationTime",   existing.PreparationTime,    updated.PreparationTime,    stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("TrialRunTime",      existing.TrialRunTime,       updated.TrialRunTime,       stepId, pid, userId, reason, now);
 
-        if (changedCount == 0) return; // Không có gì đổi thì không update UpdatedAt
+        if (changedCount == 0) return;
 
         existing.NC = updated.NC;
         existing.Drawing = updated.Drawing;
         existing.MachineRegistered = updated.MachineRegistered;
         existing.MachineAlternative = updated.MachineAlternative;
         existing.FixtureType = updated.FixtureType;
+        existing.ToolType = updated.ToolType;
+        existing.TimingMachine = updated.TimingMachine;
+        existing.IsBackup = updated.IsBackup;
+        existing.ParentNC = updated.ParentNC;
         existing.SetupTime = updated.SetupTime;
         existing.MachiningTime = updated.MachiningTime;
         existing.InspectionTime = updated.InspectionTime;
@@ -168,7 +167,6 @@ public class PartMachiningService
         await _db.SaveChangesAsync();
     }
 
-    /// <summary>Soft delete: set IsActive=0. Log: FieldName='Deleted'.</summary>
     public async Task SoftDeleteAsync(long stepId, int userId, string reason)
     {
         ValidateReason(reason);
@@ -191,7 +189,6 @@ public class PartMachiningService
         await _db.SaveChangesAsync();
     }
 
-    /// <summary>Khôi phục dòng đã soft delete: set IsActive=1. Log: FieldName='Restored'.</summary>
     public async Task RestoreAsync(long stepId, int userId, string reason)
     {
         ValidateReason(reason);
@@ -214,17 +211,12 @@ public class PartMachiningService
         await _db.SaveChangesAsync();
     }
 
-    // ================================================================
-    // PRIVATE HELPERS
-    // ================================================================
-
     private static void ValidateReason(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
             throw new ArgumentException("Lý do phải có ít nhất 3 ký tự", nameof(reason));
     }
 
-    /// <summary>Load user, check permission cho vùng Machining. Throw UnauthorizedAccessException nếu không có quyền.</summary>
     private async Task EnsurePermissionAsync(int userId)
     {
         var user = await _db.Users
@@ -238,13 +230,12 @@ public class PartMachiningService
             throw new UnauthorizedAccessException("User đã bị khóa");
 
         var groupCode = user.Group?.GroupCode;
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, user.Role, Area))
+        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
             throw new UnauthorizedAccessException(
                 $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
-                $"Chỉ ADMIN hoặc {PartMasterPermissionHelper.GroupTechnical} Leader mới được sửa.");
+                $"Chỉ ADMIN hoặc nhóm Kỹ thuật (PART_GC) mới được sửa.");
     }
 
-    /// <summary>So sánh string, add log nếu khác. Trả về 1 nếu có log, 0 nếu không.</summary>
     private int LogStringDiff(string field, string? oldVal, string? newVal,
         long stepId, int partId, int userId, string reason, DateTime now)
     {

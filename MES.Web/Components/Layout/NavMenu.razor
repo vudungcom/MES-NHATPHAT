@@ -1,3 +1,9 @@
+@using System.Security.Claims
+@using MES.Web.Constants
+@using MES.Web.Services
+@inject AuthenticationStateProvider AuthState
+@inject UserService UserSvc
+
 <nav class="mes-sidebar">
     <div class="mes-brand d-flex align-items-center p-3">
         <img src="/images/Logo.jpg" alt="Logo" style="height: 34px; background: white; padding: 2px 4px; border-radius: 4px; margin-right: 10px;" />
@@ -13,21 +19,34 @@
                 <i class="bi bi-house-door"></i> Trang chủ
             </NavLink>
         </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/kh-plan">
-                <i class="bi bi-calendar-check"></i> Kế Hoạch
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/part-master">
-                <i class="bi bi-file-earmark-ruled"></i> Part Master
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/kho">
-                <i class="bi bi-box-seam"></i> Kho
-            </NavLink>
-        </li>
+
+        @if (CanView("KE_HOACH"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/kh-plan">
+                    <i class="bi bi-calendar-check"></i> Kế Hoạch
+                </NavLink>
+            </li>
+        }
+
+        @if (CanViewPartMaster())
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/part-master">
+                    <i class="bi bi-file-earmark-ruled"></i> Part Master
+                </NavLink>
+            </li>
+        }
+
+        @if (CanView("KHO"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/kho">
+                    <i class="bi bi-box-seam"></i> Kho
+                </NavLink>
+            </li>
+        }
+
         <li class="nav-item">
             <NavLink class="nav-link" href="/hieu-suat-may">
                 <i class="bi bi-cpu"></i> Hiệu suất máy
@@ -38,30 +57,97 @@
                 <i class="bi bi-people"></i> Hiệu suất công nhân
             </NavLink>
         </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/so-do-to-chuc">
-                <i class="bi bi-diagram-3"></i> Sơ đồ tổ chức
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/thiet-bi">
-                <i class="bi bi-wrench"></i> Danh sách thiết bị
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/do-ga">
-                <i class="bi bi-tools"></i> Quản lý Đồ gá
-            </NavLink>
-        </li>
-        <!-- MỤC MỚI: CÔNG VIỆC WTS TIÊU CHUẨN -->
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/wts-tieu-chuan">
-                <i class="bi bi-list-check"></i> WTS Tiêu chuẩn
-            </NavLink>
-        </li>
+
+        @if (CanView("SO_DO_TC"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/so-do-to-chuc">
+                    <i class="bi bi-diagram-3"></i> Sơ đồ tổ chức
+                </NavLink>
+            </li>
+        }
+
+        @if (CanView("THIET_BI"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/thiet-bi">
+                    <i class="bi bi-wrench"></i> Danh sách thiết bị
+                </NavLink>
+            </li>
+        }
+
+        @if (CanView("DO_GA"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/do-ga">
+                    <i class="bi bi-tools"></i> Quản lý Đồ gá
+                </NavLink>
+            </li>
+        }
+
+        @if (CanView("WTS_MASTER"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/wts-tieu-chuan">
+                    <i class="bi bi-list-check"></i> WTS Tiêu chuẩn
+                </NavLink>
+            </li>
+        }
+
+        <!-- MỤC CÀI ĐẶT & PHÂN QUYỀN (HIỂN THỊ DÀNH CHO ADMIN) -->
+        <AuthorizeView>
+            <Authorized>
+                @if (isAdmin || CanView("SETTING_ADMIN"))
+                {
+                    <li class="nav-item mt-3 border-top pt-2">
+                        <NavLink class="nav-link text-warning fw-bold" href="/settings">
+                            <i class="bi bi-gear-fill"></i> Cài đặt Phân quyền
+                        </NavLink>
+                    </li>
+                }
+            </Authorized>
+        </AuthorizeView>
     </ul>
 
     <div class="mes-sidebar-foot">
         <small class="text-muted">Prototype - dữ liệu có thể reset</small>
     </div>
 </nav>
+
+@code {
+    private bool isAdmin = false;
+    private Dictionary<string, (bool CanView, bool CanEdit)> _permissions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        isAdmin = user.IsInRole("ADMIN") 
+               || user.FindFirst("GroupCode")?.Value == "ADMIN" 
+               || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+               || user.Identity?.Name?.ToLower() == "admin";
+
+        if (int.TryParse(userIdClaim, out var uid))
+        {
+            _permissions = await UserSvc.GetAllUserPermissionsAsync(uid);
+        }
+    }
+
+    private bool CanView(string sectionCode)
+    {
+        if (isAdmin) return true;
+        return _permissions.TryGetValue(sectionCode, out var p) && p.CanView;
+    }
+
+    private bool CanViewPartMaster()
+    {
+        if (isAdmin) return true;
+        return CanView("PART_TAO_MOI") 
+            || CanView("PART_GC") 
+            || CanView("PART_HTSP") 
+            || CanView("PART_KCS") 
+            || CanView("PART_DONGGOI");
+    }
+}

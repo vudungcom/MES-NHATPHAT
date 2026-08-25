@@ -174,7 +174,7 @@ public class PartBaviaService
             throw new ArgumentException("Lý do phải có ít nhất 3 ký tự", nameof(reason));
     }
 
-    private async Task EnsurePermissionAsync(int userId)
+private async Task EnsurePermissionAsync(int userId)
     {
         var user = await _db.Users
             .Include(u => u.Group)
@@ -185,7 +185,8 @@ public class PartBaviaService
         if (!user.IsActive) throw new UnauthorizedAccessException("User đã bị khóa");
 
         var groupCode = user.Group?.GroupCode;
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, user.Role, Area))
+        // Bỏ user.Role, truyền null
+        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
             throw new UnauthorizedAccessException(
                 $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
                 $"Chỉ ADMIN hoặc {RequiredGroup} Leader mới được sửa.");

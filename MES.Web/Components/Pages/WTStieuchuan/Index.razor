@@ -15,7 +15,7 @@
         <div>
             <h2 style="font-weight: bold; color: #1e293b;">Danh mục Công việc WTS Tiêu Chuẩn</h2>
             <p class="text-muted mb-0">
-                Master Data định hình nguyên công cho <b>Part Master</b> và là danh mục bắt buộc cho <b>chấm công WTS của công nhân</b>.
+                Master Data định hình nguyên công cho <b>Part Master</b> và danh mục bắt buộc cho <b>chấm công WTS của công nhân</b>.
             </p>
         </div>
         <div class="d-flex gap-2">
@@ -57,14 +57,13 @@
             </div>
         </div>
         <div class="col-md-4">
+            <!-- Dropdown Filter tải tự động từ CSDL -->
             <select class="form-select form-select-sm" @bind="filterCategory">
-                <option value="">-- Tất cả Nhóm công việc (6 nhóm) --</option>
-                <option value="TARO">🔹 Công việc nhóm Taro</option>
-                <option value="BAVIA">🔹 Công việc nhóm Bavia</option>
-                <option value="RUA">🔹 Công việc nhóm Rửa</option>
-                <option value="KCS">🔹 Công việc nhóm Kiểm tra (KCS)</option>
-                <option value="DONG_GOI">🔹 Công việc nhóm Đóng gói</option>
-                <option value="KT_NC">🔹 Kiểm tra trong gia công (NC1-NC10)</option>
+                <option value="">-- Tất cả Nhóm công việc (@DanhSachNhom.Count nhóm) --</option>
+                @foreach (var cat in DanhSachNhom)
+                {
+                    <option value="@cat.Code">🔹 @cat.Name (@cat.Code)</option>
+                }
             </select>
         </div>
         <div class="col-md-3 text-end align-self-center text-muted small">
@@ -88,11 +87,11 @@
                     <thead style="background-color: #f8fafc;">
                         <tr>
                             <th style="width: 50px;" class="text-center">#</th>
-                            <th style="width: 190px;">Nhóm công đoạn</th>
+                            <th style="width: 220px;">Nhóm công đoạn</th>
                             <th style="width: 120px;" class="text-center text-danger">Mã công việc</th>
                             <th>Tên công việc tiêu chuẩn</th>
                             <th style="width: 100px;" class="text-center">ĐVT</th>
-                            <th style="width: 110px;" class="text-center">Thứ tự</th>
+                            <th style="width: 80px;" class="text-center">Thứ tự</th>
                             <th>Ghi chú</th>
                             <th style="width: 130px;" class="text-center">Thao tác</th>
                         </tr>
@@ -143,7 +142,7 @@
     </div>
 </div>
 
-<!-- MODAL THÊM / SỬA CÔNG VIỆC -->
+<!-- MODAL THÊM / SỬA CÔNG VIỆC (HỖ TRỢ TẠO NHÓM MỚI) -->
 @if (isHienThiPopupSua && itemDangSua != null)
 {
     <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
@@ -156,21 +155,46 @@
                     <button type="button" class="btn-close" @onclick="DongPopupSua"></button>
                 </div>
                 <div class="modal-body">
+                    <!-- Chọn nhóm có sẵn hoặc tạo nhóm mới -->
                     <div class="mb-2">
-                        <label class="form-label small fw-bold mb-1">Nhóm công đoạn <span class="text-danger">*</span></label>
-                        <select class="form-select form-select-sm" @bind="itemDangSua.CategoryCode">
-                            <option value="TARO">Công việc nhóm Taro</option>
-                            <option value="BAVIA">Công việc nhóm Bavia</option>
-                            <option value="RUA">Công việc nhóm Rửa</option>
-                            <option value="KCS">Công việc nhóm Kiểm tra (KCS)</option>
-                            <option value="DONG_GOI">Công việc nhóm Đóng gói</option>
-                            <option value="KT_NC">Công việc kiểm tra trong gia công (NC)</option>
-                        </select>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-bold mb-0">Nhóm công đoạn <span class="text-danger">*</span></label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="chkTaoNhomMoi" @bind="isTaoNhomMoi" />
+                                <label class="form-check-label small fw-semibold text-primary" for="chkTaoNhomMoi">Tạo nhóm mới</label>
+                            </div>
+                        </div>
+
+                        @if (!isTaoNhomMoi)
+                        {
+                            <select class="form-select form-select-sm" @onchange="OnChonNhomCoSan">
+                                @foreach (var cat in DanhSachNhom)
+                                {
+                                    <option value="@cat.Code" selected="@(itemDangSua.CategoryCode == cat.Code)">@cat.Name (@cat.Code)</option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            <div class="p-2 rounded border bg-light">
+                                <div class="row g-2">
+                                    <div class="col-5">
+                                        <label class="form-label small fw-bold mb-1">Mã nhóm mới *</label>
+                                        <input type="text" class="form-control form-control-sm text-uppercase fw-bold" autocomplete="off" @bind="itemDangSua.CategoryCode" placeholder="VD: GIA_CONG..." />
+                                    </div>
+                                    <div class="col-7">
+                                        <label class="form-label small fw-bold mb-1">Tên nhóm mới *</label>
+                                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.CategoryName" placeholder="VD: Công việc nhóm Gia công..." />
+                                    </div>
+                                </div>
+                            </div>
+                        }
                     </div>
+
                     <div class="row g-2 mb-2">
                         <div class="col-5">
                             <label class="form-label small fw-bold mb-1">Mã công việc <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control form-control-sm text-uppercase fw-bold text-danger" autocomplete="off" @bind="itemDangSua.TaskCode" placeholder="VD: 1T, 3V1, KM1..." />
+                            <input type="text" class="form-control form-control-sm text-uppercase fw-bold text-danger" autocomplete="off" @bind="itemDangSua.TaskCode" placeholder="VD: GC1, 1T, 3V1..." />
                         </div>
                         <div class="col-4">
                             <label class="form-label small fw-bold mb-1">Đơn vị tính</label>
@@ -181,10 +205,12 @@
                             <input type="number" class="form-control form-control-sm" @bind="itemDangSua.DisplayOrder" />
                         </div>
                     </div>
+
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Tên công việc tiêu chuẩn <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.TaskName" placeholder="VD: Làm vát đón, Kiểm tra ren..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.TaskName" placeholder="VD: Gia công phay mặt đầu, Làm vát đón..." />
                     </div>
+
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Ghi chú</label>
                         <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.GhiChu" placeholder="VD: Hướng dẫn kỹ thuật..." />
@@ -324,12 +350,14 @@
     private string loiPopup = "";
 
     private List<StandardWtsTask> DanhSachGoc = new List<StandardWtsTask>();
+    private List<(string Code, string Name)> DanhSachNhom = new List<(string Code, string Name)>();
     private List<StandardWtsTaskChangeLog> danhSachChangeLog = new List<StandardWtsTaskChangeLog>();
 
     private bool isHienThiPopupSua = false;
     private bool isHienThiPopupLichSu = false;
     private bool isHienThiPopupXoa = false;
     private bool isThemMoi = false;
+    private bool isTaoNhomMoi = false;
 
     private StandardWtsTask? itemDangSua = null;
     private StandardWtsTask? itemDangXem = null;
@@ -357,6 +385,7 @@
     {
         isLoading = true;
         DanhSachGoc = await WtsSvc.GetAllActiveAsync();
+        DanhSachNhom = await WtsSvc.GetDistinctCategoriesAsync();
         isLoading = false;
     }
 
@@ -368,17 +397,32 @@
         "KCS" => "bg-danger text-white",
         "DONG_GOI" => "bg-warning text-dark",
         "KT_NC" => "bg-dark text-white",
+        "GIA_CONG" => "bg-purple text-white",
         _ => "bg-secondary text-white"
     };
 
+    private void OnChonNhomCoSan(ChangeEventArgs e)
+    {
+        var selectedCode = e.Value?.ToString() ?? "";
+        if (itemDangSua != null)
+        {
+            itemDangSua.CategoryCode = selectedCode;
+            var found = DanhSachNhom.FirstOrDefault(x => x.Code == selectedCode);
+            itemDangSua.CategoryName = found.Name ?? selectedCode;
+        }
+    }
+
     private void MoPopupThem()
     {
+        var defaultCat = DanhSachNhom.FirstOrDefault();
         itemDangSua = new StandardWtsTask
         {
-            CategoryCode = "TARO",
+            CategoryCode = defaultCat.Code ?? "TARO",
+            CategoryName = defaultCat.Name ?? "Công việc nhóm Taro",
             DefaultUnit = "Chi tiết",
             DisplayOrder = DanhSachGoc.Count + 1
         };
+        isTaoNhomMoi = false;
         isThemMoi = true;
         pinXacNhan = "";
         lyDoSua = "";
@@ -400,6 +444,7 @@
             DisplayOrder = item.DisplayOrder,
             GhiChu = item.GhiChu
         };
+        isTaoNhomMoi = false;
         isThemMoi = false;
         pinXacNhan = "";
         lyDoSua = "";

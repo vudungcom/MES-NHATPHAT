@@ -1,4 +1,3 @@
-using MES.Web.Data.Entities;    // ← THÊM DÒNG NÀY
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -13,7 +12,6 @@ namespace MES.Web.Data.Entities;
 [Table("PartMachiningSteps")]
 public class PartMachiningStep
 {
-    // PK khai báo trong AppDbContext.OnModelCreating bằng HasKey(x => x.StepId)
     public long StepId { get; set; }
 
     [Required]
@@ -26,7 +24,7 @@ public class PartMachiningStep
     [Required]
     public int StepOrder { get; set; }
 
-    /// <summary>Mã NC: 'NC01', 'NC02', 'NC03'...</summary>
+    /// <summary>Mã NC: 'NC01', 'NC02', 'NC01-DP-01'...</summary>
     [Required]
     [MaxLength(20)]
     public string NC { get; set; } = string.Empty;
@@ -46,6 +44,21 @@ public class PartMachiningStep
     /// <summary>Loại đồ gá (VD: VJ45).</summary>
     [MaxLength(50)]
     public string? FixtureType { get; set; }
+
+    /// <summary>Loại dao / Dao cụ sử dụng.</summary>
+    [MaxLength(100)]
+    public string? ToolType { get; set; }
+
+    /// <summary>Máy bấm giờ / Máy dùng để đo Cycle Time thực tế.</summary>
+    [MaxLength(50)]
+    public string? TimingMachine { get; set; }
+
+    /// <summary>Đánh dấu là phương án gia công dự phòng (true = DP, false = Chính thức).</summary>
+    public bool IsBackup { get; set; } = false;
+
+    /// <summary>Mã NC gốc của phương án chính (VD: NC01 nếu đây là NC01-DP-01).</summary>
+    [MaxLength(20)]
+    public string? ParentNC { get; set; }
 
     /// <summary>Thời gian gá lắp (phút).</summary>
     [Column(TypeName = "decimal(10,2)")]

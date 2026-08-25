@@ -1,0 +1,60 @@
+Danh sách các file hiện tại trong workspace (theo tầng)
+
+MES.Web/
+  MES.Web.csproj
+  Program.cs
+  Data/
+    AppDbContext.cs
+    SeedData.cs
+    Entities/
+      PartMaster.cs
+      DoGaChangeLog.cs
+      PartTaroStep.cs
+      PartInspectionStep.cs
+      PartBaviaStep.cs
+      StockTransaction.cs
+      DoGaMuonTraLog.cs
+      PartProcessStepChangeLog.cs
+      FileStorage.cs
+      PartMasterAttribute.cs
+      PartMachiningStep.cs
+      KhPlanDetailChangeLog.cs
+      Department.cs
+      StandardWtsTask.cs
+      KhPlan.cs
+      Customer.cs
+      User.cs
+      ThietBi.cs
+      PartWashingStep.cs
+      DepartmentChangeLog.cs
+      StandardWtsTaskChangeLog.cs
+      ThietBichangelog.cs
+      DoGa.cs
+  Services/
+    PartInspectionService.cs
+    PartTaroService.cs
+    ExcelHelper.cs
+    PartMachiningService.cs
+    DepartmentService.cs
+    PasswordHasher.cs
+    KhPlanService.cs
+    ThietBiService.cs
+    PartWashingService.cs
+    AuthService.cs
+    PartMasterService.cs
+    PartMasterListService.cs
+    PartBaviaService.cs
+    DoGaService.cs
+    StandardWtsTaskService.cs
+    PartMasterPermissionHelper.cs
+  Data/Entities/ (note: duplicate of above Entities folder)
+  obj/
+    Release/net8.0/
+      .NETCoreApp,Version=v8.0.AssemblyAttributes.cs
+      MES.Web.GlobalUsings.g.cs
+      MES.Web.AssemblyInfo.cs
+
+Ghi chú:
+- Đây là danh sách file được liệt kê từ project MES.Web (MES.Web.csproj).
+- Không có sửa đổi code nào được thực hiện.
+- Nếu bạn muốn danh sách theo định dạng khác (ví dụ .md hoặc cây chi tiết hơn), cho biết để tôi tạo lại.

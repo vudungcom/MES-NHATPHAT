@@ -1,7 +1,7 @@
 namespace MES.Web.Services;
 
 /// <summary>
-/// 4 vùng của Part Master. Mỗi vùng thuộc quản lý của 1 nhóm chuyên môn.
+/// Các vùng của Part Master. Mỗi vùng thuộc quản lý của 1 nhóm chuyên môn.
 /// </summary>
 public enum PartMasterArea
 {
@@ -15,20 +15,14 @@ public enum PartMasterArea
     C_HoanThienSP = 3,
 
     /// <summary>D. Kiểm tra (bảng PartInspectionSteps). Nhóm INSPECTION quản.</summary>
-    D_KiemTra = 4
+    D_KiemTra = 4,
+
+    /// <summary>E. Đóng gói thành phẩm.</summary>
+    E_DongGoi = 5
 }
 
 /// <summary>
-/// Helper phân quyền Part Master — static, không cần DI, gọi được từ Service / Razor / Layout.
-///
-/// Quy tắc chốt ở Lượt 6B:
-///  - XEM: mọi user đã login đều xem được (kể cả VIEWER, WAREHOUSE, PRODUCTION, QC, SUPPLIER).
-///  - TẠO Part Master mới: chỉ ADMIN hoặc Leader của 1 trong 4 group (PLANNING/TECHNICAL/FINISHING/INSPECTION).
-///  - SỬA/THÊM DÒNG/XÓA/KHÔI PHỤC dòng công đoạn: chỉ ADMIN hoặc Leader của group **đúng area**.
-///    VD: bảng Machining chỉ TECHNICAL Leader (hoặc ADMIN) sửa được.
-///
-/// User Normal (không phải Leader): chỉ xem, không sửa/thêm/xóa được gì.
-/// User các group ngoài (VIEWER, WAREHOUSE, PRODUCTION, QC, SUPPLIER): chỉ xem.
+/// Helper phân quyền Part Master — static, không cần DI, tương thích toàn bộ Service/Layout/Razor.
 /// </summary>
 public static class PartMasterPermissionHelper
 {
@@ -48,7 +42,7 @@ public static class PartMasterPermissionHelper
     public const string RoleLeader = "Leader";
     public const string RoleNormal = "Normal";
 
-    /// <summary>Có được xem Part Master (list + detail) không? Mọi user đã login đều xem được.</summary>
+    /// <summary>Có được xem Part Master (list + detail) không?</summary>
     public static bool CanView(string? groupCode)
     {
         return !string.IsNullOrEmpty(groupCode);
@@ -56,7 +50,7 @@ public static class PartMasterPermissionHelper
 
     /// <summary>
     /// Có được tạo Part Master mới không?
-    /// ADMIN: được. Leader của 1 trong 4 group chuyên môn: được. Còn lại: không.
+    /// ADMIN: được. Leader của 1 trong các group chuyên môn: được.
     /// </summary>
     public static bool CanCreatePartMaster(string? groupCode, string? role)
     {
@@ -70,7 +64,7 @@ public static class PartMasterPermissionHelper
 
     /// <summary>
     /// Có được sửa/thêm/xóa/khôi phục trong vùng cụ thể của Part Master không?
-    /// ADMIN: được mọi vùng. Leader của group đúng area: được. Còn lại: không.
+    /// ADMIN: được mọi vùng. Leader của group đúng area: được.
     /// </summary>
     public static bool CanEditArea(string? groupCode, string? role, PartMasterArea area)
     {
@@ -94,6 +88,20 @@ public static class PartMasterPermissionHelper
         PartMasterArea.B_Machining   => "Quy trình gia công",
         PartMasterArea.C_HoanThienSP => "Hoàn thiện SP",
         PartMasterArea.D_KiemTra     => "Kiểm tra",
+        PartMasterArea.E_DongGoi     => "Đóng gói",
         _ => "Không xác định"
+    };
+
+    /// <summary>
+    /// Chuyển đổi từ Area sang SectionCode chuẩn trong ma trận RBAC
+    /// </summary>
+    public static string ToSectionCode(PartMasterArea area) => area switch
+    {
+        PartMasterArea.A_KeHoach     => "PART_TAO_MOI",
+        PartMasterArea.B_Machining   => "PART_GC",
+        PartMasterArea.C_HoanThienSP => "PART_HTSP",
+        PartMasterArea.D_KiemTra     => "PART_KCS",
+        PartMasterArea.E_DongGoi     => "PART_DONGGOI",
+        _ => "PART_TAO_MOI"
     };
 }

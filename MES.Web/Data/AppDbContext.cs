@@ -36,12 +36,13 @@ public class AppDbContext : DbContext
     public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();
     public DbSet<StandardWtsTaskChangeLog> StandardWtsTaskChangeLogs => Set<StandardWtsTaskChangeLog>();
 
-    // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) ====
+    // ==== Part Master process step tables ====
     public DbSet<PartMachiningStep> PartMachiningSteps => Set<PartMachiningStep>();
     public DbSet<PartTaroStep> PartTaroSteps => Set<PartTaroStep>();
     public DbSet<PartBaviaStep> PartBaviaSteps => Set<PartBaviaStep>();
     public DbSet<PartWashingStep> PartWashingSteps => Set<PartWashingStep>();
     public DbSet<PartInspectionStep> PartInspectionSteps => Set<PartInspectionStep>();
+    public DbSet<PartPackagingStep> PartPackagingSteps => Set<PartPackagingStep>(); // Vùng E mới
     public DbSet<PartProcessStepChangeLog> PartProcessStepChangeLogs => Set<PartProcessStepChangeLog>();
 
     protected override void OnModelCreating(ModelBuilder mb)
@@ -68,12 +69,13 @@ public class AppDbContext : DbContext
         mb.Entity<StandardWtsTask>().HasKey(x => x.TaskId);
         mb.Entity<StandardWtsTaskChangeLog>().HasKey(x => x.ChangeId);
 
-        // ==== Luot 6A - Explicit Primary Keys cho 6 bang moi ====
+        // ==== Process Step Explicit Primary Keys ====
         mb.Entity<PartMachiningStep>().HasKey(x => x.StepId);
         mb.Entity<PartTaroStep>().HasKey(x => x.StepId);
         mb.Entity<PartBaviaStep>().HasKey(x => x.StepId);
         mb.Entity<PartWashingStep>().HasKey(x => x.StepId);
         mb.Entity<PartInspectionStep>().HasKey(x => x.StepId);
+        mb.Entity<PartPackagingStep>().HasKey(x => x.StepId); // Vùng E mới
         mb.Entity<PartProcessStepChangeLog>().HasKey(x => x.ChangeId);
 
         // ==== Customer ====
@@ -299,6 +301,25 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.CreatedBy)
             .OnDelete(DeleteBehavior.NoAction);
         mb.Entity<PartInspectionStep>()
+            .HasOne(x => x.UpdatedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.UpdatedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== PartPackagingStep (Vùng E) ====
+        mb.Entity<PartPackagingStep>().HasIndex(x => new { x.PartId, x.StepOrder });
+        mb.Entity<PartPackagingStep>().HasIndex(x => new { x.PartId, x.IsActive });
+        mb.Entity<PartPackagingStep>()
+            .HasOne(x => x.Part)
+            .WithMany()
+            .HasForeignKey(x => x.PartId)
+            .OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<PartPackagingStep>()
+            .HasOne(x => x.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.CreatedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<PartPackagingStep>()
             .HasOne(x => x.UpdatedByUser)
             .WithMany()
             .HasForeignKey(x => x.UpdatedBy)

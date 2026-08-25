@@ -20,9 +20,24 @@ public class StandardWtsTaskService
     {
         return await _db.StandardWtsTasks
             .Where(t => t.IsActive)
-            .OrderBy(t => t.DisplayOrder)
+            .OrderBy(t => t.CategoryCode)
+            .ThenBy(t => t.DisplayOrder)
             .ThenBy(t => t.TaskId)
             .ToListAsync();
+    }
+
+    /// <summary>
+    /// Lấy danh sách các nhóm công đoạn động đang có trong CSDL
+    /// </summary>
+    public async Task<List<(string Code, string Name)>> GetDistinctCategoriesAsync()
+    {
+        var list = await _db.StandardWtsTasks
+            .Where(t => t.IsActive)
+            .Select(t => new { t.CategoryCode, t.CategoryName })
+            .Distinct()
+            .ToListAsync();
+
+        return list.Select(x => (x.CategoryCode, x.CategoryName)).ToList();
     }
 
     public async Task<List<StandardWtsTask>> GetByCategoryAsync(string categoryCode)
@@ -33,21 +48,21 @@ public class StandardWtsTaskService
             .ToListAsync();
     }
 
-    /// <summary>
-    /// Thêm mới công việc tiêu chuẩn
-    /// </summary>
     public async Task<(bool Success, string? Error)> CreateAsync(StandardWtsTask model, int currentUserId, string pin)
     {
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
+        if (string.IsNullOrWhiteSpace(model.CategoryCode)) return (false, "Mã nhóm công đoạn không được để trống.");
+        if (string.IsNullOrWhiteSpace(model.CategoryName)) return (false, "Tên nhóm công đoạn không được để trống.");
         if (string.IsNullOrWhiteSpace(model.TaskCode)) return (false, "Mã công việc không được để trống.");
         if (string.IsNullOrWhiteSpace(model.TaskName)) return (false, "Tên công việc không được để trống.");
 
+        model.CategoryCode = model.CategoryCode.Trim().ToUpper();
+        model.CategoryName = model.CategoryName.Trim();
         model.TaskCode = model.TaskCode.Trim().ToUpper();
         model.TaskName = model.TaskName.Trim();
-        model.CategoryName = GetCategoryNameByCode(model.CategoryCode);
         model.DefaultUnit = string.IsNullOrWhiteSpace(model.DefaultUnit) ? "Chi tiết" : model.DefaultUnit.Trim();
 
         bool exists = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == model.TaskCode && x.IsActive);
@@ -75,9 +90,6 @@ public class StandardWtsTaskService
         return (true, null);
     }
 
-    /// <summary>
-    /// Sửa công việc tiêu chuẩn
-    /// </summary>
     public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin)
     {
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
@@ -115,7 +127,8 @@ public class StandardWtsTaskService
 
         CheckAndLog("Mã công việc", task.TaskCode, newCode);
         CheckAndLog("Tên công việc", task.TaskName, updatedModel.TaskName);
-        CheckAndLog("Nhóm công việc", task.CategoryCode, updatedModel.CategoryCode);
+        CheckAndLog("Mã nhóm", task.CategoryCode, updatedModel.CategoryCode);
+        CheckAndLog("Tên nhóm", task.CategoryName, updatedModel.CategoryName);
         CheckAndLog("Đơn vị tính", task.DefaultUnit, updatedModel.DefaultUnit);
         CheckAndLog("Thời gian chuẩn (s)", task.StandardTimeSec?.ToString(), updatedModel.StandardTimeSec?.ToString());
         CheckAndLog("Ghi chú", task.GhiChu, updatedModel.GhiChu);
@@ -124,8 +137,8 @@ public class StandardWtsTaskService
         {
             task.TaskCode = newCode;
             task.TaskName = updatedModel.TaskName.Trim();
-            task.CategoryCode = updatedModel.CategoryCode;
-            task.CategoryName = GetCategoryNameByCode(updatedModel.CategoryCode);
+            task.CategoryCode = updatedModel.CategoryCode.Trim().ToUpper();
+            task.CategoryName = updatedModel.CategoryName.Trim();
             task.DefaultUnit = string.IsNullOrWhiteSpace(updatedModel.DefaultUnit) ? "Chi tiết" : updatedModel.DefaultUnit.Trim();
             task.StandardTimeSec = updatedModel.StandardTimeSec;
             task.DisplayOrder = updatedModel.DisplayOrder;
@@ -140,9 +153,6 @@ public class StandardWtsTaskService
         return (true, null);
     }
 
-    /// <summary>
-    /// Xóa công việc tiêu chuẩn (Soft delete)
-    /// </summary>
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int taskId, int currentUserId, string pin)
     {
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
@@ -181,20 +191,6 @@ public class StandardWtsTaskService
             .ToListAsync();
     }
 
-    public static string GetCategoryNameByCode(string code) => code switch
-    {
-        "TARO" => "Công việc nhóm Taro",
-        "BAVIA" => "Công việc nhóm Bavia",
-        "RUA" => "Công việc nhóm Rửa",
-        "KCS" => "Công việc nhóm Kiểm tra (KCS)",
-        "DONG_GOI" => "Công việc nhóm Đóng gói",
-        "KT_NC" => "Công việc kiểm tra trong gia công (NC)",
-        _ => "Khác"
-    };
-
-    /// <summary>
-    /// Xuất danh mục công việc tiêu chuẩn ra Excel
-    /// </summary>
     public async Task<byte[]> ExportExcelAsync(List<StandardWtsTask> data)
     {
         using var workbook = new XLWorkbook();

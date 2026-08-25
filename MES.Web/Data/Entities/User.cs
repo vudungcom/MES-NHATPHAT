@@ -1,9 +1,11 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MES.Web.Data.Entities;
 
 public class User
 {
+    [Key]
     public int UserId { get; set; }
 
     [Required, MaxLength(50)]
@@ -16,39 +18,33 @@ public class User
     public string PasswordHash { get; set; } = "";
 
     [MaxLength(20)]
-    public string? PIN { get; set; }  // 4 số, dùng sau khi có barcode scanner
+    public string? PIN { get; set; }  
 
     public int? GroupId { get; set; }
-    public UserGroup? Group { get; set; }
+    
+    [ForeignKey("GroupId")]
+    public virtual UserGroup? Group { get; set; }
 
     public bool IsActive { get; set; } = true;
-	/// <summary>
-    /// Vai trò trong group: 'Leader' | 'Normal'. NULL nếu thuộc ADMIN hoặc VIEWER.
-    /// - ADMIN: NULL (đã full quyền theo GroupCode)
-    /// - VIEWER: NULL (chỉ xem)
-    /// - 5 group còn lại (PLANNING, WAREHOUSE, TECHNICAL, FINISHING, INSPECTION):
-    ///   phải là 'Leader' hoặc 'Normal'
-    /// Enforce ở service layer, không phải DB constraint.
-    /// </summary>
-    [MaxLength(20)]
-    public string? Role { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;
-
     public DateTime? LastLoginAt { get; set; }
 }
 
 public class UserGroup
 {
+    [Key]
     public int GroupId { get; set; }
 
     [Required, MaxLength(50)]
-    public string GroupCode { get; set; } = "";  // ADMIN, PLANNING, WAREHOUSE, WORKER...
+    public string GroupCode { get; set; } = "";  // ADMIN, KY_THUAT, LEADER_KT...
 
     [Required, MaxLength(100)]
     public string GroupName { get; set; } = "";
 
-    /// <summary>JSON string chứa permissions</summary>
+    /// <summary>
+    /// Chuỗi JSON lưu trữ danh sách GroupPermissionSetting
+    /// </summary>
     public string? Permissions { get; set; }
 
     public bool IsActive { get; set; } = true;

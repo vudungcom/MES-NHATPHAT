@@ -1,158 +1,181 @@
 @page "/kh-plan"
 @attribute [Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
 @using MES.Web.Components.Shared
+@using MES.Web.Services
 @inject KhPlanService KhSvc
+@inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Kế Hoạch - MES</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="mb-1">Kế Hoạch KH</h1>
-        <p class="text-muted small mb-0">Mỗi dòng = 1 PO. <strong>Double-click</strong> để xem chi tiết. Bấm nút Sửa / Tách để thao tác.</p>
-    </div>
-    <div class="d-flex gap-2">
-        <a href="/kh-plan/bulk-update-std" class="btn btn-outline-warning">
-            <i class="bi bi-file-earmark-excel"></i> Sửa STD hàng loạt (Excel)
-        </a>
-        <a href="/kh-plan/create" class="btn btn-primary">
-            <i class="bi bi-plus-lg"></i> Tạo phiếu KH mới
-        </a>
-    </div>
-</div>
-
-<div class="row mb-3 g-2">
-    <div class="col-md-5">
-        <div class="input-group input-group-sm">
-            <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input class="form-control" placeholder="Tìm theo PO / Old PO / Part No / Khách / Số phiếu..."
-                   @bind="_search" @bind:event="oninput" />
-            @if (!string.IsNullOrEmpty(_search))
-            {
-                <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
-                    <i class="bi bi-x"></i>
-                </button>
-            }
-        </div>
-    </div>
-    <div class="col-md-3">
-        <select class="form-select form-select-sm" @bind="_statusFilter">
-            <option value="">-- Tất cả trạng thái --</option>
-            <option value="WaitingSupplierOrder">Chờ đặt Order VL</option>
-            <option value="Ordered">Đã đặt Order VL</option>
-            <option value="PartialReceived">Nhập 1 phần</option>
-            <option value="FullyReceived">Nhập đủ</option>
-            <option value="InProduction">Đang SX</option>
-            <option value="Completed">Hoàn thành</option>
-            <option value="Cancelled">Hủy</option>
-        </select>
-    </div>
-    <div class="col-md-4 text-end">
-        <small class="text-muted">
-            Hiển thị @Filtered.Count / @(_rows?.Count ?? 0) dòng
-        </small>
-    </div>
-</div>
-
-@if (_rows == null)
+@if (_isLoading)
 {
-    <p><em>Đang tải...</em></p>
+    <div class="text-center py-5"><span class="spinner-border"></span> Đang tải dữ liệu Kế hoạch...</div>
 }
-else if (_rows.Count == 0)
+else if (!_canView)
 {
-    <div class="alert alert-secondary">
-        <i class="bi bi-inbox"></i> Chưa có phiếu KH nào. Bấm "Tạo phiếu KH mới" để bắt đầu.
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p>Tài khoản của bạn không có quyền xem phân hệ <b>Kế Hoạch (KE_HOACH)</b>. Vui lòng liên hệ Admin để được cấp quyền trên Ma trận phân quyền.</p>
     </div>
 }
 else
 {
-    <div class="table-responsive">
-        <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
-            <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
-                <tr>
-                    <th>Số phiếu</th>
-                    <th>Ngày lập</th>
-                    <th>Ngày nhận</th>
-                    <th>Khách hàng</th>
-                    <th><strong>PO</strong></th>
-                    <th>Old PO</th>
-                    <th><strong>Part No</strong></th>
-                    <th class="text-end">SL</th>
-                    <th>Đvị</th>
-                    <th>STD</th>
-                    <th>Loại</th>
-                    <th>Ưu tiên</th>
-                    <th>Cấu hình phôi</th>
-                    <th>Ghi chú Hàng</th>
-                    <th>Order VL</th>
-                    <th>Vị trí</th>
-                    <th>Trạng thái</th>
-                    <th style="width: 120px;">Thao tác</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in Filtered)
-                {
-                    <tr @ondblclick="() => OpenView(r)" style="cursor: pointer;" title="Double-click để xem chi tiết">
-                        <td><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
-                        <td class="text-nowrap">@r.PlanDate.ToString("dd/MM/yy")</td>
-                        <td class="text-nowrap">
-                            @if (r.ReceivedDate.HasValue)
-                            {
-                                @r.ReceivedDate.Value.ToString("dd/MM/yy")
-                            }
-                            else
-                            {
-                                <span class="text-muted">-</span>
-                            }
-                        </td>
-                        <td class="text-truncate" style="max-width: 180px;" title="@r.CustomerName">@r.CustomerName</td>
-                        <td><code>@r.PurchaseOrder</code></td>
-                        <td>
-                            @if (!string.IsNullOrEmpty(r.OldPurchaseOrder))
-                            {
-                                <code class="text-muted" title="Tách từ PO này">@r.OldPurchaseOrder</code>
-                            }
-                        </td>
-                        <td><code>@r.PartNo</code></td>
-                        <td class="text-end text-nowrap">@r.Quantity.ToString("0.####")</td>
-                        <td class="text-nowrap">@r.Unit</td>
-                        <td class="text-nowrap">
-                            @r.STD.ToString("dd/MM/yy")
-                            @if (r.STD < DateTime.Today)
-                            {
-                                <i class="bi bi-exclamation-triangle text-danger ms-1" title="Quá hạn"></i>
-                            }
-                            else if (r.STD < DateTime.Today.AddDays(7))
-                            {
-                                <i class="bi bi-clock text-warning ms-1" title="Sắp hạn"></i>
-                            }
-                        </td>
-                        <td>@r.Type</td>
-                        <td>@r.Priority</td>
-                        <td class="font-monospace text-truncate" style="max-width: 100px;" title="@r.MaterialConfig">@r.MaterialConfig</td>
-                        <td class="text-truncate" style="max-width: 140px;" title="@r.PartNotes">@r.PartNotes</td>
-                        <td class="font-monospace">@r.OrderVL</td>
-                        <td>@r.Location</td>
-                        <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
-                        <td @onclick:stopPropagation class="text-nowrap">
-                            <a class="btn btn-sm btn-outline-primary py-0 px-1" href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}/edit")" title="Sửa dòng này">
-                                <i class="bi bi-pencil"></i>
-                            </a>
-                            <button class="btn btn-sm btn-outline-warning py-0 px-1" @onclick="() => OpenSplit(r)" title="Tách PO">
-                                <i class="bi bi-diagram-3"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary py-0 px-1" @onclick="() => OpenHistory(r)" title="Lịch sử sửa">
-                                <i class="bi bi-clock-history"></i>
-                            </button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h1 class="mb-1">Kế Hoạch KH</h1>
+            <p class="text-muted small mb-0">Mỗi dòng = 1 PO. <strong>Double-click</strong> để xem chi tiết. Bấm nút Sửa / Tách để thao tác.</p>
+        </div>
+        <div class="d-flex gap-2">
+            @if (_canEdit)
+            {
+                <a href="/kh-plan/bulk-update-std" class="btn btn-outline-warning">
+                    <i class="bi bi-file-earmark-excel"></i> Sửa STD hàng loạt (Excel)
+                </a>
+                <a href="/kh-plan/create" class="btn btn-primary">
+                    <i class="bi bi-plus-lg"></i> Tạo phiếu KH mới
+                </a>
+            }
+        </div>
     </div>
+
+    <div class="row mb-3 g-2">
+        <div class="col-md-5">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input class="form-control" placeholder="Tìm theo PO / Old PO / Part No / Khách / Số phiếu..."
+                       @bind="_search" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(_search))
+                {
+                    <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
+                        <i class="bi bi-x"></i>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="col-md-3">
+            <select class="form-select form-select-sm" @bind="_statusFilter">
+                <option value="">-- Tất cả trạng thái --</option>
+                <option value="WaitingSupplierOrder">Chờ đặt Order VL</option>
+                <option value="Ordered">Đã đặt Order VL</option>
+                <option value="PartialReceived">Nhập 1 phần</option>
+                <option value="FullyReceived">Nhập đủ</option>
+                <option value="InProduction">Đang SX</option>
+                <option value="Completed">Hoàn thành</option>
+                <option value="Cancelled">Hủy</option>
+            </select>
+        </div>
+        <div class="col-md-4 text-end">
+            <small class="text-muted">
+                Hiển thị @Filtered.Count / @(_rows?.Count ?? 0) dòng
+            </small>
+        </div>
+    </div>
+
+    @if (_rows == null)
+    {
+        <p><em>Đang tải...</em></p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <div class="alert alert-secondary">
+            <i class="bi bi-inbox"></i> Chưa có phiếu KH nào. @(_canEdit ? "Bấm \"Tạo phiếu KH mới\" để bắt đầu." : "")
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
+                <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                    <tr>
+                        <th>Số phiếu</th>
+                        <th>Ngày lập</th>
+                        <th>Ngày nhận</th>
+                        <th>Khách hàng</th>
+                        <th><strong>PO</strong></th>
+                        <th>Old PO</th>
+                        <th><strong>Part No</strong></th>
+                        <th class="text-end">SL</th>
+                        <th>Đvị</th>
+                        <th>STD</th>
+                        <th>Loại</th>
+                        <th>Ưu tiên</th>
+                        <th>Cấu hình phôi</th>
+                        <th>Ghi chú Hàng</th>
+                        <th>Order VL</th>
+                        <th>Vị trí</th>
+                        <th>Trạng thái</th>
+                        <th style="width: 120px;">Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in Filtered)
+                    {
+                        <tr @ondblclick="() => OpenView(r)" style="cursor: pointer;" title="Double-click để xem chi tiết">
+                            <td><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
+                            <td class="text-nowrap">@r.PlanDate.ToString("dd/MM/yy")</td>
+                            <td class="text-nowrap">
+                                @if (r.ReceivedDate.HasValue)
+                                {
+                                    @r.ReceivedDate.Value.ToString("dd/MM/yy")
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
+                            <td class="text-truncate" style="max-width: 180px;" title="@r.CustomerName">@r.CustomerName</td>
+                            <td><code>@r.PurchaseOrder</code></td>
+                            <td>
+                                @if (!string.IsNullOrEmpty(r.OldPurchaseOrder))
+                                {
+                                    <code class="text-muted" title="Tách từ PO này">@r.OldPurchaseOrder</code>
+                                }
+                            </td>
+                            <td><code>@r.PartNo</code></td>
+                            <td class="text-end text-nowrap">@r.Quantity.ToString("0.####")</td>
+                            <td class="text-nowrap">@r.Unit</td>
+                            <td class="text-nowrap">
+                                @r.STD.ToString("dd/MM/yy")
+                                @if (r.STD < DateTime.Today)
+                                {
+                                    <i class="bi bi-exclamation-triangle text-danger ms-1" title="Quá hạn"></i>
+                                }
+                                else if (r.STD < DateTime.Today.AddDays(7))
+                                {
+                                    <i class="bi bi-clock text-warning ms-1" title="Sắp hạn"></i>
+                                }
+                            </td>
+                            <td>@r.Type</td>
+                            <td>@r.Priority</td>
+                            <td class="font-monospace text-truncate" style="max-width: 100px;" title="@r.MaterialConfig">@r.MaterialConfig</td>
+                            <td class="text-truncate" style="max-width: 140px;" title="@r.PartNotes">@r.PartNotes</td>
+                            <td class="font-monospace">@r.OrderVL</td>
+                            <td>@r.Location</td>
+                            <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
+                            <td @onclick:stopPropagation class="text-nowrap">
+                                @if (_canEdit)
+                                {
+                                    <a class="btn btn-sm btn-outline-primary py-0 px-1" href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}/edit")" title="Sửa dòng này">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <button class="btn btn-sm btn-outline-warning py-0 px-1" @onclick="() => OpenSplit(r)" title="Tách PO">
+                                        <i class="bi bi-diagram-3"></i>
+                                    </button>
+                                }
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-1" @onclick="() => OpenHistory(r)" title="Lịch sử sửa">
+                                    <i class="bi bi-clock-history"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
 }
 
 <SplitPOModal
@@ -227,6 +250,10 @@ else
 }
 
 @code {
+    private bool _isLoading = true;
+    private bool _canView = false;
+    private bool _canEdit = false;
+
     private List<KhPlanDetailRow>? _rows;
     private string _search = "";
     private string _statusFilter = "";
@@ -239,7 +266,35 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await Reload();
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = auth.User;
+        var userIdStr = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        var isAdmin = user.IsInRole("ADMIN") 
+                   || user.FindFirst("GroupCode")?.Value == "ADMIN" 
+                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                   || user.Identity?.Name?.ToLower() == "admin";
+
+        if (isAdmin)
+        {
+            _canView = true;
+            _canEdit = true;
+        }
+        else if (int.TryParse(userIdStr, out var uid))
+        {
+            var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+            if (perms.TryGetValue("KE_HOACH", out var p))
+            {
+                _canView = p.CanView;
+                _canEdit = p.CanEdit;
+            }
+        }
+
+        if (_canView)
+        {
+            await Reload();
+        }
+        _isLoading = false;
     }
 
     private async Task Reload()
@@ -273,7 +328,6 @@ else
         }
     }
 
-    /// <summary>v0.5.2: View 1 dòng cụ thể, không hiện các dòng khác cùng phiếu</summary>
     private void OpenView(KhPlanDetailRow row)
     {
         Nav.NavigateTo($"/kh-plan/{row.KhPlanId}/detail/{row.KhPlanDetailId}");

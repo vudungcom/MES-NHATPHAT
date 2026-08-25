@@ -185,7 +185,8 @@ public class PartInspectionService
         if (!user.IsActive) throw new UnauthorizedAccessException("User đã bị khóa");
 
         var groupCode = user.Group?.GroupCode;
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, user.Role, Area))
+        // Bỏ user.Role, truyền null
+        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
             throw new UnauthorizedAccessException(
                 $"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}. " +
                 $"Chỉ ADMIN hoặc {RequiredGroup} Leader mới được sửa.");

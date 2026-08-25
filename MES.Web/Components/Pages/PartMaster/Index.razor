@@ -1,178 +1,220 @@
 @page "/part-master"
 @attribute [Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
 @using MES.Web.Data.Entities
 @using MES.Web.Services
 @inject PartMasterListService ListSvc
 @inject PartMasterService PmSvc
+@inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Part Master - MES</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="mb-1">Part Master</h1>
-        <p class="text-muted small mb-0">
-            Mỗi dòng = 1 Part. Click <i class="bi bi-caret-right-fill"></i> để xem chi tiết,
-            <strong>double-click</strong> hoặc bấm "Chi tiết" để mở trang sửa.
-        </p>
-    </div>
-    <div class="d-flex gap-2">
-        @if (_canCreate)
-        {
-            <a href="/part-master/create" class="btn btn-primary">
-                <i class="bi bi-plus-lg"></i> Tạo Part mới
-            </a>
-        }
-    </div>
-</div>
-
-<div class="row mb-3 g-2">
-    <div class="col-md-5">
-        <div class="input-group input-group-sm">
-            <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input class="form-control" placeholder="Tìm theo Part No / Tên chi tiết / Khách hàng..."
-                   @bind="_search" @bind:event="oninput" />
-            @if (!string.IsNullOrEmpty(_search))
-            {
-                <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
-                    <i class="bi bi-x"></i>
-                </button>
-            }
-        </div>
-    </div>
-    <div class="col-md-3">
-        <select class="form-select form-select-sm" @bind="_customerFilter">
-            <option value="">-- Tất cả khách hàng --</option>
-            @foreach (var c in CustomerOptions)
-            {
-                <option value="@c.Id">@c.Name</option>
-            }
-        </select>
-    </div>
-    <div class="col-md-4 text-end">
-        <small class="text-muted">
-            Hiển thị @Filtered.Count() / @(_rows?.Count ?? 0) Part
-        </small>
-    </div>
-</div>
-
-@if (_rows == null)
+@if (_isLoading)
 {
-    <p><em>Đang tải...</em></p>
+    <div class="text-center py-5"><span class="spinner-border"></span> Đang tải dữ liệu Part Master...</div>
 }
-else if (_rows.Count == 0)
+else if (!_canView)
 {
-    <div class="alert alert-secondary">
-        <i class="bi bi-inbox"></i> Chưa có Part Master nào trong hệ thống.
-        Khi Kế hoạch tạo phiếu KH với Part No mới, Part Master sẽ tự động được tạo.
-        @if (_canCreate)
-        {
-            <span>Hoặc bấm <strong>"Tạo Part mới"</strong> ở góc trên để tạo Part sạch.</span>
-        }
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p>Tài khoản của bạn không có quyền xem danh mục <b>Part Master</b>. Vui lòng liên hệ Admin để được cấp quyền trên Ma trận phân quyền.</p>
     </div>
 }
 else
 {
-    <div class="table-responsive">
-        <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
-            <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
-                <tr>
-                    <th style="width: 30px;"></th>
-                    <th><strong>Part No</strong></th>
-                    <th>Tên chi tiết</th>
-                    <th>Khách hàng</th>
-                    <th>Mã VL</th>
-                    <th>Cấu hình phôi</th>
-                    <th>Ghi chú phôi</th>
-                    <th>Quy trình gia công</th>
-                    <th>Taro</th>
-                    <th>Bavia</th>
-                    <th>Rửa</th>
-                    <th>Kiểm tra</th>
-                    <th style="width: 90px;">Thao tác</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var row in Filtered)
-                {
-                    <tr @ondblclick="() => OpenDetail(row.PartNo)"
-                        style="cursor: pointer;"
-                        title="Double-click để mở trang chi tiết">
-                        <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
-                            <button class="btn btn-sm btn-link p-0" @onclick="() => ToggleExpandAsync(row.PartId)"
-                                    title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết inline")">
-                                @if (IsExpanded(row.PartId))
-                                {
-                                    <i class="bi bi-caret-down-fill"></i>
-                                }
-                                else
-                                {
-                                    <i class="bi bi-caret-right-fill"></i>
-                                }
-                            </button>
-                        </td>
-                        <td><code class="fw-bold">@row.PartNo</code></td>
-                        <td>@(row.PartName ?? "—")</td>
-                        <td>@(row.CustomerName ?? "—")</td>
-                        <td>@(row.Material ?? "—")</td>
-                        <td>@(row.MaterialConfig ?? "—")</td>
-                        <td>@(row.MaterialNote ?? "—")</td>
-                        <td>@RenderNcs(row.MachiningNcs)</td>
-                        <td>@RenderNcs(row.TaroNcs)</td>
-                        <td>@RenderNcs(row.BaviaNcs)</td>
-                        <td>@RenderNcs(row.WashingNcs)</td>
-                        <td>@RenderNcs(row.InspectionNcs)</td>
-                        <td @onclick:stopPropagation @ondblclick:stopPropagation>
-                            <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)"
-                                    title="Mở trang chi tiết">
-                                <i class="bi bi-arrow-right-circle"></i> Chi tiết
-                            </button>
-                        </td>
-                    </tr>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h1 class="mb-1">Part Master</h1>
+            <p class="text-muted small mb-0">
+                Mỗi dòng = 1 Part. Click <i class="bi bi-caret-right-fill"></i> để xem chi tiết,
+                <strong>double-click</strong> hoặc bấm "Chi tiết" để mở trang sửa.
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            @if (_canCreate)
+            {
+                <a href="/part-master/create" class="btn btn-primary">
+                    <i class="bi bi-plus-lg"></i> Tạo Part mới
+                </a>
+            }
+        </div>
+    </div>
 
-                    @if (IsExpanded(row.PartId))
+    <div class="row mb-3 g-2">
+        <div class="col-md-5">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input class="form-control" placeholder="Tìm theo Part No / Tên chi tiết / Khách hàng..."
+                       @bind="_search" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(_search))
+                {
+                    <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
+                        <i class="bi bi-x"></i>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="col-md-3">
+            <select class="form-select form-select-sm" @bind="_customerFilter">
+                <option value="">-- Tất cả khách hàng --</option>
+                @foreach (var c in CustomerOptions)
+                {
+                    <option value="@c.Id">@c.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4 text-end">
+            <small class="text-muted">
+                Hiển thị @Filtered.Count() / @(_rows?.Count ?? 0) Part
+            </small>
+        </div>
+    </div>
+
+    @if (_rows == null)
+    {
+        <p><em>Đang tải...</em></p>
+    }
+    else if (_rows.Count == 0)
+    {
+        <div class="alert alert-secondary">
+            <i class="bi bi-inbox"></i> Chưa có Part Master nào trong hệ thống.
+            Khi Kế hoạch tạo phiếu KH với Part No mới, Part Master sẽ tự động được tạo.
+            @if (_canCreate)
+            {
+                <span>Hoặc bấm <strong>"Tạo Part mới"</strong> ở góc trên để tạo Part sạch.</span>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
+                <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
+                    <tr>
+                        <th style="width: 30px;"></th>
+                        <th><strong>Part No</strong></th>
+                        <th>Tên chi tiết</th>
+                        <th>Khách hàng</th>
+                        <th>Mã VL</th>
+                        <th>Cấu hình phôi</th>
+                        <th>Ghi chú phôi</th>
+                        <th>Quy trình gia công</th>
+                        <th>Taro</th>
+                        <th>Bavia</th>
+                        <th>Rửa</th>
+                        <th>Kiểm tra</th>
+                        <th style="width: 90px;">Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Filtered)
                     {
-                        <tr>
-                            <td colspan="13" class="bg-light p-3">
-                                @if (_detailByPart.TryGetValue(row.PartId, out var detail))
-                                {
-                                    @RenderExpandedDetail(row, detail)
-                                }
-                                else
-                                {
-                                    <em class="text-muted small">Đang tải chi tiết...</em>
-                                }
+                        <tr @ondblclick="() => OpenDetail(row.PartNo)"
+                            style="cursor: pointer;"
+                            title="Double-click để mở trang chi tiết">
+                            <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
+                                <button class="btn btn-sm btn-link p-0" @onclick="() => ToggleExpandAsync(row.PartId)"
+                                        title="@(IsExpanded(row.PartId) ? "Thu gọn" : "Xem chi tiết inline")">
+                                    @if (IsExpanded(row.PartId))
+                                    {
+                                        <i class="bi bi-caret-down-fill"></i>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-caret-right-fill"></i>
+                                    }
+                                </button>
+                            </td>
+                            <td><code class="fw-bold">@row.PartNo</code></td>
+                            <td>@(row.PartName ?? "—")</td>
+                            <td>@(row.CustomerName ?? "—")</td>
+                            <td>@(row.Material ?? "—")</td>
+                            <td>@(row.MaterialConfig ?? "—")</td>
+                            <td>@(row.MaterialNote ?? "—")</td>
+                            <td>@RenderNcs(row.MachiningNcs)</td>
+                            <td>@RenderNcs(row.TaroNcs)</td>
+                            <td>@RenderNcs(row.BaviaNcs)</td>
+                            <td>@RenderNcs(row.WashingNcs)</td>
+                            <td>@RenderNcs(row.InspectionNcs)</td>
+                            <td @onclick:stopPropagation @ondblclick:stopPropagation>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)"
+                                        title="Mở trang chi tiết">
+                                    <i class="bi bi-arrow-right-circle"></i> Chi tiết
+                                </button>
                             </td>
                         </tr>
+
+                        @if (IsExpanded(row.PartId))
+                        {
+                            <tr>
+                                <td colspan="13" class="bg-light p-3">
+                                    @if (_detailByPart.TryGetValue(row.PartId, out var detail))
+                                    {
+                                        @RenderExpandedDetail(row, detail)
+                                    }
+                                    else
+                                    {
+                                        <em class="text-muted small">Đang tải chi tiết...</em>
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
-                }
-            </tbody>
-        </table>
-    </div>
+                </tbody>
+            </table>
+        </div>
+    }
 }
 
 @code {
+    private bool _isLoading = true;
+    private bool _canView = false;
+    private bool _canCreate = false;
+
     private List<PartMasterListRow>? _rows;
     private HashSet<int> _expanded = new();
     private Dictionary<int, PartMasterExpandDetail> _detailByPart = new();
     private string _search = string.Empty;
     private string _customerFilter = string.Empty;
-    private bool _canCreate;
 
     protected override async Task OnInitializedAsync()
     {
-        _rows = await ListSvc.GetAllRowsAsync();
-
-        // Check quyền tạo Part mới — query fresh từ DB
         var auth = await AuthState.GetAuthenticationStateAsync();
-        var userIdStr = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (int.TryParse(userIdStr, out var uid))
+        var user = auth.User;
+        var userIdStr = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        var isAdmin = user.IsInRole("ADMIN") 
+                   || user.FindFirst("GroupCode")?.Value == "ADMIN" 
+                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                   || user.Identity?.Name?.ToLower() == "admin";
+
+        if (isAdmin)
         {
-            var ctx = await PmSvc.GetUserContextAsync(uid);
-            _canCreate = PartMasterPermissionHelper.CanCreatePartMaster(ctx?.GroupCode, ctx?.Role);
+            _canView = true;
+            _canCreate = true;
         }
+        else if (int.TryParse(userIdStr, out var uid))
+        {
+            var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+            
+            // Được xem Part Master nếu có quyền xem ở bất kỳ vùng Part Master nào
+            _canView = perms.Values.Any(p => p.CanView);
+
+            // Được tạo Part mới nếu có quyền Sửa ở vùng PART_TAO_MOI
+            if (perms.TryGetValue("PART_TAO_MOI", out var pTaoMoi))
+            {
+                _canCreate = pTaoMoi.CanEdit;
+            }
+        }
+
+        if (_canView)
+        {
+            _rows = await ListSvc.GetAllRowsAsync();
+        }
+        _isLoading = false;
     }
 
     private bool IsExpanded(int partId) => _expanded.Contains(partId);
@@ -198,7 +240,6 @@ else
         Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(partNo)}");
     }
 
-    // Chuỗi NC nối "→" (VD: NC01 → NC02 → NC03)
     private RenderFragment RenderNcs(List<string> ncs) => builder =>
     {
         if (ncs.Count == 0)

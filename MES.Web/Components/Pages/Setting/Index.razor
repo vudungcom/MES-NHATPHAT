@@ -1,0 +1,467 @@
+@page "/settings"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using MES.Web.Constants
+@using System.Security.Claims
+@inject AuthenticationStateProvider AuthState
+@inject MES.Web.Services.UserService UserSvc
+@inject NavigationManager NavManager
+
+<PageTitle>Cài đặt hệ thống & Phân quyền - MES</PageTitle>
+
+<div class="container-fluid pt-3 pb-5">
+    @if (isLoading)
+    {
+        <div class="text-center py-5"><span class="spinner-border"></span> Đang tải cấu hình...</div>
+    }
+    else if (!isAdmin)
+    {
+        <div class="alert alert-danger shadow-sm">
+            <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+            <p>Chỉ tài khoản thuộc nhóm <b>ADMIN</b> mới có quyền truy cập trang Cài đặt.</p>
+        </div>
+    }
+    else
+    {
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h2 style="font-weight: bold; color: #1e293b;"><i class="bi bi-gear-fill me-2 text-secondary"></i>Cài đặt & Phân quyền</h2>
+                <p class="text-muted mb-0">Quản lý người dùng, nhóm bộ phận và ma trận phân quyền hệ thống.</p>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(thongBaoLoi))
+        {
+            <div class="alert alert-danger py-2 small mb-3">
+                <i class="bi bi-exclamation-triangle"></i> @thongBaoLoi
+                <button type="button" class="btn-close float-end" @onclick="() => thongBaoLoi = string.Empty"></button>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(thongBaoThanhCong))
+        {
+            <div class="alert alert-success py-2 small mb-3">
+                <i class="bi bi-check-circle"></i> @thongBaoThanhCong
+                <button type="button" class="btn-close float-end" @onclick="() => thongBaoThanhCong = string.Empty"></button>
+            </div>
+        }
+
+        <!-- TABS NAV -->
+        <ul class="nav nav-tabs mb-3 fw-bold">
+            <li class="nav-item">
+                <button class="nav-link @(activeTab == 1 ? "active text-primary" : "text-muted")" @onclick="() => activeTab = 1">
+                    <i class="bi bi-people-fill me-1"></i> Danh sách User
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link @(activeTab == 2 ? "active text-primary" : "text-muted")" @onclick="() => activeTab = 2">
+                    <i class="bi bi-diagram-3-fill me-1"></i> Nhóm bộ phận
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link @(activeTab == 3 ? "active text-danger" : "text-muted")" @onclick="() => activeTab = 3">
+                    <i class="bi bi-grid-3x3-gap-fill me-1"></i> Ma trận Phân quyền
+                </button>
+            </li>
+        </ul>
+
+        <!-- TAB 1: USERS -->
+        @if (activeTab == 1)
+        {
+            <div class="card shadow-sm border-0 mb-3">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <h5 class="mb-0 fw-bold text-primary">Danh sách Người dùng (@danhSachUser.Count)</h5>
+                    <button class="btn btn-sm btn-primary" @onclick="MoPopupUser"><i class="bi bi-plus-lg"></i> Thêm User</button>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Tên đăng nhập</th>
+                                <th>Họ và Tên</th>
+                                <th>Nhóm</th>
+                                <th>Trạng thái</th>
+                                <th>Ngày tạo</th>
+                                <th class="text-center">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var u in danhSachUser)
+                            {
+                                <tr>
+                                    <td class="fw-bold">@u.Username</td>
+                                    <td>@u.FullName</td>
+                                    <td>
+                                        <span class="badge bg-secondary">@(u.Group?.GroupName ?? "Chưa gán")</span>
+                                    </td>
+                                    <td>
+                                        @if (u.IsActive) { <span class="badge bg-success">Hoạt động</span> }
+                                        else { <span class="badge bg-danger">Khóa</span> }
+                                    </td>
+                                    <td class="small text-muted">@u.CreatedAt.ToString("dd/MM/yyyy")</td>
+                                    <td class="text-center">
+                                        <button class="btn btn-sm btn-outline-primary py-0 px-2" @onclick="() => MoPopupSuaUser(u)"><i class="bi bi-pencil"></i></button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- TAB 2: GROUPS -->
+        @if (activeTab == 2)
+        {
+            <div class="card shadow-sm border-0 mb-3">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <h5 class="mb-0 fw-bold text-primary">Danh mục Nhóm / Chức danh (@danhSachGroup.Count)</h5>
+                    <button class="btn btn-sm btn-primary" @onclick="MoPopupGroup"><i class="bi bi-plus-lg"></i> Thêm Nhóm</button>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 150px;">Mã Nhóm</th>
+                                <th>Tên hiển thị</th>
+                                <th class="text-center">Số lượng User</th>
+                                <th class="text-center">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var g in danhSachGroup)
+                            {
+                                <tr>
+                                    <td class="font-monospace fw-bold text-danger">@g.GroupCode</td>
+                                    <td class="fw-bold">@g.GroupName</td>
+                                    <td class="text-center">@danhSachUser.Count(u => u.GroupId == g.GroupId)</td>
+                                    <td class="text-center">
+                                        @if (g.GroupCode != "ADMIN")
+                                        {
+                                            <button class="btn btn-sm btn-outline-primary py-0 px-2" @onclick="() => MoPopupSuaGroup(g)"><i class="bi bi-pencil"></i></button>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-dark">Hệ thống</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- TAB 3: MA TRẬN PHÂN QUYỀN (MATRIX RBAC) -->
+        @if (activeTab == 3)
+        {
+            <div class="alert alert-info small mb-3 shadow-sm border-0 d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="bi bi-info-circle-fill me-2"></i>
+                    Bảng ma trận quản lý quyền truy cập. Nhóm <b>ADMIN</b> mặc định có toàn quyền. Bật quyền <b>Sửa</b> sẽ tự động bật quyền <b>Xem</b>.
+                </div>
+                <button class="btn btn-danger btn-sm fw-bold px-4 shadow" @onclick="LuuMaTranPhanQuyenAsync" disabled="@isProcessing">
+                    @if (isProcessing) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="bi bi-save me-1"></i> <span>Lưu Ma Trận</span> }
+                </button>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="table-responsive" style="max-height: 65vh; overflow-y: auto; overflow-x: auto;">
+                    <table class="table table-bordered table-hover table-sm text-center align-middle mb-0" style="min-width: 1200px;">
+                        <thead class="table-dark sticky-top" style="z-index: 2;">
+                            <tr>
+                                <th class="text-start sticky-start bg-dark" style="left: 0; z-index: 3; min-width: 200px;">
+                                    Nhóm người dùng \ Vùng dữ liệu
+                                </th>
+                                @foreach (var sec in SystemPermissions.Sections)
+                                {
+                                    <th style="min-width: 140px;" title="@sec.Description">
+                                        <div class="fw-bold text-warning" style="font-size: 0.85rem;">@sec.Name</div>
+                                    </th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var grp in danhSachGroup.Where(g => g.GroupCode != "ADMIN"))
+                            {
+                                <tr>
+                                    <!-- Cột cố định -->
+                                    <td class="text-start fw-bold sticky-start bg-white shadow-sm" style="left: 0; z-index: 1;">
+                                        @grp.GroupName
+                                        <div class="text-muted font-monospace" style="font-size: 0.7rem;">@grp.GroupCode</div>
+                                    </td>
+                                    
+                                    <!-- Các ô Checkbox -->
+                                    @foreach (var sec in SystemPermissions.Sections)
+                                    {
+                                        var p = permissionMatrix[grp.GroupId][sec.Code];
+                                        <td class="@(p.CanEdit ? "bg-warning bg-opacity-10" : (p.CanView ? "bg-light" : ""))">
+                                            <div class="d-flex flex-column align-items-center gap-1 my-1">
+                                                <div class="form-check form-switch mb-0">
+                                                    <input class="form-check-input" type="checkbox" role="switch" id="view_@(grp.GroupId)_@(sec.Code)" 
+                                                           @bind="p.CanView" 
+                                                           @bind:after="() => { if(!p.CanView) p.CanEdit = false; }" />
+                                                    <label class="form-check-label small @(p.CanView ? "fw-bold text-success" : "text-muted")" for="view_@(grp.GroupId)_@(sec.Code)">Xem</label>
+                                                </div>
+                                                <div class="form-check form-switch mb-0">
+                                                    <input class="form-check-input" type="checkbox" role="switch" id="edit_@(grp.GroupId)_@(sec.Code)" 
+                                                           @bind="p.CanEdit" 
+                                                           @bind:after="() => { if(p.CanEdit) p.CanView = true; }" />
+                                                    <label class="form-check-label small @(p.CanEdit ? "fw-bold text-danger" : "text-muted")" for="edit_@(grp.GroupId)_@(sec.Code)">Sửa</label>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+<!-- Modal Thêm/Sửa USER -->
+@if (isHienThiPopupUser)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">@(userDangSua.UserId == 0 ? "Thêm người dùng mới" : "Sửa thông tin người dùng")</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupUser"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Tên đăng nhập *</label>
+                        <input type="text" class="form-control" @bind="userDangSua.Username" disabled="@(userDangSua.UserId > 0)" placeholder="Nhập username viết liền không dấu..." />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Họ và tên *</label>
+                        <input type="text" class="form-control" @bind="userDangSua.FullName" placeholder="VD: Nguyễn Văn A..." />
+                    </div>
+                    @if (userDangSua.UserId == 0)
+                    {
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold mb-1">Mật khẩu khởi tạo *</label>
+                            <input type="password" class="form-control" @bind="matKhauMoi" placeholder="Mật khẩu..." />
+                        </div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold mb-1">Nhóm / Chức danh *</label>
+                        <select class="form-select" @bind="userDangSua.GroupId">
+                            <option value="">-- Chọn nhóm bộ phận --</option>
+                            @foreach (var g in danhSachGroup)
+                            {
+                                <option value="@g.GroupId">@g.GroupName (@g.GroupCode)</option>
+                            }
+                        </select>
+                    </div>
+                    @if (userDangSua.UserId > 0)
+                    {
+                        <div class="form-check form-switch mt-3">
+                            <input class="form-check-input" type="checkbox" id="chkActive" @bind="userDangSua.IsActive">
+                            <label class="form-check-label fw-bold @(userDangSua.IsActive ? "text-success" : "text-danger")" for="chkActive">
+                                @(userDangSua.IsActive ? "Đang hoạt động" : "Tài khoản bị khóa")
+                            </label>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="DongPopupUser">Hủy</button>
+                    <button type="button" class="btn btn-primary" @onclick="LuuUserAsync">Lưu thông tin</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal Thêm/Sửa GROUP -->
+@if (isHienThiPopupGroup)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">@(groupMoi.GroupId == 0 ? "Tạo Nhóm / Chức danh mới" : "Sửa Tên Nhóm / Chức danh")</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupGroup"></button>
+                </div>
+                <div class="modal-body">
+                    @if (groupMoi.GroupId == 0)
+                    {
+                        <div class="alert alert-light small border py-2 mb-3">
+                            <b>Gợi ý:</b> Hãy tạo nhóm cho Leader tách biệt với Normal. VD: <code>KT</code> (Nhân viên Kỹ Thuật), <code>LEADER_KT</code> (Tổ trưởng Kỹ Thuật).
+                        </div>
+                    }
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Mã Nhóm (GroupCode) *</label>
+                        <input type="text" class="form-control text-uppercase font-monospace fw-bold" @bind="groupMoi.GroupCode" disabled="@(groupMoi.GroupId > 0)" placeholder="VD: GIA_CONG, LEADER_GC..." />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Tên hiển thị *</label>
+                        <input type="text" class="form-control" @bind="groupMoi.GroupName" placeholder="VD: Tổ trưởng Gia công..." autofocus />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="DongPopupGroup">Hủy</button>
+                    <button type="button" class="btn btn-primary" @onclick="LuuGroupAsync">@(groupMoi.GroupId == 0 ? "Tạo nhóm" : "Lưu thay đổi")</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isAdmin = false;
+    private bool isProcessing = false;
+    private int activeTab = 3; // Mặc định mở tab Ma trận
+
+    private string thongBaoLoi = "";
+    private string thongBaoThanhCong = "";
+
+    private List<UserGroup> danhSachGroup = new();
+    private List<User> danhSachUser = new();
+    
+    // Cấu trúc Ma trận: Dict<GroupId, Dict<SectionCode, GroupPermissionSetting>>
+    private Dictionary<int, Dictionary<string, GroupPermissionSetting>> permissionMatrix = new();
+
+    // Biến cho Popup
+    private bool isHienThiPopupUser = false;
+    private bool isHienThiPopupGroup = false;
+    private User userDangSua = new();
+    private UserGroup groupMoi = new();
+    private string matKhauMoi = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var user = authState.User;
+        
+        var isUserAdmin = user.IsInRole("ADMIN") 
+                       || user.FindFirst("GroupCode")?.Value == "ADMIN" 
+                       || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                       || user.Identity?.Name?.ToLower() == "admin";
+
+        if (isUserAdmin)
+        {
+            isAdmin = true;
+            await LoadDataAsync();
+        }
+        isLoading = false;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        danhSachGroup = await UserSvc.GetAllGroupsAsync();
+        danhSachUser = await UserSvc.GetAllUsersAsync();
+
+        // Khởi tạo Ma trận phân quyền vào bộ nhớ
+        permissionMatrix.Clear();
+        foreach (var grp in danhSachGroup)
+        {
+            var savedPerms = UserSvc.GetGroupPermissions(grp.Permissions);
+            var sectionDict = new Dictionary<string, GroupPermissionSetting>();
+            
+            foreach (var sec in SystemPermissions.Sections)
+            {
+                var existing = savedPerms.FirstOrDefault(x => x.SectionCode == sec.Code);
+                sectionDict[sec.Code] = existing ?? new GroupPermissionSetting { SectionCode = sec.Code, CanView = false, CanEdit = false };
+            }
+            permissionMatrix[grp.GroupId] = sectionDict;
+        }
+    }
+
+    private async Task LuuMaTranPhanQuyenAsync()
+    {
+        isProcessing = true;
+        thongBaoLoi = "";
+        thongBaoThanhCong = "";
+
+        try
+        {
+            foreach (var grp in danhSachGroup.Where(g => g.GroupCode != "ADMIN"))
+            {
+                var dict = permissionMatrix[grp.GroupId];
+                var permsToSave = dict.Values.ToList();
+                await UserSvc.UpdateGroupPermissionsAsync(grp.GroupId, permsToSave);
+            }
+            thongBaoThanhCong = "Đã lưu ma trận phân quyền thành công. Các thay đổi sẽ áp dụng vào lần đăng nhập tiếp theo của User.";
+        }
+        catch (Exception ex)
+        {
+            thongBaoLoi = "Lỗi khi lưu: " + ex.Message;
+        }
+        
+        isProcessing = false;
+    }
+
+    // ==== Logic User ====
+    private void MoPopupUser() { userDangSua = new User(); matKhauMoi = ""; isHienThiPopupUser = true; thongBaoLoi = ""; thongBaoThanhCong = ""; }
+    private void MoPopupSuaUser(User u) { userDangSua = new User { UserId = u.UserId, Username = u.Username, FullName = u.FullName, GroupId = u.GroupId, IsActive = u.IsActive }; isHienThiPopupUser = true; }
+    private void DongPopupUser() { isHienThiPopupUser = false; }
+
+    private async Task LuuUserAsync()
+    {
+        if (string.IsNullOrWhiteSpace(userDangSua.Username) || string.IsNullOrWhiteSpace(userDangSua.FullName) || userDangSua.GroupId == null)
+        {
+            thongBaoLoi = "Vui lòng nhập đủ Tên đăng nhập, Họ tên và Chọn nhóm."; return;
+        }
+
+        if (userDangSua.UserId == 0) // Thêm mới
+        {
+            if (string.IsNullOrWhiteSpace(matKhauMoi)) { thongBaoLoi = "Vui lòng nhập mật khẩu khởi tạo."; return; }
+            var res = await UserSvc.CreateUserAsync(userDangSua, matKhauMoi);
+            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+        }
+        else // Sửa
+        {
+            var res = await UserSvc.UpdateUserAsync(userDangSua);
+            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+        }
+
+        DongPopupUser();
+        await LoadDataAsync();
+        thongBaoThanhCong = "Lưu thông tin người dùng thành công.";
+    }
+
+    // ==== Logic Group ====
+    private void MoPopupGroup() { groupMoi = new UserGroup(); isHienThiPopupGroup = true; thongBaoLoi = ""; thongBaoThanhCong = ""; }
+    
+    private void MoPopupSuaGroup(UserGroup g) 
+    { 
+        groupMoi = new UserGroup { GroupId = g.GroupId, GroupCode = g.GroupCode, GroupName = g.GroupName, Permissions = g.Permissions, IsActive = g.IsActive }; 
+        isHienThiPopupGroup = true; 
+        thongBaoLoi = ""; 
+        thongBaoThanhCong = ""; 
+    }
+    
+    private void DongPopupGroup() { isHienThiPopupGroup = false; }
+
+    private async Task LuuGroupAsync()
+    {
+        if (string.IsNullOrWhiteSpace(groupMoi.GroupCode) || string.IsNullOrWhiteSpace(groupMoi.GroupName))
+        {
+            thongBaoLoi = "Vui lòng nhập đủ Mã nhóm và Tên nhóm."; return;
+        }
+
+        if (groupMoi.GroupId == 0) // Thêm mới
+        {
+            var res = await UserSvc.CreateGroupAsync(groupMoi);
+            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            thongBaoThanhCong = "Tạo nhóm mới thành công.";
+        }
+        else // Sửa tên hiển thị
+        {
+            var res = await UserSvc.UpdateGroupAsync(groupMoi);
+            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            thongBaoThanhCong = "Cập nhật tên nhóm thành công.";
+        }
+
+        DongPopupGroup();
+        await LoadDataAsync(); // Tự động vẽ lại dữ liệu và Ma trận
+    }
+}
