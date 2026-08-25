@@ -1,0 +1,359 @@
+@page "/customers"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject CustomerService CustomerSvc
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Danh sách Khách hàng - MES</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Danh mục Khách hàng</h1>
+        <p class="text-muted small mb-0">Quản lý đối tác, thông tin mã NCC và theo dõi lịch sử chỉnh sửa Master Data.</p>
+    </div>
+    <div>
+        <button class="btn btn-primary" @onclick="OpenCreateModal">
+            <i class="bi bi-plus-lg"></i> Thêm khách hàng mới
+        </button>
+    </div>
+</div>
+
+<div class="row g-2 mb-3">
+    <div class="col-md-5">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input class="form-control" placeholder="Tìm theo Mã KH / Tên khách hàng / Supplier Code..."
+                   @bind="_search" @bind:event="oninput" />
+            @if (!string.IsNullOrEmpty(_search))
+            {
+                <button class="btn btn-outline-secondary" @onclick="() => _search = string.Empty">
+                    <i class="bi bi-x"></i>
+                </button>
+            }
+        </div>
+    </div>
+    <div class="col-md-7 d-flex justify-content-end align-items-center gap-3">
+        <div class="form-check form-switch small">
+            <input class="form-check-input" type="checkbox" id="chkShowAll" @bind="_showInactive" @bind:after="async () => await LoadDataAsync()" />
+            <label class="form-check-label text-muted" for="chkShowAll">Hiện cả khách hàng đã ngừng/xóa</label>
+        </div>
+        <small class="text-muted">Hiển thị <strong>@Filtered.Count()</strong> / @_customers.Count khách hàng</small>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải danh sách...</div>
+}
+else
+{
+    <div class="table-responsive border rounded bg-white shadow-sm">
+        <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+            <thead class="table-light">
+                <tr>
+                    <th style="width: 50px;" class="text-center">#</th>
+                    <th style="width: 140px;">Mã KH</th>
+                    <th>Tên khách hàng</th>
+                    <th style="width: 160px;">Supplier Code</th>
+                    <th style="width: 120px;" class="text-center">Trạng thái</th>
+                    <th style="width: 110px;" class="text-center">Thao tác</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            <em>Không tìm thấy khách hàng nào phù hợp.</em>
+                        </td>
+                    </tr>
+                }
+                @foreach (var (item, idx) in Filtered.Select((c, i) => (c, i)))
+                {
+                    <tr class="@(!item.IsActive ? "table-secondary text-muted text-decoration-line-through" : "")">
+                        <td class="text-center text-muted">@(idx + 1)</td>
+                        <td><code>@(string.IsNullOrEmpty(item.CustomerCode) ? "—" : item.CustomerCode)</code></td>
+                        <td class="fw-bold text-dark">@item.CustomerName</td>
+                        <td>@(item.SupplierCode ?? "—")</td>
+                        <td class="text-center">
+                            @if (item.IsActive)
+                            {
+                                <span class="badge bg-success bg-opacity-10 text-success border border-success">Hoạt động</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">Ngừng hoạt động</span>
+                            }
+                        </td>
+                        <td class="text-center text-nowrap">
+                            <button class="btn btn-sm btn-outline-secondary p-0 px-1 me-1" title="Lịch sử thay đổi"
+                                    @onclick="async () => await OpenHistoryModal(item)">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary p-0 px-1 me-1" title="Chỉnh sửa"
+                                    @onclick="() => OpenEditModal(item)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            @if (item.IsActive)
+                            {
+                                <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Ngừng hoạt động"
+                                        @onclick="async () => await ToggleDelete(item, false)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-success p-0 px-1" title="Khôi phục hoạt động"
+                                        @onclick="async () => await ToggleDelete(item, true)">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ==================== MODAL THÊM / SỬA KHÁCH HÀNG ==================== *@
+@if (_showEditModal && _editingModel != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1050;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header @(_editingModel.CustomerId == 0 ? "bg-primary" : "bg-dark") text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-building"></i>
+                        @(_editingModel.CustomerId == 0 ? "Thêm khách hàng mới" : $"Chỉnh sửa: {_editingModel.CustomerName}")
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => _showEditModal = false"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Mã khách hàng</label>
+                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerCode" placeholder="VD: QM, KOSTAL..." />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Tên khách hàng <span class="text-danger">*</span></label>
+                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerName" placeholder="VD: Quang Minh Production Trading Co., Ltd" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Supplier Code</label>
+                        <input class="form-control form-control-sm" @bind="_editingModel.SupplierCode" placeholder="Mã nhà cung cấp quy định (nếu có)" />
+                    </div>
+
+                    @if (_editingModel.CustomerId > 0)
+                    {
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold text-danger">Lý do thay đổi <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập lý do sửa đổi..." />
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger py-2 small mb-0 mt-2">
+                            <i class="bi bi-exclamation-triangle-fill"></i> @_errorMessage
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => _showEditModal = false">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary px-3 fw-bold" @onclick="async () => await SaveCustomerAsync()" disabled="@_saving">
+                        <i class="bi bi-check-lg"></i> @(_saving ? "Đang lưu..." : "Lưu thông tin")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ==================== MODAL LỊCH SỬ AUDIT TRAIL ==================== *@
+@if (_showHistoryModal && _selectedCustomer != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1060;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-light py-2 border-bottom">
+                    <h6 class="modal-title mb-0 text-dark fw-bold">
+                        <i class="bi bi-clock-history text-secondary me-1"></i>
+                        Lịch sử sửa — <span class="text-primary">@_selectedCustomer.CustomerName</span>
+                    </h6>
+                    <button type="button" class="btn-close" @onclick="() => _showHistoryModal = false"></button>
+                </div>
+                <div class="modal-body p-0">
+                    @if (_historyLoading)
+                    {
+                        <div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm"></span> Đang tải lịch sử...</div>
+                    }
+                    else if (!_historyLogs.Any())
+                    {
+                        <div class="text-center py-4 text-muted"><em>Chưa có nhật ký thay đổi nào.</em></div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive mb-0">
+                            <table class="table table-sm table-hover table-bordered align-middle mb-0" style="font-size: 0.8rem;">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th style="width: 130px;">Thời gian</th>
+                                        <th style="width: 120px;">Trường (Field)</th>
+                                        <th>Giá trị cũ</th>
+                                        <th>Giá trị mới</th>
+                                        <th style="width: 140px;">Người sửa</th>
+                                        <th>Lý do</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var log in _historyLogs)
+                                    {
+                                        <tr>
+                                            <td>@log.ChangedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                                            <td><code class="text-secondary">@log.FieldName</code></td>
+                                            <td class="text-danger">@log.OldValue</td>
+                                            <td class="text-success fw-bold">@log.NewValue</td>
+                                            <td><i class="bi bi-person-circle text-muted me-1"></i>@log.ChangedByName</td>
+                                            <td class="text-muted fst-italic">@log.Reason</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showHistoryModal = false">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _saving = false;
+    private int _currentUserId;
+    private List<Customer> _customers = new();
+    private string _search = string.Empty;
+    private bool _showInactive = false;
+
+    private bool _showEditModal = false;
+    private Customer? _editingModel;
+    private string _editReason = string.Empty;
+    private string? _errorMessage;
+
+    private bool _showHistoryModal = false;
+    private bool _historyLoading = false;
+    private Customer? _selectedCustomer;
+    private List<CustomerChangeLogItem> _historyLogs = new();
+
+    private IEnumerable<Customer> Filtered
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_search)) return _customers;
+            var s = _search.Trim();
+            return _customers.Where(c =>
+                (c.CustomerCode?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                c.CustomerName.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (c.SupplierCode?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var uidStr = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int.TryParse(uidStr, out _currentUserId);
+
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _customers = await CustomerSvc.GetAllAsync(_showInactive);
+    }
+
+    private void OpenCreateModal()
+    {
+        _editingModel = new Customer { IsActive = true };
+        _editReason = string.Empty;
+        _errorMessage = null;
+        _showEditModal = true;
+    }
+
+    private void OpenEditModal(Customer item)
+    {
+        _editingModel = new Customer
+        {
+            CustomerId = item.CustomerId,
+            CustomerCode = item.CustomerCode,
+            CustomerName = item.CustomerName,
+            SupplierCode = item.SupplierCode,
+            IsActive = item.IsActive
+        };
+        _editReason = string.Empty;
+        _errorMessage = null;
+        _showEditModal = true;
+    }
+
+    private async Task SaveCustomerAsync()
+    {
+        _errorMessage = null;
+        if (_editingModel == null) return;
+
+        if (string.IsNullOrWhiteSpace(_editingModel.CustomerName))
+        {
+            _errorMessage = "Tên khách hàng là bắt buộc.";
+            return;
+        }
+
+        if (_editingModel.CustomerId > 0 && (string.IsNullOrWhiteSpace(_editReason) || _editReason.Trim().Length < 3))
+        {
+            _errorMessage = "Vui lòng nhập lý do chỉnh sửa (tối thiểu 3 ký tự).";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            if (_editingModel.CustomerId == 0)
+            {
+                var (ok, err, _) = await CustomerSvc.CreateAsync(_editingModel, _currentUserId);
+                if (!ok) { _errorMessage = err; return; }
+            }
+            else
+            {
+                var (ok, err) = await CustomerSvc.UpdateAsync(_editingModel, _editReason, _currentUserId);
+                if (!ok) { _errorMessage = err; return; }
+            }
+
+            _showEditModal = false;
+            await LoadDataAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ToggleDelete(Customer item, bool activate)
+    {
+        await CustomerSvc.ToggleActiveAsync(item.CustomerId, activate, activate ? "Khôi phục hoạt động" : "Ngừng hoạt động", _currentUserId);
+        await LoadDataAsync();
+    }
+
+    private async Task OpenHistoryModal(Customer item)
+    {
+        _selectedCustomer = item;
+        _showHistoryModal = true;
+        _historyLoading = true;
+        _historyLogs = await CustomerSvc.GetChangeLogsAsync(item.CustomerId);
+        _historyLoading = false;
+    }
+}

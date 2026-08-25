@@ -41,6 +41,7 @@ builder.Services.AddScoped<DoGaService>();
 builder.Services.AddScoped<StandardWtsTaskService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<PartPackagingService>();
+builder.Services.AddScoped<CustomerService>();
 // Luot 6B - Part Master process step services
 builder.Services.AddScoped<PartMachiningService>();
 builder.Services.AddScoped<PartTaroService>();

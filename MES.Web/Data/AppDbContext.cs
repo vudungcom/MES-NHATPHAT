@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     // ==== So Do To Chuc module ====
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
+	public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
 
     // ==== Do Ga & Phu Kien module ====
     public DbSet<DoGa> DoGas => Set<DoGa>();
