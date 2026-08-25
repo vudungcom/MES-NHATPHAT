@@ -14,6 +14,8 @@
 @inject PartInspectionService InspectionSvc
 @inject PartPackagingService PackagingSvc
 @inject StandardWtsTaskService WtsSvc
+@inject ThietBiService ThietBiSvc
+@inject DoGaService DoGaSvc
 @inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
@@ -28,6 +30,16 @@
     .section-readonly:hover {
         opacity: 1;
         filter: grayscale(0%);
+    }
+
+    /* Ẩn nút mũi tên tăng giảm trên ô input number */
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    input[type=number] {
+        -moz-appearance: textfield;
     }
 </style>
 
@@ -148,18 +160,16 @@ else
                             <tr class="text-center">
                                 <th style="width: 45px;">#</th>
                                 <th style="width: 110px;">NC *</th>
-                                @* Cột Bản vẽ tạm ẩn - mở lại khi cần *@
-                                @* <th>Bản vẽ</th> *@
-                                <th>Máy đăng ký</th>
-                                <th>Máy đồng dạng</th>
-                                <th>Đồ gá</th>
-                                <th>Loại dao</th>
-                                <th>Máy bấm giờ</th>
-                                <th style="width: 65px;">T.Gá lắp</th>
-                                <th style="width: 65px;">T.Gia công</th>
-                                <th style="width: 65px;">T.Kiểm tra</th>
-                                <th style="width: 65px;">T.Chuẩn bị</th>
-                                <th style="width: 65px;">T.Chạy thử</th>
+                                <th style="min-width: 140px;">Máy đăng ký</th>
+                                <th style="min-width: 160px;">Máy đồng dạng</th>
+                                <th style="min-width: 130px;">Đồ gá</th>
+                                <th style="min-width: 110px;">Loại dao</th>
+                                <th style="min-width: 140px;">Máy bấm giờ</th>
+                                <th style="width: 75px;">T.Gá lắp</th>
+                                <th style="width: 75px;">T.Gia công</th>
+                                <th style="width: 75px;">T.Kiểm tra</th>
+                                <th style="width: 75px;">T.Chuẩn bị</th>
+                                <th style="width: 75px;">T.Chạy thử</th>
                                 @if (_canEditB) { <th style="width: 80px;">Thao tác</th> }
                             </tr>
                         </thead>
@@ -181,18 +191,78 @@ else
                                             <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")" @bind="edit.NC" disabled="@(!_canEditB || RowLocked(edit))" />
                                         </div>
                                     </td>
-                                    @* Ô dữ liệu Bản vẽ tạm ẩn - mở lại khi cần *@
-                                    @* <td><input class="form-control form-control-sm" @bind="edit.Drawing" disabled="@(!_canEditB || RowLocked(edit))" /></td> *@
-                                    <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineRegistered" placeholder="VD: PHAY08" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input class="form-control form-control-sm text-uppercase" @bind="edit.MachineAlternative" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.FixtureType" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.ToolType" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input class="form-control form-control-sm" @bind="edit.TimingMachine" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.SetupTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.MachiningTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.InspectionTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.PreparationTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.TrialRunTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+
+                                    @* Máy đăng ký *@
+                                    <td>
+                                        <select class="form-select form-select-sm" @bind="edit.MachineRegistered" disabled="@(!_canEditB || RowLocked(edit))">
+                                            <option value="">-- Chọn máy --</option>
+                                            @if (!string.IsNullOrEmpty(edit.MachineRegistered) && !_thietBiList.Any(m => m.SoMay == edit.MachineRegistered))
+                                            {
+                                                <option value="@edit.MachineRegistered">@edit.MachineRegistered (Khác)</option>
+                                            }
+                                            @foreach (var m in _thietBiList)
+                                            {
+                                                <option value="@m.SoMay">@m.SoMay - @m.TenMay</option>
+                                            }
+                                        </select>
+                                    </td>
+
+                                    @* Máy đồng dạng *@
+                                    <td>
+                                        <div class="input-group input-group-sm">
+                                            <input class="form-control form-control-sm" 
+                                                   @bind="edit.MachineAlternative" 
+                                                   placeholder="Chọn máy..." 
+                                                   disabled="@(!_canEditB || RowLocked(edit))" />
+                                            @if (_canEditB && !RowLocked(edit))
+                                            {
+                                                <button class="btn btn-outline-secondary" type="button" 
+                                                        title="Chọn nhiều máy đồng dạng" 
+                                                        @onclick="() => OpenAlternativeModal(edit)">
+                                                    <i class="bi bi-list-check"></i>
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+
+                                    @* Đồ gá *@
+                                    <td>
+                                        <select class="form-select form-select-sm" @bind="edit.FixtureType" disabled="@(!_canEditB || RowLocked(edit))">
+                                            <option value="">-- Chọn đồ gá --</option>
+                                            @if (!string.IsNullOrEmpty(edit.FixtureType) && !_doGaList.Any(d => d.TenDoGa == edit.FixtureType))
+                                            {
+                                                <option value="@edit.FixtureType">@edit.FixtureType (Khác)</option>
+                                            }
+                                            @foreach (var g in _doGaList)
+                                            {
+                                                <option value="@g.TenDoGa">@g.TenDoGa</option>
+                                            }
+                                        </select>
+                                    </td>
+
+                                    @* Loại dao *@
+                                    <td><input class="form-control form-control-sm" @bind="edit.ToolType" placeholder="Loại dao..." disabled="@(!_canEditB || RowLocked(edit))" /></td>
+
+                                    @* Máy bấm giờ *@
+                                    <td>
+                                        <select class="form-select form-select-sm" @bind="edit.TimingMachine" disabled="@(!_canEditB || RowLocked(edit))">
+                                            <option value="">-- Chọn máy --</option>
+                                            @if (!string.IsNullOrEmpty(edit.TimingMachine) && !_thietBiList.Any(m => m.SoMay == edit.TimingMachine))
+                                            {
+                                                <option value="@edit.TimingMachine">@edit.TimingMachine (Khác)</option>
+                                            }
+                                            @foreach (var m in _thietBiList)
+                                            {
+                                                <option value="@m.SoMay">@m.SoMay - @m.TenMay</option>
+                                            }
+                                        </select>
+                                    </td>
+
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" disabled="@(!_canEditB || RowLocked(edit))" /></td>
                                     @if (_canEditB)
                                     {
                                         <td class="text-center text-nowrap">
@@ -229,7 +299,7 @@ else
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
-                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 75px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
                                 @if (_taroEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
@@ -255,7 +325,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
                                             <td class="text-center text-nowrap">
@@ -287,7 +357,7 @@ else
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
-                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 75px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
                                 @if (_baviaEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
@@ -313,7 +383,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
                                             <td class="text-center text-nowrap">
@@ -345,7 +415,7 @@ else
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
-                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 65px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
+                                <tr><th style="width: 80px;">NC</th><th>Công đoạn chuẩn (WTS)</th><th style="width: 75px;">T.Chuẩn</th>@if (_canEditC){<th style="width: 55px;"></th>}</tr>
                             </thead>
                             <tbody>
                                 @if (_washingEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
@@ -371,7 +441,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditC || RowLocked(edit))" title="@edit.StepName" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" disabled="@(!_canEditC || RowLocked(edit))" /></td>
                                         @if (_canEditC)
                                         {
                                             <td class="text-center text-nowrap">
@@ -409,7 +479,7 @@ else
                         <tr>
                             <th style="width: 120px;" class="text-center">NC *</th>
                             <th>Nội dung công việc (WTS Chuẩn)</th>
-                            <th class="text-end" style="width: 120px;">T.Chuẩn (phút)</th>
+                            <th class="text-end" style="width: 130px;">T.Chuẩn (phút)</th>
                             @if (_canEditD) { <th style="width: 80px;" class="text-center">Thao tác</th> }
                         </tr>
                     </thead>
@@ -437,7 +507,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditD || RowLocked(edit))" title="@edit.StepName" />
                                     }
                                 </td>
-                                <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditD || RowLocked(edit))" /></td>
+                                <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" disabled="@(!_canEditD || RowLocked(edit))" /></td>
                                 @if (_canEditD)
                                 {
                                     <td class="text-center text-nowrap">
@@ -473,7 +543,7 @@ else
                         <tr>
                             <th style="width: 120px;" class="text-center">NC *</th>
                             <th>Nội dung đóng gói (WTS Chuẩn)</th>
-                            <th class="text-end" style="width: 120px;">T.Chuẩn (phút)</th>
+                            <th class="text-end" style="width: 130px;">T.Chuẩn (phút)</th>
                             @if (_canEditE) { <th style="width: 80px;" class="text-center">Thao tác</th> }
                         </tr>
                     </thead>
@@ -501,7 +571,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" readonly disabled="@(!_canEditE || RowLocked(edit))" title="@edit.StepName" />
                                     }
                                 </td>
-                                <td><input type="number" step="0.01" class="form-control form-control-sm text-end" @bind="edit.StandardTime" disabled="@(!_canEditE || RowLocked(edit))" /></td>
+                                <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" disabled="@(!_canEditE || RowLocked(edit))" /></td>
                                 @if (_canEditE)
                                 {
                                     <td class="text-center text-nowrap">
@@ -523,13 +593,20 @@ else
     @* ==================== REASON + SAVE ==================== *@
     @if (CanEditAnyArea)
     {
-        <div class="card mb-5 border-danger shadow-sm">
-            <div class="card-header bg-danger text-white fw-bold">
-                <i class="bi bi-pencil-square"></i> Xác nhận & Lý do thay đổi <span class="text-warning">*</span>
+        <div class="card mb-5 @(RequiresReason ? "border-danger shadow-sm" : "border-primary shadow-sm")">
+            <div class="card-header @(RequiresReason ? "bg-danger" : "bg-primary") text-white fw-bold">
+                <i class="bi bi-pencil-square"></i> 
+                @(RequiresReason ? "Xác nhận & Lý do thay đổi *" : "Ghi chú / Lý do (Tùy chọn khi nhập lần đầu)")
             </div>
             <div class="card-body bg-light">
-                <textarea class="form-control border-danger" @bind="_reason" rows="2" placeholder="Nhập tóm tắt lý do sửa đổi (bắt buộc). VD: Thêm công đoạn rửa cho mã hàng mới, chỉnh lại thời gian chạy máy CNC..."></textarea>
-                <small class="text-muted mt-1 d-block"><i class="bi bi-info-circle"></i> Tối thiểu 3 ký tự. Dữ liệu sẽ được ký điện tử và lưu vào sổ Audit Trail.</small>
+                <textarea class="form-control @(RequiresReason ? "border-danger" : "")" @bind="_reason" rows="2" 
+                          placeholder="@(RequiresReason ? "Nhập tóm tắt lý do sửa đổi (bắt buộc khi sửa dữ liệu đã có)..." : "Nhập ghi chú nếu có (không bắt buộc đối với lần đầu nhập)...")"></textarea>
+                <small class="text-muted mt-1 d-block">
+                    <i class="bi bi-info-circle"></i> 
+                    @(RequiresReason 
+                        ? "Tối thiểu 3 ký tự. Dữ liệu sẽ được ký điện tử và lưu vào sổ Audit Trail." 
+                        : "Lần đầu nhập không bắt buộc điền lý do. Hệ thống sẽ tự động lưu 'Khởi tạo quy trình ban đầu' vào Audit Trail.")
+                </small>
                 
                 @if (!string.IsNullOrEmpty(_saveResult))
                 {
@@ -546,6 +623,60 @@ else
             </div>
         </div>
     }
+}
+
+@* ==================== MODAL CHỌN NHIỀU MÁY ĐỒNG DẠNG ==================== *@
+@if (_showAltMachineModal && _currentEditingAltMachining != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-cpu"></i> Chọn máy đồng dạng cho công đoạn <b>@_currentEditingAltMachining.NC</b>
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseAlternativeModal"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="Tìm theo Số máy / Tên máy / Bộ phận..." 
+                               @bind="_altMachineSearch" @bind:event="oninput" />
+                    </div>
+                    <div class="list-group list-group-flush border rounded" style="max-height: 320px; overflow-y: auto;">
+                        @if (!FilteredAltMachines.Any())
+                        {
+                            <div class="p-3 text-center text-muted small"><em>Không tìm thấy thiết bị phù hợp</em></div>
+                        }
+                        @foreach (var m in FilteredAltMachines)
+                        {
+                            var isSelected = _selectedAltMachines.Contains(m.SoMay);
+                            <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3" style="cursor: pointer;">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input me-2" type="checkbox" 
+                                           checked="@isSelected" 
+                                           @onchange="(e) => ToggleAltMachineSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                                    <strong class="text-primary">@m.SoMay</strong>
+                                    <span class="text-dark ms-2">@m.TenMay</span>
+                                    <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
+                                </div>
+                                <span class="small text-muted">@m.LoaiMay</span>
+                            </label>
+                        }
+                    </div>
+                    <div class="small text-muted mt-2">
+                        Đã chọn: <strong class="text-primary">@(_selectedAltMachines.Count > 0 ? string.Join(", ", _selectedAltMachines) : "Chưa chọn")</strong>
+                    </div>
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAlternativeModal">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="SaveAlternativeModal">
+                        <i class="bi bi-check-lg"></i> Xác nhận
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 }
 
 <PinConfirmModal IsOpen="_showPinModal" Title="Xác nhận đổi Master Data" Description="Việc thay đổi tham số chuẩn sẽ ảnh hưởng đến các Kế hoạch trong tương lai. Vui lòng nhập mã PIN." Changes="@_pendingDefaultChanges" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
@@ -594,6 +725,31 @@ else
         }
     }
 
+    // Kiểm tra xem có chỉnh sửa/xóa dữ liệu CŨ đã tồn tại không
+    private bool RequiresReason
+    {
+        get
+        {
+            // Nếu sửa Tên chi tiết đã có từ trước
+            if (_partName != _originalPartName && !string.IsNullOrWhiteSpace(_originalPartName)) return true;
+
+            // Nếu sửa/đổi thuộc tính phôi đã có default từ trước
+            if (!string.IsNullOrWhiteSpace(_originalMaterial) && _material != _originalMaterial) return true;
+            if (!string.IsNullOrWhiteSpace(_originalConfig) && _materialConfig != _originalConfig) return true;
+            if (!string.IsNullOrWhiteSpace(_originalNote) && _materialNote != _originalNote) return true;
+
+            // Nếu sửa, xóa, hoặc khôi phục dòng công đoạn ĐÃ CÓ trong database
+            if (_machiningEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+            if (_taroEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+            if (_baviaEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+            if (_washingEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+            if (_inspectionEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+            if (_packagingEdits.Any(e => e.StepId > 0 && e.State != EditState.Unchanged)) return true;
+
+            return false;
+        }
+    }
+
     private string? _partName;
     private Dictionary<string, List<PartMasterAttribute>> _attrGroups = new();
     private string? _material;
@@ -620,6 +776,28 @@ else
     private List<StandardWtsTask> _washingTasks = new();
     private List<StandardWtsTask> _inspectionTasks = new();
     private List<StandardWtsTask> _packagingTasks = new();
+
+    private List<ThietBi> _thietBiList = new();
+    private List<DoGa> _doGaList = new();
+
+    private bool _showAltMachineModal = false;
+    private MachiningEdit? _currentEditingAltMachining;
+    private HashSet<string> _selectedAltMachines = new();
+    private string _altMachineSearch = string.Empty;
+
+    private IEnumerable<ThietBi> FilteredAltMachines
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_altMachineSearch)) return _thietBiList;
+            var s = _altMachineSearch.Trim();
+            return _thietBiList.Where(m =>
+                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+        }
+    }
 
     private int ActiveMachiningCount => _machiningEdits.Count(e => e.State != EditState.Deleted);
     private int ActiveTaroCount => _taroEdits.Count(e => e.State != EditState.Deleted);
@@ -685,6 +863,9 @@ else
         _washingTasks = _allWtsTasks.Where(t => t.CategoryCode == "RUA").ToList();
         _inspectionTasks = _allWtsTasks.Where(t => t.CategoryCode == "KCS" || t.CategoryCode == "KT_NC").ToList();
         _packagingTasks = _allWtsTasks.Where(t => t.CategoryCode == "DONG_GOI").ToList();
+
+        _thietBiList = await ThietBiSvc.GetAllActiveAsync();
+        _doGaList = await DoGaSvc.GetAllActiveAsync();
 
         _part = await PmSvc.GetByPartNoAsync(PartNo);
         if (_part == null)
@@ -783,6 +964,38 @@ else
         }
     }
 
+    private void OpenAlternativeModal(MachiningEdit edit)
+    {
+        _currentEditingAltMachining = edit;
+        _selectedAltMachines = (edit.MachineAlternative ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altMachineSearch = string.Empty;
+        _showAltMachineModal = true;
+    }
+
+    private void ToggleAltMachineSelection(string soMay, bool isChecked)
+    {
+        if (isChecked) _selectedAltMachines.Add(soMay);
+        else _selectedAltMachines.Remove(soMay);
+    }
+
+    private void CloseAlternativeModal()
+    {
+        _showAltMachineModal = false;
+        _currentEditingAltMachining = null;
+    }
+
+    private void SaveAlternativeModal()
+    {
+        if (_currentEditingAltMachining != null)
+        {
+            _currentEditingAltMachining.MachineAlternative = string.Join(", ", _selectedAltMachines.OrderBy(x => x));
+        }
+        _showAltMachineModal = false;
+        _currentEditingAltMachining = null;
+    }
+
     private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
     {
         var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
@@ -792,7 +1005,7 @@ else
             edit.StepName = task.TaskName;
             if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
             {
-                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 2);
+                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
             }
         }
         else
@@ -875,9 +1088,10 @@ else
         _saveResult = string.Empty;
         _saveHasError = false;
 
-        if (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3)
+        // Chỉ bắt buộc nhập lý do nếu có sửa đổi dữ liệu cũ
+        if (RequiresReason && (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3))
         {
-            _saveResult = "Lý do thay đổi là bắt buộc, tối thiểu 3 ký tự.";
+            _saveResult = "Lý do thay đổi là bắt buộc (tối thiểu 3 ký tự) khi chỉnh sửa dữ liệu đã có.";
             _saveHasError = true;
             return;
         }
@@ -909,15 +1123,16 @@ else
         var list = new List<PinConfirmModal.DefaultChangeInfo>();
         if (!_canEditA) return list;
 
-        if (_setDefaultMaterial && _material != _originalMaterial)
+        // Bỏ mã PIN nếu lần đầu thiết lập (Original là rỗng)
+        if (_setDefaultMaterial && !string.IsNullOrWhiteSpace(_originalMaterial) && _material != _originalMaterial)
         {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Material", OldValue = _originalMaterial, NewValue = _material! });
         }
-        if (_setDefaultConfig && _materialConfig != _originalConfig)
+        if (_setDefaultConfig && !string.IsNullOrWhiteSpace(_originalConfig) && _materialConfig != _originalConfig)
         {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialConfig", OldValue = _originalConfig, NewValue = _materialConfig! });
         }
-        if (_setDefaultNote && _materialNote != _originalNote)
+        if (_setDefaultNote && !string.IsNullOrWhiteSpace(_originalNote) && _materialNote != _originalNote)
         {
             list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialNote", OldValue = _originalNote, NewValue = _materialNote! });
         }
@@ -929,7 +1144,9 @@ else
         _saving = true;
         var log = new List<string>();
         var errors = new List<string>();
-        var reason = _reason.Trim();
+        
+        // Tự động gán lý do mặc định nếu là tạo mới lần đầu và người dùng để trống
+        var reason = string.IsNullOrWhiteSpace(_reason) ? "Khởi tạo quy trình ban đầu" : _reason.Trim();
 
         try
         {
@@ -952,19 +1169,42 @@ else
                 await TryAddAttrValue("MaterialConfig", _materialConfig, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialNote", _materialNote, _currentUserId, log, errors);
 
-                if (applyDefaultChanges)
+                if (_setDefaultMaterial && (string.IsNullOrWhiteSpace(_originalMaterial) || applyDefaultChanges))
                 {
-                    foreach (var chg in _pendingDefaultChanges)
+                    try
                     {
-                        try
-                        {
-                            await PmSvc.SetAsDefaultAsync(_part!.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
-                            log.Add($"✓ Đặt default {chg.AttributeType} = {chg.NewValue}");
-                        }
-                        catch (Exception ex)
-                        {
-                            errors.Add($"✗ Đặt default {chg.AttributeType}: {ex.Message}");
-                        }
+                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "Material", _material!, _currentUserId);
+                        log.Add($"✓ Đặt default Material = {_material}");
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"✗ Đặt default Material: {ex.Message}");
+                    }
+                }
+
+                if (_setDefaultConfig && (string.IsNullOrWhiteSpace(_originalConfig) || applyDefaultChanges))
+                {
+                    try
+                    {
+                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "MaterialConfig", _materialConfig!, _currentUserId);
+                        log.Add($"✓ Đặt default MaterialConfig = {_materialConfig}");
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"✗ Đặt default MaterialConfig: {ex.Message}");
+                    }
+                }
+
+                if (_setDefaultNote && (string.IsNullOrWhiteSpace(_originalNote) || applyDefaultChanges))
+                {
+                    try
+                    {
+                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "MaterialNote", _materialNote!, _currentUserId);
+                        log.Add($"✓ Đặt default MaterialNote = {_materialNote}");
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"✗ Đặt default MaterialNote: {ex.Message}");
                     }
                 }
             }
