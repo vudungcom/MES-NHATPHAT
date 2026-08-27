@@ -32,6 +32,8 @@ public class AppDbContext : DbContext
     public DbSet<DoGa> DoGas => Set<DoGa>();
     public DbSet<DoGaMuonTraLog> DoGaMuonTraLogs => Set<DoGaMuonTraLog>();
     public DbSet<DoGaChangeLog> DoGaChangeLogs => Set<DoGaChangeLog>();
+	public DbSet<Dao> Daos { get; set; }
+public DbSet<DaoChangeLog> DaoChangeLogs { get; set; }
 
     // ==== Standard WTS Tasks module ====
     public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();

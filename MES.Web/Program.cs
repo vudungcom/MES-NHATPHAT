@@ -50,6 +50,7 @@ builder.Services.AddScoped<PartWashingService>();
 builder.Services.AddScoped<PartInspectionService>();
 // Luot 6C - Part Master listing
 builder.Services.AddScoped<PartMasterListService>();
+builder.Services.AddScoped<DaoService>();
 
 var app = builder.Build();
 

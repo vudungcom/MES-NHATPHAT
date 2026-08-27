@@ -67,8 +67,7 @@
             </li>
         }
 
-        @* Mục Khách hàng: Admin, nhóm Kế hoạch hoặc tài khoản có quyền KHACH_HANG đều có thể xem *@
-        @if (CanView("KHACH_HANG") || CanView("KE_HOACH"))
+        @if (CanView("KHACH_HANG"))
         {
             <li class="nav-item">
                 <NavLink class="nav-link" href="/customers">
@@ -91,6 +90,15 @@
             <li class="nav-item">
                 <NavLink class="nav-link" href="/do-ga">
                     <i class="bi bi-tools"></i> Quản lý Đồ gá
+                </NavLink>
+            </li>
+        }
+
+        @if (CanView("DAO"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/dao">
+                    <i class="bi bi-scissors"></i> Quản lý dao
                 </NavLink>
             </li>
         }
