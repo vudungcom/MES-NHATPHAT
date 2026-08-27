@@ -102,11 +102,11 @@ else
                         <th>Mã VL</th>
                         <th>Cấu hình phôi</th>
                         <th>Ghi chú phôi</th>
-                        <th>Quy trình gia công</th>
-                        <th>Taro</th>
-                        <th>Bavia</th>
-                        <th>Rửa</th>
-                        <th>Kiểm tra</th>
+                        <th class="text-center" style="width: 70px;">KH</th>
+                        <th class="text-center" style="width: 80px;">Gia công</th>
+                        <th class="text-center" style="width: 60px;">HTSP</th>
+                        <th class="text-center" style="width: 60px;">KCS</th>
+                        <th class="text-center" style="width: 75px;">Đóng gói</th>
                         <th style="width: 90px;">Thao tác</th>
                     </tr>
                 </thead>
@@ -136,11 +136,11 @@ else
                             <td>@(row.Material ?? "—")</td>
                             <td>@(row.MaterialConfig ?? "—")</td>
                             <td>@(row.MaterialNote ?? "—")</td>
-                            <td>@RenderNcs(row.MachiningNcs)</td>
-                            <td>@RenderNcs(row.TaroNcs)</td>
-                            <td>@RenderNcs(row.BaviaNcs)</td>
-                            <td>@RenderNcs(row.WashingNcs)</td>
-                            <td>@RenderNcs(row.InspectionNcs)</td>
+                            <td class="text-center">@ConfirmBadge(row.IsPlanConfirmed)</td>
+                            <td class="text-center">@ConfirmBadge(row.IsMachiningConfirmed)</td>
+                            <td class="text-center">@ConfirmBadge(row.IsHtspConfirmed)</td>
+                            <td class="text-center">@ConfirmBadge(row.IsKcsConfirmed)</td>
+                            <td class="text-center">@ConfirmBadge(row.IsPkgConfirmed)</td>
                             <td @onclick:stopPropagation @ondblclick:stopPropagation>
                                 <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)"
                                         title="Mở trang chi tiết">
@@ -240,6 +240,18 @@ else
         Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(partNo)}");
     }
 
+    // Badge OK/NG cho 5 cột xác nhận
+    private RenderFragment ConfirmBadge(bool confirmed) => builder =>
+    {
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", confirmed
+            ? "badge bg-success"
+            : "badge bg-danger");
+        builder.AddContent(2, confirmed ? "OK" : "NG");
+        builder.CloseElement();
+    };
+
+    // Vẫn giữ RenderNcs để dùng trong phần expand detail bên dưới
     private RenderFragment RenderNcs(List<string> ncs) => builder =>
     {
         if (ncs.Count == 0)

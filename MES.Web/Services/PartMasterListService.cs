@@ -8,9 +8,9 @@ namespace MES.Web.Services;
 /// Service query dữ liệu cho trang Part Master Index (list + expand).
 ///
 /// Thiết kế:
-///  - `GetAllRowsAsync` load 1 lượt tất cả Part + Customer + attribute default + preview NC của 5 bảng step.
-///    Tránh N+1: chỉ 7 query cho toàn bộ list, không phải 5*N cho mỗi row.
-///  - `GetDetailForExpandAsync` load lazy khi user click ▶: chỉ query 5 bảng cho 1 Part cụ thể.
+///  - `GetAllRowsAsync` load 1 lượt tất cả Part + Customer + attribute default + preview NC của 6 bảng step.
+///    Tránh N+1: chỉ query 1 lần cho toàn bộ list, không phải query lặp lại cho mỗi row.
+///  - `GetDetailForExpandAsync` load lazy khi user click ▶: chỉ query 6 bảng cho 1 Part cụ thể.
 /// </summary>
 public class PartMasterListService
 {
@@ -22,7 +22,7 @@ public class PartMasterListService
     }
 
     /// <summary>
-    /// Load toàn bộ Part active + Customer + attribute default + preview NC 5 bảng step.
+    /// Load toàn bộ Part active + Customer + attribute default + preview NC 6 bảng step.
     /// Trả về list đã sort theo PartNo.
     /// </summary>
     public async Task<List<PartMasterListRow>> GetAllRowsAsync()
@@ -31,7 +31,7 @@ public class PartMasterListService
         var parts = await _db.PartMasters
             .Include(p => p.Customer)
             .Where(p => p.IsActive)
-            .OrderBy(p => p.PartNo)
+            .OrderByDescending(p => p.CreatedAt)
             .AsNoTracking()
             .ToListAsync();
 
@@ -53,29 +53,34 @@ public class PartMasterListService
             .ToDictionary(g => g.Key,
                           g => g.ToDictionary(x => x.AttributeType, x => x.Value));
 
-        // 3-7. Preview NC của 5 bảng step (chỉ NC + StepOrder)
+        // 3-8. Preview NC của 6 bảng step (lọc bỏ các dòng dự phòng IsBackup = true)
         var machiningPreview = await LoadNcPreviewAsync(
-            _db.PartMachiningSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive)
+            _db.PartMachiningSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
         var taroPreview = await LoadNcPreviewAsync(
-            _db.PartTaroSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive)
+            _db.PartTaroSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
         var baviaPreview = await LoadNcPreviewAsync(
-            _db.PartBaviaSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive)
+            _db.PartBaviaSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
         var washingPreview = await LoadNcPreviewAsync(
-            _db.PartWashingSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive)
+            _db.PartWashingSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
         var inspectionPreview = await LoadNcPreviewAsync(
-            _db.PartInspectionSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive)
+            _db.PartInspectionSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
+                .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
+                .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
+
+        var pkgPreview = await LoadNcPreviewAsync(
+            _db.PartPackagingSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
@@ -90,46 +95,60 @@ public class PartMasterListService
             Material       = GetAttr(attrLookup, p.PartId, "Material"),
             MaterialConfig = GetAttr(attrLookup, p.PartId, "MaterialConfig"),
             MaterialNote   = GetAttr(attrLookup, p.PartId, "MaterialNote"),
+            
+            // Cờ xác nhận từ bảng PartMaster
+            IsPlanConfirmed = p.IsPlanConfirmed,
+            IsMachiningConfirmed = p.IsMachiningConfirmed,
+            IsHtspConfirmed = p.IsHtspConfirmed,
+            IsKcsConfirmed = p.IsKcsConfirmed,
+            IsPkgConfirmed = p.IsPkgConfirmed,
+
             MachiningNcs   = machiningPreview.GetValueOrDefault(p.PartId) ?? new(),
             TaroNcs        = taroPreview.GetValueOrDefault(p.PartId) ?? new(),
             BaviaNcs       = baviaPreview.GetValueOrDefault(p.PartId) ?? new(),
             WashingNcs     = washingPreview.GetValueOrDefault(p.PartId) ?? new(),
             InspectionNcs  = inspectionPreview.GetValueOrDefault(p.PartId) ?? new(),
+            PkgNcs         = pkgPreview.GetValueOrDefault(p.PartId) ?? new(),
         }).ToList();
     }
 
     /// <summary>
-    /// Load chi tiết đầy đủ 5 bảng step cho 1 Part (dùng khi expand).
-    /// Chỉ IsActive=true. Sort theo StepOrder.
+    /// Load chi tiết đầy đủ 6 bảng step cho 1 Part (dùng khi expand).
     /// </summary>
     public async Task<PartMasterExpandDetail> GetDetailForExpandAsync(int partId)
     {
         var machining = await _db.PartMachiningSteps
-            .Where(s => s.PartId == partId && s.IsActive)
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
             .ToListAsync();
 
         var taro = await _db.PartTaroSteps
-            .Where(s => s.PartId == partId && s.IsActive)
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
             .ToListAsync();
 
         var bavia = await _db.PartBaviaSteps
-            .Where(s => s.PartId == partId && s.IsActive)
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
             .ToListAsync();
 
         var washing = await _db.PartWashingSteps
-            .Where(s => s.PartId == partId && s.IsActive)
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
             .ToListAsync();
 
         var inspection = await _db.PartInspectionSteps
-            .Where(s => s.PartId == partId && s.IsActive)
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        var pkg = await _db.PartPackagingSteps
+            .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
             .ToListAsync();
@@ -140,7 +159,8 @@ public class PartMasterListService
             Taro = taro,
             Bavia = bavia,
             Washing = washing,
-            Inspection = inspection
+            Inspection = inspection,
+            Packaging = pkg
         };
     }
 
@@ -183,18 +203,29 @@ public class PartMasterListRow
     public string? Material { get; set; }
     public string? MaterialConfig { get; set; }
     public string? MaterialNote { get; set; }
+
+    public bool IsPlanConfirmed { get; set; }
+    public bool IsMachiningConfirmed { get; set; }
+    public bool IsHtspConfirmed { get; set; }
+    public bool IsKcsConfirmed { get; set; }
+    public bool IsPkgConfirmed { get; set; }
+
+    // Đánh giá 1 Part đã được các phòng ban nhập đủ OK 100% hay chưa
+    public bool IsFullyConfirmed => IsPlanConfirmed && IsMachiningConfirmed && IsHtspConfirmed && IsKcsConfirmed && IsPkgConfirmed;
+
     public List<string> MachiningNcs { get; set; } = new();
     public List<string> TaroNcs { get; set; } = new();
     public List<string> BaviaNcs { get; set; } = new();
     public List<string> WashingNcs { get; set; } = new();
     public List<string> InspectionNcs { get; set; } = new();
+    public List<string> PkgNcs { get; set; } = new();
 
-    /// <summary>Tổng số công đoạn (tất cả 5 loại). Dùng để hiển thị "Chưa có" nếu = 0.</summary>
+    /// <summary>Tổng số công đoạn (tất cả 6 loại). Dùng để hiển thị "Chưa có" nếu = 0.</summary>
     public int TotalSteps =>
-        MachiningNcs.Count + TaroNcs.Count + BaviaNcs.Count + WashingNcs.Count + InspectionNcs.Count;
+        MachiningNcs.Count + TaroNcs.Count + BaviaNcs.Count + WashingNcs.Count + InspectionNcs.Count + PkgNcs.Count;
 }
 
-/// <summary>Data chi tiết cho phần expand — chứa 5 list step entity đầy đủ.</summary>
+/// <summary>Data chi tiết cho phần expand — chứa 6 list step entity đầy đủ.</summary>
 public class PartMasterExpandDetail
 {
     public List<PartMachiningStep> Machining { get; set; } = new();
@@ -202,7 +233,8 @@ public class PartMasterExpandDetail
     public List<PartBaviaStep> Bavia { get; set; } = new();
     public List<PartWashingStep> Washing { get; set; } = new();
     public List<PartInspectionStep> Inspection { get; set; } = new();
+    public List<PartPackagingStep> Packaging { get; set; } = new();
 
     public int TotalSteps =>
-        Machining.Count + Taro.Count + Bavia.Count + Washing.Count + Inspection.Count;
+        Machining.Count + Taro.Count + Bavia.Count + Washing.Count + Inspection.Count + Packaging.Count;
 }

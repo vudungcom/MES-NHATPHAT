@@ -17,6 +17,7 @@
 @inject StandardWtsTaskService WtsSvc
 @inject ThietBiService ThietBiSvc
 @inject DoGaService DoGaSvc
+@inject DaoService DaoSvc
 @inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
@@ -81,13 +82,20 @@ else
             <div class="small text-muted">
                 <i class="bi bi-building"></i> Khách hàng: <strong class="text-dark">@(_part.Customer?.CustomerName ?? "—")</strong>
             </div>
+            <div class="mt-2 d-flex gap-2">
+                @if (_part.IsPlanConfirmed) { <span class="badge bg-success">KH: OK</span> } else { <span class="badge bg-danger">KH: NG</span> }
+                @if (_part.IsMachiningConfirmed) { <span class="badge bg-success">Gia công: OK</span> } else { <span class="badge bg-danger">Gia công: NG</span> }
+                @if (_part.IsHtspConfirmed) { <span class="badge bg-success">HTSP: OK</span> } else { <span class="badge bg-danger">HTSP: NG</span> }
+                @if (_part.IsKcsConfirmed) { <span class="badge bg-success">KCS: OK</span> } else { <span class="badge bg-danger">KCS: NG</span> }
+                @if (_part.IsPkgConfirmed) { <span class="badge bg-success">Đóng gói: OK</span> } else { <span class="badge bg-danger">Đóng gói: NG</span> }
+            </div>
         </div>
         <div class="d-flex gap-2">
             <a href="/part-master" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Quay lại</a>
             @if (CanEditAnyArea)
             {
-                <button class="btn btn-primary shadow-sm" @onclick="TrySaveAsync" disabled="@(_saving || !HasUnsavedChanges)">
-                    <i class="bi bi-save"></i> @(_saving ? "Đang lưu..." : "Lưu tất cả thay đổi")
+                <button class="btn btn-primary shadow-sm" @onclick="TrySaveAsync" disabled="@_saving">
+                    <i class="bi bi-check2-circle"></i> @(_saving ? "Đang xử lý..." : "Lưu & Xác nhận OK")
                 </button>
             }
         </div>
@@ -165,8 +173,8 @@ else
                                 <th style="min-width: 140px;">Máy đăng ký</th>
                                 <th style="min-width: 160px;">Máy đồng dạng</th>
                                 <th style="min-width: 130px;">Đồ gá</th>
-                                <th style="min-width: 110px;">Loại dao</th>
-                                <th style="min-width: 140px;">Máy bấm giờ</th>
+                                <th style="min-width: 140px;">Loại dao (Cột B)</th>
+                                <th style="min-width: 120px;">Máy bấm giờ</th>
                                 <th style="width: 80px;">T.Gá lắp<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Gia công<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Kiểm tra<br/><span class="text-muted fw-normal">(phút)</span></th>
@@ -240,20 +248,30 @@ else
                                         </select>
                                     </td>
 
-                                    <td><input class="form-control form-control-sm" @bind="edit.ToolType" @bind:after="() => MarkAsModified(edit)" placeholder="Loại dao..." disabled="@(!_canEditB || RowLocked(edit))" /></td>
-
+                                    @* Cột Loại Dao: Dropdown giống Đồ gá *@
                                     <td>
-                                        <select class="form-select form-select-sm" @bind="edit.TimingMachine" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))">
-                                            <option value="">-- Chọn máy --</option>
-                                            @if (!string.IsNullOrEmpty(edit.TimingMachine) && !_thietBiList.Any(m => m.SoMay == edit.TimingMachine))
+                                        <select class="form-select form-select-sm font-monospace"
+                                                @bind="edit.ToolType" @bind:after="() => MarkAsModified(edit)"
+                                                disabled="@(!_canEditB || RowLocked(edit))">
+                                            <option value="">-- Chọn dao --</option>
+                                            @if (!string.IsNullOrEmpty(edit.ToolType) && !_daoList.Any(d => d.TenDao == edit.ToolType))
                                             {
-                                                <option value="@edit.TimingMachine">@edit.TimingMachine (Khác)</option>
+                                                <option value="@edit.ToolType">@edit.ToolType (Khác)</option>
                                             }
-                                            @foreach (var m in _thietBiList)
+                                            @foreach (var d in _daoList)
                                             {
-                                                <option value="@m.SoMay">@m.SoMay - @m.TenMay</option>
+                                                <option value="@d.TenDao">@d.TenDao</option>
                                             }
                                         </select>
+                                    </td>
+
+                                    @* Cột Máy bấm giờ: Nhập tay tự do *@
+                                    <td>
+                                        <input class="form-control form-control-sm" 
+                                               @bind="edit.TimingMachine" 
+                                               @bind:after="() => MarkAsModified(edit)" 
+                                               placeholder="Nhập máy bấm giờ..." 
+                                               disabled="@(!_canEditB || RowLocked(edit))" />
                                     </td>
 
                                     <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
@@ -273,7 +291,7 @@ else
                                         @if (_canEditB)
                                         {
                                             <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
-                                                    @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, MachineAlternative = edit.MachineAlternative, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
+                                                    @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, TimingMachine = edit.TimingMachine, MachineAlternative = edit.MachineAlternative, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
                                                 <i class="bi bi-diagram-3"></i>
                                             </button>
                                             @RowActionButton(edit, () => ToggleDelete(edit, _machiningEdits))
@@ -519,7 +537,7 @@ else
                     <i class="bi bi-search"></i> D. Kiểm tra chất lượng (KCS) (@ActiveInspectionCount)
                     @if (!_canEditD) { <span class="badge bg-dark text-white ms-2">Chỉ xem</span> }
                 </span>
-                @if (_canEditD) { <button class="btn btn-sm btn-dark" @onclick="() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                @if (_canEditD) { <button class="btn btn-dark btn-sm" @onclick="() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
@@ -683,8 +701,8 @@ else
             </div>
             <div class="card-footer bg-white text-end py-3">
                 <a href="/part-master" class="btn btn-outline-secondary me-2">Hủy bỏ</a>
-                <button class="btn btn-primary px-4 fw-bold" @onclick="TrySaveAsync" disabled="@(_saving || !HasUnsavedChanges)">
-                    <i class="bi bi-save me-1"></i> @(_saving ? "Đang lưu..." : "LƯU TẤT CẢ THAY ĐỔI")
+                <button class="btn btn-primary px-4 fw-bold" @onclick="TrySaveAsync" disabled="@_saving">
+                    <i class="bi bi-check2-circle me-1"></i> @(_saving ? "Đang xử lý..." : (HasUnsavedChanges ? "LƯU THAY ĐỔI & XÁC NHẬN" : "XÁC NHẬN OK"))
                 </button>
             </div>
         </div>
@@ -813,7 +831,6 @@ else
 }
 
 <PinConfirmModal IsOpen="_showPinModal" Title="Xác nhận đổi Master Data" Description="Việc thay đổi tham số chuẩn sẽ ảnh hưởng đến các Kế hoạch trong tương lai. Vui lòng nhập mã PIN." Changes="@_pendingDefaultChanges" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
-
 @code {
     [SupplyParameterFromQuery(Name = "partNo")]
     public string? PartNo { get; set; }
@@ -858,7 +875,6 @@ else
         }
     }
 
-    // Kiểm tra xem có chỉnh sửa/xóa dữ liệu CŨ đã tồn tại không
     private bool RequiresReason
     {
         get
@@ -909,8 +925,8 @@ else
 
     private List<ThietBi> _thietBiList = new();
     private List<DoGa> _doGaList = new();
+    private List<Dao> _daoList = new();
 
-    // ==================== Biến State cho Modal Chọn nhiều máy đồng dạng ====================
     private bool _showAltMachineModal = false;
     private MachiningEdit? _currentEditingAltMachining;
     private HashSet<string> _selectedAltMachines = new();
@@ -930,7 +946,6 @@ else
         }
     }
 
-    // ==================== Biến State cho Modal Lịch sử thay đổi (Audit Trail) ====================
     private bool _showHistoryModal = false;
     private bool _historyLoading = false;
     private string _historyTitle = "";
@@ -1003,6 +1018,7 @@ else
 
         _thietBiList = await ThietBiSvc.GetAllActiveAsync();
         _doGaList = await DoGaSvc.GetAllActiveAsync();
+        _daoList = await DaoSvc.GetAllAsync(includeInactive: false);
 
         _part = await PmSvc.GetByPartNoAsync(PartNo);
         if (_part == null)
@@ -1073,17 +1089,15 @@ else
         await ReloadStepsAsync();
     }
 
-    // ==================== Logic gọi truy vấn Lịch sử ====================
     private async Task ShowHistoryAsync(long stepId, string tableTag, string nc)
     {
         _historyTitle = $"Lịch sử sửa — {nc}";
         _showHistoryModal = true;
         _historyLoading = true;
-        StateHasChanged(); // Cập nhật UI ngay lập tức để hiện Modal loading
+        StateHasChanged();
 
         try
         {
-            // Truy vấn trực tiếp bằng DB Context (Lazy-loading siêu nhanh, không ảnh hưởng hiệu năng hệ thống)
             _historyLogs = await Db.PartProcessStepChangeLogs
                 .Where(x => x.StepTable == tableTag && x.StepId == stepId)
                 .OrderByDescending(x => x.ChangedAt)
@@ -1189,7 +1203,6 @@ else
         }
     }
 
-    // Hàm đánh dấu dòng dữ liệu đã bị người dùng sửa
     private void MarkAsModified(StepEditBase edit)
     {
         if (edit.State == EditState.Unchanged)
@@ -1221,12 +1234,11 @@ else
             EditState.New => "table-success",
             EditState.Deleted => "table-secondary text-muted text-decoration-line-through",
             EditState.Restored => "table-info",
-            EditState.Modified => "table-warning", // Đổi màu nhẹ khi người dùng đang sửa dữ liệu cũ
+            EditState.Modified => "table-warning",
             _ => ""
         };
     }
 
-    // Tạo nội dung hiển thị khi rê chuột
     private string RowTooltip(StepEditBase e)
     {
         if (e.State == EditState.Modified) return "Dòng này đã bị chỉnh sửa (chưa lưu).";
@@ -1291,7 +1303,6 @@ else
         _saveResult = string.Empty;
         _saveHasError = false;
 
-        // Bắt buộc nhập lý do khi sửa/xóa dữ liệu cũ
         if (RequiresReason && (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3))
         {
             _saveResult = "Lý do thay đổi là bắt buộc (tối thiểu 3 ký tự) khi chỉnh sửa dữ liệu đã có.";
@@ -1301,7 +1312,6 @@ else
 
         _pendingDefaultChanges = CollectDefaultChanges();
 
-        // Ép bật Modal xác nhận PIN nếu: có đổi Master A (Default) HOẶC có sửa/xoá dữ liệu ở B->E
         if (_pendingDefaultChanges.Count > 0 || RequiresReason)
         {
             if (_pendingDefaultChanges.Count == 0)
@@ -1420,6 +1430,10 @@ else
                         errors.Add($"✗ Đặt default MaterialNote: {ex.Message}");
                     }
                 }
+
+                // Bật cờ OK cho Kế hoạch
+                _part!.IsPlanConfirmed = true;
+                Db.PartMasters.Update(_part);
             }
 
             if (_canEditB)
@@ -1430,6 +1444,9 @@ else
                     id => MachiningSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => MachiningSvc.RestoreAsync(id, _currentUserId, reason),
                     "Machining", log, errors);
+
+                _part!.IsMachiningConfirmed = true;
+                Db.PartMasters.Update(_part);
             }
 
             if (_canEditC)
@@ -1454,6 +1471,9 @@ else
                     id => WashingSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => WashingSvc.RestoreAsync(id, _currentUserId, reason),
                     "Rửa", log, errors);
+
+                _part!.IsHtspConfirmed = true;
+                Db.PartMasters.Update(_part);
             }
 
             if (_canEditD)
@@ -1464,6 +1484,9 @@ else
                     id => InspectionSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => InspectionSvc.RestoreAsync(id, _currentUserId, reason),
                     "Kiểm tra", log, errors);
+
+                _part!.IsKcsConfirmed = true;
+                Db.PartMasters.Update(_part);
             }
 
             if (_canEditE)
@@ -1474,6 +1497,15 @@ else
                     id => PackagingSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => PackagingSvc.RestoreAsync(id, _currentUserId, reason),
                     "Đóng gói", log, errors);
+
+                _part!.IsPkgConfirmed = true;
+                Db.PartMasters.Update(_part);
+            }
+
+            if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
+            {
+                await Db.SaveChangesAsync();
+                log.Add("✓ Đã lưu xác nhận OK.");
             }
         }
         finally

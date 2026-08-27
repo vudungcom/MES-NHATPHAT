@@ -1,9 +1,12 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MES.Web.Data.Entities;
 
+[Table("PartMasters")]
 public class PartMaster
 {
+    [Key]
     public int PartId { get; set; }
 
     [Required, MaxLength(100)]
@@ -12,12 +15,6 @@ public class PartMaster
     [MaxLength(200)]
     public string? PartName { get; set; }
 
-    // ==== Legacy fields (giữ để tương thích data cũ) ====
-    // Từ v0.3 trở đi, các thuộc tính này lấy từ bảng PartMasterAttribute.
-    // Các field dưới đây chỉ dùng cho:
-    // (1) Data cũ chưa migrate sang PartMasterAttribute
-    // (2) Fallback nếu PartMasterAttribute rỗng
-    // Migration script sẽ copy các giá trị này vào PartMasterAttribute làm default.
     [MaxLength(100)]
     public string? MaterialConfig { get; set; }
 
@@ -25,6 +22,8 @@ public class PartMaster
     public string? Material { get; set; }
 
     public int? CustomerId { get; set; }
+
+    [ForeignKey(nameof(CustomerId))]
     public Customer? Customer { get; set; }
 
     [MaxLength(50)]
@@ -39,6 +38,13 @@ public class PartMaster
     public bool IsActive { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+    // ==== CỜ TRẠNG THÁI XÁC NHẬN MASTER DATA ====
+    public bool IsPlanConfirmed { get; set; } = false;      // Vùng A
+    public bool IsMachiningConfirmed { get; set; } = false; // Vùng B
+    public bool IsHtspConfirmed { get; set; } = false;      // Vùng C
+    public bool IsKcsConfirmed { get; set; } = false;       // Vùng D
+    public bool IsPkgConfirmed { get; set; } = false;       // Vùng E
 
     // Navigation
     public List<PartMasterAttribute> Attributes { get; set; } = new();
