@@ -9,6 +9,7 @@
 @inject UserService UserSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
 
 <PageTitle>Part Master - MES</PageTitle>
 
@@ -34,6 +35,10 @@ else
             </p>
         </div>
         <div class="d-flex gap-2">
+            <button class="btn btn-outline-success" @onclick="ExportExcelAsync" disabled="@_exporting">
+                <i class="bi bi-file-earmark-excel"></i>
+                @(_exporting ? "Đang xuất..." : "Xuất Excel")
+            </button>
             @if (_canCreate)
             {
                 <a href="/part-master/create" class="btn btn-primary">
@@ -43,7 +48,7 @@ else
         </div>
     </div>
 
-    <div class="row mb-3 g-2">
+    <div class="row mb-2 g-2">
         <div class="col-md-5">
             <div class="input-group input-group-sm">
                 <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -66,11 +71,52 @@ else
                 }
             </select>
         </div>
-        <div class="col-md-4 text-end">
-            <small class="text-muted">
-                Hiển thị @Filtered.Count() / @(_rows?.Count ?? 0) Part
+        <div class="col-md-4">
+            <select class="form-select form-select-sm" @bind="_statusFilter" @bind:after="OnStatusFilterChanged">
+                <option value="">-- Tất cả trạng thái --</option>
+                <option value="ok">✅ Hoàn thành (5/5 OK)</option>
+                <option value="ng">❌ Chưa hoàn thành</option>
+            </select>
+        </div>
+    </div>
+
+    @* Bộ lọc bộ phận — chỉ hiện khi chọn "Chưa hoàn thành" *@
+    @if (_statusFilter == "ng")
+    {
+        <div class="d-flex align-items-center gap-3 mb-2 px-2 py-2 bg-light rounded border">
+            <small class="text-muted fw-bold text-nowrap">Lọc bộ phận chưa OK:</small>
+            <div class="d-flex gap-3 flex-wrap">
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="fKH" @bind="_filterKH" />
+                    <label class="form-check-label small" for="fKH">KH</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="fGC" @bind="_filterGC" />
+                    <label class="form-check-label small" for="fGC">Gia công</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="fHTSP" @bind="_filterHTSP" />
+                    <label class="form-check-label small" for="fHTSP">HTSP</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="fKCS" @bind="_filterKCS" />
+                    <label class="form-check-label small" for="fKCS">KCS</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" id="fPKG" @bind="_filterPKG" />
+                    <label class="form-check-label small" for="fPKG">Đóng gói</label>
+                </div>
+            </div>
+            <small class="text-muted ms-auto">
+                (Không tick = hiện tất cả chưa hoàn thành. Tick = chỉ hiện Part chưa OK ở bộ phận đó)
             </small>
         </div>
+    }
+
+    <div class="text-end mb-2">
+        <small class="text-muted">
+            Hiển thị @Filtered.Count() / @(_rows?.Count ?? 0) Part
+        </small>
     </div>
 
     @if (_rows == null)
@@ -175,12 +221,21 @@ else
     private bool _isLoading = true;
     private bool _canView = false;
     private bool _canCreate = false;
+    private bool _exporting = false;
 
     private List<PartMasterListRow>? _rows;
     private HashSet<int> _expanded = new();
     private Dictionary<int, PartMasterExpandDetail> _detailByPart = new();
     private string _search = string.Empty;
     private string _customerFilter = string.Empty;
+
+    // Bộ lọc trạng thái
+    private string _statusFilter = string.Empty; // "" | "ok" | "ng"
+    private bool _filterKH = false;
+    private bool _filterGC = false;
+    private bool _filterHTSP = false;
+    private bool _filterKCS = false;
+    private bool _filterPKG = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -266,12 +321,58 @@ else
         builder.CloseElement();
     };
 
+    private void OnStatusFilterChanged()
+    {
+        // Reset checkbox bộ phận khi đổi filter tổng
+        _filterKH = _filterGC = _filterHTSP = _filterKCS = _filterPKG = false;
+    }
+
+    private async Task ExportExcelAsync()
+    {
+        _exporting = true;
+        try
+        {
+            var data = Filtered.ToList();
+            var label = BuildFilterLabel();
+            var bytes = ExcelHelper.ExportPartMasterList(data, label);
+            var fileName = $"PartMaster_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                Convert.ToBase64String(bytes));
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+
+    private string BuildFilterLabel()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_search)) parts.Add($"Tìm: \"{_search}\"");
+        if (!string.IsNullOrEmpty(_customerFilter)) parts.Add("Lọc khách hàng");
+        if (_statusFilter == "ok") parts.Add("Hoàn thành");
+        if (_statusFilter == "ng")
+        {
+            var bps = new List<string>();
+            if (_filterKH) bps.Add("KH");
+            if (_filterGC) bps.Add("Gia công");
+            if (_filterHTSP) bps.Add("HTSP");
+            if (_filterKCS) bps.Add("KCS");
+            if (_filterPKG) bps.Add("Đóng gói");
+            parts.Add(bps.Count > 0 ? $"Chưa OK: {string.Join(", ", bps)}" : "Chưa hoàn thành");
+        }
+        return parts.Count > 0 ? string.Join(" | ", parts) : "Tất cả";
+    }
+
     private IEnumerable<PartMasterListRow> Filtered
     {
         get
         {
             if (_rows == null) return Enumerable.Empty<PartMasterListRow>();
             IEnumerable<PartMasterListRow> q = _rows;
+
+            // Tìm kiếm text
             if (!string.IsNullOrWhiteSpace(_search))
             {
                 var s = _search.Trim();
@@ -281,10 +382,36 @@ else
                     || (r.CustomerName?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
                 );
             }
+
+            // Lọc khách hàng
             if (!string.IsNullOrEmpty(_customerFilter) && int.TryParse(_customerFilter, out var cid))
             {
                 q = q.Where(r => r.CustomerId == cid);
             }
+
+            // Lọc trạng thái tổng
+            if (_statusFilter == "ok")
+            {
+                q = q.Where(r => r.IsFullyConfirmed);
+            }
+            else if (_statusFilter == "ng")
+            {
+                q = q.Where(r => !r.IsFullyConfirmed);
+
+                // Lọc thêm theo bộ phận cụ thể (OR logic — Part chưa OK ở ít nhất 1 bộ phận đã tick)
+                bool anyChecked = _filterKH || _filterGC || _filterHTSP || _filterKCS || _filterPKG;
+                if (anyChecked)
+                {
+                    q = q.Where(r =>
+                        (_filterKH   && !r.IsPlanConfirmed) ||
+                        (_filterGC   && !r.IsMachiningConfirmed) ||
+                        (_filterHTSP && !r.IsHtspConfirmed) ||
+                        (_filterKCS  && !r.IsKcsConfirmed) ||
+                        (_filterPKG  && !r.IsPkgConfirmed)
+                    );
+                }
+            }
+
             return q;
         }
     }

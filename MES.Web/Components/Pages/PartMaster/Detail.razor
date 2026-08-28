@@ -94,8 +94,10 @@ else
             <a href="/part-master" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Quay lại</a>
             @if (CanEditAnyArea)
             {
-                <button class="btn btn-primary shadow-sm" @onclick="TrySaveAsync" disabled="@_saving">
-                    <i class="bi bi-check2-circle"></i> @(_saving ? "Đang xử lý..." : "Lưu & Xác nhận OK")
+                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") shadow-sm"
+                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully)">
+                    <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle")"></i>
+                    @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
                 </button>
             }
         </div>
@@ -128,7 +130,7 @@ else
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Tên chi tiết</label>
-                        <input class="form-control form-control-sm" @bind="_partName" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
+                        <input class="form-control form-control-sm" @bind="_partName" @oninput="() => _savedSuccessfully = false" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
@@ -701,8 +703,10 @@ else
             </div>
             <div class="card-footer bg-white text-end py-3">
                 <a href="/part-master" class="btn btn-outline-secondary me-2">Hủy bỏ</a>
-                <button class="btn btn-primary px-4 fw-bold" @onclick="TrySaveAsync" disabled="@_saving">
-                    <i class="bi bi-check2-circle me-1"></i> @(_saving ? "Đang xử lý..." : (HasUnsavedChanges ? "LƯU THAY ĐỔI & XÁC NHẬN" : "XÁC NHẬN OK"))
+                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") px-4 fw-bold"
+                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully)">
+                    <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle") me-1"></i>
+                    @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
                 </button>
             </div>
         </div>
@@ -837,6 +841,7 @@ else
 
     private bool _loading = true;
     private bool _saving = false;
+    private bool _savedSuccessfully = false; // true sau khi lưu thành công → nút mờ, reset khi user sửa thêm
     private PartMaster? _part;
     private int _currentUserId;
 
@@ -1209,6 +1214,7 @@ else
         {
             edit.State = EditState.Modified;
         }
+        _savedSuccessfully = false; // User đang sửa tiếp → nút sáng lại
     }
 
     private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
@@ -1527,6 +1533,7 @@ else
             _setDefaultMaterial = false;
             _setDefaultConfig = false;
             _setDefaultNote = false;
+            _savedSuccessfully = true; // Nút mờ đi sau khi lưu thành công
             await LoadAllAsync();
         }
     }
