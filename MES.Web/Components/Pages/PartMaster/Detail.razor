@@ -316,6 +316,48 @@ else
                         </tbody>
                     </table>
                 </div>
+
+                @* --- DANH SÁCH MÁY LOẠI TRỪ (global setting — áp dụng cho tất cả Part) --- *@
+                @if (_canViewB)
+                {
+                    <div class="border-top px-3 py-2 d-flex align-items-start gap-3" style="background: #fff8f0;">
+                        <div class="flex-shrink-0 pt-1" style="min-width: 210px;">
+                            <div class="fw-bold text-danger" style="font-size: 0.82rem;">
+                                <i class="bi bi-slash-circle me-1"></i>Máy loại trừ (không tính TG)
+                            </div>
+                            <div class="text-muted mt-1" style="font-size: 0.7rem; line-height: 1.4;">
+                                Cài đặt chung — áp dụng cho <strong>tất cả Part</strong>.<br/>
+                                NC chạy trên máy này <strong>không tính vào chu kỳ gia công chính</strong>.
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 d-flex flex-wrap gap-1 align-items-center py-1 min-height-28">
+                            @if (!_excludeSettings.Any())
+                            {
+                                <span class="fst-italic text-muted" style="font-size: 0.8rem;">Chưa có máy nào bị loại trừ</span>
+                            }
+                            else
+                            {
+                                @foreach (var ex in _excludeSettings)
+                                {
+                                    <span class="badge rounded-pill border border-danger text-danger bg-white px-2"
+                                          style="font-size: 0.75rem; font-weight: 500;">
+                                        <i class="bi bi-slash-circle me-1" style="font-size: 0.65rem;"></i>@ex.SoMay
+                                    </span>
+                                }
+                            }
+                        </div>
+                        @if (_canEditB)
+                        {
+                            <div class="flex-shrink-0 pt-1">
+                                <button class="btn btn-sm btn-outline-danger"
+                                        @onclick="OpenExcludeModal"
+                                        title="Cài đặt danh sách máy loại trừ (toàn hệ thống)">
+                                    <i class="bi bi-gear me-1"></i>Cài đặt
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
             </div>
         </div>
     }
@@ -791,6 +833,78 @@ else
     </div>
 }
 
+@* ==================== MODAL CÀI ĐẶT MÁY LOẠI TRỪ ==================== *@
+@if (_showExcludeModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header py-2" style="background: #c0392b;">
+                    <h6 class="modal-title mb-0 text-white fw-bold">
+                        <i class="bi bi-slash-circle me-1"></i>Cài đặt máy loại trừ (toàn hệ thống)
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseExcludeModal" disabled="@_excludeSaving"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                        Cài đặt này áp dụng cho <strong>toàn bộ Part</strong> trong hệ thống.
+                        Nguyên công chạy trên máy được chọn sẽ <strong>không tính vào thời gian chu kỳ gia công chính</strong>.
+                    </div>
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="Tìm theo Số máy / Tên máy / Bộ phận..."
+                               @bind="_excludeMachineSearch" @bind:event="oninput" />
+                    </div>
+                    <div class="list-group list-group-flush border rounded" style="max-height: 340px; overflow-y: auto;">
+                        @if (!FilteredExcludeMachines.Any())
+                        {
+                            <div class="p-3 text-center text-muted small"><em>Không tìm thấy thiết bị phù hợp</em></div>
+                        }
+                        @foreach (var m in FilteredExcludeMachines)
+                        {
+                            var isSelected = _selectedExcludeMachines.Contains(m.SoMay);
+                            <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3" style="cursor: pointer;">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input me-2" type="checkbox"
+                                           checked="@isSelected"
+                                           @onchange="(e) => ToggleExcludeMachineSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                                    <strong class="text-danger">@m.SoMay</strong>
+                                    <span class="text-dark ms-2">@m.TenMay</span>
+                                    <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
+                                </div>
+                                <span class="small text-muted">@m.LoaiMay</span>
+                            </label>
+                        }
+                    </div>
+                    <div class="small text-muted mt-2">
+                        Đang loại trừ: <strong class="text-danger">
+                            @(_selectedExcludeMachines.Count > 0
+                                ? string.Join(", ", _selectedExcludeMachines.OrderBy(x => x))
+                                : "Chưa có")
+                        </strong>
+                    </div>
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseExcludeModal" disabled="@_excludeSaving">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-danger" @onclick="SaveExcludeModalAsync" disabled="@_excludeSaving">
+                        @if (_excludeSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Đang lưu...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-check-lg me-1"></i>
+                            <span>Xác nhận & Lưu</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @* ==================== MODAL LỊCH SỬ THAY ĐỔI (AUDIT TRAIL) ==================== *@
 @if (_showHistoryModal)
 {
@@ -970,6 +1084,13 @@ else
     private HashSet<string> _selectedAltMachines = new();
     private string _altMachineSearch = string.Empty;
 
+    // --- Danh sách máy loại trừ (global setting) ---
+    private List<MachineExcludeSetting> _excludeSettings = new();
+    private bool _showExcludeModal = false;
+    private HashSet<string> _selectedExcludeMachines = new();
+    private string _excludeMachineSearch = string.Empty;
+    private bool _excludeSaving = false;
+
     private IEnumerable<ThietBi> FilteredAltMachines
     {
         get
@@ -1057,6 +1178,10 @@ else
         _thietBiList = await ThietBiSvc.GetAllActiveAsync();
         _doGaList = await DoGaSvc.GetAllActiveAsync();
         _daoList = await DaoSvc.GetAllAsync(includeInactive: false);
+        _excludeSettings = await Db.MachineExcludeSettings
+            .OrderBy(x => x.SoMay)
+            .AsNoTracking()
+            .ToListAsync();
 
         _part = await PmSvc.GetByPartNoAsync(PartNo);
         if (_part == null)
@@ -1231,6 +1356,87 @@ else
         }
         _showAltMachineModal = false;
         _currentEditingAltMachining = null;
+    }
+
+    // ===== DANH SÁCH MÁY LOẠI TRỪ (global setting) =====
+
+    private IEnumerable<ThietBi> FilteredExcludeMachines
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_excludeMachineSearch)) return _thietBiList;
+            var s = _excludeMachineSearch.Trim();
+            return _thietBiList.Where(m =>
+                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void OpenExcludeModal()
+    {
+        _selectedExcludeMachines = _excludeSettings
+            .Select(x => x.SoMay)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _excludeMachineSearch = string.Empty;
+        _showExcludeModal = true;
+    }
+
+    private void CloseExcludeModal()
+    {
+        _showExcludeModal = false;
+    }
+
+    private void ToggleExcludeMachineSelection(string soMay, bool isChecked)
+    {
+        if (isChecked) _selectedExcludeMachines.Add(soMay);
+        else _selectedExcludeMachines.Remove(soMay);
+    }
+
+    private async Task SaveExcludeModalAsync()
+    {
+        _excludeSaving = true;
+        try
+        {
+            // Fresh read để tránh EF tracking conflict
+            var current = await Db.MachineExcludeSettings.ToListAsync();
+            var currentSet = current.Select(x => x.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Xóa máy bị bỏ tick
+            var toRemove = current.Where(x => !_selectedExcludeMachines.Contains(x.SoMay)).ToList();
+            if (toRemove.Any())
+                Db.MachineExcludeSettings.RemoveRange(toRemove);
+
+            // Thêm máy mới được tick
+            foreach (var soMay in _selectedExcludeMachines.Where(s => !currentSet.Contains(s)))
+            {
+                await Db.MachineExcludeSettings.AddAsync(new MachineExcludeSetting
+                {
+                    SoMay = soMay,
+                    AddedAt = DateTime.Now,
+                    AddedByUserId = _currentUserId > 0 ? _currentUserId : null
+                });
+            }
+
+            await Db.SaveChangesAsync();
+
+            // Reload list hiển thị
+            _excludeSettings = await Db.MachineExcludeSettings
+                .OrderBy(x => x.SoMay)
+                .AsNoTracking()
+                .ToListAsync();
+
+            _showExcludeModal = false;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[MachineExclude] SaveError: {ex.Message}");
+        }
+        finally
+        {
+            _excludeSaving = false;
+        }
     }
 
     private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)

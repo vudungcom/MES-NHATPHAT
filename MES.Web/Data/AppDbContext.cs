@@ -26,16 +26,16 @@ public class AppDbContext : DbContext
     // ==== So Do To Chuc module ====
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
-	public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
+    public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
 
     // ==== Do Ga & Phu Kien module ====
     public DbSet<DoGa> DoGas => Set<DoGa>();
     public DbSet<DoGaMuonTraLog> DoGaMuonTraLogs => Set<DoGaMuonTraLog>();
     public DbSet<DoGaChangeLog> DoGaChangeLogs => Set<DoGaChangeLog>();
-	public DbSet<Dao> Daos { get; set; }
-public DbSet<DaoChangeLog> DaoChangeLogs { get; set; }
-public DbSet<KhoVatLieu> KhoVatLieus => Set<KhoVatLieu>();
-public DbSet<KhoVatLieuChangeLog> KhoVatLieuChangeLogs => Set<KhoVatLieuChangeLog>();
+    public DbSet<Dao> Daos { get; set; }
+    public DbSet<DaoChangeLog> DaoChangeLogs { get; set; }
+    public DbSet<KhoVatLieu> KhoVatLieus => Set<KhoVatLieu>();
+    public DbSet<KhoVatLieuChangeLog> KhoVatLieuChangeLogs => Set<KhoVatLieuChangeLog>();
 
     // ==== Standard WTS Tasks module ====
     public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();
@@ -47,11 +47,14 @@ public DbSet<KhoVatLieuChangeLog> KhoVatLieuChangeLogs => Set<KhoVatLieuChangeLo
     public DbSet<PartBaviaStep> PartBaviaSteps => Set<PartBaviaStep>();
     public DbSet<PartWashingStep> PartWashingSteps => Set<PartWashingStep>();
     public DbSet<PartInspectionStep> PartInspectionSteps => Set<PartInspectionStep>();
-    
+
     // BỔ SUNG VÙNG E
-    public DbSet<PartPackagingStep> PartPackagingSteps => Set<PartPackagingStep>(); 
-    
+    public DbSet<PartPackagingStep> PartPackagingSteps => Set<PartPackagingStep>();
+
     public DbSet<PartProcessStepChangeLog> PartProcessStepChangeLogs => Set<PartProcessStepChangeLog>();
+
+    // ==== Machine Exclude Settings (global) ====
+    public DbSet<MachineExcludeSetting> MachineExcludeSettings => Set<MachineExcludeSetting>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -83,11 +86,20 @@ public DbSet<KhoVatLieuChangeLog> KhoVatLieuChangeLogs => Set<KhoVatLieuChangeLo
         mb.Entity<PartBaviaStep>().HasKey(x => x.StepId);
         mb.Entity<PartWashingStep>().HasKey(x => x.StepId);
         mb.Entity<PartInspectionStep>().HasKey(x => x.StepId);
-        
+
         // BỔ SUNG PK VÙNG E
         mb.Entity<PartPackagingStep>().HasKey(x => x.StepId);
-        
+
         mb.Entity<PartProcessStepChangeLog>().HasKey(x => x.ChangeId);
+
+        // ==== MachineExcludeSetting ====
+        mb.Entity<MachineExcludeSetting>().HasKey(x => x.Id);
+        mb.Entity<MachineExcludeSetting>().HasIndex(x => x.SoMay).IsUnique();
+        mb.Entity<MachineExcludeSetting>()
+            .HasOne(x => x.AddedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.AddedByUserId)
+            .OnDelete(DeleteBehavior.NoAction);
 
         // ==== Customer ====
         mb.Entity<Customer>().HasIndex(x => x.CustomerCode).IsUnique();
