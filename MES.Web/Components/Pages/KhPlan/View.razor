@@ -1,7 +1,9 @@
 @page "/kh-plan/{Id:int}/detail/{DetailId:int}"
 @attribute [Authorize]
 @rendermode InteractiveServer
+@using MES.Web.Services
 @inject KhPlanService KhSvc
+@inject KhoVatLieuService KhoSvc
 @inject NavigationManager Nav
 
 <PageTitle>Xem phiếu KH - MES</PageTitle>
@@ -147,19 +149,31 @@ else
                 </div>
             </div>
 
-            <p class="small text-secondary fw-500 mb-2 mt-3">C. Thông tin nội bộ</p>
+            <p class="small text-secondary fw-500 mb-2 mt-3">
+                C. Thông tin nội bộ
+                <span class="text-muted fw-normal ms-2" style="font-size:0.78rem;">
+                    <i class="bi bi-box-seam me-1"></i>Lấy từ module Quản lý Kho — chỉ xem.
+                    @if (_khoItem == null)
+                    {
+                        <a href="/kho" class="text-warning ms-1"><i class="bi bi-exclamation-triangle"></i> Chưa có dữ liệu kho — vào Quản lý Kho để nhập</a>
+                    }
+                </span>
+            </p>
             <div class="row g-2">
                 <div class="col-md-3">
-                    <label class="form-label small text-muted">Order VL</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.OrderVL" readonly />
+                    <label class="form-label small text-muted">Order VL <small class="text-muted">(Cột K - Kho)</small></label>
+                    <input class="form-control form-control-sm font-monospace bg-light"
+                           value="@(_khoItem?.OrderVatLieu ?? "—")" readonly />
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label small text-muted">Vị trí kho</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.Location" readonly />
+                    <label class="form-label small text-muted">Vị trí kho <small class="text-muted">(Cột L - Kho)</small></label>
+                    <input class="form-control form-control-sm font-monospace bg-light"
+                           value="@(_khoItem?.ViTriDePhoi ?? "—")" readonly />
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label small text-muted">Tình trạng phôi</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.MaterialCondition" readonly />
+                    <label class="form-label small text-muted">Tình trạng phôi <small class="text-muted">(Cột M - Kho)</small></label>
+                    <input class="form-control form-control-sm bg-light"
+                           value="@(_khoItem?.TinhTrangPhoi ?? "—")" readonly />
                 </div>
             </div>
         </div>
@@ -172,6 +186,7 @@ else
 
     private KhPlan? _plan;
     private KhPlanDetail? _detail;
+    private KhoVatLieuViewItem? _khoItem; // dữ liệu kho tương ứng với dòng này (read-only)
 
     protected override async Task OnInitializedAsync()
     {
@@ -182,6 +197,10 @@ else
         {
             _plan = plan;
             _detail = detail;
+
+            // Lấy dữ liệu kho tương ứng (nếu có) — chỉ để hiển thị, không cho sửa
+            var allKho = await KhoSvc.GetAllAsync();
+            _khoItem = allKho.FirstOrDefault(k => k.KhPlanDetailId == DetailId);
         }
     }
 

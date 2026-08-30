@@ -189,8 +189,12 @@ else
                             <td>@r.Priority</td>
                             <td class="font-monospace text-truncate" style="max-width: 100px;" title="@r.MaterialConfig">@r.MaterialConfig</td>
                             <td class="text-truncate" style="max-width: 140px;" title="@r.PartNotes">@r.PartNotes</td>
-                            <td class="font-monospace">@r.OrderVL</td>
-                            <td>@r.Location</td>
+                            <td class="font-monospace text-nowrap" title="Lấy từ Quản lý Kho">
+                                @(string.IsNullOrEmpty(r.KhoOrderVL) ? "—" : r.KhoOrderVL)
+                            </td>
+                            <td class="text-nowrap" title="Lấy từ Quản lý Kho">
+                                @(string.IsNullOrEmpty(r.KhoViTri) ? "—" : r.KhoViTri)
+                            </td>
                             <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
                             <td @onclick:stopPropagation class="text-nowrap">
                                 @if (_canEdit)

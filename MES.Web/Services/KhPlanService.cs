@@ -91,6 +91,8 @@ public class KhPlanService
         var q = from d in _db.KhPlanDetails
                 join p in _db.KhPlans on d.KhPlanId equals p.KhPlanId
                 join c in _db.Customers on p.CustomerId equals c.CustomerId
+                join k in _db.KhoVatLieus on d.KhPlanDetailId equals k.PlanDetailId into kGroup
+                from k in kGroup.DefaultIfEmpty()
                 orderby p.PlanDate descending, d.LineNo
                 select new KhPlanDetailRow
                 {
@@ -113,7 +115,10 @@ public class KhPlanService
                     OrderVL = d.OrderVL,
                     Location = d.Location,
                     PartNotes = d.PartNotes,
-                    Status = d.Status
+                    Status = d.Status,
+                    // Lấy từ Kho — chỉ để hiển thị
+                    KhoOrderVL = k != null ? k.OrderVatLieu : null,
+                    KhoViTri   = k != null ? k.ViTriDePhoi  : null,
                 };
 
         return await q.Take(1000).ToListAsync();
@@ -486,6 +491,9 @@ public class KhPlanDetailRow
     public string? Location { get; set; }
     public string? PartNotes { get; set; }
     public string Status { get; set; } = "";
+    // Lấy từ KhoVatLieus — chỉ để hiển thị, không cho sửa ở KhPlan
+    public string? KhoOrderVL { get; set; }
+    public string? KhoViTri { get; set; }
 }
 
 public class BulkStdRow

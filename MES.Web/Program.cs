@@ -48,6 +48,7 @@ builder.Services.AddScoped<PartTaroService>();
 builder.Services.AddScoped<PartBaviaService>();
 builder.Services.AddScoped<PartWashingService>();
 builder.Services.AddScoped<PartInspectionService>();
+builder.Services.AddScoped<KhoVatLieuService>();
 // Luot 6C - Part Master listing
 builder.Services.AddScoped<PartMasterListService>();
 builder.Services.AddScoped<DaoService>();

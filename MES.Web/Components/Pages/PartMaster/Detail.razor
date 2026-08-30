@@ -90,12 +90,24 @@ else
                 @if (_part.IsPkgConfirmed) { <span class="badge bg-success">Đóng gói: OK</span> } else { <span class="badge bg-danger">Đóng gói: NG</span> }
             </div>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-start">
             <a href="/part-master" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Quay lại</a>
             @if (CanEditAnyArea)
             {
-                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") shadow-sm"
-                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully)">
+                <div class="d-flex flex-column align-items-center">
+                    <button class="btn @(_hasChanges ? "btn-warning" : "btn-outline-secondary") shadow-sm w-100"
+                            @onclick="TrySaveDraftAsync"
+                            disabled="@(_draftSaving || !_hasChanges)">
+                        <i class="bi bi-floppy"></i>
+                        @(_draftSaving ? "Đang lưu..." : "Lưu nháp")
+                    </button>
+                    @if (_isDraftSaved && !_hasChanges)
+                    {
+                        <small class="text-danger fw-bold mt-1" style="font-size: 0.75rem;">Đã lưu nháp (NG)</small>
+                    }
+                </div>
+                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") shadow-sm" style="height: 38px;"
+                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully || !HasUnsavedChanges)">
                     <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle")"></i>
                     @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
                 </button>
@@ -130,7 +142,7 @@ else
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Tên chi tiết</label>
-                        <input class="form-control form-control-sm" @bind="_partName" @oninput="() => _savedSuccessfully = false" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
+                        <input class="form-control form-control-sm" @bind="_partName" @oninput="() => { _savedSuccessfully = false; _hasChanges = true; }" disabled="@(!_canEditA)" placeholder="Nhập tên chi tiết đầy đủ..." />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
@@ -320,7 +332,7 @@ else
                             <i class="bi bi-nut"></i> C.1 Taro (@ActiveTaroCount)
                             @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
                         </span>
-                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _taroEdits.Add(new TaroEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="AddTaroRow" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
                     </div>
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
@@ -392,7 +404,7 @@ else
                             <i class="bi bi-scissors"></i> C.2 Bavia (@ActiveBaviaCount)
                             @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
                         </span>
-                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _baviaEdits.Add(new BaviaEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="AddBaviaRow" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
                     </div>
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
@@ -464,7 +476,7 @@ else
                             <i class="bi bi-droplet"></i> C.3 Rửa (@ActiveWashingCount)
                             @if (!_canEditC) { <span class="badge bg-light text-dark ms-1">Chỉ xem</span> }
                         </span>
-                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="() => _washingEdits.Add(new WashingEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                        @if (_canEditC) { <button class="btn btn-sm btn-light text-success fw-bold" @onclick="AddWashingRow" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
                     </div>
                     <div class="card-body p-0">
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
@@ -539,7 +551,7 @@ else
                     <i class="bi bi-search"></i> D. Kiểm tra chất lượng (KCS) (@ActiveInspectionCount)
                     @if (!_canEditD) { <span class="badge bg-dark text-white ms-2">Chỉ xem</span> }
                 </span>
-                @if (_canEditD) { <button class="btn btn-dark btn-sm" @onclick="() => _inspectionEdits.Add(new InspectionEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                @if (_canEditD) { <button class="btn btn-dark btn-sm" @onclick="AddInspectionRow" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
@@ -612,7 +624,7 @@ else
                     <i class="bi bi-box-seam"></i> E. Quy trình Đóng gói (@ActivePackagingCount)
                     @if (!_canEditE) { <span class="badge bg-light text-dark ms-2">Chỉ xem</span> }
                 </span>
-                @if (_canEditE) { <button class="btn btn-sm btn-light text-primary fw-bold" @onclick="() => _packagingEdits.Add(new PackagingEdit { State = EditState.New })" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
+                @if (_canEditE) { <button class="btn btn-sm btn-light text-primary fw-bold" @onclick="AddPackagingRow" title="Thêm dòng"><i class="bi bi-plus-lg"></i></button> }
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
@@ -701,10 +713,22 @@ else
                     </div>
                 }
             </div>
-            <div class="card-footer bg-white text-end py-3">
-                <a href="/part-master" class="btn btn-outline-secondary me-2">Hủy bỏ</a>
-                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") px-4 fw-bold"
-                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully)">
+            <div class="card-footer bg-white text-end py-3 d-flex justify-content-end gap-2 align-items-start">
+                <a href="/part-master" class="btn btn-outline-secondary">Hủy bỏ</a>
+                <div class="d-flex flex-column align-items-center">
+                    <button class="btn @(_hasChanges ? "btn-warning" : "btn-outline-secondary") px-4"
+                            @onclick="TrySaveDraftAsync"
+                            disabled="@(_draftSaving || !_hasChanges)">
+                        <i class="bi bi-floppy me-1"></i>
+                        @(_draftSaving ? "Đang lưu..." : "Lưu nháp")
+                    </button>
+                    @if (_isDraftSaved && !_hasChanges)
+                    {
+                        <small class="text-danger fw-bold mt-1">Đã lưu nháp (Trạng thái: NG)</small>
+                    }
+                </div>
+                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") px-4 fw-bold" style="height: 38px;"
+                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully || !HasUnsavedChanges)">
                     <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle") me-1"></i>
                     @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
                 </button>
@@ -835,13 +859,19 @@ else
 }
 
 <PinConfirmModal IsOpen="_showPinModal" Title="Xác nhận đổi Master Data" Description="Việc thay đổi tham số chuẩn sẽ ảnh hưởng đến các Kế hoạch trong tương lai. Vui lòng nhập mã PIN." Changes="@_pendingDefaultChanges" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
+
 @code {
     [SupplyParameterFromQuery(Name = "partNo")]
     public string? PartNo { get; set; }
 
     private bool _loading = true;
     private bool _saving = false;
-    private bool _savedSuccessfully = false; // true sau khi lưu thành công → nút mờ, reset khi user sửa thêm
+    private bool _draftSaving = false;
+    private bool _savedSuccessfully = false;
+    private bool _hasChanges = false;
+    private bool _isDraftSaved = false;
+    private bool _isDraftConfirming = false; // Theo dõi xem popup PIN được mở từ Lưu Nháp hay Lưu OK
+
     private PartMaster? _part;
     private int _currentUserId;
 
@@ -906,9 +936,12 @@ else
     private string? _material;
     private string? _materialConfig;
     private string? _materialNote;
+    
+    // Đã trả lại đủ 3 cờ check logic
     private bool _setDefaultMaterial;
     private bool _setDefaultConfig;
     private bool _setDefaultNote;
+    
     private string? _originalPartName;
     private string? _originalMaterial;
     private string? _originalConfig;
@@ -1033,6 +1066,7 @@ else
         }
 
         await LoadAllAsync();
+        _hasChanges = false;
         _loading = false;
     }
 
@@ -1130,7 +1164,16 @@ else
     private void AddMachiningRow()
     {
         _machiningEdits.Add(new MachiningEdit { State = EditState.New, IsBackup = false });
+        _hasChanges = true;
+        _isDraftSaved = false;
+        StateHasChanged();
     }
+
+    private void AddTaroRow()        { _taroEdits.Add(new TaroEdit { State = EditState.New });               _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
+    private void AddBaviaRow()       { _baviaEdits.Add(new BaviaEdit { State = EditState.New });             _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
+    private void AddWashingRow()     { _washingEdits.Add(new WashingEdit { State = EditState.New });         _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
+    private void AddInspectionRow()  { _inspectionEdits.Add(new InspectionEdit { State = EditState.New });   _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
+    private void AddPackagingRow()   { _packagingEdits.Add(new PackagingEdit { State = EditState.New });     _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
 
     private void AddBackupRow<T>(List<T> list, T parent, Func<string, string, T> factory) where T : StepEditBase
     {
@@ -1153,6 +1196,8 @@ else
         {
             list.Add(newBackup);
         }
+        _hasChanges = true;
+        _isDraftSaved = false;
     }
 
     private void OpenAlternativeModal(MachiningEdit edit)
@@ -1211,10 +1256,10 @@ else
     private void MarkAsModified(StepEditBase edit)
     {
         if (edit.State == EditState.Unchanged)
-        {
             edit.State = EditState.Modified;
-        }
-        _savedSuccessfully = false; // User đang sửa tiếp → nút sáng lại
+        _hasChanges = true;
+        _savedSuccessfully = false;
+        _isDraftSaved = false;
     }
 
     private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
@@ -1231,6 +1276,8 @@ else
         {
             edit.State = EditState.Deleted;
         }
+        _hasChanges = true;
+        _isDraftSaved = false;
     }
 
     private string RowCssClass(StepEditBase e)
@@ -1304,7 +1351,34 @@ else
         builder.CloseElement();
     };
 
-    private async Task TrySaveAsync()
+    /// <summary>
+    /// Chỉ bật Popup Modal nhập PIN khi người dùng CHỦ ĐỘNG tích chọn Checkbox Đặt làm mặc định.
+    /// Logic này đã trả lại sự nhất quán cho cả 3 cột Vùng A.
+    /// </summary>
+    private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
+    {
+        var list = new List<PinConfirmModal.DefaultChangeInfo>();
+        if (!_canEditA) return list;
+
+        if (_setDefaultMaterial && _material != _originalMaterial)
+        {
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Mã VL (Material)", OldValue = _originalMaterial ?? "(Trống)", NewValue = _material ?? "(Trống)" });
+        }
+        if (_setDefaultConfig && _materialConfig != _originalConfig)
+        {
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Cấu hình phôi", OldValue = _originalConfig ?? "(Trống)", NewValue = _materialConfig ?? "(Trống)" });
+        }
+        if (_setDefaultNote && _materialNote != _originalNote)
+        {
+            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Ghi chú phôi", OldValue = _originalNote ?? "(Trống)", NewValue = _materialNote ?? "(Trống)" });
+        }
+        return list;
+    }
+
+    private async Task TrySaveDraftAsync() => await InitiateSaveAsync(isDraft: true);
+    private async Task TrySaveAsync() => await InitiateSaveAsync(isDraft: false);
+
+    private async Task InitiateSaveAsync(bool isDraft)
     {
         _saveResult = string.Empty;
         _saveHasError = false;
@@ -1318,6 +1392,7 @@ else
 
         _pendingDefaultChanges = CollectDefaultChanges();
 
+        // Mở popup khi có check ô Default, hoặc có sửa các dòng quy trình.
         if (_pendingDefaultChanges.Count > 0 || RequiresReason)
         {
             if (_pendingDefaultChanges.Count == 0)
@@ -1330,18 +1405,39 @@ else
                     NewValue = "Đã thay đổi/Xóa" 
                 });
             }
+            _isDraftConfirming = isDraft;
             _showPinModal = true;
         }
         else
         {
-            await DoSaveAsync(applyDefaultChanges: false);
+            if (isDraft) _draftSaving = true; else _saving = true;
+            try
+            {
+                await DoSaveAsync(confirmOk: !isDraft);
+            }
+            finally
+            {
+                if (isDraft) _draftSaving = false; else _saving = false;
+            }
         }
     }
 
     private async Task OnPinConfirmed()
     {
         _showPinModal = false;
-        await DoSaveAsync(applyDefaultChanges: true);
+        
+        if (_isDraftConfirming)
+        {
+            _draftSaving = true;
+            try { await DoSaveAsync(confirmOk: false); }
+            finally { _draftSaving = false; }
+        }
+        else
+        {
+            _saving = true;
+            try { await DoSaveAsync(confirmOk: true); }
+            finally { _saving = false; }
+        }
     }
 
     private void OnPinCancelled()
@@ -1349,32 +1445,50 @@ else
         _showPinModal = false;
     }
 
-    private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
+    /// <summary>
+    /// HÀM SỬA LỖI MẤT "ssss": Cập nhật cờ Default trực tiếp qua EF Core,
+    /// TUYỆT ĐỐI KHÔNG ghi đè giá trị cũ, để đảm bảo danh sách vẫn giữ đủ mọi lịch sử.
+    /// </summary>
+    private async Task SafeSetDefaultAsync(string attrType, string? newValue)
     {
-        var list = new List<PinConfirmModal.DefaultChangeInfo>();
-        if (!_canEditA) return list;
+        if (string.IsNullOrWhiteSpace(newValue)) return;
 
-        if (_setDefaultMaterial && !string.IsNullOrWhiteSpace(_originalMaterial) && _material != _originalMaterial)
+        var attrs = await Db.PartMasterAttributes
+            .Where(a => a.PartId == _part!.PartId && a.AttributeType == attrType)
+            .ToListAsync();
+
+        var target = attrs.FirstOrDefault(x => x.Value == newValue) 
+                  ?? Db.PartMasterAttributes.Local.FirstOrDefault(x => x.PartId == _part!.PartId && x.AttributeType == attrType && x.Value == newValue);
+
+        // Chỉ tắt các cờ cũ nếu như tìm thấy record mới để bật
+        if (target != null)
         {
-            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "Material", OldValue = _originalMaterial, NewValue = _material! });
+            bool hasChanges = false;
+            foreach (var a in attrs.Where(x => x.IsDefault && x.Value != newValue))
+            {
+                a.IsDefault = false;
+                Db.PartMasterAttributes.Update(a);
+                hasChanges = true;
+            }
+
+            if (!target.IsDefault)
+            {
+                target.IsDefault = true;
+                Db.PartMasterAttributes.Update(target);
+                hasChanges = true;
+            }
+
+            if (hasChanges)
+            {
+                await Db.SaveChangesAsync();
+            }
         }
-        if (_setDefaultConfig && !string.IsNullOrWhiteSpace(_originalConfig) && _materialConfig != _originalConfig)
-        {
-            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialConfig", OldValue = _originalConfig, NewValue = _materialConfig! });
-        }
-        if (_setDefaultNote && !string.IsNullOrWhiteSpace(_originalNote) && _materialNote != _originalNote)
-        {
-            list.Add(new PinConfirmModal.DefaultChangeInfo { PartNo = _part!.PartNo, AttributeType = "MaterialNote", OldValue = _originalNote, NewValue = _materialNote! });
-        }
-        return list;
     }
 
-    private async Task DoSaveAsync(bool applyDefaultChanges)
+    private async Task DoSaveAsync(bool confirmOk)
     {
-        _saving = true;
         var log = new List<string>();
         var errors = new List<string>();
-        
         var reason = string.IsNullOrWhiteSpace(_reason) ? "Khởi tạo quy trình ban đầu" : _reason.Trim();
 
         try
@@ -1394,51 +1508,34 @@ else
                     }
                 }
 
+                // LƯU CÁC GIÁ TRỊ VÀO DATABASE (NẾU CHƯA CÓ TRONG LIST)
                 await TryAddAttrValue("Material", _material, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialConfig", _materialConfig, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialNote", _materialNote, _currentUserId, log, errors);
 
-                if (_setDefaultMaterial && (string.IsNullOrWhiteSpace(_originalMaterial) || applyDefaultChanges))
+                // ÉP DB LƯU TỨC THÌ ĐỂ CÁC RECORD MỚI SINH RA ID TRƯỚC KHI CHẠY DEFAULT
+                await Db.SaveChangesAsync();
+
+                // CẬP NHẬT DEFAULT (CHỈ KHI NGƯỜI DÙNG TÍCH CHỌN)
+                if (_setDefaultMaterial)
                 {
-                    try
-                    {
-                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "Material", _material!, _currentUserId);
-                        log.Add($"✓ Đặt default Material = {_material}");
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Add($"✗ Đặt default Material: {ex.Message}");
-                    }
+                    try { await SafeSetDefaultAsync("Material", _material); log.Add($"✓ Đặt default Material = {_material}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default Material: {ex.Message}"); }
                 }
 
-                if (_setDefaultConfig && (string.IsNullOrWhiteSpace(_originalConfig) || applyDefaultChanges))
+                if (_setDefaultConfig)
                 {
-                    try
-                    {
-                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "MaterialConfig", _materialConfig!, _currentUserId);
-                        log.Add($"✓ Đặt default MaterialConfig = {_materialConfig}");
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Add($"✗ Đặt default MaterialConfig: {ex.Message}");
-                    }
+                    try { await SafeSetDefaultAsync("MaterialConfig", _materialConfig); log.Add($"✓ Đặt default MaterialConfig = {_materialConfig}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialConfig: {ex.Message}"); }
                 }
 
-                if (_setDefaultNote && (string.IsNullOrWhiteSpace(_originalNote) || applyDefaultChanges))
+                if (_setDefaultNote)
                 {
-                    try
-                    {
-                        await PmSvc.SetAsDefaultAsync(_part!.PartId, "MaterialNote", _materialNote!, _currentUserId);
-                        log.Add($"✓ Đặt default MaterialNote = {_materialNote}");
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Add($"✗ Đặt default MaterialNote: {ex.Message}");
-                    }
+                    try { await SafeSetDefaultAsync("MaterialNote", _materialNote); log.Add($"✓ Đặt default MaterialNote = {_materialNote}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {ex.Message}"); }
                 }
 
-                // Bật cờ OK cho Kế hoạch
-                _part!.IsPlanConfirmed = true;
+                _part!.IsPlanConfirmed = confirmOk;
                 Db.PartMasters.Update(_part);
             }
 
@@ -1451,7 +1548,7 @@ else
                     id => MachiningSvc.RestoreAsync(id, _currentUserId, reason),
                     "Machining", log, errors);
 
-                _part!.IsMachiningConfirmed = true;
+                _part!.IsMachiningConfirmed = confirmOk;
                 Db.PartMasters.Update(_part);
             }
 
@@ -1478,7 +1575,7 @@ else
                     id => WashingSvc.RestoreAsync(id, _currentUserId, reason),
                     "Rửa", log, errors);
 
-                _part!.IsHtspConfirmed = true;
+                _part!.IsHtspConfirmed = confirmOk;
                 Db.PartMasters.Update(_part);
             }
 
@@ -1491,7 +1588,7 @@ else
                     id => InspectionSvc.RestoreAsync(id, _currentUserId, reason),
                     "Kiểm tra", log, errors);
 
-                _part!.IsKcsConfirmed = true;
+                _part!.IsKcsConfirmed = confirmOk;
                 Db.PartMasters.Update(_part);
             }
 
@@ -1504,14 +1601,14 @@ else
                     id => PackagingSvc.RestoreAsync(id, _currentUserId, reason),
                     "Đóng gói", log, errors);
 
-                _part!.IsPkgConfirmed = true;
+                _part!.IsPkgConfirmed = confirmOk;
                 Db.PartMasters.Update(_part);
             }
 
             if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
             {
                 await Db.SaveChangesAsync();
-                log.Add("✓ Đã lưu xác nhận OK.");
+                log.Add(confirmOk ? "✓ Đã lưu & Xác nhận OK." : "✓ Đã lưu nháp (trạng thái chuyển về NG).");
             }
         }
         finally
@@ -1533,7 +1630,9 @@ else
             _setDefaultMaterial = false;
             _setDefaultConfig = false;
             _setDefaultNote = false;
-            _savedSuccessfully = true; // Nút mờ đi sau khi lưu thành công
+            _savedSuccessfully = confirmOk;
+            _isDraftSaved = !confirmOk; 
+            _hasChanges = false;
             await LoadAllAsync();
         }
     }
@@ -1547,7 +1646,7 @@ else
         try
         {
             await PmSvc.AddValueAsync(_part!.PartId, type, value, uid);
-            log.Add($"✓ Thêm giá trị {type}: {value}");
+            log.Add($"✓ Thêm giá trị mới {type}: {value}");
         }
         catch (Exception ex)
         {
@@ -1563,7 +1662,7 @@ else
             {
                 if (e.State == EditState.New)
                 {
-                    if (string.IsNullOrWhiteSpace(e.NC)) continue;
+                    if (string.IsNullOrWhiteSpace(e.NC)) e.NC = "-";
                     var id = await addFn(e);
                     log.Add($"✓ [{label}] Thêm NC={e.NC}");
                 }
@@ -1577,7 +1676,7 @@ else
                     await restoreFn(e.StepId);
                     log.Add($"✓ [{label}] Khôi phục NC={e.NC}");
                 }
-                else if (e.StepId > 0 && e.State != EditState.Deleted && e.HasChanges)
+                else if (e.StepId > 0 && e.State == EditState.Modified)
                 {
                     await updateFn(e.StepId, e);
                     log.Add($"✓ [{label}] Sửa NC={e.NC}");

@@ -1,16 +1,5 @@
 @rendermode InteractiveServer
 
-@*
-   Component 1 ô nhập cho 1 thuộc tính Part (Material, MaterialConfig, Location, MaterialNote).
-   
-   Hiển thị:
-   - Label (chỉ hiện khi có text)
-   - Input text với datalist xổ list các giá trị đã có trong PartMasterAttribute
-   - Nút mũi tên xổ list (visual cue)
-   - Nếu user gõ giá trị khác default → warning nhỏ dưới ô + hiện checkbox "Đặt default mới"
-   - Nếu tick checkbox → cha xử lý ghi lại pending change để hỏi PIN khi Save
-*@
-
 <div>
     @if (!string.IsNullOrWhiteSpace(Label))
     {
@@ -25,54 +14,89 @@
 
     @if (Attributes != null && Attributes.Any())
     {
-        @* Có sẵn attribute → hiện input với datalist *@
         <div class="position-relative">
             <input class="form-control form-control-sm @InputCssClass"
-                   list="@_datalistId"
-                   @bind="_value"
-                   @bind:after="OnValueChangedAsync"
+                   style="padding-right: 28px; @(AllowFreeText ? "" : "cursor: pointer; background-color: #fff;")"
+                   value="@_value"
+                   @oninput="OnInputChanged"
+                   @onfocus="OpenDropdown"
+                   @onclick="OpenDropdown"
+                   @onblur="HideDropdown"
                    placeholder="@Placeholder"
-                   disabled="@Disabled" />
+                   disabled="@Disabled"
+                   readonly="@(!AllowFreeText)" />
+            
             <i class="bi bi-chevron-down position-absolute"
-               style="right: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; color: #999; pointer-events: none;"></i>
-        </div>
-        <datalist id="@_datalistId">
-            @foreach (var attr in Attributes.OrderByDescending(a => a.IsDefault).ThenBy(a => a.Value))
+               style="right: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #6c757d; pointer-events: none;"></i>
+
+            @if (_showDropdown && !Disabled)
             {
-                <option value="@attr.Value">@(attr.IsDefault ? "★ (default) " : "")@attr.Value</option>
+                <div class="position-absolute bg-white border rounded shadow-sm w-100"
+                     style="z-index: 1050; max-height: 220px; overflow-y: auto; top: 100%; left: 0; margin-top: 2px;"
+                     @onmousedown:preventDefault="true">
+
+                    @foreach (var attr in FilteredAttributes)
+                    {
+                        <button type="button"
+                                class="dropdown-item small py-2 text-start"
+                                @onmousedown="() => SelectAttribute(attr.Value)">
+                            @if (attr.IsDefault)
+                            {
+                                <span class="text-success fw-semibold">★ @attr.Value (Mặc định)</span>
+                            }
+                            else
+                            {
+                                <span>@attr.Value</span>
+                            }
+                        </button>
+                    }
+
+                    @if (AllowFreeText && !string.IsNullOrWhiteSpace(_value) &&
+                         !Attributes.Any(a => string.Equals(a.Value, _value.Trim(), StringComparison.OrdinalIgnoreCase)))
+                    {
+                        <div class="border-top px-3 py-2 small text-muted bg-light">
+                            <i class="bi bi-plus-circle text-primary me-1"></i>
+                            Giá trị mới: <strong>@_value</strong>
+                        </div>
+                    }
+                </div>
             }
-        </datalist>
+        </div>
     }
     else
     {
-        @* Chưa có attribute nào (Part mới) → chỉ hiện input thường *@
-        <input class="form-control form-control-sm"
-               @bind="_value"
-               @bind:after="OnValueChangedAsync"
+        <input class="form-control form-control-sm @InputCssClass"
+               value="@_value"
+               @oninput="OnInputChanged"
                placeholder="@Placeholder"
-               disabled="@Disabled" />
+               disabled="@Disabled"
+               readonly="@(!AllowFreeText)" />
     }
 
-    @if (_isValueDifferentFromDefault && !string.IsNullOrEmpty(_value) && !Disabled)
+    @* ĐÃ SỬA: Dùng chung cờ ShowSetDefaultCheckbox để ẩn TOÀN BỘ khối cảnh báo (cả text lẫn checkbox) *@
+    @if (ShowSetDefaultCheckbox && _isValueDifferentFromDefault && !string.IsNullOrEmpty(_value) && !Disabled)
     {
         <div class="mt-1">
             <div class="small text-warning">
                 <i class="bi bi-exclamation-triangle"></i>
                 @if (string.IsNullOrEmpty(_defaultValue))
                 {
-                    <span>Chưa có giá trị default cho attribute này</span>
+                    <span>Chưa có giá trị mặc định (★) cho mục này.</span>
                 }
                 else
                 {
-                    <span>Khác default (<code>@_defaultValue</code>)</span>
+                    <span>Khác với mặc định (<code>@_defaultValue</code>)</span>
                 }
             </div>
+
             <div class="form-check form-check-sm mt-1">
-                <input class="form-check-input" type="checkbox" id="@_checkboxId"
+                <input class="form-check-input"
+                       type="checkbox"
+                       id="@_checkboxId"
                        checked="@IsSetAsDefault"
                        @onchange="OnSetDefaultToggled" />
                 <label class="form-check-label small text-muted" for="@_checkboxId">
-                    Đặt <code>@_value</code> làm default mới (cần PIN xác nhận khi Save)
+                    Đặt <code>@_value</code> làm giá trị mặc định (★) mới (cần nhập PIN xác nhận)
                 </label>
             </div>
         </div>
@@ -84,34 +108,64 @@
     [Parameter] public string? Placeholder { get; set; }
     [Parameter] public bool IsRequired { get; set; }
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool AllowFreeText { get; set; } = true; 
+    [Parameter] public bool ShowSetDefaultCheckbox { get; set; } = true;
     [Parameter] public List<PartMasterAttribute>? Attributes { get; set; }
-
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string?> ValueChanged { get; set; }
-
     [Parameter] public bool IsSetAsDefault { get; set; }
     [Parameter] public EventCallback<bool> IsSetAsDefaultChanged { get; set; }
 
     private string? _value;
     private string? _defaultValue;
     private bool _isValueDifferentFromDefault;
+    private bool _showDropdown;
+    private bool _showAll; 
 
-    private string _datalistId = "dl-" + Guid.NewGuid().ToString("N").Substring(0, 8);
     private string _checkboxId = "cb-" + Guid.NewGuid().ToString("N").Substring(0, 8);
 
-    private string InputCssClass => _isValueDifferentFromDefault && !string.IsNullOrEmpty(_value)
-        ? "border-warning"
-        : (IsAutoFilledFromDefault ? "bg-success bg-opacity-10" : "");
+    // ĐÃ SỬA: Nếu tắt Checkbox (đang ở tab Kế Hoạch) thì cũng TẮT luôn viền vàng cảnh báo
+    private string InputCssClass =>
+        (_isValueDifferentFromDefault && !string.IsNullOrEmpty(_value) && ShowSetDefaultCheckbox)
+            ? "border-warning"
+            : (IsAutoFilledFromDefault ? "bg-success bg-opacity-10" : "");
 
     private bool IsAutoFilledFromDefault =>
         !string.IsNullOrEmpty(_value) &&
         !string.IsNullOrEmpty(_defaultValue) &&
-        _value == _defaultValue;
+        string.Equals(_value.Trim(), _defaultValue.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<PartMasterAttribute> FilteredAttributes
+    {
+        get
+        {
+            if (Attributes == null) return Enumerable.Empty<PartMasterAttribute>();
+
+            var baseList = Attributes
+                .Where(a => !string.IsNullOrEmpty(a.Value))
+                .GroupBy(a => a.Value)
+                .Select(g => g.OrderByDescending(a => a.IsDefault).First())
+                .OrderByDescending(a => a.IsDefault)
+                .ThenBy(a => a.Value);
+
+            if (!AllowFreeText || _showAll || string.IsNullOrWhiteSpace(_value))
+            {
+                return baseList;
+            }
+
+            return baseList.Where(a => a.Value.Contains(_value.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+    }
 
     protected override void OnParametersSet()
     {
-        _value = Value;
         _defaultValue = Attributes?.FirstOrDefault(a => a.IsDefault)?.Value;
+
+        if (_value != Value)
+        {
+            _value = Value;
+        }
+        
         RecalcDifference();
     }
 
@@ -122,14 +176,20 @@
             _isValueDifferentFromDefault = false;
             return;
         }
-        _isValueDifferentFromDefault = _value != _defaultValue;
+
+        _isValueDifferentFromDefault = !string.Equals(_value.Trim(), _defaultValue?.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task OnValueChangedAsync()
+    private async Task OnInputChanged(ChangeEventArgs e)
     {
+        if (!AllowFreeText) return; 
+
+        _value = e.Value?.ToString();
+        _showAll = false;
+        _showDropdown = true;
+
         RecalcDifference();
 
-        // Nếu về lại default → tự tắt checkbox
         if (!_isValueDifferentFromDefault && IsSetAsDefault)
         {
             IsSetAsDefault = false;
@@ -139,9 +199,40 @@
         await ValueChanged.InvokeAsync(_value);
     }
 
+    private void OpenDropdown()
+    {
+        if (Attributes != null && Attributes.Any())
+        {
+            _showDropdown = true;
+            _showAll = true;
+        }
+    }
+
+    private void HideDropdown()
+    {
+        _showDropdown = false;
+    }
+
+    private async Task SelectAttribute(string value)
+    {
+        _value = value;
+        _showAll = false;
+        
+        RecalcDifference();
+
+        if (!_isValueDifferentFromDefault && IsSetAsDefault)
+        {
+            IsSetAsDefault = false;
+            await IsSetAsDefaultChanged.InvokeAsync(false);
+        }
+
+        await ValueChanged.InvokeAsync(_value);
+        _showDropdown = false;
+    }
+
     private async Task OnSetDefaultToggled(ChangeEventArgs e)
     {
-        var newVal = (bool)(e.Value ?? false);
+        var newVal = e.Value is bool b && b;
         IsSetAsDefault = newVal;
         await IsSetAsDefaultChanged.InvokeAsync(newVal);
     }

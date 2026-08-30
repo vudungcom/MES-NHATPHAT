@@ -1,93 +1,839 @@
 @page "/kho"
 @attribute [Authorize]
 @rendermode InteractiveServer
-@inject AppDbContext Db
+@using System.Security.Claims
+@using MES.Web.Constants
+@using MES.Web.Services
+@inject KhoVatLieuService KhoSvc
+@inject UserService UserSvc
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthState
 
-<PageTitle>Kho - MES</PageTitle>
+<PageTitle>Quản lý Kho Phôi & Vật Tư - MES</PageTitle>
+
+@* CSS giống hệt Part Master — copy nguyên pattern *@
+<style>
+    .col-filter-wrap { position: relative; display: inline-block; }
+    .col-filter-btn {
+        background: none; border: none; padding: 0 2px;
+        cursor: pointer; color: #555; font-size: 0.7rem;
+        vertical-align: middle;
+    }
+    .col-filter-btn.active { color: #0d6efd; }
+    .col-filter-dropdown {
+        position: fixed; z-index: 9999;
+        background: #fff; border: 1px solid #ccc; border-radius: 4px;
+        width: 260px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 8px 0;
+    }
+    .col-filter-dropdown .section { padding: 4px 10px; }
+    .col-filter-dropdown .sort-btn {
+        display: block; width: 100%; text-align: left;
+        background: none; border: none; padding: 4px 10px;
+        font-size: 0.82rem; cursor: pointer;
+    }
+    .col-filter-dropdown .sort-btn:hover { background: #f0f0f0; }
+    .col-filter-dropdown .divider { border-top: 1px solid #eee; margin: 4px 0; }
+    .col-filter-dropdown .search-box {
+        width: calc(100% - 20px); margin: 4px 10px;
+        padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px;
+        font-size: 0.8rem;
+    }
+    .col-filter-dropdown .value-list {
+        max-height: 180px; min-height: 40px; overflow-y: auto;
+        padding: 2px 10px;
+    }
+    .col-filter-dropdown .value-list label {
+        display: block; font-size: 0.8rem;
+        cursor: pointer; padding: 1px 0;
+        white-space: nowrap;
+    }
+    .col-filter-dropdown .footer {
+        padding: 6px 10px; display: flex; gap: 6px;
+        justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px;
+    }
+    /* Giữ header cố định width khi dropdown toggle — tránh layout shift */
+    #kho-table th { white-space: nowrap; }
+</style>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
-        <h1 class="mb-1">Kho</h1>
-        <p class="text-muted small mb-0">Tồn kho hiện tại tính từ StockTransaction (event log)</p>
+        <h1 class="mb-1"><i class="bi bi-box-seam me-2 text-primary"></i>Quản lý Kho Phôi & Vật Tư</h1>
+        <p class="text-muted small mb-0">Cột A-H link trực tiếp từ Kế hoạch. Cột I-O do Kho nhập thực nhận & cấp phát.</p>
     </div>
-    <div>
-        <button class="btn btn-outline-secondary" disabled>
-            <i class="bi bi-box-arrow-in-down"></i> Nhập kho (Phase 2)
+    <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-sm btn-outline-success shadow-sm fw-bold"
+                @onclick="async () => await ExportExcelAsync()"
+                disabled="@(!FilteredList.Any())">
+            <i class="bi bi-file-earmark-excel me-1"></i> Xuất Excel (@FilteredList.Count() dòng)
         </button>
-        <button class="btn btn-outline-secondary" disabled>
-            <i class="bi bi-box-arrow-up"></i> Xuất kho (Phase 2)
-        </button>
+
+        @if (_canEditKho)
+        {
+            <span class="badge bg-success py-2 px-3"><i class="bi bi-shield-check me-1"></i> Quyền: Nhập & Cấp Kho</span>
+        }
+        else
+        {
+            <span class="badge bg-secondary py-2 px-3"><i class="bi bi-eye me-1"></i> Quyền: Chỉ xem</span>
+        }
     </div>
 </div>
 
-<div class="alert alert-info small">
-    <i class="bi bi-info-circle"></i>
-    Phase 1 chỉ hiển thị query tồn kho. Chức năng Nhập/Xuất kho sẽ có ở Phase 2 sau khi khảo sát chốt workflow ở nhà máy.
+@* Thanh công cụ lọc *@
+<div class="row g-2 mb-2 align-items-center">
+    <div class="col-md-4">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input class="form-control" placeholder="Tìm kiếm nhanh toàn bảng..."
+                   @bind="_globalSearch" @bind:event="oninput" />
+            @if (!string.IsNullOrEmpty(_globalSearch))
+            {
+                <button class="btn btn-outline-secondary" @onclick="() => _globalSearch = string.Empty">
+                    <i class="bi bi-x"></i>
+                </button>
+            }
+        </div>
+    </div>
+    <div class="col-md-3">
+        <select class="form-select form-select-sm" @bind="_filterStatus">
+            <option value="">-- Tất cả trạng thái phôi --</option>
+            <option value="ChuaNhan">Chưa nhận phôi (Ngày nhận: No)</option>
+            <option value="DaNhan">Đã nhận phôi</option>
+            <option value="DaCap">Đã cấp phôi vào sản xuất</option>
+            <option value="ChuaCap">Đã nhận nhưng chưa cấp</option>
+        </select>
+    </div>
+    <div class="col-md-5 d-flex justify-content-end align-items-center gap-2">
+        @* Nút xóa filter — dùng visibility:hidden để tránh layout shift *@
+        <span style="visibility: @(HasActiveColFilters || !string.IsNullOrEmpty(_globalSearch) || !string.IsNullOrEmpty(_filterStatus) ? "visible" : "hidden")">
+            <button class="btn btn-sm btn-outline-warning" @onclick="ResetAllFilters" title="Xóa toàn bộ bộ lọc">
+                <i class="bi bi-x-circle me-1"></i> Xóa filter cột
+            </button>
+        </span>
+        <small class="text-muted ms-2">Hiển thị <strong>@FilteredList.Count()</strong> / @_items.Count dòng</small>
+    </div>
 </div>
 
-@if (_stockRows == null)
+@if (_loading)
 {
-    <p><em>Đang tải...</em></p>
-}
-else if (_stockRows.Count == 0)
-{
-    <div class="alert alert-secondary">
-        <i class="bi bi-inbox"></i> Kho trống. Chưa có StockTransaction nào.
-    </div>
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải dữ liệu kho...</div>
 }
 else
 {
-    <div class="table-responsive">
-        <table class="table table-sm table-hover">
-            <thead class="table-light">
-                <tr>
-                    <th>Part No</th>
-                    <th>PO</th>
-                    <th class="text-end">Tồn</th>
-                    <th>Vị trí</th>
+    <div class="table-responsive bg-white shadow-sm rounded border" style="max-height: 75vh; overflow-y: auto;"
+         @onclick="CloseAllDropdowns">
+        <table id="kho-table" class="table table-bordered table-hover align-middle mb-0 text-center" style="font-size: 0.78rem;">
+            <thead class="table-light sticky-top" style="z-index: 2;">
+                @* Header phân cụm *@
+                <tr style="background-color: #f8fafc;">
+                    <th style="width:35px;">#</th>
+                    <th colspan="8" class="text-center bg-primary bg-opacity-10 text-primary fw-bold border-end">
+                        <i class="bi bi-link-45deg"></i> CỘT A - H: DỮ LIỆU LINK TỪ KẾ HOẠCH
+                    </th>
+                    <th colspan="7" class="text-center bg-warning bg-opacity-10 text-dark fw-bold border-end">
+                        <i class="bi bi-box-seam"></i> CỘT I - O: KHO NHẬP THỰC TẾ & CẤP PHÁT
+                    </th>
+                    @* Thao tác + Trạng thái ra ngoài cùng bên phải *@
+                    <th colspan="2" class="text-center bg-light">Thao tác & Trạng thái</th>
+                </tr>
+                @* Tiêu đề cột *@
+                <tr class="align-middle">
+                    <th style="width:35px;">#</th>
+
+                    @* Cụm A - H link Kế hoạch *@
+                    <th style="min-width:110px;">@ColHeader("SoPO", "Số PO", "A")</th>
+                    <th style="min-width:120px;">@ColHeader("PartNo", "Mã chi tiết", "B")</th>
+                    <th style="width:50px;">@ColHeader("DonViTinh", "ĐVT", "C")</th>
+                    <th style="width:65px;">@ColHeader("SoLuongKH", "SL KH", "D")</th>
+                    <th style="width:90px;">@ColHeader("ThoiHan", "Thời hạn", "E")</th>
+                    <th style="min-width:100px;">@ColHeader("MaVatLieu", "Mã vật liệu", "F")</th>
+                    <th style="min-width:120px;">@ColHeader("CauHinhPhoi", "Cấu hình phôi", "G")</th>
+                    <th style="min-width:110px;" class="border-end">@ColHeader("GhiChuPhoi", "Ghi chú phôi", "H")</th>
+
+                    @* Cụm I - O Kho nhập *@
+                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayNhan", "Ngày nhận", "I")</th>
+                    <th style="width:75px;" class="bg-warning bg-opacity-10">@ColHeader("SlNhan", "SL nhận", "J")</th>
+                    <th style="min-width:110px;" class="bg-warning bg-opacity-10">@ColHeader("OrderVL", "Order VL", "K")</th>
+                    <th style="min-width:85px;" class="bg-warning bg-opacity-10">@ColHeader("ViTriDe", "Vị trí để", "L")</th>
+                    <th style="min-width:90px;" class="bg-warning bg-opacity-10">@ColHeader("TinhTrang", "Tình trạng", "M")</th>
+                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayCap", "Ngày cấp", "N")</th>
+                    <th style="width:75px;" class="bg-warning bg-opacity-10 border-end">@ColHeader("SlCap", "SL cấp", "O")</th>
+
+                    @* Thao tác + Trạng thái — ngoài cùng bên phải *@
+                    <th style="width:90px;">Thao tác</th>
+                    <th style="width:110px;">Trạng thái</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var r in _stockRows)
+                @if (!FilteredList.Any())
                 {
                     <tr>
-                        <td><code>@r.PartNo</code></td>
-                        <td><code>@r.PurchaseOrder</code></td>
-                        <td class="text-end">@r.Stock.ToString("N0")</td>
-                        <td>@r.Location</td>
+                        <td colspan="19" class="text-center py-4 text-muted">
+                            <em>Không có dòng dữ liệu phôi / kho nào phù hợp điều kiện lọc.</em>
+                        </td>
+                    </tr>
+                }
+                @foreach (var (row, idx) in FilteredList.Select((r, i) => (r, i)))
+                {
+                    <tr @ondblclick="() => OpenEditKhoModal(row)"
+                        style="cursor: pointer;"
+                        title="Double-click để mở form cập nhật kho">
+                        <td class="text-muted">@(idx + 1)</td>
+
+                        @* Cột A - H: Kế hoạch *@
+                        <td class="text-start font-monospace fw-bold text-primary">@row.SoPO</td>
+                        <td class="text-start fw-bold">@row.PartNo</td>
+                        <td>@row.DonViTinh</td>
+                        <td class="fw-bold text-dark">@row.SoLuongKeHoach.ToString("0.####")</td>
+                        <td>@row.ThoiHan.ToString("dd/MM/yyyy")</td>
+                        <td class="text-start">@(string.IsNullOrEmpty(row.MaVatLieu) ? "—" : row.MaVatLieu)</td>
+                        <td class="text-start">@(string.IsNullOrEmpty(row.CauHinhPhoi) ? "—" : row.CauHinhPhoi)</td>
+                        <td class="text-start border-end text-muted">@(string.IsNullOrEmpty(row.GhiChuPhoi) ? "—" : row.GhiChuPhoi)</td>
+
+                        @* Cột I - O: Kho Nhập *@
+                        <td class="bg-warning bg-opacity-10 @(row.NgayNhanPhoi.HasValue ? "text-dark fw-bold" : "text-muted")">
+                            @(row.NgayNhanPhoi.HasValue ? row.NgayNhanPhoi.Value.ToString("dd/MM/yyyy") : "No")
+                        </td>
+                        <td class="bg-warning bg-opacity-10 fw-bold @(row.SoLuongThucNhan.HasValue ? "text-success" : "text-muted")">
+                            @(row.SoLuongThucNhan?.ToString() ?? "—")
+                        </td>
+                        <td class="bg-warning bg-opacity-10 font-monospace text-start">@(string.IsNullOrEmpty(row.OrderVatLieu) ? "—" : row.OrderVatLieu)</td>
+                        <td class="bg-warning bg-opacity-10 fw-bold text-info">@(string.IsNullOrEmpty(row.ViTriDePhoi) ? "—" : row.ViTriDePhoi)</td>
+                        <td class="bg-warning bg-opacity-10 text-start">@(string.IsNullOrEmpty(row.TinhTrangPhoi) ? "—" : row.TinhTrangPhoi)</td>
+                        <td class="bg-warning bg-opacity-10 @(row.NgayCapPhoi.HasValue ? "text-dark fw-bold" : "text-muted")">
+                            @(row.NgayCapPhoi.HasValue ? row.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")
+                        </td>
+                        <td class="bg-warning bg-opacity-10 fw-bold border-end @(row.SoLuongCap.HasValue ? "text-primary" : "text-muted")">
+                            @(row.SoLuongCap?.ToString() ?? "—")
+                        </td>
+
+                        @* Thao tác — ngoài cùng phải; stopPropagation để không trigger dblclick *@
+                        <td class="text-nowrap" @onclick:stopPropagation @ondblclick:stopPropagation>
+                            <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1"
+                                    title="Cập nhật thông tin Kho"
+                                    disabled="@(!_canEditKho)"
+                                    @onclick="() => OpenEditKhoModal(row)">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                                    title="Lịch sử Audit Trail"
+                                    disabled="@(row.KhoVatLieuId == 0)"
+                                    @onclick="async () => await OpenHistoryModal(row)">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
+                        </td>
+
+                        @* Trạng thái — ngoài cùng phải *@
+                        <td>
+                            @if (row.NgayCapPhoi.HasValue)
+                            {
+                                <span class="badge bg-success">Đã cấp phôi</span>
+                            }
+                            else if (row.NgayNhanPhoi.HasValue)
+                            {
+                                <span class="badge bg-primary">Đã nhận phôi</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">Chưa có phôi</span>
+                            }
+                        </td>
                     </tr>
                 }
             </tbody>
         </table>
     </div>
+
+    @* Dropdown filter cột — render ngoài table để không bị clip *@
+    @if (_openDropdown != null && _colDefs.TryGetValue(_openDropdown, out var colDef))
+    {
+        <div class="col-filter-dropdown" style="top: @(_ddTop)px; left: @(_ddLeft)px;"
+             @onclick:stopPropagation>
+            @* Sort *@
+            <div class="section">
+                <button class="sort-btn" @onclick="() => SetSort(_openDropdown!, true)">
+                    <i class="bi bi-sort-alpha-down"></i> Sort A → Z
+                    @if (_sortCol == _openDropdown && _sortAsc) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+                </button>
+                <button class="sort-btn" @onclick="() => SetSort(_openDropdown!, false)">
+                    <i class="bi bi-sort-alpha-up"></i> Sort Z → A
+                    @if (_sortCol == _openDropdown && !_sortAsc) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+                </button>
+            </div>
+            <div class="divider"></div>
+
+            @* Clear filter cột này — chỉ hiện khi đang active *@
+            @if (colDef.SelectedValues.Count > 0 && colDef.SelectedValues.Count < colDef.AllValues.Count)
+            {
+                <button class="sort-btn text-danger" @onclick="() => ClearColFilter(_openDropdown!)">
+                    <i class="bi bi-x-circle"></i> Xóa filter cột này
+                </button>
+                <div class="divider"></div>
+            }
+
+            @* Search trong list *@
+            <input class="search-box" placeholder="Tìm trong danh sách..."
+                   @bind="colDef.SearchText" @bind:event="oninput" />
+
+            @* Danh sách giá trị *@
+            <div class="value-list">
+                @{
+                    var visibleVals = colDef.AllValues
+                        .Where(v => string.IsNullOrEmpty(colDef.SearchText)
+                                 || v.Contains(colDef.SearchText, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    bool allSelected = visibleVals.All(v => colDef.SelectedValues.Contains(v));
+                }
+                <label>
+                    <input type="checkbox" checked="@allSelected"
+                           @onchange="e => ToggleSelectAll(colDef, visibleVals, (bool)(e.Value ?? false))" />
+                    <strong>(Chọn tất cả)</strong>
+                </label>
+                @foreach (var val in visibleVals)
+                {
+                    var v = val;
+                    <label>
+                        <input type="checkbox" checked="@colDef.SelectedValues.Contains(v)"
+                               @onchange="e => ToggleColValue(colDef, v, (bool)(e.Value ?? false))" />
+                        @v
+                    </label>
+                }
+            </div>
+
+            <div class="footer">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="CloseAllDropdowns">Hủy</button>
+                <button class="btn btn-sm btn-primary" @onclick="() => ApplyColFilter(_openDropdown!)">OK</button>
+            </div>
+        </div>
+    }
+}
+
+@* ==================== MODAL CẬP NHẬT KHO (CỘT I - O) ==================== *@
+@if (_showEditModal && _editingRow != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1050;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content shadow border-0">
+                <div class="modal-header bg-primary text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-box-seam me-1"></i>
+                        Cập nhật Kho — PO: <b>@_editingRow.SoPO</b> | Part: <b>@_editingRow.PartNo</b>
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => _showEditModal = false"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="card mb-3 bg-light border-0">
+                        <div class="card-body p-2 small">
+                            <div class="row g-2">
+                                <div class="col-md-3"><strong>Số lượng KH:</strong> @_editingRow.SoLuongKeHoach.ToString("0.####") @_editingRow.DonViTinh</div>
+                                <div class="col-md-3"><strong>Thời hạn KH:</strong> @_editingRow.ThoiHan.ToString("dd/MM/yyyy")</div>
+                                <div class="col-md-3"><strong>Mã VL:</strong> @(_editingRow.MaVatLieu ?? "—")</div>
+                                <div class="col-md-3"><strong>Cấu hình phôi:</strong> @(_editingRow.CauHinhPhoi ?? "—")</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Ngày nhận phôi (Cột I)</label>
+                            <input type="date" class="form-control form-control-sm"
+                                   value="@(_editNgayNhan?.ToString("yyyy-MM-dd"))"
+                                   @onchange="(e) => _editNgayNhan = string.IsNullOrEmpty(e.Value?.ToString()) ? null : DateTime.Parse(e.Value.ToString()!)" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Số lượng thực nhận (Cột J)</label>
+                            <input type="number" min="0" class="form-control form-control-sm text-end fw-bold" @bind="_editSlNhan" placeholder="Nhập SL thực nhận..." />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Order vật liệu (Cột K)</label>
+                            <input class="form-control form-control-sm font-monospace" @bind="_editOrderVl" placeholder="VD: 0003488452, E054697..." />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Vị trí để phôi (Cột L)</label>
+                            <input class="form-control form-control-sm" @bind="_editViTri" placeholder="VD: C6, A3-5, Hướng 22..." />
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label small fw-bold">Tình trạng phôi (Cột M)</label>
+                            <input class="form-control form-control-sm" @bind="_editTinhTrang" placeholder="VD: OK, NG, có bvxn, cắt đạt..." />
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Ngày cấp phôi (Cột N)</label>
+                            <input type="date" class="form-control form-control-sm"
+                                   value="@(_editNgayCap?.ToString("yyyy-MM-dd"))"
+                                   @onchange="(e) => _editNgayCap = string.IsNullOrEmpty(e.Value?.ToString()) ? null : DateTime.Parse(e.Value.ToString()!)" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Số lượng cấp (Cột O)</label>
+                            <input type="number" min="0" class="form-control form-control-sm text-end fw-bold text-primary" @bind="_editSlCap" placeholder="Nhập SL cấp sản xuất..." />
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-danger">Lý do thay đổi / cập nhật kho <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập lý do cập nhật (bắt buộc, tối thiểu 3 ký tự)..." />
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger py-2 small mb-0 mt-3">
+                            <i class="bi bi-exclamation-triangle-fill"></i> @_errorMessage
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => _showEditModal = false">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-primary px-3 fw-bold" @onclick="async () => await SaveKhoDataAsync()" disabled="@_saving">
+                        <i class="bi bi-check-lg"></i> @(_saving ? "Đang lưu..." : "Lưu dữ liệu kho")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ==================== MODAL LỊCH SỬ AUDIT TRAIL ==================== *@
+@if (_showHistoryModal && _selectedRow != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1060;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content shadow border-0">
+                <div class="modal-header bg-light py-2 border-bottom">
+                    <h6 class="modal-title mb-0 text-dark fw-bold">
+                        <i class="bi bi-clock-history text-secondary me-1"></i>
+                        Lịch sử thay đổi kho — PO: <span class="text-primary">@_selectedRow.SoPO</span> | Part: <span class="text-primary">@_selectedRow.PartNo</span>
+                    </h6>
+                    <button type="button" class="btn-close" @onclick="() => _showHistoryModal = false"></button>
+                </div>
+                <div class="modal-body p-0">
+                    @if (_historyLoading)
+                    {
+                        <div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm"></span> Đang tải lịch sử...</div>
+                    }
+                    else if (!_historyLogs.Any())
+                    {
+                        <div class="text-center py-4 text-muted"><em>Chưa có nhật ký thay đổi nào cho dòng này.</em></div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive mb-0">
+                            <table class="table table-sm table-hover table-bordered align-middle mb-0" style="font-size: 0.8rem;">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th style="width: 130px;">Thời gian</th>
+                                        <th style="width: 140px;">Trường (Cột)</th>
+                                        <th>Giá trị cũ</th>
+                                        <th>Giá trị mới</th>
+                                        <th style="width: 130px;">Người sửa</th>
+                                        <th>Lý do</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var log in _historyLogs)
+                                    {
+                                        <tr>
+                                            <td>@log.ChangedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                                            <td><code class="text-secondary">@log.FieldName</code></td>
+                                            <td class="text-danger">@(string.IsNullOrEmpty(log.OldValue) ? "—" : log.OldValue)</td>
+                                            <td class="text-success fw-bold">@(string.IsNullOrEmpty(log.NewValue) ? "—" : log.NewValue)</td>
+                                            <td><i class="bi bi-person-circle text-muted me-1"></i>@log.ChangedByName</td>
+                                            <td class="text-muted fst-italic">@log.Reason</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showHistoryModal = false">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
-    private List<StockRow>? _stockRows;
+    // ================================================================
+    // STATE
+    // ================================================================
+    private bool _loading = true;
+    private bool _saving = false;
+    private int _currentUserId;
+    private bool _canViewKho = false;
+    private bool _canEditKho = false;
 
+    private List<KhoVatLieuViewItem> _items = new();
+
+    // Quick filters
+    private string _globalSearch = string.Empty;
+    private string _filterStatus = string.Empty;
+
+    // Excel-style column filter — giống hệt Part Master pattern
+    private Dictionary<string, ColFilterDef> _colDefs = new();
+    private string? _openDropdown;
+    private double _ddTop, _ddLeft;
+
+    // Sort
+    private string? _sortCol;
+    private bool _sortAsc = true;
+
+    // Modal Edit
+    private bool _showEditModal = false;
+    private KhoVatLieuViewItem? _editingRow;
+    private DateTime? _editNgayNhan;
+    private int? _editSlNhan;
+    private string? _editOrderVl;
+    private string? _editViTri;
+    private string? _editTinhTrang;
+    private DateTime? _editNgayCap;
+    private int? _editSlCap;
+    private string _editReason = string.Empty;
+    private string? _errorMessage;
+
+    // Modal History
+    private bool _showHistoryModal = false;
+    private bool _historyLoading = false;
+    private KhoVatLieuViewItem? _selectedRow;
+    private List<KhoVatLieuChangeLogItem> _historyLogs = new();
+
+    // ================================================================
+    // INIT
+    // ================================================================
     protected override async Task OnInitializedAsync()
     {
-        // Query tồn theo Business Rules: SUM(QuantityChange) GROUP BY PartId, PurchaseOrder
-        var q = from st in Db.StockTransactions
-                join p in Db.PartMasters on st.PartId equals p.PartId
-                group new { st, p } by new { st.PartId, st.PurchaseOrder, p.PartNo, p.LocationDefault } into g
-                where g.Sum(x => x.st.QuantityChange) > 0
-                select new StockRow
-                {
-                    PartNo = g.Key.PartNo,
-                    PurchaseOrder = g.Key.PurchaseOrder,
-                    Stock = g.Sum(x => x.st.QuantityChange),
-                    Location = g.Key.LocationDefault ?? ""
-                };
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = auth.User;
+        var uidStr = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int.TryParse(uidStr, out _currentUserId);
 
-        _stockRows = await q.OrderBy(x => x.PartNo).ToListAsync();
+        var isAdmin = user.IsInRole("ADMIN")
+                   || user.FindFirst("GroupCode")?.Value == "ADMIN"
+                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                   || user.Identity?.Name?.ToLower() == "admin";
+
+        if (isAdmin)
+        {
+            _canViewKho = _canEditKho = true;
+        }
+        else if (_currentUserId > 0)
+        {
+            var perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+            _canViewKho = perms.TryGetValue(SystemPermissions.Kho, out var pv) && pv.CanView;
+            _canEditKho = perms.TryGetValue(SystemPermissions.Kho, out var pe) && pe.CanEdit;
+        }
+
+        await LoadDataAsync();
+        _loading = false;
     }
 
-    private class StockRow
+    private async Task LoadDataAsync()
     {
-        public string PartNo { get; set; } = "";
-        public string PurchaseOrder { get; set; } = "";
-        public decimal Stock { get; set; }
-        public string Location { get; set; } = "";
+        _items = await KhoSvc.GetAllAsync();
+        BuildColDefs();
+    }
+
+    // ================================================================
+    // BUILD COL DEFS — giống hệt Part Master pattern
+    // ================================================================
+    private void BuildColDefs()
+    {
+        _colDefs = new Dictionary<string, ColFilterDef>
+        {
+            ["SoPO"]       = ColFilterDef.Build(_items, r => r.SoPO),
+            ["PartNo"]     = ColFilterDef.Build(_items, r => r.PartNo),
+            ["DonViTinh"]  = ColFilterDef.Build(_items, r => r.DonViTinh ?? "—"),
+            ["SoLuongKH"]  = ColFilterDef.Build(_items, r => r.SoLuongKeHoach.ToString("0.####")),
+            ["ThoiHan"]    = ColFilterDef.Build(_items, r => r.ThoiHan.ToString("dd/MM/yyyy")),
+            ["MaVatLieu"]  = ColFilterDef.Build(_items, r => r.MaVatLieu ?? "—"),
+            ["CauHinhPhoi"]= ColFilterDef.Build(_items, r => r.CauHinhPhoi ?? "—"),
+            ["GhiChuPhoi"] = ColFilterDef.Build(_items, r => r.GhiChuPhoi ?? "—"),
+            ["NgayNhan"]   = ColFilterDef.Build(_items, r => r.NgayNhanPhoi.HasValue ? r.NgayNhanPhoi.Value.ToString("dd/MM/yyyy") : "No"),
+            ["SlNhan"]     = ColFilterDef.Build(_items, r => r.SoLuongThucNhan?.ToString() ?? "—"),
+            ["OrderVL"]    = ColFilterDef.Build(_items, r => r.OrderVatLieu ?? "—"),
+            ["ViTriDe"]    = ColFilterDef.Build(_items, r => r.ViTriDePhoi ?? "—"),
+            ["TinhTrang"]  = ColFilterDef.Build(_items, r => r.TinhTrangPhoi ?? "—"),
+            ["NgayCap"]    = ColFilterDef.Build(_items, r => r.NgayCapPhoi.HasValue ? r.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No"),
+            ["SlCap"]      = ColFilterDef.Build(_items, r => r.SoLuongCap?.ToString() ?? "—"),
+        };
+    }
+
+    // ================================================================
+    // COLUMN HEADER với filter button — copy nguyên từ Part Master
+    // ================================================================
+    private RenderFragment ColHeader(string colKey, string label, string colLetter) => __builder =>
+    {
+        var hasFilter = _colDefs.TryGetValue(colKey, out var def)
+                     && def.SelectedValues.Count > 0
+                     && def.SelectedValues.Count < def.AllValues.Count;
+        var isSorted = _sortCol == colKey;
+
+        <span class="col-filter-wrap">
+            <span style="cursor: pointer; user-select: none;"
+                  @onclick="() => SetSort(colKey, _sortCol == colKey ? !_sortAsc : true)">
+                @label
+                <br /><small class="text-muted" style="font-weight:normal;">(Cột @colLetter)</small>
+                @if (isSorted)
+                {
+                    <i class="bi @(_sortAsc ? "bi-arrow-up" : "bi-arrow-down") ms-1" style="font-size:0.65rem;"></i>
+                }
+            </span>
+            <button class="col-filter-btn @(hasFilter ? "active" : "")"
+                    title="Lọc cột này"
+                    @onclick:stopPropagation
+                    @onclick="async e => await OpenDropdownAsync(colKey, e)">
+                <i class="bi @(hasFilter ? "bi-funnel-fill" : "bi-funnel")"></i>
+            </button>
+        </span>
+    };
+
+    // ================================================================
+    // DROPDOWN LOGIC — copy nguyên từ Part Master
+    // ================================================================
+    private async Task OpenDropdownAsync(string colKey, MouseEventArgs e)
+    {
+        if (_openDropdown == colKey) { _openDropdown = null; return; }
+        _openDropdown = colKey;
+        _ddTop  = e.ClientY + 10;
+        _ddLeft = e.ClientX - 10;
+        if (_ddLeft > 1100) _ddLeft = 1100;
+        await Task.CompletedTask;
+    }
+
+    private void CloseAllDropdowns() => _openDropdown = null;
+
+    private void ToggleSelectAll(ColFilterDef def, List<string> visible, bool select)
+    {
+        var updated = new HashSet<string>(def.SelectedValues);
+        if (select) foreach (var v in visible) updated.Add(v);
+        else        foreach (var v in visible) updated.Remove(v);
+        def.SelectedValues = updated;
+    }
+
+    private void ToggleColValue(ColFilterDef def, string val, bool selected)
+    {
+        var updated = new HashSet<string>(def.SelectedValues);
+        if (selected) updated.Add(val);
+        else          updated.Remove(val);
+        def.SelectedValues = updated;
+    }
+
+    private void ApplyColFilter(string colKey)
+    {
+        _openDropdown = null;
+        StateHasChanged();
+    }
+
+    private void ClearColFilter(string colKey)
+    {
+        if (_colDefs.TryGetValue(colKey, out var def))
+            def.SelectedValues = new HashSet<string>(def.AllValues);
+        _openDropdown = null;
+    }
+
+    private void SetSort(string col, bool asc)
+    {
+        _sortCol = col; _sortAsc = asc;
+        _openDropdown = null;
+    }
+
+    private bool HasActiveColFilters =>
+        _colDefs.Any(kv => kv.Value.SelectedValues.Count > 0
+                        && kv.Value.SelectedValues.Count < kv.Value.AllValues.Count)
+        || _sortCol != null;
+
+    // ================================================================
+    // FILTERED + SORTED
+    // ================================================================
+    private IEnumerable<KhoVatLieuViewItem> FilteredList
+    {
+        get
+        {
+            var q = _items.AsEnumerable();
+
+            // Quick filter trạng thái
+            if (!string.IsNullOrWhiteSpace(_filterStatus))
+            {
+                q = _filterStatus switch
+                {
+                    "ChuaNhan" => q.Where(k => !k.NgayNhanPhoi.HasValue),
+                    "DaNhan"   => q.Where(k => k.NgayNhanPhoi.HasValue),
+                    "DaCap"    => q.Where(k => k.NgayCapPhoi.HasValue),
+                    "ChuaCap"  => q.Where(k => k.NgayNhanPhoi.HasValue && !k.NgayCapPhoi.HasValue),
+                    _ => q
+                };
+            }
+
+            // Quick filter global search
+            if (!string.IsNullOrWhiteSpace(_globalSearch))
+            {
+                var s = _globalSearch.Trim();
+                q = q.Where(k =>
+                    k.SoPO.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    k.PartNo.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (k.OrderVatLieu?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (k.ViTriDePhoi?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (k.MaVatLieu?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            // Excel-style column filters — giống Part Master
+            foreach (var (key, def) in _colDefs)
+            {
+                if (def.SelectedValues.Count == def.AllValues.Count) continue; // không lọc nếu chọn tất cả
+                q = key switch
+                {
+                    "SoPO"        => q.Where(k => def.SelectedValues.Contains(k.SoPO)),
+                    "PartNo"      => q.Where(k => def.SelectedValues.Contains(k.PartNo)),
+                    "DonViTinh"   => q.Where(k => def.SelectedValues.Contains(k.DonViTinh ?? "—")),
+                    "SoLuongKH"   => q.Where(k => def.SelectedValues.Contains(k.SoLuongKeHoach.ToString("0.####"))),
+                    "ThoiHan"     => q.Where(k => def.SelectedValues.Contains(k.ThoiHan.ToString("dd/MM/yyyy"))),
+                    "MaVatLieu"   => q.Where(k => def.SelectedValues.Contains(k.MaVatLieu ?? "—")),
+                    "CauHinhPhoi" => q.Where(k => def.SelectedValues.Contains(k.CauHinhPhoi ?? "—")),
+                    "GhiChuPhoi"  => q.Where(k => def.SelectedValues.Contains(k.GhiChuPhoi ?? "—")),
+                    "NgayNhan"    => q.Where(k => def.SelectedValues.Contains(k.NgayNhanPhoi.HasValue ? k.NgayNhanPhoi.Value.ToString("dd/MM/yyyy") : "No")),
+                    "SlNhan"      => q.Where(k => def.SelectedValues.Contains(k.SoLuongThucNhan?.ToString() ?? "—")),
+                    "OrderVL"     => q.Where(k => def.SelectedValues.Contains(k.OrderVatLieu ?? "—")),
+                    "ViTriDe"     => q.Where(k => def.SelectedValues.Contains(k.ViTriDePhoi ?? "—")),
+                    "TinhTrang"   => q.Where(k => def.SelectedValues.Contains(k.TinhTrangPhoi ?? "—")),
+                    "NgayCap"     => q.Where(k => def.SelectedValues.Contains(k.NgayCapPhoi.HasValue ? k.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")),
+                    "SlCap"       => q.Where(k => def.SelectedValues.Contains(k.SoLuongCap?.ToString() ?? "—")),
+                    _ => q
+                };
+            }
+
+            // Sort
+            if (_sortCol != null)
+            {
+                Func<KhoVatLieuViewItem, string> keySelector = _sortCol switch
+                {
+                    "SoPO"        => k => k.SoPO,
+                    "PartNo"      => k => k.PartNo,
+                    "DonViTinh"   => k => k.DonViTinh ?? "",
+                    "SoLuongKH"   => k => k.SoLuongKeHoach.ToString("0000000000.####"),
+                    "ThoiHan"     => k => k.ThoiHan.ToString("yyyy-MM-dd"),
+                    "MaVatLieu"   => k => k.MaVatLieu ?? "",
+                    "CauHinhPhoi" => k => k.CauHinhPhoi ?? "",
+                    "GhiChuPhoi"  => k => k.GhiChuPhoi ?? "",
+                    "NgayNhan"    => k => k.NgayNhanPhoi?.ToString("yyyy-MM-dd") ?? "9999",
+                    "SlNhan"      => k => k.SoLuongThucNhan?.ToString("0000000") ?? "",
+                    "OrderVL"     => k => k.OrderVatLieu ?? "",
+                    "ViTriDe"     => k => k.ViTriDePhoi ?? "",
+                    "TinhTrang"   => k => k.TinhTrangPhoi ?? "",
+                    "NgayCap"     => k => k.NgayCapPhoi?.ToString("yyyy-MM-dd") ?? "9999",
+                    "SlCap"       => k => k.SoLuongCap?.ToString("0000000") ?? "",
+                    _ => k => k.SoPO
+                };
+                q = _sortAsc ? q.OrderBy(keySelector) : q.OrderByDescending(keySelector);
+            }
+
+            return q;
+        }
+    }
+
+    // ================================================================
+    // RESET ALL
+    // ================================================================
+    private void ResetAllFilters()
+    {
+        _globalSearch = string.Empty;
+        _filterStatus = string.Empty;
+        foreach (var def in _colDefs.Values)
+            def.SelectedValues = new HashSet<string>(def.AllValues);
+        _sortCol = null;
+        _openDropdown = null;
+    }
+
+    // ================================================================
+    // EXPORT EXCEL
+    // ================================================================
+    private async Task ExportExcelAsync()
+    {
+        var data = FilteredList.ToList();
+        var bytes = KhoSvc.ExportToExcel(data);
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"DU_LIEU_KHO_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+        await JS.InvokeVoidAsync("downloadFileFromBytes", fileName,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base64);
+    }
+
+    // ================================================================
+    // MODAL EDIT
+    // ================================================================
+    private void OpenEditKhoModal(KhoVatLieuViewItem row)
+    {
+        if (!_canEditKho) return; // người chỉ xem không mở modal
+        _editingRow   = row;
+        _editNgayNhan = row.NgayNhanPhoi;
+        _editSlNhan   = row.SoLuongThucNhan;
+        _editOrderVl  = row.OrderVatLieu;
+        _editViTri    = row.ViTriDePhoi;
+        _editTinhTrang= row.TinhTrangPhoi;
+        _editNgayCap  = row.NgayCapPhoi;
+        _editSlCap    = row.SoLuongCap;
+        _editReason   = string.Empty;
+        _errorMessage = null;
+        _showEditModal= true;
+    }
+
+    private async Task SaveKhoDataAsync()
+    {
+        _errorMessage = null;
+        if (_editingRow == null) return;
+
+        if (string.IsNullOrWhiteSpace(_editReason) || _editReason.Trim().Length < 3)
+        {
+            _errorMessage = "Vui lòng nhập lý do thay đổi (tối thiểu 3 ký tự).";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var (ok, err) = await KhoSvc.SaveKhoInputAsync(
+                _editingRow.KhPlanDetailId,
+                _editNgayNhan, _editSlNhan, _editOrderVl,
+                _editViTri, _editTinhTrang,
+                _editNgayCap, _editSlCap,
+                _editReason, _currentUserId);
+
+            if (!ok) { _errorMessage = err; return; }
+
+            _showEditModal = false;
+            await LoadDataAsync();
+        }
+        finally { _saving = false; }
+    }
+
+    // ================================================================
+    // MODAL HISTORY
+    // ================================================================
+    private async Task OpenHistoryModal(KhoVatLieuViewItem row)
+    {
+        _selectedRow    = row;
+        _showHistoryModal = true;
+        _historyLoading = true;
+        _historyLogs    = await KhoSvc.GetChangeLogsAsync(row.KhoVatLieuId);
+        _historyLoading = false;
+    }
+
+    // ================================================================
+    // ColFilterDef — copy nguyên từ Part Master, chỉ đổi generic type
+    // ================================================================
+    private class ColFilterDef
+    {
+        public List<string> AllValues { get; set; } = new();
+        public HashSet<string> SelectedValues { get; set; } = new();
+        public string SearchText { get; set; } = string.Empty;
+
+        public static ColFilterDef Build(List<KhoVatLieuViewItem> rows, Func<KhoVatLieuViewItem, string> selector)
+        {
+            var all = rows.Select(selector).Distinct().OrderBy(v => v).ToList();
+            return new ColFilterDef
+            {
+                AllValues = all,
+                SelectedValues = new HashSet<string>(all) // mặc định chọn tất cả = không lọc
+            };
+        }
     }
 }

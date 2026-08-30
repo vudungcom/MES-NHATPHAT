@@ -10,6 +10,13 @@
 
 <PageTitle>Sửa phiếu KH - MES</PageTitle>
 
+<PinConfirmModal IsOpen="_showPinModal"
+    Title="Xác nhận lưu thay đổi phiếu KH"
+    Description="Vui lòng nhập mã PIN để xác nhận lưu thay đổi."
+    Changes="@_pendingDefaultChanges"
+    OnConfirmed="OnPinConfirmed"
+    OnCancelled="OnPinCancelled" />
+
 @if (_plan == null || _detailForm == null)
 {
     <p><em>Đang tải...</em></p>
@@ -29,13 +36,9 @@ else
             </p>
         </div>
         <div class="d-flex gap-2">
-            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detailForm.KhPlanDetailId}")" class="btn btn-outline-secondary">
-                <i class="bi bi-x"></i> Hủy (không lưu)
+            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detailForm.KhPlanDetailId}")" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-x"></i> Hủy
             </a>
-            <button class="btn btn-primary" @onclick="AttemptSaveAsync" disabled="@_saving">
-                <i class="bi bi-check-lg"></i>
-                @(_saving ? "Đang lưu..." : "Lưu thay đổi")
-            </button>
         </div>
     </div>
 
@@ -134,28 +137,34 @@ else
                 </div>
             </div>
 
-            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (chọn từ dropdown hoặc gõ mới)</p>
+            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (từ PartMaster — chỉ được chọn)</p>
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <AttributePicker
                         Label="Mã vật liệu"
+                        Placeholder="-- Chọn Mã VL --"
                         Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterial)"
-                        @bind-Value="_detailForm.Material"
-                        @bind-IsSetAsDefault="_detailForm.SetMaterialAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="_detailForm.Material" />
                 </div>
                 <div class="col-md-3">
                     <AttributePicker
                         Label="Cấu hình phôi (DxRxD)"
+                        Placeholder="-- Chọn Cấu hình --"
                         Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterialConfig)"
-                        @bind-Value="_detailForm.MaterialConfig"
-                        @bind-IsSetAsDefault="_detailForm.SetMaterialConfigAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="_detailForm.MaterialConfig" />
                 </div>
                 <div class="col-md-6">
                     <AttributePicker
                         Label="Ghi chú Phôi"
+                        Placeholder="-- Chọn Ghi chú --"
                         Attributes="GetAttrsFor(_detailForm.PartNo, AttrMaterialNote)"
-                        @bind-Value="_detailForm.MaterialNotes"
-                        @bind-IsSetAsDefault="_detailForm.SetMaterialNoteAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="_detailForm.MaterialNotes" />
                 </div>
             </div>
 
@@ -185,15 +194,20 @@ else
             <div class="form-text small">Lý do này sẽ được ghi vào lịch sử của TẤT CẢ field bị thay đổi trong lần Save này.</div>
         </div>
     </div>
-}
 
-<PinConfirmModal
-    IsOpen="_showPinModal"
-    Title="Xác nhận thay đổi giá trị default"
-    Description="Bạn đang thay đổi giá trị default của PartMaster. Các phiếu tạo mới sau này sẽ lấy giá trị mới. Các phiếu cũ giữ nguyên."
-    Changes="_pendingDefaultChanges"
-    OnConfirmed="OnPinConfirmedAsync"
-    OnCancelled="OnPinCancelled" />
+    @* Nút hành động cuối trang *@
+    <div class="d-flex justify-content-end gap-2 mb-4">
+        <a href="@($"/kh-plan/{_plan!.KhPlanId}/detail/{_detailForm!.KhPlanDetailId}")" class="btn btn-outline-secondary">
+            <i class="bi bi-x-lg"></i> Hủy (không lưu)
+        </a>
+        <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary")"
+                @onclick="AttemptSaveAsync"
+                disabled="@(_saving || _savedSuccessfully)">
+            <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-shield-lock")"></i>
+            @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu ✓" : "Nhập PIN & Lưu"))
+        </button>
+    </div>
+}
 
 @code {
     [Parameter] public int Id { get; set; }        // KhPlanId
@@ -212,11 +226,11 @@ else
 
     private string _reason = "";
     private bool _saving;
-    private string? _error;
-    private int _currentUserId;
-
+    private bool _savedSuccessfully;
     private bool _showPinModal;
     private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
+    private string? _error;
+    private int _currentUserId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -268,6 +282,70 @@ else
         return partAttrs.GetValueOrDefault(attrType);
     }
 
+    // CÁC HÀM HELPER BỊ THIẾU ĐÃ ĐƯỢC PHỤC HỒI ĐẦY ĐỦ Ở DƯỚI
+    private void AddBackupRow<T>(List<T> list, T parent, Func<string, string, T> factory) where T : StepEditBase
+    {
+        var baseNC = !string.IsNullOrWhiteSpace(parent.ParentNC) ? parent.ParentNC : (parent.NC?.Split("-DP-")[0].Trim() ?? "NC");
+        if (string.IsNullOrWhiteSpace(baseNC) || baseNC == "NC") return;
+
+        var count = list.Count(e => (e.ParentNC == baseNC || (e.NC != null && e.NC.StartsWith($"{baseNC}-DP-"))) && e.NC != baseNC);
+        var newBackup = factory($"{baseNC}-DP-{count + 1:D2}", baseNC);
+        
+        var idx = list.IndexOf(parent);
+        if (idx >= 0)
+        {
+            while (idx + 1 < list.Count && list[idx + 1].NC != null && list[idx + 1].NC.StartsWith($"{baseNC}-DP-"))
+            {
+                idx++;
+            }
+            list.Insert(idx + 1, newBackup);
+        }
+        else
+        {
+            list.Add(newBackup);
+        }
+    }
+
+    private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
+    {
+        var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
+        if (task != null)
+        {
+            edit.NC = task.TaskCode;
+            edit.StepName = task.TaskName;
+            if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
+            {
+                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
+            }
+        }
+        else
+        {
+            edit.NC = ""; 
+            edit.StepName = "";
+        }
+    }
+
+    private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
+    {
+        if (edit.State == EditState.New)
+        {
+            list.Remove(edit);
+        }
+        else if (edit.State == EditState.Deleted)
+        {
+            edit.State = edit.WasActiveInDb ? EditState.Unchanged : EditState.Restored;
+        }
+        else
+        {
+            edit.State = EditState.Deleted;
+        }
+    }
+
+    private void OnAnyFieldChanged()
+    {
+        _savedSuccessfully = false;
+    }
+
     private async Task AttemptSaveAsync()
     {
         _error = null;
@@ -283,64 +361,36 @@ else
             return;
         }
 
-        _pendingDefaultChanges = CollectDefaultChanges();
-
-        if (_pendingDefaultChanges.Any())
+        // Build danh sách thay đổi để hiển thị trong PIN modal (giống Part Master)
+        _pendingDefaultChanges = new List<PinConfirmModal.DefaultChangeInfo>
         {
-            _showPinModal = true;
-        }
-        else
-        {
-            await DoSaveAsync();
-        }
-    }
-
-    private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
-    {
-        var changes = new List<PinConfirmModal.DefaultChangeInfo>();
-        if (_detailForm == null || string.IsNullOrEmpty(_detailForm.PartNo)) return changes;
-
-        var d = _detailForm;
-        var partAttrs = _attrsCache.GetValueOrDefault(d.PartNo);
-
-        void Check(string attrType, string? newValue, bool setAsDefault)
-        {
-            if (!setAsDefault) return;
-            if (string.IsNullOrWhiteSpace(newValue)) return;
-            var currentDefault = partAttrs?.GetValueOrDefault(attrType)?.FirstOrDefault(a => a.IsDefault)?.Value;
-            if (currentDefault == newValue) return;
-
-            changes.Add(new PinConfirmModal.DefaultChangeInfo
+            new PinConfirmModal.DefaultChangeInfo
             {
-                PartNo = d.PartNo,
-                AttributeType = attrType,
-                OldValue = currentDefault,
-                NewValue = newValue
-            });
-        }
+                PartNo = _detailForm.PartNo,
+                AttributeType = "Lý do",
+                OldValue = "",
+                NewValue = _reason.Trim()
+            }
+        };
 
-        Check(AttrMaterial, d.Material, d.SetMaterialAsDefault);
-        Check(AttrMaterialConfig, d.MaterialConfig, d.SetMaterialConfigAsDefault);
-        Check(AttrMaterialNote, d.MaterialNotes, d.SetMaterialNoteAsDefault);
-
-        return changes;
+        _saving = true;
+        _showPinModal = true;
     }
 
-    private async Task OnPinConfirmedAsync()
+    private void OnPinConfirmed()
     {
         _showPinModal = false;
-        await DoSaveAsync(applyDefaultChanges: true);
+        _ = DoSaveAsync();
     }
 
     private void OnPinCancelled()
     {
         _showPinModal = false;
-        _pendingDefaultChanges.Clear();
+        _saving = false;
     }
 
-    private async Task DoSaveAsync(bool applyDefaultChanges = false)
+    private async Task DoSaveAsync()
     {
-        _saving = true;
         try
         {
             if (_plan != null)
@@ -356,15 +406,6 @@ else
                 await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
                 await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
                 await MaybeAddNewValue(pm.PartId, AttrMaterialNote, d.MaterialNotes);
-            }
-
-            if (applyDefaultChanges)
-            {
-                foreach (var chg in _pendingDefaultChanges)
-                {
-                    var p = _partLookup[chg.PartNo];
-                    await PartSvc.SetAsDefaultAsync(p.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
-                }
             }
 
             var newValues = new KhPlanDetail
@@ -385,11 +426,16 @@ else
             await KhSvc.UpdateFullAsync(d.KhPlanDetailId, newValues, _currentUserId, _reason.Trim());
 
             await Db.SaveChangesAsync();
+            _savedSuccessfully = true;
+
+            // Tự động về trang View sau 1.5 giây
+            await Task.Delay(1500);
             Nav.NavigateTo($"/kh-plan/{Id}/detail/{DetailId}");
         }
         catch (Exception ex)
         {
             _error = "Lỗi khi lưu: " + ex.Message;
+            _savedSuccessfully = false;
         }
         finally
         {
@@ -405,6 +451,26 @@ else
             .Any(a => a.PartId == partId && a.Value == value);
         if (exists) return;
         await PartSvc.AddValueAsync(partId, attrType, value, _currentUserId);
+    }
+
+    // CÁC ĐỊNH NGHĨA CLASS ĐƯỢC PHỤC HỒI NGUYÊN VẸN
+    public enum EditState { Unchanged, Modified, New, Deleted, Restored }
+
+    public abstract class StepEditBase
+    {
+        public long StepId { get; set; }
+        public string NC { get; set; } = "";
+        public bool IsBackup { get; set; }
+        public string? ParentNC { get; set; }
+        public EditState State { get; set; } = EditState.Unchanged;
+        public bool WasActiveInDb { get; set; }
+        public virtual bool HasChanges => true;
+    }
+
+    public abstract class SimpleStepEditBase : StepEditBase
+    {
+        public string? StepName { get; set; }
+        public decimal? StandardTime { get; set; }
     }
 
     public class DetailForm

@@ -113,7 +113,7 @@
 
 <div class="alert alert-info small py-2">
     <i class="bi bi-info-circle"></i>
-    <strong>Quy trình:</strong> Nhập PO + Part No → nếu Part cũ có trong PartMaster → 3 ô Material / Cấu hình phôi / Ghi chú Phôi sẽ auto-fill giá trị <strong>default</strong>. Bấm mũi tên ▼ để chọn giá trị khác đã có. Gõ giá trị mới cũng được — nếu khác default, tick "Đặt làm default mới" (cần PIN khi Save). <strong>Vị trí kho</strong> nhập tự do, sau này Kho sẽ điền.
+    <strong>Quy trình:</strong> Nhập PO + Part No → nếu Part cũ có trong PartMaster → 3 ô Material / Cấu hình phôi / Ghi chú Phôi sẽ auto-fill giá trị <strong>default</strong>. Bấm mũi tên ▼ để chọn giá trị khác đã có. <strong>Vị trí kho</strong> nhập tự do, sau này Kho sẽ điền.
 </div>
 
 @for (int i = 0; i < _details.Count; i++)
@@ -183,31 +183,34 @@
                 </div>
             </div>
 
-            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (từ PartMaster — chọn hoặc gõ mới)</p>
+            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật (từ PartMaster — chỉ được chọn)</p>
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <AttributePicker
                         Label="Mã vật liệu"
-                        Placeholder="Chọn hoặc gõ mới"
+                        Placeholder="-- Chọn Mã VL --"
                         Attributes="GetAttrsFor(d.PartNo, AttrMaterial)"
-                        @bind-Value="d.Material"
-                        @bind-IsSetAsDefault="d.SetMaterialAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="d.Material" />
                 </div>
                 <div class="col-md-3">
                     <AttributePicker
                         Label="Cấu hình phôi (DxRxD)"
-                        Placeholder="VD B12x82x97"
+                        Placeholder="-- Chọn Cấu hình --"
                         Attributes="GetAttrsFor(d.PartNo, AttrMaterialConfig)"
-                        @bind-Value="d.MaterialConfig"
-                        @bind-IsSetAsDefault="d.SetMaterialConfigAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="d.MaterialConfig" />
                 </div>
                 <div class="col-md-6">
                     <AttributePicker
                         Label="Ghi chú Phôi"
-                        Placeholder="Chọn ghi chú cũ hoặc gõ mới"
+                        Placeholder="-- Chọn Ghi chú --"
                         Attributes="GetAttrsFor(d.PartNo, AttrMaterialNote)"
-                        @bind-Value="d.MaterialNotes"
-                        @bind-IsSetAsDefault="d.SetMaterialNoteAsDefault" />
+                        AllowFreeText="false"
+                        ShowSetDefaultCheckbox="false"
+                        @bind-Value="d.MaterialNotes" />
                 </div>
             </div>
 
@@ -239,14 +242,6 @@
     }
 </datalist>
 
-<PinConfirmModal
-    IsOpen="_showPinModal"
-    Title="Xác nhận thay đổi giá trị default"
-    Description="Bạn đang thay đổi giá trị default của PartMaster. Sau khi xác nhận, các phiếu KH TẠO MỚI sau này sẽ lấy giá trị mới. Các phiếu cũ giữ nguyên."
-    Changes="_pendingDefaultChanges"
-    OnConfirmed="OnPinConfirmedAsync"
-    OnCancelled="OnPinCancelled" />
-
 @code {
     private const string AttrMaterial = "Material";
     private const string AttrMaterialConfig = "MaterialConfig";
@@ -267,9 +262,6 @@
     private string _newCustomerCode = "";
     private string _newCustomerName = "";
     private string _newCustomerSupCode = "";
-
-    private bool _showPinModal;
-    private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -383,64 +375,10 @@
             if (d.Quantity <= 0) { _error = "SL phải > 0"; return; }
         }
 
-        _pendingDefaultChanges = CollectDefaultChanges();
-
-        if (_pendingDefaultChanges.Any())
-        {
-            _showPinModal = true;
-        }
-        else
-        {
-            await DoSaveAsync();
-        }
+        await DoSaveAsync();
     }
 
-    private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
-    {
-        var changes = new List<PinConfirmModal.DefaultChangeInfo>();
-
-        foreach (var d in _details)
-        {
-            if (string.IsNullOrEmpty(d.PartNo)) continue;
-            var partAttrs = _attrsCache.GetValueOrDefault(d.PartNo);
-
-            void Check(string attrType, string? newValue, bool setAsDefault)
-            {
-                if (!setAsDefault) return;
-                if (string.IsNullOrWhiteSpace(newValue)) return;
-                var currentDefault = partAttrs?.GetValueOrDefault(attrType)?.FirstOrDefault(a => a.IsDefault)?.Value;
-                if (currentDefault == newValue) return;
-
-                changes.Add(new PinConfirmModal.DefaultChangeInfo
-                {
-                    PartNo = d.PartNo,
-                    AttributeType = attrType,
-                    OldValue = currentDefault,
-                    NewValue = newValue
-                });
-            }
-
-            Check(AttrMaterial, d.Material, d.SetMaterialAsDefault);
-            Check(AttrMaterialConfig, d.MaterialConfig, d.SetMaterialConfigAsDefault);
-            Check(AttrMaterialNote, d.MaterialNotes, d.SetMaterialNoteAsDefault);
-        }
-
-        return changes;
-    }
-
-    private async Task OnPinConfirmedAsync()
-    {
-        _showPinModal = false;
-        await DoSaveAsync(applyDefaultChanges: true);
-    }
-
-    private void OnPinCancelled()
-    {
-        _showPinModal = false;
-        _pendingDefaultChanges.Clear();
-    }
-
-    private async Task DoSaveAsync(bool applyDefaultChanges = false)
+    private async Task DoSaveAsync()
     {
         _saving = true;
         try
@@ -464,15 +402,6 @@
                     await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
                     await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
                     await MaybeAddNewValue(pm.PartId, AttrMaterialNote, d.MaterialNotes);
-                }
-            }
-
-            if (applyDefaultChanges)
-            {
-                foreach (var chg in _pendingDefaultChanges)
-                {
-                    var pm = _partLookup[chg.PartNo];
-                    await PartSvc.SetAsDefaultAsync(pm.PartId, chg.AttributeType, chg.NewValue, _currentUserId);
                 }
             }
 
@@ -533,9 +462,5 @@
         public string? OrderVL { get; set; }
         public string? MaterialCondition { get; set; }
         public string? PartNotes { get; set; }
-
-        public bool SetMaterialAsDefault { get; set; }
-        public bool SetMaterialConfigAsDefault { get; set; }
-        public bool SetMaterialNoteAsDefault { get; set; }
     }
 }
