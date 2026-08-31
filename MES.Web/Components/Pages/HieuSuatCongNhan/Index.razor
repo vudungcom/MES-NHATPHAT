@@ -1,10 +1,557 @@
 @page "/hieu-suat-cong-nhan"
 @attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using MES.Web.Data
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject AppDbContext Db
+@inject KhPlanService KhSvc
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
 
-<PageTitle>Hiệu suất công nhân - MES</PageTitle>
+<PageTitle>Nhập WTS - MES</PageTitle>
 
-<h1>Hiệu suất công nhân</h1>
-<div class="alert alert-warning mt-3">
-    <i class="bi bi-tools"></i>
-    <strong>Đang phát triển.</strong> Sẽ có sau khi Worker quét barcode + Production transaction chạy được.
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Nhập WTS Sản xuất</h1>
+        <p class="text-muted small mb-0">
+            Chọn phiếu KH → chọn NC → điền thông tin thực tế
+        </p>
+    </div>
+    @if (_currentWorker != null)
+    {
+        <div class="text-end">
+            <span class="badge bg-primary fs-6">@_currentWorker.FullName</span>
+            <br/>
+            <small class="text-muted">@(_currentWorker.Group?.GroupName ?? _currentWorker.Group?.GroupCode)</small>
+        </div>
+    }
 </div>
+
+@if (!_canSubmit)
+{
+    <div class="alert alert-warning">
+        <i class="bi bi-shield-exclamation"></i>
+        Tài khoản của bạn chưa được phân nhóm sản xuất. Vui lòng liên hệ Admin.
+    </div>
+}
+else
+{
+    @* ── Bước 1: Chọn phiếu KH ── *@
+    <div class="card mb-3">
+        <div class="card-header py-2 fw-semibold">
+            <i class="bi bi-1-circle-fill text-primary me-1"></i> Chọn phiếu KH cần làm
+        </div>
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label small">Tìm theo PO / Part No / Số phiếu</label>
+                    <input class="form-control form-control-sm" placeholder="Nhập để tìm..."
+                           @bind="_searchPO" @bind:event="oninput" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small">Trạng thái</label>
+                    <select class="form-select form-select-sm" @bind="_filterStatus">
+                        <option value="">-- Tất cả --</option>
+                        <option value="FullyReceived">Nhập đủ phôi</option>
+                        <option value="InProduction">Đang SX</option>
+                        <option value="WaitingSupplierOrder">Chờ phôi</option>
+                    </select>
+                </div>
+            </div>
+
+            @if (_rows != null)
+            {
+                var filtered = FilteredRows.ToList();
+                @if (filtered.Count == 0)
+                {
+                    <div class="alert alert-secondary mt-2 py-2 small mb-0">
+                        <i class="bi bi-inbox"></i> Không tìm thấy phiếu phù hợp
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive mt-2">
+                        <table class="table table-sm table-hover table-bordered small mb-0" style="font-size:0.82rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Số phiếu</th>
+                                    <th>PO</th>
+                                    <th>Part No</th>
+                                    <th class="text-end">SL</th>
+                                    <th>STD</th>
+                                    <th>Ưu tiên</th>
+                                    <th>Trạng thái</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in filtered.Take(30))
+                                {
+                                    var isSelected = _selectedDetail?.KhPlanDetailId == r.KhPlanDetailId;
+                                    <tr class="@(isSelected ? "table-primary" : "")" style="cursor:pointer;"
+                                        @onclick="() => SelectDetail(r)">
+                                        <td><code>@r.PlanNo</code></td>
+                                        <td><code>@r.PurchaseOrder</code></td>
+                                        <td><code class="text-danger">@r.PartNo</code></td>
+                                        <td class="text-end">@r.Quantity.ToString("0.####") @r.Unit</td>
+                                        <td class="text-nowrap">@r.STD.ToString("dd/MM/yy")</td>
+                                        <td>@(r.Priority ?? "—")</td>
+                                        <td><span class="badge bg-@GetStatusColor(r.Status)" style="font-size:0.7rem;">@r.Status</span></td>
+                                        <td>
+                                            @if (isSelected)
+                                            { <i class="bi bi-check-circle-fill text-primary"></i> }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (filtered.Count > 30)
+                    {
+                        <small class="text-muted">Hiển thị 30 / @filtered.Count dòng. Nhập thêm để lọc.</small>
+                    }
+                }
+            }
+        </div>
+    </div>
+
+    @* ── Bước 2: Chọn NC ── *@
+    @if (_selectedDetail != null && _snapshot != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header py-2 fw-semibold">
+                <i class="bi bi-2-circle-fill text-primary me-1"></i>
+                Chọn NC cần làm —
+                <code class="text-danger">@_selectedDetail.PartNo</code> /
+                <code>@_selectedDetail.PurchaseOrder</code>
+                <span class="ms-2 text-muted small">(SL: @_selectedDetail.Quantity.ToString("0.####") @_selectedDetail.Unit)</span>
+            </div>
+            <div class="card-body p-2">
+                @if (!_snapshot.Machining.Any())
+                {
+                    <div class="alert alert-warning py-2 small mb-0">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Phiếu này chưa có snapshot quy trình gia công.
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover table-bordered mb-0" style="font-size:0.82rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:60px;">#</th>
+                                    <th style="width:80px;">NC</th>
+                                    <th>Máy đăng ký</th>
+                                    <th>Đồ gá</th>
+                                    <th>Loại dao</th>
+                                    <th class="text-end">T.Gá lắp<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
+                                    <th class="text-end">T.Gia công<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
+                                    <th class="text-end">T.Kiểm tra<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
+                                    <th class="text-center">Đã HT</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var s in _snapshot.Machining)
+                                {
+                                    var isSelNC = _selectedNC?.NC == s.NC && _selectedNC?.StepOrder == s.StepOrder;
+                                    var done = _qtySummary.TryGetValue($"GC|{s.NC}", out var q) ? q : 0m;
+                                    var doneColor = done == 0 ? "danger" : (done >= _selectedDetail.Quantity ? "success" : "warning");
+                                    <tr class="@(isSelNC ? "table-success" : "") @(s.IsBackup ? "table-warning" : "")"
+                                        style="cursor:pointer;" @onclick="() => SelectNC(s)">
+                                        <td class="text-center">@s.StepOrder @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
+                                        <td><code class="fw-bold">@s.NC</code></td>
+                                        <td>@(s.MachineRegistered ?? "—")</td>
+                                        <td>@(s.FixtureType ?? "—")</td>
+                                        <td>@(s.ToolType ?? "—")</td>
+                                        <td class="text-end text-muted">@FmtTime(s.SetupTime)</td>
+                                        <td class="text-end text-muted">@FmtTime(s.MachiningTime)</td>
+                                        <td class="text-end text-muted">@FmtTime(s.InspectionTime)</td>
+                                        <td class="text-center">
+                                            <span class="badge bg-@doneColor" style="font-size:0.68rem;">@done.ToString("0.##")/@_selectedDetail.Quantity.ToString("0.##")</span>
+                                        </td>
+                                        <td class="text-center">
+                                            @if (isSelNC) { <i class="bi bi-check-circle-fill text-success"></i> }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @* ── Bước 3: Form nhập thực tế ── *@
+        @if (_selectedNC != null)
+        {
+            <div class="card mb-3 border-success">
+                <div class="card-header py-2 fw-semibold" style="background:#e8f5e9;">
+                    <i class="bi bi-3-circle-fill text-success me-1"></i>
+                    Nhập thực tế — NC <code class="text-success fw-bold">@_selectedNC.NC</code>
+                    @if (!string.IsNullOrEmpty(_selectedNC.MachineRegistered))
+                    { <span class="text-muted small ms-2">Máy đăng ký: @_selectedNC.MachineRegistered</span> }
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="alert alert-danger py-2 small">@_error</div>
+                    }
+                    @if (_savedOk)
+                    {
+                        <div class="alert alert-success py-2 small">
+                            <i class="bi bi-check-circle me-1"></i> Đã ghi nhận WTS thành công!
+                        </div>
+                    }
+
+                    <div class="row g-3">
+                        @* SL chạy *@
+                        <div class="col-md-2">
+                            <label class="form-label small fw-semibold">SL chạy <span class="text-danger">*</span></label>
+                            <input type="number" step="1" min="1" class="form-control form-control-sm text-end fw-bold"
+                                   @bind="_form.QtyDone" placeholder="0" />
+                            <div class="form-text small">
+                                Còn lại: @((_selectedDetail.Quantity - (_qtySummary.TryGetValue($"GC|{_selectedNC.NC}", out var qq) ? qq : 0m)).ToString("0.##"))
+                            </div>
+                        </div>
+
+                        @* Máy dùng *@
+                        <div class="col-md-3">
+                            <label class="form-label small fw-semibold">Máy dùng <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm font-monospace"
+                                   @bind="_form.MachineUsed"
+                                   placeholder="@(_selectedNC.MachineRegistered ?? "Nhập mã máy...")" />
+                            @if (!string.IsNullOrEmpty(_selectedNC.MachineAlternative))
+                            {
+                                <div class="form-text small">Đồng dạng: @_selectedNC.MachineAlternative</div>
+                            }
+                        </div>
+
+                        @* T.Bắt đầu *@
+                        <div class="col-md-2">
+                            <label class="form-label small fw-semibold">T.Bắt đầu <span class="text-danger">*</span></label>
+                            <input type="datetime-local" class="form-control form-control-sm"
+                                   @bind="_form.StartTime" />
+                        </div>
+
+                        @* T.Hoàn thành *@
+                        <div class="col-md-2">
+                            <label class="form-label small fw-semibold">T.Hoàn thành <span class="text-danger">*</span></label>
+                            <input type="datetime-local" class="form-control form-control-sm"
+                                   @bind="_form.EndTime" />
+                        </div>
+                    </div>
+
+                    <hr class="my-3"/>
+                    <p class="small text-muted fw-semibold mb-2">Thời gian thực tế (phút) — để trống nếu không áp dụng</p>
+                    <div class="row g-2">
+                        <div class="col-md-2">
+                            <label class="form-label small">T.Gá lắp
+                                @if (_selectedNC.SetupTime.HasValue)
+                                { <span class="text-muted">(chuẩn: @_selectedNC.SetupTime.Value.ToString("0.#"))</span> }
+                            </label>
+                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
+                                   @bind="_form.SetupTime_Actual" placeholder="—" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">T.Gia công
+                                @if (_selectedNC.MachiningTime.HasValue)
+                                { <span class="text-muted">(chuẩn: @_selectedNC.MachiningTime.Value.ToString("0.#"))</span> }
+                            </label>
+                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
+                                   @bind="_form.MachiningTime_Actual" placeholder="—" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">T.Kiểm tra
+                                @if (_selectedNC.InspectionTime.HasValue)
+                                { <span class="text-muted">(chuẩn: @_selectedNC.InspectionTime.Value.ToString("0.#"))</span> }
+                            </label>
+                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
+                                   @bind="_form.InspectionTime_Actual" placeholder="—" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">T.Chuẩn bị
+                                @if (_selectedNC.PreparationTime.HasValue)
+                                { <span class="text-muted">(chuẩn: @_selectedNC.PreparationTime.Value.ToString("0.#"))</span> }
+                            </label>
+                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
+                                   @bind="_form.PreparationTime_Actual" placeholder="—" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">T.Chạy thử
+                                @if (_selectedNC.TrialRunTime.HasValue)
+                                { <span class="text-muted">(chuẩn: @_selectedNC.TrialRunTime.Value.ToString("0.#"))</span> }
+                            </label>
+                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
+                                   @bind="_form.TrialRunTime_Actual" placeholder="—" />
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-8">
+                            <label class="form-label small">Ghi chú</label>
+                            <input class="form-control form-control-sm" @bind="_form.Notes"
+                                   placeholder="VD: máy bị rung ở bước cuối, tăng tốc độ cut..." />
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-end gap-2 mt-3">
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm">
+                            <i class="bi bi-x-lg me-1"></i>Hủy
+                        </button>
+                        <button class="btn btn-success" @onclick="SubmitWtsAsync" disabled="@_saving">
+                            <i class="bi bi-check-lg me-1"></i>
+                            @(_saving ? "Đang lưu..." : "Xác nhận ghi WTS")
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @* Lịch sử WTS đã ghi cho NC này *@
+            @if (_wtsLogs.Any(x => x.ProcessGroup == "GC" && x.NC == _selectedNC.NC && !x.IsVoided))
+            {
+                <div class="card mb-3">
+                    <div class="card-header py-2 small fw-semibold">
+                        <i class="bi bi-clock-history me-1"></i> Lịch sử WTS đã ghi — NC <code>@_selectedNC.NC</code>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Worker</th>
+                                    <th class="text-center">SL</th>
+                                    <th>Máy dùng</th>
+                                    <th class="text-center">Bắt đầu</th>
+                                    <th class="text-center">Hoàn thành</th>
+                                    <th class="text-end">T.Gá lắp</th>
+                                    <th class="text-end">T.GC</th>
+                                    <th class="text-end">T.KT</th>
+                                    <th>Ghi chú</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var log in _wtsLogs.Where(x => x.ProcessGroup == "GC" && x.NC == _selectedNC.NC && !x.IsVoided))
+                                {
+                                    <tr>
+                                        <td class="fw-semibold text-primary">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                        <td class="text-center fw-bold text-success">@log.QtyDone.ToString("0.##")</td>
+                                        <td>@(log.MachineUsed ?? "—")</td>
+                                        <td class="text-center">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                        <td class="text-center">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                        <td class="text-end">@FmtTime(log.SetupTime_Actual)</td>
+                                        <td class="text-end">@FmtTime(log.MachiningTime_Actual)</td>
+                                        <td class="text-end">@FmtTime(log.InspectionTime_Actual)</td>
+                                        <td class="text-muted">@log.Notes</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+    }
+}
+
+@code {
+    private bool _canSubmit;
+    private User? _currentWorker;
+    private int _currentUserId;
+
+    // Data
+    private List<KhPlanDetailRow>? _rows;
+    private List<WtsProductionLog> _wtsLogs = new();
+    private Dictionary<string, decimal> _qtySummary = new();
+
+    // Selection
+    private KhPlanDetailRow? _selectedDetail;
+    private RouteSnapshotData? _snapshot;
+    private KhPlanRouteSnapshotMachining? _selectedNC;
+
+    // Filter
+    private string _searchPO = "";
+    private string _filterStatus = "";
+
+    // Form
+    private WtsForm _form = new();
+    private bool _saving;
+    private bool _savedOk;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userIdStr = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdStr, out _currentUserId)) return;
+
+        // Load user + group
+        _currentWorker = await Db.Users
+            .Include(u => u.Group)
+            .FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+
+        // Xác định quyền submit WTS
+        var gc = _currentWorker?.Group?.GroupCode ?? "";
+        _canSubmit = gc is "PRODUCTION" or "ADMIN" or "TECHNICAL";
+
+        if (_canSubmit)
+        {
+            // Load danh sách phiếu KH
+            _rows = await KhSvc.GetDetailRowsAsync();
+
+            // Pre-fill máy và thời gian
+            _form.StartTime = DateTime.Now.AddHours(-1);
+            _form.EndTime = DateTime.Now;
+        }
+    }
+
+    private IEnumerable<KhPlanDetailRow> FilteredRows
+    {
+        get
+        {
+            if (_rows == null) return Enumerable.Empty<KhPlanDetailRow>();
+            var q = _rows.AsEnumerable();
+
+            if (!string.IsNullOrEmpty(_filterStatus))
+                q = q.Where(r => r.Status == _filterStatus);
+
+            if (!string.IsNullOrEmpty(_searchPO))
+            {
+                var s = _searchPO.Trim().ToLowerInvariant();
+                q = q.Where(r =>
+                    r.PurchaseOrder.ToLowerInvariant().Contains(s) ||
+                    r.PartNo.ToLowerInvariant().Contains(s) ||
+                    r.PlanNo.ToLowerInvariant().Contains(s));
+            }
+
+            return q.OrderBy(r => r.STD);
+        }
+    }
+
+    private async Task SelectDetail(KhPlanDetailRow row)
+    {
+        _selectedDetail = row;
+        _selectedNC = null;
+        _savedOk = false;
+        _error = null;
+
+        // Load snapshot và WTS logs
+        _snapshot = await KhSvc.GetRouteSnapshotAsync(row.KhPlanDetailId);
+        _wtsLogs = await KhSvc.GetWtsLogsAsync(row.KhPlanDetailId);
+        _qtySummary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId);
+        ResetForm();
+    }
+
+    private void SelectNC(KhPlanRouteSnapshotMachining nc)
+    {
+        _selectedNC = nc;
+        _savedOk = false;
+        _error = null;
+        // Pre-fill máy đăng ký nếu chưa nhập
+        if (string.IsNullOrEmpty(_form.MachineUsed))
+            _form.MachineUsed = nc.MachineRegistered ?? "";
+    }
+
+    private async Task SubmitWtsAsync()
+    {
+        _error = null;
+        _savedOk = false;
+
+        // Validate
+        if (_selectedDetail == null || _selectedNC == null) return;
+        if (_form.QtyDone <= 0) { _error = "SL chạy phải > 0"; return; }
+        if (string.IsNullOrWhiteSpace(_form.MachineUsed)) { _error = "Nhập mã máy dùng"; return; }
+        if (_form.EndTime <= _form.StartTime) { _error = "T.Hoàn thành phải sau T.Bắt đầu"; return; }
+
+        // Validate không vượt SL
+        var alreadyDone = _qtySummary.TryGetValue($"GC|{_selectedNC.NC}", out var ad) ? ad : 0m;
+        if (alreadyDone + _form.QtyDone > _selectedDetail.Quantity)
+        {
+            _error = $"Tổng SL sẽ vượt quá SL kế hoạch ({_selectedDetail.Quantity}). " +
+                     $"Đã hoàn thành: {alreadyDone}, đang nhập: {_form.QtyDone}";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var log = new WtsProductionLog
+            {
+                KhPlanDetailId        = _selectedDetail.KhPlanDetailId,
+                ProcessGroup          = "GC",
+                NC                    = _selectedNC.NC,
+                WorkerId              = _currentUserId,
+                MachineUsed           = _form.MachineUsed.Trim(),
+                QtyDone               = _form.QtyDone,
+                StartTime             = _form.StartTime,
+                EndTime               = _form.EndTime,
+                SetupTime_Actual      = _form.SetupTime_Actual,
+                MachiningTime_Actual  = _form.MachiningTime_Actual,
+                InspectionTime_Actual = _form.InspectionTime_Actual,
+                PreparationTime_Actual= _form.PreparationTime_Actual,
+                TrialRunTime_Actual   = _form.TrialRunTime_Actual,
+                Notes                 = _form.Notes,
+                CreatedAt             = DateTime.Now,
+                IsVoided              = false,
+            };
+
+            Db.WtsProductionLogs.Add(log);
+            await Db.SaveChangesAsync();
+
+            // Reload summary
+            _wtsLogs = await KhSvc.GetWtsLogsAsync(_selectedDetail.KhPlanDetailId);
+            _qtySummary = await KhSvc.GetWtsQtySummaryAsync(_selectedDetail.KhPlanDetailId);
+
+            _savedOk = true;
+            ResetForm();
+        }
+        catch (Exception ex)
+        {
+            _error = "Lỗi khi lưu: " + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _form = new WtsForm
+        {
+            StartTime = DateTime.Now.AddHours(-1),
+            EndTime   = DateTime.Now,
+            MachineUsed = _selectedNC?.MachineRegistered ?? ""
+        };
+    }
+
+    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.#") : "—";
+
+    private string GetStatusColor(string status) => status switch
+    {
+        "WaitingSupplierOrder" => "info",
+        "Ordered"              => "primary",
+        "PartialReceived"      => "primary",
+        "FullyReceived"        => "success",
+        "InProduction"         => "success",
+        "Completed"            => "success",
+        "Cancelled"            => "secondary",
+        _                      => "secondary"
+    };
+
+    public class WtsForm
+    {
+        public decimal QtyDone { get; set; }
+        public string MachineUsed { get; set; } = "";
+        public DateTime StartTime { get; set; } = DateTime.Now.AddHours(-1);
+        public DateTime EndTime { get; set; } = DateTime.Now;
+        public decimal? SetupTime_Actual { get; set; }
+        public decimal? MachiningTime_Actual { get; set; }
+        public decimal? InspectionTime_Actual { get; set; }
+        public decimal? PreparationTime_Actual { get; set; }
+        public decimal? TrialRunTime_Actual { get; set; }
+        public string? Notes { get; set; }
+    }
+}

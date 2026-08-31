@@ -542,6 +542,7 @@ D:.
     |   |   |       Index.razor
     |   |   |       
     |   |   +---Kho
+    |   |   |       Index.rar
     |   |   |       Index.razor
     |   |   |       
     |   |   +---KhPlan
@@ -553,7 +554,6 @@ D:.
     |   |   |       
     |   |   +---PartMaster
     |   |   |       Create.razor
-    |   |   |       Detail - Copy.bak
     |   |   |       Detail.razor
     |   |   |       Index.razor
     |   |   |       
@@ -593,8 +593,12 @@ D:.
     |           DoGaChangeLog.cs
     |           DoGaMuonTraLog.cs
     |           FileStorage.cs
+    |           KhoVatLieu.cs
+    |           KhoVatLieuChangeLog.cs
     |           KhPlan.cs
     |           KhPlanDetailChangeLog.cs
+    |           KhPlanRouteSnapshots.cs
+    |           MachineExcludeSetting.cs
     |           PartBaviaStep.cs
     |           PartInspectionStep.cs
     |           PartMachiningStep.cs
@@ -610,6 +614,7 @@ D:.
     |           ThietBi.cs
     |           ThietBichangelog.cs
     |           User.cs
+    |           WtsProductionLog.cs
     |           
     +---obj
     |   |   MES.Web.csproj.nuget.dgspec.json
@@ -742,6 +747,7 @@ D:.
     |       DepartmentService.cs
     |       DoGaService.cs
     |       ExcelHelper.cs
+    |       KhoVatLieuService.cs
     |       KhPlanService.cs
     |       PartBaviaService.cs
     |       PartInspectionService.cs
@@ -763,6 +769,9 @@ D:.
         |       
         +---images
         |       Logo.jpg
+        |       
+        +---js
+        |       downloadHelper.js
         |       
         \---uploads
             \---avatars
