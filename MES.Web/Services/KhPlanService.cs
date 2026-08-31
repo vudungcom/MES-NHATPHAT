@@ -209,7 +209,6 @@ public class KhPlanService
             changeCount++;
         }
 
-        // Quantity: format decimal đẹp
         if (d.Quantity != newValues.Quantity)
         {
             LogChange("Quantity", d.Quantity.ToString(QtyFormat), newValues.Quantity.ToString(QtyFormat));
@@ -238,10 +237,6 @@ public class KhPlanService
 
     /// <summary>
     /// Tách 1 KhPlanDetail thành N dòng mới. Xóa dòng gốc.
-    /// v0.5.2:
-    /// - Log SplitFrom tách rõ OldValue = "PO gốc (SL N)", NewValue = "PO mới (SL N)"
-    /// - Format số dùng QtyFormat (không lẻ .0000)
-    /// - Sau khi tách xong, RENUMBER LineNo toàn phiếu về 1, 2, 3... theo CreatedAt
     /// </summary>
     public async Task<List<int>> SplitPOAsync(
         int sourceDetailId,
@@ -282,7 +277,6 @@ public class KhPlanService
                 throw new InvalidOperationException($"PO {r.PurchaseOrder} đã tồn tại trong hệ thống");
         }
 
-        // Snapshot data từ source
         var srcKhPlanId = source.KhPlanId;
         var srcPartNo = source.PartNo;
         var srcPO = source.PurchaseOrder;
@@ -311,13 +305,12 @@ public class KhPlanService
                 .Where(x => x.KhPlanId == srcKhPlanId)
                 .MaxAsync(x => (int?)x.LineNo) ?? 0;
 
-            // 1. Tạo N dòng mới
             foreach (var r in newRows)
             {
                 var newDetail = new KhPlanDetail
                 {
                     KhPlanId = srcKhPlanId,
-                    LineNo = ++maxLineNo,  // tạm, sẽ renumber ở cuối
+                    LineNo = ++maxLineNo,
                     PartNo = srcPartNo,
                     PurchaseOrder = r.PurchaseOrder.Trim(),
                     OldPurchaseOrder = srcPO,
@@ -342,7 +335,6 @@ public class KhPlanService
                 newDetailIds.Add(newDetail.KhPlanDetailId);
                 newIdList.Add($"{r.PurchaseOrder}={r.Quantity.ToString(QtyFormat)}");
 
-                // Log SplitFrom cho dòng mới - tách rõ Old/New
                 _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
                 {
                     KhPlanDetailId = newDetail.KhPlanDetailId,
@@ -356,7 +348,6 @@ public class KhPlanService
                 });
             }
 
-            // 2. Log cho dòng gốc
             var splitInfo = string.Join(", ", newIdList);
             _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
             {
@@ -371,24 +362,17 @@ public class KhPlanService
             });
             await _db.SaveChangesAsync();
 
-            // 3. Detach source + log liên quan khỏi tracker
             _db.Entry(source).State = EntityState.Detached;
             var localLogs = _db.ChangeTracker.Entries<KhPlanDetailChangeLog>()
                 .Where(e => e.Entity.KhPlanDetailId == sourceDetailId)
                 .ToList();
             foreach (var log in localLogs)
-            {
                 log.State = EntityState.Detached;
-            }
 
-            // 4. Xóa source bằng raw SQL
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanDetails WHERE KhPlanDetailId = {0}",
                 sourceDetailId);
 
-            // 5. RENUMBER LineNo toàn phiếu (v0.5.2)
-            // Đảm bảo LineNo bắt đầu từ 1, tăng dần theo CreatedAt.
-            // Dùng [LineNo] bracket + <> thay != để tránh lỗi SQL parser
             await _db.Database.ExecuteSqlRawAsync(@"
                 ;WITH cte AS (
                     SELECT KhPlanDetailId,
@@ -466,6 +450,334 @@ public class KhPlanService
         if (!string.IsNullOrEmpty(fieldName)) q = q.Where(x => x.FieldName == fieldName);
         return await q.OrderByDescending(x => x.ChangedAt).ToListAsync();
     }
+
+
+
+    /// <summary>
+    /// Xóa toàn bộ snapshot quy trình B→E cũ của 1 KhPlanDetail,
+    /// sau đó copy lại từ Part Master hiện tại.
+    /// Ghi log vào KhPlanDetailChangeLog để truy vết.
+    /// </summary>
+    public async Task RefreshRouteSnapshotAsync(int khPlanDetailId, int partId, int userId, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new InvalidOperationException("Bắt buộc nhập lý do cập nhật quy trình");
+
+        using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // 1. Đếm snapshot cũ để ghi log
+            var oldCountMachining  = await _db.KhPlanRouteSnapshotMachining .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var oldCountTaro       = await _db.KhPlanRouteSnapshotTaro       .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var oldCountBavia      = await _db.KhPlanRouteSnapshotBavia      .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var oldCountWashing    = await _db.KhPlanRouteSnapshotWashing    .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var oldCountInspection = await _db.KhPlanRouteSnapshotInspection .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var oldCountPackaging  = await _db.KhPlanRouteSnapshotPackaging  .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+
+            // 2. Xóa snapshot cũ bằng raw SQL (nhanh, không cần load vào RAM)
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotMachining  WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotTaro       WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotBavia      WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotWashing    WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotInspection WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotPackaging  WHERE KhPlanDetailId = {0}", khPlanDetailId);
+
+            // 3. Copy lại từ Part Master hiện tại
+            await CopyRouteSnapshotAsync(khPlanDetailId, partId, userId);
+
+            // 4. Đếm snapshot mới
+            var newCountMachining  = await _db.KhPlanRouteSnapshotMachining .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var newCountTaro       = await _db.KhPlanRouteSnapshotTaro      .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var newCountBavia      = await _db.KhPlanRouteSnapshotBavia     .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var newCountWashing    = await _db.KhPlanRouteSnapshotWashing   .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var newCountInspection = await _db.KhPlanRouteSnapshotInspection.CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+            var newCountPackaging  = await _db.KhPlanRouteSnapshotPackaging .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
+
+            // 5. Ghi log
+            _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
+            {
+                KhPlanDetailId = khPlanDetailId,
+                FieldName      = "RouteSnapshot",
+                OldValue       = $"GC:{oldCountMachining} Taro:{oldCountTaro} Bavia:{oldCountBavia} Rửa:{oldCountWashing} KCS:{oldCountInspection} ĐG:{oldCountPackaging}",
+                NewValue       = $"GC:{newCountMachining} Taro:{newCountTaro} Bavia:{newCountBavia} Rửa:{newCountWashing} KCS:{newCountInspection} ĐG:{newCountPackaging}",
+                ChangedBy      = userId,
+                ChangedAt      = DateTime.Now,
+                ChangeSource   = "Manual",
+                Reason         = reason
+            });
+            await _db.SaveChangesAsync();
+
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+    /// <summary>
+    /// Lấy tóm tắt số bước snapshot cho nhiều KhPlanDetail cùng lúc (batch).
+    /// Trả về dict: KhPlanDetailId → SnapshotSummary
+    /// Dùng cho trang Index để hiển thị badge GC/HTSP/KCS/ĐG mà không N+1 query.
+    /// </summary>
+    public async Task<Dictionary<int, SnapshotSummary>> GetSnapshotSummaryAsync(List<int> detailIds)
+    {
+        if (!detailIds.Any()) return new();
+
+        var machining  = await _db.KhPlanRouteSnapshotMachining
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var taro       = await _db.KhPlanRouteSnapshotTaro
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var bavia      = await _db.KhPlanRouteSnapshotBavia
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var washing    = await _db.KhPlanRouteSnapshotWashing
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var inspection = await _db.KhPlanRouteSnapshotInspection
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var packaging  = await _db.KhPlanRouteSnapshotPackaging
+            .Where(s => detailIds.Contains(s.KhPlanDetailId))
+            .GroupBy(s => s.KhPlanDetailId)
+            .Select(g => new { Id = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        // Gộp về dict theo detailId
+        var result = new Dictionary<int, SnapshotSummary>();
+        foreach (var id in detailIds)
+        {
+            result[id] = new SnapshotSummary
+            {
+                GC   = machining .FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+                Taro = taro      .FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+                Bavia= bavia     .FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+                Rua  = washing   .FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+                KCS  = inspection.FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+                DG   = packaging .FirstOrDefault(x => x.Id == id)?.Count ?? 0,
+            };
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Lấy toàn bộ snapshot quy trình B→E của 1 KhPlanDetail.
+    /// Trả về null nếu chưa có snapshot (phiếu cũ tạo trước khi có tính năng này).
+    /// </summary>
+    public async Task<RouteSnapshotData> GetRouteSnapshotAsync(int khPlanDetailId)
+    {
+        var result = new RouteSnapshotData
+        {
+            Machining  = await _db.KhPlanRouteSnapshotMachining
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            Taro       = await _db.KhPlanRouteSnapshotTaro
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            Bavia      = await _db.KhPlanRouteSnapshotBavia
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            Washing    = await _db.KhPlanRouteSnapshotWashing
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            Inspection = await _db.KhPlanRouteSnapshotInspection
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            Packaging  = await _db.KhPlanRouteSnapshotPackaging
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+        };
+        return result;
+    }
+    /// <summary>
+    /// Copy toàn bộ quy trình B→E từ PartMaster vào snapshot của KhPlanDetail.
+    /// Chỉ copy các step IsActive = true.
+    /// Gọi SAU KHI KhPlanDetail đã được lưu vào DB (có KhPlanDetailId).
+    /// Nếu Part mới (chưa có steps) → không có gì để copy, bỏ qua.
+    /// </summary>
+    public async Task CopyRouteSnapshotAsync(int khPlanDetailId, int partId, int snapshotBy)
+    {
+        var now = DateTime.Now;
+
+        // ── B. Machining ────────────────────────────────────────
+        var machining = await _db.PartMachiningSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in machining)
+        {
+            _db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining
+            {
+                KhPlanDetailId     = khPlanDetailId,
+                SourcePartId       = partId,
+                SnapshotAt         = now,
+                SnapshotBy         = snapshotBy,
+                StepOrder          = s.StepOrder,
+                NC                 = s.NC,
+                Drawing            = s.Drawing,
+                MachineRegistered  = s.MachineRegistered,
+                MachineAlternative = s.MachineAlternative,
+                FixtureType        = s.FixtureType,
+                ToolType           = s.ToolType,
+                TimingMachine      = s.TimingMachine,
+                IsBackup           = s.IsBackup,
+                ParentNC           = s.ParentNC,
+                SetupTime          = s.SetupTime,
+                MachiningTime      = s.MachiningTime,
+                InspectionTime     = s.InspectionTime,
+                PreparationTime    = s.PreparationTime,
+                TrialRunTime       = s.TrialRunTime,
+            });
+        }
+
+        // ── C.1 Taro ────────────────────────────────────────────
+        var taro = await _db.PartTaroSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in taro)
+        {
+            _db.KhPlanRouteSnapshotTaro.Add(new KhPlanRouteSnapshotTaro
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SourcePartId   = partId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                StepOrder      = s.StepOrder,
+                NC             = s.NC,
+                StepName       = s.StepName,
+                StandardTime   = s.StandardTime,
+                IsBackup       = s.IsBackup,
+                ParentNC       = s.ParentNC,
+            });
+        }
+
+        // ── C.2 Bavia ───────────────────────────────────────────
+        var bavia = await _db.PartBaviaSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in bavia)
+        {
+            _db.KhPlanRouteSnapshotBavia.Add(new KhPlanRouteSnapshotBavia
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SourcePartId   = partId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                StepOrder      = s.StepOrder,
+                NC             = s.NC,
+                StepName       = s.StepName,
+                StandardTime   = s.StandardTime,
+                IsBackup       = s.IsBackup,
+                ParentNC       = s.ParentNC,
+            });
+        }
+
+        // ── C.3 Rửa ─────────────────────────────────────────────
+        var washing = await _db.PartWashingSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in washing)
+        {
+            _db.KhPlanRouteSnapshotWashing.Add(new KhPlanRouteSnapshotWashing
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SourcePartId   = partId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                StepOrder      = s.StepOrder,
+                NC             = s.NC,
+                StepName       = s.StepName,
+                StandardTime   = s.StandardTime,
+                IsBackup       = s.IsBackup,
+                ParentNC       = s.ParentNC,
+            });
+        }
+
+        // ── D. Inspection ────────────────────────────────────────
+        var inspection = await _db.PartInspectionSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in inspection)
+        {
+            _db.KhPlanRouteSnapshotInspection.Add(new KhPlanRouteSnapshotInspection
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SourcePartId   = partId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                StepOrder      = s.StepOrder,
+                NC             = s.NC,
+                StepName       = s.StepName,
+                StandardTime   = s.StandardTime,
+                IsBackup       = s.IsBackup,
+                ParentNC       = s.ParentNC,
+            });
+        }
+
+        // ── E. Packaging ─────────────────────────────────────────
+        var packaging = await _db.PartPackagingSteps
+            .Where(s => s.PartId == partId && s.IsActive)
+            .OrderBy(s => s.StepOrder)
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var s in packaging)
+        {
+            _db.KhPlanRouteSnapshotPackaging.Add(new KhPlanRouteSnapshotPackaging
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SourcePartId   = partId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                StepOrder      = s.StepOrder,
+                NC             = s.NC,
+                StepName       = s.StepName,
+                StandardTime   = s.StandardTime,
+                IsBackup       = s.IsBackup,
+                ParentNC       = s.ParentNC,
+            });
+        }
+
+        // Một lần SaveChanges duy nhất cho toàn bộ 6 bảng
+        await _db.SaveChangesAsync();
+    }
 }
 
 // ==== DTOs ====
@@ -515,4 +827,32 @@ public class SplitPORow
 {
     public string PurchaseOrder { get; set; } = "";
     public decimal Quantity { get; set; }
+}
+
+// ==== Route Snapshot DTOs ====
+public class RouteSnapshotData
+{
+    public List<KhPlanRouteSnapshotMachining>  Machining  { get; set; } = new();
+    public List<KhPlanRouteSnapshotTaro>        Taro       { get; set; } = new();
+    public List<KhPlanRouteSnapshotBavia>       Bavia      { get; set; } = new();
+    public List<KhPlanRouteSnapshotWashing>     Washing    { get; set; } = new();
+    public List<KhPlanRouteSnapshotInspection>  Inspection { get; set; } = new();
+    public List<KhPlanRouteSnapshotPackaging>   Packaging  { get; set; } = new();
+
+    public bool HasAny => Machining.Count > 0 || Taro.Count > 0 || Bavia.Count > 0
+                       || Washing.Count > 0 || Inspection.Count > 0 || Packaging.Count > 0;
+}
+
+public class SnapshotSummary
+{
+    public int GC   { get; set; } // Machining
+    public int Taro { get; set; }
+    public int Bavia{ get; set; }
+    public int Rua  { get; set; } // Washing
+    public int KCS  { get; set; } // Inspection
+    public int DG   { get; set; } // Packaging
+
+    // HTSP = Taro + Bavia + Rửa
+    public int HTSP => Taro + Bavia + Rua;
+    public bool HasAny => GC + HTSP + KCS + DG > 0;
 }

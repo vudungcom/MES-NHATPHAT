@@ -381,27 +381,39 @@ else
                             <thead class="table-light text-center">
                                 <tr>
                                     <th style="width: 70px;">NC</th>
+                                    <th style="width: 70px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                @if (_taroEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
+                                @if (_taroEdits.Count == 0) { <tr><td colspan="5" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _taroEdits)
                                 {
                                     <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                                        @* Cột NC — nhập thủ công *@
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
-                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" 
-                                                       value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
+                                                       @bind="edit.NC" @bind:after="() => MarkAsModified(edit)"
+                                                       placeholder="..." disabled="@(!_canEditC || RowLocked(edit))" />
                                             </div>
                                         </td>
+                                        @* Cột Mã CV — auto fill từ WTS khi chọn, readonly *@
+                                        <td>
+                                            @if (edit is TaroEdit taroEdit)
+                                            {
+                                                <input class="form-control form-control-sm text-center fw-bold text-success"
+                                                       value="@(string.IsNullOrEmpty(taroEdit.WtsCode) ? "..." : taroEdit.WtsCode)" readonly />
+                                            }
+                                        </td>
+                                        @* Cột Công đoạn chuẩn WTS *@
                                         <td>
                                             @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
                                             {
-                                                <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _taroTasks)">
+                                                <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTaskTaro(edit, e.Value?.ToString(), _taroTasks)">
                                                     <option value="">-- Chọn WTS Taro --</option>
                                                     @foreach (var t in _taroTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
                                                 </select>
@@ -412,18 +424,17 @@ else
                                             }
                                         </td>
                                         <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
-                                        
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
                                             {
-                                                <button class="btn btn-sm btn-outline-secondary p-0 px-1 me-1" title="Xem lịch sử thay đổi" 
+                                                <button class="btn btn-sm btn-outline-secondary p-0 px-1 me-1" title="Xem lịch sử thay đổi"
                                                         @onclick="@(() => ShowHistoryAsync(edit.StepId, "Taro", edit.NC ?? "NC"))">
                                                     <i class="bi bi-clock-history"></i>
                                                 </button>
                                             }
                                             @if (_canEditC)
                                             {
-                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1"
                                                         @onclick="() => AddBackupRow(_taroEdits, edit, (nc, parent) => new TaroEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
                                                 </button>
@@ -452,7 +463,7 @@ else
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
                                 <tr>
-                                    <th style="width: 70px;">NC</th>
+                                    <th style="width: 70px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
@@ -524,7 +535,7 @@ else
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
                                 <tr>
-                                    <th style="width: 70px;">NC</th>
+                                    <th style="width: 70px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
@@ -599,7 +610,7 @@ else
                 <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 120px;" class="text-center">NC *</th>
+                            <th style="width: 120px;" class="text-center">Mã CV *</th>
                             <th>Nội dung công việc (WTS Chuẩn)</th>
                             <th class="text-end" style="width: 140px;">T.Chuẩn (phút)</th>
                             <th style="width: @(_canEditD ? "85px" : "40px");" class="text-center">Thao tác</th>
@@ -672,7 +683,7 @@ else
                 <table class="table table-sm align-middle mb-0" style="font-size: 0.8rem;">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 120px;" class="text-center">NC *</th>
+                            <th style="width: 120px;" class="text-center">Mã CV *</th>
                             <th>Nội dung đóng gói (WTS Chuẩn)</th>
                             <th class="text-end" style="width: 140px;">T.Chuẩn (phút)</th>
                             <th style="width: @(_canEditE ? "85px" : "40px");" class="text-center">Thao tác</th>
@@ -1459,6 +1470,32 @@ else
         }
     }
 
+    /// <summary>
+    /// Dùng riêng cho Taro — khi chọn WTS fill StepName, StandardTime và WtsCode,
+    /// KHÔNG fill NC (NC Taro do người dùng nhập thủ công).
+    /// </summary>
+    private void OnSelectWtsTaskTaro(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
+    {
+        var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
+        if (task != null)
+        {
+            if (edit is TaroEdit taroEdit)
+                taroEdit.WtsCode = task.TaskCode;
+            edit.StepName = task.TaskName;
+            if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
+            {
+                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
+            }
+            MarkAsModified(edit);
+        }
+        else
+        {
+            if (edit is TaroEdit taroEdit)
+                taroEdit.WtsCode = "";
+            edit.StepName = "";
+        }
+    }
+
     private void MarkAsModified(StepEditBase edit)
     {
         if (edit.State == EditState.Unchanged)
@@ -2015,6 +2052,9 @@ else
 
     public class TaroEdit : SimpleStepEditBase
     {
+        /// <summary>Mã công việc WTS — auto fill từ dropdown, độc lập với NC thủ công. Chỉ lưu trong UI, chưa persist DB.</summary>
+        public string? WtsCode { get; set; }
+
         public static TaroEdit FromEntity(PartTaroStep s) => new TaroEdit
         {
             StepId = s.StepId,

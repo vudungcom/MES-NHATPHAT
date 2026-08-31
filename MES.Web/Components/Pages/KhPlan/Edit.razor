@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @rendermode InteractiveServer
 @using MES.Web.Components.Shared
+@using MES.Web.Data.Entities
 @inject AppDbContext Db
 @inject KhPlanService KhSvc
 @inject PartMasterService PartSvc
@@ -16,6 +17,44 @@
     Changes="@_pendingDefaultChanges"
     OnConfirmed="OnPinConfirmed"
     OnCancelled="OnPinCancelled" />
+
+@* Confirm dialog cập nhật quy trình *@
+@if (_showRefreshConfirm)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="max-width:480px;">
+            <div class="mes-modal-header">
+                <h5 class="mb-0 text-warning">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Cập nhật quy trình từ Part Master
+                </h5>
+                <button class="btn-close" @onclick="() => _showRefreshConfirm = false"></button>
+            </div>
+            <div class="mes-modal-body">
+                <div class="alert alert-warning py-2 small">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    Thao tác này sẽ <strong>xóa toàn bộ quy trình B→E hiện tại</strong> của phiếu này
+                    và thay bằng dữ liệu <strong>mới nhất từ Part Master</strong>.
+                    <br /><br />
+                    Hãy đảm bảo Part Master đã được cập nhật đúng trước khi tiếp tục.
+                </div>
+                <label class="form-label small fw-semibold">Lý do cập nhật <span class="text-danger">*</span></label>
+                <input class="form-control form-control-sm" @bind="_refreshReason"
+                       placeholder="VD: Kỹ thuật đã cập nhật thêm bước NC03 vào Part Master" />
+                @if (!string.IsNullOrEmpty(_refreshError))
+                {
+                    <div class="text-danger small mt-1">@_refreshError</div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="() => _showRefreshConfirm = false">Hủy</button>
+                <button class="btn btn-sm btn-warning" @onclick="DoRefreshSnapshotAsync" disabled="@_refreshing">
+                    <i class="bi bi-arrow-clockwise me-1"></i>
+                    @(_refreshing ? "Đang cập nhật..." : "Xác nhận cập nhật")
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @if (_plan == null || _detailForm == null)
 {
@@ -47,12 +86,20 @@ else
         <div class="alert alert-danger py-2">@_error</div>
     }
 
+    @if (_refreshSuccess)
+    {
+        <div class="alert alert-success py-2 small">
+            <i class="bi bi-check-circle me-1"></i> Đã cập nhật quy trình từ Part Master thành công.
+        </div>
+    }
+
     <div class="alert alert-warning small py-2">
         <i class="bi bi-exclamation-triangle"></i>
         <strong>Lưu ý:</strong> Không sửa được <strong>Số phiếu / PO / Part No / Khách hàng / Ngày lập</strong>.
         Bắt buộc nhập lý do ở cuối trang.
     </div>
 
+    @* ── Thông tin phiếu ── *@
     <div class="card mb-3">
         <div class="card-body">
             <h6 class="text-secondary"><i class="bi bi-file-earmark-text"></i> Thông tin phiếu</h6>
@@ -81,6 +128,7 @@ else
         </div>
     </div>
 
+    @* ── Chi tiết Part ── *@
     <div class="card mb-2">
         <div class="card-body">
             <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
@@ -108,32 +156,32 @@ else
                 </div>
                 <div class="col-md-2">
                     <label class="form-label small">SL <span class="text-danger">*</span></label>
-                    <input type="number" step="1" min="1" class="form-control form-control-sm text-end" @bind="_detailForm.Quantity" />
+                    <input type="number" step="1" min="1" class="form-control form-control-sm text-end"
+                           @bind="_detailForm.Quantity" @bind:after="OnAnyFieldChanged" />
                 </div>
                 <div class="col-md-1">
                     <label class="form-label small">Đvị</label>
-                    <select class="form-select form-select-sm" @bind="_detailForm.Unit">
+                    <select class="form-select form-select-sm" @bind="_detailForm.Unit" @bind:after="OnAnyFieldChanged">
                         <option>EA</option><option>PCS</option><option>SET</option>
                     </select>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">STD (deadline) <span class="text-danger">*</span></label>
-                    <input type="date" class="form-control form-control-sm" @bind="_detailForm.STD" />
+                    <input type="date" class="form-control form-control-sm" @bind="_detailForm.STD" @bind:after="OnAnyFieldChanged" />
                 </div>
             </div>
-
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small">Loại hàng</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.Type" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.Type" @bind:after="OnAnyFieldChanged" />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Ưu tiên</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.Priority" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.Priority" @bind:after="OnAnyFieldChanged" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Ghi chú Hàng</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.PartNotes" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.PartNotes" @bind:after="OnAnyFieldChanged" />
                 </div>
             </div>
 
@@ -172,20 +220,204 @@ else
             <div class="row g-2">
                 <div class="col-md-3">
                     <label class="form-label small">Order VL</label>
-                    <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25" @bind="_detailForm.OrderVL" />
+                    <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25"
+                           @bind="_detailForm.OrderVL" @bind:after="OnAnyFieldChanged" />
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size: 0.75rem;">(tự nhập)</span></label>
-                    <input class="form-control form-control-sm font-monospace" @bind="_detailForm.Location" placeholder="VD B1" />
+                    <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size:0.75rem;">(tự nhập)</span></label>
+                    <input class="form-control form-control-sm font-monospace"
+                           @bind="_detailForm.Location" @bind:after="OnAnyFieldChanged" placeholder="VD B1" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Tình trạng phôi</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.MaterialCondition" />
+                    <input class="form-control form-control-sm"
+                           @bind="_detailForm.MaterialCondition" @bind:after="OnAnyFieldChanged" />
                 </div>
             </div>
         </div>
     </div>
 
+    @* ── Quy trình sản xuất (Snapshot) ── *@
+    <div class="card mb-3">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">
+                <i class="bi bi-diagram-3 me-1"></i> Quy trình sản xuất
+                <span class="badge bg-secondary ms-1">Snapshot</span>
+            </span>
+            <div class="d-flex align-items-center gap-3">
+                <small class="text-muted" style="font-size:0.75rem;">
+                    Snapshot tại thời điểm tạo phiếu — không tự thay đổi theo Part Master.
+                </small>
+                @if (_partId.HasValue)
+                {
+                    <button class="btn btn-sm btn-outline-warning" @onclick="() => _showRefreshConfirm = true"
+                            title="Xóa snapshot cũ và copy lại từ Part Master hiện tại">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Cập nhật từ Part Master
+                    </button>
+                }
+                else
+                {
+                    <span class="text-muted small"><i class="bi bi-exclamation-circle"></i> Part chưa có trong Part Master</span>
+                }
+            </div>
+        </div>
+        <div class="card-body p-2">
+            @if (_snapshot == null || !_snapshot.HasAny)
+            {
+                <div class="alert alert-warning py-2 small mb-0">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    Chưa có snapshot quy trình. Bấm <strong>"Cập nhật từ Part Master"</strong> để copy quy trình hiện tại vào phiếu này.
+                </div>
+            }
+            else
+            {
+                @* B. Machining *@
+                @if (_snapshot.Machining.Count > 0)
+                {
+                    <div class="mb-3">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#1a73e8;color:white;">
+                            <i class="bi bi-gear-wide-connected me-1"></i> B. Quy trình gia công (@_snapshot.Machining.Count bước)
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width:40px">#</th>
+                                        <th style="width:70px">NC</th>
+                                        <th>Máy đăng ký</th>
+                                        <th>Máy đồng dạng</th>
+                                        <th>Đồ gá</th>
+                                        <th>Loại dao</th>
+                                        <th class="text-end">T.Gá lắp</th>
+                                        <th class="text-end">T.Gia công</th>
+                                        <th class="text-end">T.Kiểm tra</th>
+                                        <th class="text-end">T.Chuẩn bị</th>
+                                        <th class="text-end">T.Chạy thử</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in _snapshot.Machining)
+                                    {
+                                        <tr class="@(s.IsBackup ? "table-warning" : "")">
+                                            <td>@s.StepOrder</td>
+                                            <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
+                                            <td>@(s.MachineRegistered ?? "—")</td>
+                                            <td class="text-muted small">@(s.MachineAlternative ?? "—")</td>
+                                            <td>@(s.FixtureType ?? "—")</td>
+                                            <td>@(s.ToolType ?? "—")</td>
+                                            <td class="text-end">@FmtTime(s.SetupTime)</td>
+                                            <td class="text-end">@FmtTime(s.MachiningTime)</td>
+                                            <td class="text-end">@FmtTime(s.InspectionTime)</td>
+                                            <td class="text-end">@FmtTime(s.PreparationTime)</td>
+                                            <td class="text-end">@FmtTime(s.TrialRunTime)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+
+                @* C. Taro / Bavia / Rửa *@
+                @if (_snapshot.Taro.Count > 0 || _snapshot.Bavia.Count > 0 || _snapshot.Washing.Count > 0)
+                {
+                    <div class="row g-2 mb-3">
+                        @if (_snapshot.Taro.Count > 0)
+                        {
+                            <div class="col-md-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                    C.1 Taro (@_snapshot.Taro.Count)
+                                </div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Taro)
+                                        {
+                                            <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        @if (_snapshot.Bavia.Count > 0)
+                        {
+                            <div class="col-md-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                    C.2 Bavia (@_snapshot.Bavia.Count)
+                                </div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Bavia)
+                                        {
+                                            <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        @if (_snapshot.Washing.Count > 0)
+                        {
+                            <div class="col-md-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                    C.3 Rửa (@_snapshot.Washing.Count)
+                                </div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Washing)
+                                        {
+                                            <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @* D. Inspection *@
+                @if (_snapshot.Inspection.Count > 0)
+                {
+                    <div class="mb-3">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#e37400;color:white;">
+                            D. Kiểm tra chất lượng (KCS) (@_snapshot.Inspection.Count bước)
+                        </div>
+                        <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                            <thead class="table-light"><tr><th style="width:70px">NC</th><th>Nội dung công việc</th><th class="text-end" style="width:100px">T.Chuẩn (phút)</th></tr></thead>
+                            <tbody>
+                                @foreach (var s in _snapshot.Inspection)
+                                {
+                                    <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @* E. Packaging *@
+                @if (_snapshot.Packaging.Count > 0)
+                {
+                    <div class="mb-1">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#6c757d;color:white;">
+                            E. Đóng gói (@_snapshot.Packaging.Count bước)
+                        </div>
+                        <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                            <thead class="table-light"><tr><th style="width:70px">NC</th><th>Tên công đoạn</th><th class="text-end" style="width:100px">T.Chuẩn (phút)</th></tr></thead>
+                            <tbody>
+                                @foreach (var s in _snapshot.Packaging)
+                                {
+                                    <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    @* ── Lý do sửa ── *@
     <div class="card mb-3 border-danger">
         <div class="card-body">
             <h6 class="text-danger mb-2"><i class="bi bi-chat-left-text"></i> Lý do sửa <span class="text-danger">*</span> (BẮT BUỘC)</h6>
@@ -195,7 +427,6 @@ else
         </div>
     </div>
 
-    @* Nút hành động cuối trang *@
     <div class="d-flex justify-content-end gap-2 mb-4">
         <a href="@($"/kh-plan/{_plan!.KhPlanId}/detail/{_detailForm!.KhPlanDetailId}")" class="btn btn-outline-secondary">
             <i class="bi bi-x-lg"></i> Hủy (không lưu)
@@ -210,17 +441,20 @@ else
 }
 
 @code {
-    [Parameter] public int Id { get; set; }        // KhPlanId
-    [Parameter] public int DetailId { get; set; }  // KhPlanDetailId
+    [Parameter] public int Id { get; set; }
+    [Parameter] public int DetailId { get; set; }
 
-    private const string AttrMaterial = "Material";
+    private const string AttrMaterial       = "Material";
     private const string AttrMaterialConfig = "MaterialConfig";
-    private const string AttrMaterialNote = "MaterialNote";
+    private const string AttrMaterialNote   = "MaterialNote";
 
     private KhPlan? _plan;
     private DetailForm? _detailForm;
     private string? _planNotes;
     private DateTime? _receivedDate;
+    private int? _partId; // PartId trong PartMaster (null nếu Part mới)
+    private RouteSnapshotData? _snapshot;
+
     private Dictionary<string, PartMaster> _partLookup = new();
     private Dictionary<string, Dictionary<string, List<PartMasterAttribute>>> _attrsCache = new();
 
@@ -232,47 +466,59 @@ else
     private string? _error;
     private int _currentUserId;
 
+    // Refresh snapshot
+    private bool _showRefreshConfirm;
+    private string _refreshReason = "";
+    private string? _refreshError;
+    private bool _refreshing;
+    private bool _refreshSuccess;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
-        _currentUserId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        _currentUserId = int.Parse(
+            authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
 
         var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
         if (plan == null || detail == null || plan.KhPlanId != Id) return;
 
-        _plan = plan;
-        _planNotes = _plan.Notes;
+        _plan         = plan;
+        _planNotes    = _plan.Notes;
         _receivedDate = _plan.ReceivedDate;
 
         // Load PartMaster + attrs
         var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
         if (pm != null)
         {
+            _partId = pm.PartId;
             _partLookup[pm.PartNo] = pm;
             _attrsCache[pm.PartNo] = await PartSvc.GetAttributesGroupedAsync(pm.PartId);
         }
 
         _detailForm = new DetailForm
         {
-            KhPlanDetailId = detail.KhPlanDetailId,
-            LineNo = detail.LineNo,
-            PartNo = detail.PartNo,
-            PurchaseOrder = detail.PurchaseOrder,
-            OldPurchaseOrder = detail.OldPurchaseOrder,
-            Quantity = detail.Quantity,
-            Unit = detail.Unit,
-            STD = detail.STD,
-            Type = detail.Type,
-            Priority = detail.Priority,
-            Material = detail.Material,
-            MaterialConfig = detail.MaterialConfig,
-            Location = detail.Location,
-            MaterialNotes = detail.MaterialNotes,
-            OrderVL = detail.OrderVL,
+            KhPlanDetailId    = detail.KhPlanDetailId,
+            LineNo            = detail.LineNo,
+            PartNo            = detail.PartNo,
+            PurchaseOrder     = detail.PurchaseOrder,
+            OldPurchaseOrder  = detail.OldPurchaseOrder,
+            Quantity          = detail.Quantity,
+            Unit              = detail.Unit,
+            STD               = detail.STD,
+            Type              = detail.Type,
+            Priority          = detail.Priority,
+            Material          = detail.Material,
+            MaterialConfig    = detail.MaterialConfig,
+            Location          = detail.Location,
+            MaterialNotes     = detail.MaterialNotes,
+            OrderVL           = detail.OrderVL,
             MaterialCondition = detail.MaterialCondition,
-            PartNotes = detail.PartNotes,
-            Status = detail.Status
+            PartNotes         = detail.PartNotes,
+            Status            = detail.Status
         };
+
+        // Load snapshot quy trình
+        _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
     }
 
     private List<PartMasterAttribute>? GetAttrsFor(string partNo, string attrType)
@@ -282,74 +528,49 @@ else
         return partAttrs.GetValueOrDefault(attrType);
     }
 
-    // CÁC HÀM HELPER BỊ THIẾU ĐÃ ĐƯỢC PHỤC HỒI ĐẦY ĐỦ Ở DƯỚI
-    private void AddBackupRow<T>(List<T> list, T parent, Func<string, string, T> factory) where T : StepEditBase
-    {
-        var baseNC = !string.IsNullOrWhiteSpace(parent.ParentNC) ? parent.ParentNC : (parent.NC?.Split("-DP-")[0].Trim() ?? "NC");
-        if (string.IsNullOrWhiteSpace(baseNC) || baseNC == "NC") return;
+    private void OnAnyFieldChanged() => _savedSuccessfully = false;
 
-        var count = list.Count(e => (e.ParentNC == baseNC || (e.NC != null && e.NC.StartsWith($"{baseNC}-DP-"))) && e.NC != baseNC);
-        var newBackup = factory($"{baseNC}-DP-{count + 1:D2}", baseNC);
-        
-        var idx = list.IndexOf(parent);
-        if (idx >= 0)
+    // ── Refresh snapshot từ Part Master ──────────────────────────────
+    private async Task DoRefreshSnapshotAsync()
+    {
+        _refreshError = null;
+        if (string.IsNullOrWhiteSpace(_refreshReason) || _refreshReason.Trim().Length < 3)
         {
-            while (idx + 1 < list.Count && list[idx + 1].NC != null && list[idx + 1].NC.StartsWith($"{baseNC}-DP-"))
-            {
-                idx++;
-            }
-            list.Insert(idx + 1, newBackup);
+            _refreshError = "Bắt buộc nhập lý do (tối thiểu 3 ký tự)";
+            return;
         }
-        else
+        if (!_partId.HasValue)
         {
-            list.Add(newBackup);
+            _refreshError = "Part chưa có trong Part Master";
+            return;
+        }
+
+        _refreshing = true;
+        try
+        {
+            await KhSvc.RefreshRouteSnapshotAsync(
+                DetailId, _partId.Value, _currentUserId, _refreshReason.Trim());
+
+            // Reload snapshot để hiển thị mới
+            _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
+            _refreshSuccess = true;
+            _showRefreshConfirm = false;
+            _refreshReason = "";
+        }
+        catch (Exception ex)
+        {
+            _refreshError = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _refreshing = false;
         }
     }
 
-    private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
-    {
-        var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
-        if (task != null)
-        {
-            edit.NC = task.TaskCode;
-            edit.StepName = task.TaskName;
-            if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
-            {
-                edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
-            }
-        }
-        else
-        {
-            edit.NC = ""; 
-            edit.StepName = "";
-        }
-    }
-
-    private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
-    {
-        if (edit.State == EditState.New)
-        {
-            list.Remove(edit);
-        }
-        else if (edit.State == EditState.Deleted)
-        {
-            edit.State = edit.WasActiveInDb ? EditState.Unchanged : EditState.Restored;
-        }
-        else
-        {
-            edit.State = EditState.Deleted;
-        }
-    }
-
-    private void OnAnyFieldChanged()
-    {
-        _savedSuccessfully = false;
-    }
-
+    // ── Save phiếu ───────────────────────────────────────────────────
     private async Task AttemptSaveAsync()
     {
         _error = null;
-
         if (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 3)
         {
             _error = "BẮT BUỘC nhập lý do sửa (tối thiểu 3 ký tự)";
@@ -361,15 +582,14 @@ else
             return;
         }
 
-        // Build danh sách thay đổi để hiển thị trong PIN modal (giống Part Master)
         _pendingDefaultChanges = new List<PinConfirmModal.DefaultChangeInfo>
         {
             new PinConfirmModal.DefaultChangeInfo
             {
-                PartNo = _detailForm.PartNo,
+                PartNo        = _detailForm.PartNo,
                 AttributeType = "Lý do",
-                OldValue = "",
-                NewValue = _reason.Trim()
+                OldValue      = "",
+                NewValue      = _reason.Trim()
             }
         };
 
@@ -396,39 +616,38 @@ else
             if (_plan != null)
             {
                 var planEntity = await Db.KhPlans.FirstAsync(x => x.KhPlanId == _plan.KhPlanId);
-                if (planEntity.Notes != _planNotes) planEntity.Notes = _planNotes;
+                if (planEntity.Notes != _planNotes)         planEntity.Notes         = _planNotes;
                 if (planEntity.ReceivedDate != _receivedDate) planEntity.ReceivedDate = _receivedDate;
             }
 
             var d = _detailForm!;
             if (_partLookup.TryGetValue(d.PartNo, out var pm))
             {
-                await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialNote, d.MaterialNotes);
+                await MaybeAddNewValue(pm.PartId, AttrMaterial,       d.Material);
+                await MaybeAddNewValue(pm.PartId, AttrMaterialConfig,  d.MaterialConfig);
+                await MaybeAddNewValue(pm.PartId, AttrMaterialNote,    d.MaterialNotes);
             }
 
             var newValues = new KhPlanDetail
             {
-                Quantity = d.Quantity,
-                Unit = d.Unit,
-                STD = d.STD,
-                Type = d.Type,
-                Priority = d.Priority,
-                Material = d.Material,
-                MaterialConfig = d.MaterialConfig,
-                Location = d.Location,
-                MaterialNotes = d.MaterialNotes,
-                OrderVL = d.OrderVL,
+                Quantity          = d.Quantity,
+                Unit              = d.Unit,
+                STD               = d.STD,
+                Type              = d.Type,
+                Priority          = d.Priority,
+                Material          = d.Material,
+                MaterialConfig    = d.MaterialConfig,
+                Location          = d.Location,
+                MaterialNotes     = d.MaterialNotes,
+                OrderVL           = d.OrderVL,
                 MaterialCondition = d.MaterialCondition,
-                PartNotes = d.PartNotes
+                PartNotes         = d.PartNotes
             };
             await KhSvc.UpdateFullAsync(d.KhPlanDetailId, newValues, _currentUserId, _reason.Trim());
 
             await Db.SaveChangesAsync();
             _savedSuccessfully = true;
 
-            // Tự động về trang View sau 1.5 giây
             await Task.Delay(1500);
             Nav.NavigateTo($"/kh-plan/{Id}/detail/{DetailId}");
         }
@@ -453,7 +672,9 @@ else
         await PartSvc.AddValueAsync(partId, attrType, value, _currentUserId);
     }
 
-    // CÁC ĐỊNH NGHĨA CLASS ĐƯỢC PHỤC HỒI NGUYÊN VẸN
+    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.##") : "—";
+
+    // ── Classes ──────────────────────────────────────────────────────
     public enum EditState { Unchanged, Modified, New, Deleted, Restored }
 
     public abstract class StepEditBase
@@ -493,7 +714,6 @@ else
         public string? MaterialCondition { get; set; }
         public string? PartNotes { get; set; }
         public string Status { get; set; } = "";
-
         public bool SetMaterialAsDefault { get; set; }
         public bool SetMaterialConfigAsDefault { get; set; }
         public bool SetMaterialNoteAsDefault { get; set; }

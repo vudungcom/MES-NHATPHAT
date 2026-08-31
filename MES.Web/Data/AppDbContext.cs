@@ -56,6 +56,14 @@ public class AppDbContext : DbContext
     // ==== Machine Exclude Settings (global) ====
     public DbSet<MachineExcludeSetting> MachineExcludeSettings => Set<MachineExcludeSetting>();
 
+    // ==== KhPlan Route Snapshot (B→E) ====
+    public DbSet<KhPlanRouteSnapshotMachining>  KhPlanRouteSnapshotMachining  => Set<KhPlanRouteSnapshotMachining>();
+    public DbSet<KhPlanRouteSnapshotTaro>        KhPlanRouteSnapshotTaro        => Set<KhPlanRouteSnapshotTaro>();
+    public DbSet<KhPlanRouteSnapshotBavia>       KhPlanRouteSnapshotBavia       => Set<KhPlanRouteSnapshotBavia>();
+    public DbSet<KhPlanRouteSnapshotWashing>     KhPlanRouteSnapshotWashing     => Set<KhPlanRouteSnapshotWashing>();
+    public DbSet<KhPlanRouteSnapshotInspection>  KhPlanRouteSnapshotInspection  => Set<KhPlanRouteSnapshotInspection>();
+    public DbSet<KhPlanRouteSnapshotPackaging>   KhPlanRouteSnapshotPackaging   => Set<KhPlanRouteSnapshotPackaging>();
+
     protected override void OnModelCreating(ModelBuilder mb)
     {
         // ==== Explicit Primary Keys ====
@@ -355,6 +363,79 @@ public class AppDbContext : DbContext
             .HasOne(x => x.ChangedByUser)
             .WithMany()
             .HasForeignKey(x => x.ChangedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== KhPlan Route Snapshots (B→E) ====
+        mb.Entity<KhPlanRouteSnapshotMachining>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotMachining>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotMachining>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotMachining>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<KhPlanRouteSnapshotTaro>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotTaro>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotTaro>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotTaro>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<KhPlanRouteSnapshotBavia>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotBavia>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotBavia>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotBavia>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<KhPlanRouteSnapshotWashing>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotWashing>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotWashing>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotWashing>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<KhPlanRouteSnapshotInspection>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotInspection>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotInspection>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotInspection>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        mb.Entity<KhPlanRouteSnapshotPackaging>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotPackaging>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.StepOrder });
+        mb.Entity<KhPlanRouteSnapshotPackaging>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotPackaging>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
             .OnDelete(DeleteBehavior.NoAction);
 
         base.OnModelCreating(mb);

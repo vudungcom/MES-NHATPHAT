@@ -11,7 +11,6 @@
 
 <PageTitle>Kế Hoạch - MES</PageTitle>
 
-@* CSS cho Excel-style filter dropdown — giống Part Master *@
 <style>
     .col-filter-wrap { position: relative; display: inline-block; }
     .col-filter-btn {
@@ -52,6 +51,13 @@
         padding: 6px 10px; display: flex; gap: 6px;
         justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px;
     }
+    /* Badge quy trình */
+    .route-badge {
+        display: inline-block; font-size: 0.68rem; font-weight: 600;
+        padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+    }
+    .route-badge.none  { background:#f1f5f9; color:#64748b; }
+    .route-badge.has   { background:#dbeafe; color:#1e40af; }
 </style>
 
 @if (_isLoading)
@@ -85,7 +91,6 @@ else
         </div>
     </div>
 
-    @* ── Tầng 1: Quick filter ── *@
     <div class="row mb-2 g-2 align-items-center">
         <div class="col-md-5">
             <div class="input-group input-group-sm">
@@ -155,6 +160,13 @@ else
                         <th style="white-space:nowrap;">Ghi chú Hàng</th>
                         <th style="white-space:nowrap;">Order VL</th>
                         <th style="white-space:nowrap;">Vị trí</th>
+                        @* Cột mới: SL hoàn thành *@
+                        <th class="text-center" style="white-space:nowrap;" title="SL hoàn thành / SL kế hoạch">HT/KH</th>
+                        @* Cột mới: 4 badge quy trình *@
+                        <th class="text-center" style="white-space:nowrap;" title="Số bước Gia công từ snapshot">GC</th>
+                        <th class="text-center" style="white-space:nowrap;" title="Số bước HTSP (Taro+Bavia+Rửa)">HTSP</th>
+                        <th class="text-center" style="white-space:nowrap;" title="Số bước KCS">KCS</th>
+                        <th class="text-center" style="white-space:nowrap;" title="Số bước Đóng gói">ĐG</th>
                         <th style="white-space:nowrap;">Trạng thái</th>
                         <th style="width:120px; white-space:nowrap;">Thao tác</th>
                     </tr>
@@ -162,6 +174,7 @@ else
                 <tbody>
                     @foreach (var r in Filtered)
                     {
+                        _snapshotSummary.TryGetValue(r.KhPlanDetailId, out var snap);
                         <tr @ondblclick="() => OpenView(r)" style="cursor: pointer;" title="Double-click để xem chi tiết">
                             <td><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
                             <td class="text-nowrap">@r.PlanDate.ToString("dd/MM/yy")</td>
@@ -195,6 +208,40 @@ else
                             <td class="text-nowrap" title="Lấy từ Quản lý Kho">
                                 @(string.IsNullOrEmpty(r.KhoViTri) ? "—" : r.KhoViTri)
                             </td>
+
+                            @* SL hoàn thành / SL kế hoạch — tạm 0/SL chờ module SX *@
+                            <td class="text-center text-nowrap">
+                                <span class="text-danger fw-semibold">0</span>
+                                <span class="text-muted">/</span>
+                                <span>@r.Quantity.ToString("0.####")</span>
+                            </td>
+
+                            @* 4 badge quy trình từ snapshot *@
+                            <td class="text-center">
+                                @if (snap == null || snap.GC == 0)
+                                { <span class="route-badge none">—</span> }
+                                else
+                                { <span class="route-badge has">@snap.GC</span> }
+                            </td>
+                            <td class="text-center">
+                                @if (snap == null || snap.HTSP == 0)
+                                { <span class="route-badge none">—</span> }
+                                else
+                                { <span class="route-badge has">@snap.HTSP</span> }
+                            </td>
+                            <td class="text-center">
+                                @if (snap == null || snap.KCS == 0)
+                                { <span class="route-badge none">—</span> }
+                                else
+                                { <span class="route-badge has">@snap.KCS</span> }
+                            </td>
+                            <td class="text-center">
+                                @if (snap == null || snap.DG == 0)
+                                { <span class="route-badge none">—</span> }
+                                else
+                                { <span class="route-badge has">@snap.DG</span> }
+                            </td>
+
                             <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
                             <td @onclick:stopPropagation class="text-nowrap">
                                 @if (_canEdit)
@@ -216,12 +263,10 @@ else
             </table>
         </div>
 
-        @* Dropdown filter cột — render ngoài table, position: fixed theo ClientX/Y *@
         @if (_openDropdown != null && _colDefs.TryGetValue(_openDropdown, out var colDef))
         {
             <div class="col-filter-dropdown" style="top: @(_ddTop)px; left: @(_ddLeft)px;"
                  @onclick:stopPropagation>
-                @* Sort *@
                 <div>
                     <button class="sort-btn" @onclick="() => SetSort(_openDropdown!, true)">
                         <i class="bi bi-sort-alpha-down"></i> Sort A → Z
@@ -233,20 +278,14 @@ else
                     </button>
                 </div>
                 <div class="divider"></div>
-
-                @* Clear filter cột này — dùng visibility để không làm nhảy layout *@
                 <button class="sort-btn text-danger"
                         style="visibility: @(colDef.SelectedValues.Count < colDef.AllValues.Count ? "visible" : "hidden")"
                         @onclick="() => ClearColFilter(_openDropdown!)">
                     <i class="bi bi-x-circle"></i> Xóa filter cột này
                 </button>
                 <div class="divider"></div>
-
-                @* Search trong list *@
                 <input class="search-box" placeholder="Tìm trong danh sách..."
                        @bind="colDef.SearchText" @bind:event="oninput" />
-
-                @* Danh sách giá trị *@
                 <div class="value-list">
                     @{
                         var visibleVals = colDef.AllValues
@@ -270,7 +309,6 @@ else
                         </label>
                     }
                 </div>
-
                 <div class="footer">
                     <button class="btn btn-sm btn-outline-secondary" @onclick="CloseAllDropdowns">Hủy</button>
                     <button class="btn btn-sm btn-primary" @onclick="() => ApplyColFilter(_openDropdown!)">OK</button>
@@ -343,40 +381,26 @@ else
 }
 
 @code {
-    // ── Auth ──────────────────────────────────────────────────────────
     private bool _isLoading = true;
     private bool _canView = false;
     private bool _canEdit = false;
 
-    // ── Data ──────────────────────────────────────────────────────────
     private List<KhPlanDetailRow>? _rows;
+    // Snapshot summary: KhPlanDetailId → SnapshotSummary
+    private Dictionary<int, SnapshotSummary> _snapshotSummary = new();
 
-    // ── Quick filter ──────────────────────────────────────────────────
     private string _search = "";
     private string _statusFilter = "";
-
-    // ── Sort ──────────────────────────────────────────────────────────
     private string? _sortCol;
     private bool _sortAsc = true;
-
-    // ── Excel-style column filters ────────────────────────────────────
     private Dictionary<string, ColFilterDef> _colDefs = new();
-
-    // ── Dropdown state ────────────────────────────────────────────────
     private string? _openDropdown;
     private double _ddTop, _ddLeft;
-
-    // ── Modal: Split PO ───────────────────────────────────────────────
     private bool _showSplitModal;
     private KhPlanDetailRow? _splitSource;
-
-    // ── Modal: History ────────────────────────────────────────────────
     private List<KhPlanDetailChangeLog>? _history;
     private KhPlanDetailRow? _historyRow;
 
-    // ═════════════════════════════════════════════════════════════════
-    // Init
-    // ═════════════════════════════════════════════════════════════════
     protected override async Task OnInitializedAsync()
     {
         var auth = await AuthState.GetAuthenticationStateAsync();
@@ -404,6 +428,13 @@ else
     {
         _rows = await KhSvc.GetDetailRowsAsync();
         BuildColDefs();
+
+        // Load snapshot summary batch — 1 lần, không N+1
+        if (_rows?.Count > 0)
+        {
+            var ids = _rows.Select(r => r.KhPlanDetailId).ToList();
+            _snapshotSummary = await KhSvc.GetSnapshotSummaryAsync(ids);
+        }
     }
 
     private void BuildColDefs()
@@ -422,23 +453,17 @@ else
         };
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // ColHeader render fragment — giống Part Master
-    // ═════════════════════════════════════════════════════════════════
     private RenderFragment ColHeader(string colKey, string label) => __builder =>
     {
         var hasFilter = _colDefs.TryGetValue(colKey, out var def)
                      && def.SelectedValues.Count < def.AllValues.Count;
         var isSorted = _sortCol == colKey;
-
         <span class="col-filter-wrap">
             <span style="cursor: pointer; user-select: none;"
                   @onclick="() => SetSort(colKey, _sortCol == colKey ? !_sortAsc : true)">
                 @label
                 @if (isSorted)
-                {
-                    <i class="bi @(_sortAsc ? "bi-arrow-up" : "bi-arrow-down") ms-1" style="font-size:0.65rem;"></i>
-                }
+                { <i class="bi @(_sortAsc ? "bi-arrow-up" : "bi-arrow-down") ms-1" style="font-size:0.65rem;"></i> }
             </span>
             <button class="col-filter-btn @(hasFilter ? "active" : "")"
                     title="Lọc cột này"
@@ -449,9 +474,6 @@ else
         </span>
     };
 
-    // ═════════════════════════════════════════════════════════════════
-    // Dropdown logic
-    // ═════════════════════════════════════════════════════════════════
     private async Task OpenDropdownAsync(string colKey, MouseEventArgs e)
     {
         if (_openDropdown == colKey) { _openDropdown = null; return; }
@@ -502,9 +524,6 @@ else
         _openDropdown = null;
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // Filtered + Sorted
-    // ═════════════════════════════════════════════════════════════════
     private IEnumerable<KhPlanDetailRow> Filtered
     {
         get
@@ -512,7 +531,6 @@ else
             if (_rows == null) return Enumerable.Empty<KhPlanDetailRow>();
             IEnumerable<KhPlanDetailRow> q = _rows;
 
-            // Quick filter: search text
             if (!string.IsNullOrEmpty(_search))
             {
                 var s = _search.Trim().ToLowerInvariant();
@@ -525,14 +543,12 @@ else
                     (r.OrderVL ?? "").ToLowerInvariant().Contains(s));
             }
 
-            // Quick filter: status
             if (!string.IsNullOrEmpty(_statusFilter))
                 q = q.Where(r => r.Status == _statusFilter);
 
-            // Excel-style column filters — giống Part Master
             foreach (var (key, def) in _colDefs)
             {
-                if (def.SelectedValues.Count == def.AllValues.Count) continue; // chọn tất = không lọc
+                if (def.SelectedValues.Count == def.AllValues.Count) continue;
                 q = key switch
                 {
                     "PlanNo"       => q.Where(r => def.SelectedValues.Contains(r.PlanNo)),
@@ -547,7 +563,6 @@ else
                 };
             }
 
-            // Sort
             if (_sortCol != null)
             {
                 Func<KhPlanDetailRow, string> keySelector = _sortCol switch
@@ -569,9 +584,6 @@ else
         }
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // Navigation & Modals
-    // ═════════════════════════════════════════════════════════════════
     private void OpenView(KhPlanDetailRow row)
         => Nav.NavigateTo($"/kh-plan/{row.KhPlanId}/detail/{row.KhPlanDetailId}");
 
@@ -604,9 +616,6 @@ else
         _                      => "secondary"
     };
 
-    // ═════════════════════════════════════════════════════════════════
-    // ColFilterDef — copy nguyên từ Part Master
-    // ═════════════════════════════════════════════════════════════════
     private class ColFilterDef
     {
         public List<string> AllValues { get; set; } = new();

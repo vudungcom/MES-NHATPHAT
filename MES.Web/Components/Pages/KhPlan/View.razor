@@ -1,6 +1,7 @@
 @page "/kh-plan/{Id:int}/detail/{DetailId:int}"
 @attribute [Authorize]
 @rendermode InteractiveServer
+@using MES.Web.Data.Entities
 @using MES.Web.Services
 @inject KhPlanService KhSvc
 @inject KhoVatLieuService KhoSvc
@@ -47,6 +48,7 @@ else
         }
     </div>
 
+    @* ── Thông tin phiếu ── *@
     <div class="card mb-3">
         <div class="card-body">
             <h6 class="text-secondary"><i class="bi bi-file-earmark-text"></i> Thông tin phiếu</h6>
@@ -79,7 +81,8 @@ else
         </div>
     </div>
 
-    <div class="card mb-2">
+    @* ── Chi tiết Part ── *@
+    <div class="card mb-3">
         <div class="card-body">
             <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
                 <div>
@@ -117,7 +120,6 @@ else
                     <input class="form-control form-control-sm bg-light" value="@_detail.STD.ToString("dd/MM/yyyy")" readonly />
                 </div>
             </div>
-
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small text-muted">Loại hàng</label>
@@ -178,6 +180,184 @@ else
             </div>
         </div>
     </div>
+
+    @* ── Quy trình sản xuất (Snapshot tại thời điểm tạo phiếu) ── *@
+    @if (_snapshot != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">
+                    <i class="bi bi-diagram-3 me-1"></i> Quy trình sản xuất
+                    <span class="badge bg-secondary ms-1" title="Snapshot tại thời điểm tạo phiếu">Snapshot</span>
+                </span>
+                @if (_snapshot.HasAny)
+                {
+                    <small class="text-muted">
+                        Được copy từ Part Master lúc tạo phiếu — không tự thay đổi theo Part Master.
+                    </small>
+                }
+            </div>
+            <div class="card-body p-2">
+                @if (!_snapshot.HasAny)
+                {
+                    <div class="alert alert-warning py-2 small mb-0">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Chưa có snapshot quy trình. Part này chưa có quy trình trong Part Master tại thời điểm tạo phiếu,
+                        hoặc phiếu được tạo trước khi tính năng này có mặt.
+                    </div>
+                }
+                else
+                {
+                    @* B. Machining *@
+                    @if (_snapshot.Machining.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#1a73e8;color:white;">
+                                <i class="bi bi-gear-wide-connected me-1"></i> B. Quy trình gia công (@_snapshot.Machining.Count bước)
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width:40px">#</th>
+                                            <th style="width:70px">NC</th>
+                                            <th>Máy đăng ký</th>
+                                            <th>Máy đồng dạng</th>
+                                            <th>Đồ gá</th>
+                                            <th>Loại dao</th>
+                                            <th class="text-end">T.Gá lắp</th>
+                                            <th class="text-end">T.Gia công</th>
+                                            <th class="text-end">T.Kiểm tra</th>
+                                            <th class="text-end">T.Chuẩn bị</th>
+                                            <th class="text-end">T.Chạy thử</th>
+                                            <th class="text-center" style="width:90px;">Trạng thái</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Machining)
+                                        {
+                                            <tr class="@(s.IsBackup ? "table-warning" : "")">
+                                                <td>@s.StepOrder</td>
+                                                <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
+                                                <td>@(s.MachineRegistered ?? "—")</td>
+                                                <td class="text-muted small">@(s.MachineAlternative ?? "—")</td>
+                                                <td>@(s.FixtureType ?? "—")</td>
+                                                <td>@(s.ToolType ?? "—")</td>
+                                                <td class="text-end">@FmtTime(s.SetupTime)</td>
+                                                <td class="text-end">@FmtTime(s.MachiningTime)</td>
+                                                <td class="text-end">@FmtTime(s.InspectionTime)</td>
+                                                <td class="text-end">@FmtTime(s.PreparationTime)</td>
+                                                <td class="text-end">@FmtTime(s.TrialRunTime)</td>
+                                                <td class="text-center">
+                                                    <span class="badge bg-danger" title="Chưa có dữ liệu sản xuất">0 / @_detail!.Quantity.ToString("0.####")</span>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+
+                    @* C. Taro / Bavia / Rửa *@
+                    @if (_snapshot.Taro.Count > 0 || _snapshot.Bavia.Count > 0 || _snapshot.Washing.Count > 0)
+                    {
+                        <div class="row g-2 mb-3">
+                            @if (_snapshot.Taro.Count > 0)
+                            {
+                                <div class="col-md-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.1 Taro (@_snapshot.Taro.Count)
+                                    </div>
+                                    <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                        <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th><th class="text-center">Trạng thái</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var s in _snapshot.Taro)
+                                            {
+                                                <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td><td class="text-center"><span class="badge bg-danger" style="font-size:0.65rem;">0/@_detail!.Quantity.ToString("0.####")</span></td></tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            @if (_snapshot.Bavia.Count > 0)
+                            {
+                                <div class="col-md-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.2 Bavia (@_snapshot.Bavia.Count)
+                                    </div>
+                                    <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                        <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th><th class="text-center">Trạng thái</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var s in _snapshot.Bavia)
+                                            {
+                                                <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td><td class="text-center"><span class="badge bg-danger" style="font-size:0.65rem;">0/@_detail!.Quantity.ToString("0.####")</span></td></tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            @if (_snapshot.Washing.Count > 0)
+                            {
+                                <div class="col-md-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.3 Rửa (@_snapshot.Washing.Count)
+                                    </div>
+                                    <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                        <thead class="table-light"><tr><th>NC</th><th>Tên</th><th class="text-end">T.Chuẩn</th><th class="text-center">Trạng thái</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var s in _snapshot.Washing)
+                                            {
+                                                <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td><td class="text-center"><span class="badge bg-danger" style="font-size:0.65rem;">0/@_detail!.Quantity.ToString("0.####")</span></td></tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @* D. Inspection *@
+                    @if (_snapshot.Inspection.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#e37400;color:white;">
+                                D. Kiểm tra chất lượng (KCS) (@_snapshot.Inspection.Count bước)
+                            </div>
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light"><tr><th style="width:70px">NC</th><th>Nội dung công việc</th><th class="text-end" style="width:100px">T.Chuẩn (phút)</th><th class="text-center" style="width:100px">Trạng thái</th></tr></thead>
+                                <tbody>
+                                    @foreach (var s in _snapshot.Inspection)
+                                    {
+                                        <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td><td class="text-center"><span class="badge bg-danger" style="font-size:0.65rem;">0/@_detail!.Quantity.ToString("0.####")</span></td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    @* E. Packaging *@
+                    @if (_snapshot.Packaging.Count > 0)
+                    {
+                        <div class="mb-2">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#6c757d;color:white;">
+                                E. Đóng gói (@_snapshot.Packaging.Count bước)
+                            </div>
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light"><tr><th style="width:70px">NC</th><th>Tên công đoạn</th><th class="text-end" style="width:100px">T.Chuẩn (phút)</th><th class="text-center" style="width:100px">Trạng thái</th></tr></thead>
+                                <tbody>
+                                    @foreach (var s in _snapshot.Packaging)
+                                    {
+                                        <tr><td><code>@s.NC</code></td><td>@(s.StepName ?? "—")</td><td class="text-end">@FmtTime(s.StandardTime)</td><td class="text-center"><span class="badge bg-danger" style="font-size:0.65rem;">0/@_detail!.Quantity.ToString("0.####")</span></td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -186,33 +366,36 @@ else
 
     private KhPlan? _plan;
     private KhPlanDetail? _detail;
-    private KhoVatLieuViewItem? _khoItem; // dữ liệu kho tương ứng với dòng này (read-only)
+    private KhoVatLieuViewItem? _khoItem;
+    private RouteSnapshotData? _snapshot;
 
     protected override async Task OnInitializedAsync()
     {
         var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
 
-        // Validate: detail phải thuộc đúng KhPlan trên URL
         if (plan != null && detail != null && plan.KhPlanId == Id)
         {
-            _plan = plan;
+            _plan   = plan;
             _detail = detail;
 
-            // Lấy dữ liệu kho tương ứng (nếu có) — chỉ để hiển thị, không cho sửa
-            var allKho = await KhoSvc.GetAllAsync();
-            _khoItem = allKho.FirstOrDefault(k => k.KhPlanDetailId == DetailId);
+            _khoItem = await KhoSvc.GetByDetailIdAsync(DetailId);
+
+            // Load snapshot quy trình B→E
+            _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
         }
     }
+
+    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.##") : "—";
 
     private string GetStatusColor(string status) => status switch
     {
         "WaitingSupplierOrder" => "info",
-        "Ordered" => "primary",
-        "PartialReceived" => "primary",
-        "FullyReceived" => "success",
-        "InProduction" => "success",
-        "Completed" => "success",
-        "Cancelled" => "secondary",
-        _ => "secondary"
+        "Ordered"              => "primary",
+        "PartialReceived"      => "primary",
+        "FullyReceived"        => "success",
+        "InProduction"         => "success",
+        "Completed"            => "success",
+        "Cancelled"            => "secondary",
+        _                      => "secondary"
     };
 }

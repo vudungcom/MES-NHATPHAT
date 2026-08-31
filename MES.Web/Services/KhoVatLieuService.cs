@@ -92,6 +92,46 @@ public class KhoVatLieuService
     }
 
     /// <summary>
+    /// Lấy dữ liệu kho của 1 KhPlanDetail cụ thể — dùng cho View.razor thay GetAllAsync
+    /// </summary>
+    public async Task<KhoVatLieuViewItem?> GetByDetailIdAsync(int khPlanDetailId)
+    {
+        var q = from d in _db.KhPlanDetails
+                join p in _db.KhPlans on d.KhPlanId equals p.KhPlanId
+                join c in _db.Customers on p.CustomerId equals c.CustomerId into cGroup
+                from c in cGroup.DefaultIfEmpty()
+                join k in _db.KhoVatLieus on d.KhPlanDetailId equals (int?)k.PlanDetailId into kGroup
+                from k in kGroup.DefaultIfEmpty()
+                where d.KhPlanDetailId == khPlanDetailId
+                select new KhoVatLieuViewItem
+                {
+                    KhPlanDetailId    = d.KhPlanDetailId,
+                    KhoVatLieuId      = k != null ? k.KhoVatLieuId : 0,
+                    KhPlanId          = p.KhPlanId,
+                    PlanNo            = p.PlanNo,
+                    PlanDate          = p.PlanDate,
+                    CustomerName      = c != null ? c.CustomerName : "",
+                    SoPO              = d.PurchaseOrder,
+                    PartNo            = d.PartNo,
+                    DonViTinh         = d.Unit,
+                    SoLuongKeHoach    = d.Quantity,
+                    ThoiHan           = d.STD,
+                    MaVatLieu         = d.Material,
+                    CauHinhPhoi       = d.MaterialConfig,
+                    GhiChuPhoi        = d.MaterialNotes,
+                    NgayNhanPhoi      = k != null ? k.NgayNhanPhoi      : null,
+                    SoLuongThucNhan   = k != null ? k.SoLuongThucNhan   : null,
+                    OrderVatLieu      = k != null ? k.OrderVatLieu      : null,
+                    ViTriDePhoi       = k != null ? k.ViTriDePhoi       : null,
+                    TinhTrangPhoi     = k != null ? k.TinhTrangPhoi     : null,
+                    NgayCapPhoi       = k != null ? k.NgayCapPhoi       : null,
+                    SoLuongCap        = k != null ? k.SoLuongCap        : null
+                };
+
+        return await q.AsNoTracking().FirstOrDefaultAsync();
+    }
+
+    /// <summary>
     /// Kho cập nhật dữ liệu Cột I -> O (Lưu vào bảng KhoVatLieus & ghi Audit Log vào KhoVatLieuChangeLogs)
     /// </summary>
     public async Task<(bool Success, string? Error)> SaveKhoInputAsync(

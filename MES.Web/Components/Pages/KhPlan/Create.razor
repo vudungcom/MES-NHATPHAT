@@ -71,7 +71,8 @@
             </div>
             <div class="col-12">
                 <label class="form-label small">Ghi chú chung</label>
-                <input type="text" class="form-control form-control-sm" @bind="_plan.Notes" placeholder="Ghi chú cho toàn phiếu KH" />
+                <input type="text" class="form-control form-control-sm" @bind="_plan.Notes"
+                       placeholder="Ghi chú cho toàn phiếu KH" />
             </div>
         </div>
     </div>
@@ -113,25 +114,41 @@
 
 <div class="alert alert-info small py-2">
     <i class="bi bi-info-circle"></i>
-    <strong>Quy trình:</strong> Nhập PO + Part No → nếu Part cũ có trong PartMaster → 3 ô Material / Cấu hình phôi / Ghi chú Phôi sẽ auto-fill giá trị <strong>default</strong>. Bấm mũi tên ▼ để chọn giá trị khác đã có. <strong>Vị trí kho</strong> nhập tự do, sau này Kho sẽ điền.
+    <strong>Quy trình:</strong> Nhập PO + Part No → nếu Part cũ có trong PartMaster → 3 ô Material / Cấu hình phôi / Ghi chú Phôi sẽ auto-fill giá trị <strong>default</strong>.
+    Bấm mũi tên ▼ để chọn giá trị khác đã có. <strong>Vị trí kho</strong> nhập tự do, sau này Kho sẽ điền.
+    Quy trình gia công (B→E) sẽ được <strong>copy tự động từ Part Master khi lưu</strong>.
 </div>
 
 @for (int i = 0; i < _details.Count; i++)
 {
     var idx = i;
     var d = _details[idx];
+    var isKnownPart = !string.IsNullOrEmpty(d.PartNo) && _partLookup.ContainsKey(d.PartNo);
+    var isNewPart   = !string.IsNullOrEmpty(d.PartNo) && !_partLookup.ContainsKey(d.PartNo);
+
     <div class="card mb-2">
         <div class="card-body">
             <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
                 <div>
                     <strong>Part @(idx + 1)</strong>
-                    @if (!string.IsNullOrEmpty(d.PartNo) && _partLookup.ContainsKey(d.PartNo))
+                    @if (isKnownPart)
                     {
-                        <span class="badge bg-success ms-2"><i class="bi bi-database-check"></i> Part cũ từ PartMaster</span>
+                        <span class="badge bg-success ms-2">
+                            <i class="bi bi-database-check"></i> Part cũ từ PartMaster
+                        </span>
+                        @* Hiển thị tóm tắt số bước sẽ được copy *@
+                        @if (_routeSummary.TryGetValue(d.PartNo, out var summary))
+                        {
+                            <span class="badge bg-info text-dark ms-1" title="Quy trình sẽ được copy khi lưu">
+                                <i class="bi bi-copy"></i> Sẽ copy: @summary
+                            </span>
+                        }
                     }
-                    else if (!string.IsNullOrEmpty(d.PartNo))
+                    else if (isNewPart)
                     {
-                        <span class="badge bg-warning text-dark ms-2"><i class="bi bi-plus-circle"></i> Part mới - thêm vào PartMaster khi lưu</span>
+                        <span class="badge bg-warning text-dark ms-2">
+                            <i class="bi bi-plus-circle"></i> Part mới - thêm vào PartMaster khi lưu
+                        </span>
                     }
                 </div>
                 <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveDetail(idx)">
@@ -154,7 +171,8 @@
                 </div>
                 <div class="col-md-2">
                     <label class="form-label small">SL <span class="text-danger">*</span></label>
-                    <input type="number" step="1" min="1" class="form-control form-control-sm text-end" @bind="d.Quantity" />
+                    <input type="number" step="1" min="1" class="form-control form-control-sm text-end"
+                           @bind="d.Quantity" />
                 </div>
                 <div class="col-md-1">
                     <label class="form-label small">Đvị</label>
@@ -171,15 +189,18 @@
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small">Loại hàng</label>
-                    <input class="form-control form-control-sm" @bind="d.Type" placeholder="Hàng mới / Repeat / Sample..." />
+                    <input class="form-control form-control-sm" @bind="d.Type"
+                           placeholder="Hàng mới / Repeat / Sample..." />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Ưu tiên</label>
-                    <input class="form-control form-control-sm" @bind="d.Priority" placeholder="Bình thường / Gấp / Thấp..." />
+                    <input class="form-control form-control-sm" @bind="d.Priority"
+                           placeholder="Bình thường / Gấp / Thấp..." />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Ghi chú Hàng</label>
-                    <input class="form-control form-control-sm" @bind="d.PartNotes" placeholder="Ghi chú đặc biệt cho mã hàng này" />
+                    <input class="form-control form-control-sm" @bind="d.PartNotes"
+                           placeholder="Ghi chú đặc biệt cho mã hàng này" />
                 </div>
             </div>
 
@@ -222,13 +243,17 @@
                            @bind="d.OrderVL" placeholder="Chờ Vật tư điền" />
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size: 0.75rem;">(tự nhập, không link Part)</span></label>
+                    <label class="form-label small">
+                        Vị trí kho
+                        <span class="text-muted" style="font-size: 0.75rem;">(tự nhập, không link Part)</span>
+                    </label>
                     <input class="form-control form-control-sm font-monospace"
                            @bind="d.Location" placeholder="VD B1, để trống nếu chưa có" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Tình trạng phôi</label>
-                    <input class="form-control form-control-sm" @bind="d.MaterialCondition" placeholder="VD: có bvxn, cắt đạt" />
+                    <input class="form-control form-control-sm" @bind="d.MaterialCondition"
+                           placeholder="VD: có bvxn, cắt đạt" />
                 </div>
             </div>
         </div>
@@ -243,15 +268,18 @@
 </datalist>
 
 @code {
-    private const string AttrMaterial = "Material";
+    private const string AttrMaterial       = "Material";
     private const string AttrMaterialConfig = "MaterialConfig";
-    private const string AttrMaterialNote = "MaterialNote";
+    private const string AttrMaterialNote   = "MaterialNote";
 
     private KhPlan _plan = new() { PlanDate = DateTime.Today, ReceivedDate = DateTime.Today };
     private List<DetailForm> _details = new();
     private List<Customer> _customers = new();
     private Dictionary<string, PartMaster> _partLookup = new();
     private Dictionary<string, Dictionary<string, List<PartMasterAttribute>>> _attrsCache = new();
+
+    // Cache tóm tắt số bước sẽ được copy: partNo → "3 Machining, 2 Taro..."
+    private Dictionary<string, string> _routeSummary = new();
 
     private bool _saving;
     private string? _error;
@@ -266,8 +294,10 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
-        _currentUserName = authState.User.FindFirst("FullName")?.Value ?? authState.User.Identity?.Name ?? "";
-        _currentUserId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        _currentUserName = authState.User.FindFirst("FullName")?.Value
+                        ?? authState.User.Identity?.Name ?? "";
+        _currentUserId = int.Parse(
+            authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
 
         await ReloadMasterDataAsync();
         AddDetail();
@@ -284,16 +314,13 @@
     {
         _details.Add(new DetailForm
         {
-            STD = DateTime.Today.AddDays(30),
-            Unit = "EA",
+            STD      = DateTime.Today.AddDays(30),
+            Unit     = "EA",
             Quantity = 0
         });
     }
 
-    private void RemoveDetail(int idx)
-    {
-        _details.RemoveAt(idx);
-    }
+    private void RemoveDetail(int idx) => _details.RemoveAt(idx);
 
     private async Task OnPartNoChangedAsync(int idx)
     {
@@ -301,6 +328,7 @@
         if (string.IsNullOrEmpty(d.PartNo)) return;
         if (!_partLookup.TryGetValue(d.PartNo, out var pm)) return;
 
+        // Load attribute cache
         if (!_attrsCache.ContainsKey(d.PartNo))
         {
             var attrs = await PartSvc.GetAttributesGroupedAsync(pm.PartId);
@@ -308,15 +336,49 @@
         }
 
         var partAttrs = _attrsCache[d.PartNo];
-
         if (string.IsNullOrEmpty(d.Material))
-            d.Material = partAttrs.GetValueOrDefault(AttrMaterial)?.FirstOrDefault(a => a.IsDefault)?.Value;
+            d.Material = partAttrs.GetValueOrDefault(AttrMaterial)
+                                  ?.FirstOrDefault(a => a.IsDefault)?.Value;
         if (string.IsNullOrEmpty(d.MaterialConfig))
-            d.MaterialConfig = partAttrs.GetValueOrDefault(AttrMaterialConfig)?.FirstOrDefault(a => a.IsDefault)?.Value;
+            d.MaterialConfig = partAttrs.GetValueOrDefault(AttrMaterialConfig)
+                                        ?.FirstOrDefault(a => a.IsDefault)?.Value;
         if (string.IsNullOrEmpty(d.MaterialNotes))
-            d.MaterialNotes = partAttrs.GetValueOrDefault(AttrMaterialNote)?.FirstOrDefault(a => a.IsDefault)?.Value;
+            d.MaterialNotes = partAttrs.GetValueOrDefault(AttrMaterialNote)
+                                       ?.FirstOrDefault(a => a.IsDefault)?.Value;
+
+        // Load tóm tắt quy trình để hiển thị badge
+        if (!_routeSummary.ContainsKey(d.PartNo))
+        {
+            await LoadRouteSummaryAsync(d.PartNo, pm.PartId);
+        }
 
         StateHasChanged();
+    }
+
+    /// <summary>
+    /// Query đếm số step từng vùng để hiển thị badge tóm tắt trên form.
+    /// Chỉ đếm IsActive = true.
+    /// </summary>
+    private async Task LoadRouteSummaryAsync(string partNo, int partId)
+    {
+        var cntMachining  = await Db.PartMachiningSteps .CountAsync(s => s.PartId == partId && s.IsActive);
+        var cntTaro       = await Db.PartTaroSteps      .CountAsync(s => s.PartId == partId && s.IsActive);
+        var cntBavia      = await Db.PartBaviaSteps     .CountAsync(s => s.PartId == partId && s.IsActive);
+        var cntWashing    = await Db.PartWashingSteps   .CountAsync(s => s.PartId == partId && s.IsActive);
+        var cntInspection = await Db.PartInspectionSteps.CountAsync(s => s.PartId == partId && s.IsActive);
+        var cntPackaging  = await Db.PartPackagingSteps .CountAsync(s => s.PartId == partId && s.IsActive);
+
+        var parts = new List<string>();
+        if (cntMachining  > 0) parts.Add($"{cntMachining} GC");
+        if (cntTaro       > 0) parts.Add($"{cntTaro} Taro");
+        if (cntBavia      > 0) parts.Add($"{cntBavia} Bavia");
+        if (cntWashing    > 0) parts.Add($"{cntWashing} Rửa");
+        if (cntInspection > 0) parts.Add($"{cntInspection} KCS");
+        if (cntPackaging  > 0) parts.Add($"{cntPackaging} ĐG");
+
+        _routeSummary[partNo] = parts.Count > 0
+            ? string.Join(", ", parts) + " bước"
+            : "Chưa có quy trình";
     }
 
     private List<PartMasterAttribute>? GetAttrsFor(string partNo, string attrType)
@@ -339,16 +401,13 @@
         {
             CustomerCode = _newCustomerCode.Trim(),
             CustomerName = _newCustomerName.Trim(),
-            SupplierCode = string.IsNullOrWhiteSpace(_newCustomerSupCode) ? null : _newCustomerSupCode.Trim(),
+            SupplierCode = string.IsNullOrWhiteSpace(_newCustomerSupCode)
+                           ? null : _newCustomerSupCode.Trim(),
             IsActive = true
         };
 
         var (success, errorMsg, created) = await CustomerSvc.CreateAsync(newCust, _currentUserId);
-        if (!success)
-        {
-            _error = "Lỗi tạo Customer: " + errorMsg;
-            return;
-        }
+        if (!success) { _error = "Lỗi tạo Customer: " + errorMsg; return; }
 
         _newCustomerCode = "";
         _newCustomerName = "";
@@ -356,10 +415,7 @@
         _showCreateCustomer = false;
 
         await ReloadMasterDataAsync();
-        if (created != null)
-        {
-            _plan.CustomerId = created.CustomerId;
-        }
+        if (created != null) _plan.CustomerId = created.CustomerId;
     }
 
     private async Task AttemptSaveAsync()
@@ -367,12 +423,12 @@
         _error = null;
 
         if (_plan.CustomerId == 0) { _error = "Chọn khách hàng"; return; }
-        if (!_details.Any()) { _error = "Thêm ít nhất 1 Part"; return; }
+        if (!_details.Any())       { _error = "Thêm ít nhất 1 Part"; return; }
         foreach (var d in _details)
         {
-            if (string.IsNullOrWhiteSpace(d.PartNo)) { _error = "Nhập Part No cho mọi dòng"; return; }
+            if (string.IsNullOrWhiteSpace(d.PartNo))       { _error = "Nhập Part No cho mọi dòng"; return; }
             if (string.IsNullOrWhiteSpace(d.PurchaseOrder)) { _error = "Nhập PO cho mọi dòng"; return; }
-            if (d.Quantity <= 0) { _error = "SL phải > 0"; return; }
+            if (d.Quantity <= 0)                            { _error = "SL phải > 0"; return; }
         }
 
         await DoSaveAsync();
@@ -383,14 +439,16 @@
         _saving = true;
         try
         {
+            // ── Bước 1: Đảm bảo Part tồn tại trong PartMaster ──────────
             foreach (var d in _details)
             {
                 if (!_partLookup.ContainsKey(d.PartNo))
                 {
+                    // Part mới → tạo PartMaster
                     var initialAttrs = new Dictionary<string, string>();
-                    if (!string.IsNullOrWhiteSpace(d.Material)) initialAttrs[AttrMaterial] = d.Material;
-                    if (!string.IsNullOrWhiteSpace(d.MaterialConfig)) initialAttrs[AttrMaterialConfig] = d.MaterialConfig;
-                    if (!string.IsNullOrWhiteSpace(d.MaterialNotes)) initialAttrs[AttrMaterialNote] = d.MaterialNotes;
+                    if (!string.IsNullOrWhiteSpace(d.Material))       initialAttrs[AttrMaterial]       = d.Material;
+                    if (!string.IsNullOrWhiteSpace(d.MaterialConfig))  initialAttrs[AttrMaterialConfig]  = d.MaterialConfig;
+                    if (!string.IsNullOrWhiteSpace(d.MaterialNotes))   initialAttrs[AttrMaterialNote]    = d.MaterialNotes;
 
                     var pm = await PartSvc.CreatePartMasterAsync(
                         d.PartNo, _plan.CustomerId, initialAttrs, _currentUserId);
@@ -398,6 +456,7 @@
                 }
                 else
                 {
+                    // Part cũ → thêm giá trị mới nếu user nhập khác
                     var pm = _partLookup[d.PartNo];
                     await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
                     await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
@@ -405,25 +464,41 @@
                 }
             }
 
+            // ── Bước 2: Tạo phiếu KH + Details ─────────────────────────
             _plan.Details = _details.Select(d => new KhPlanDetail
             {
-                PartNo = d.PartNo,
-                PurchaseOrder = d.PurchaseOrder,
-                Quantity = d.Quantity,
-                Unit = d.Unit,
-                STD = d.STD,
-                Type = d.Type,
-                Priority = d.Priority,
-                Material = d.Material,
-                MaterialConfig = d.MaterialConfig,
-                Location = d.Location,
-                MaterialNotes = d.MaterialNotes,
-                OrderVL = d.OrderVL,
+                PartNo            = d.PartNo,
+                PurchaseOrder     = d.PurchaseOrder,
+                Quantity          = d.Quantity,
+                Unit              = d.Unit,
+                STD               = d.STD,
+                Type              = d.Type,
+                Priority          = d.Priority,
+                Material          = d.Material,
+                MaterialConfig    = d.MaterialConfig,
+                Location          = d.Location,
+                MaterialNotes     = d.MaterialNotes,
+                OrderVL           = d.OrderVL,
                 MaterialCondition = d.MaterialCondition,
-                PartNotes = d.PartNotes
+                PartNotes         = d.PartNotes,
             }).ToList();
 
+            // CreateAsync trả về KhPlanId; Details đã được lưu và có KhPlanDetailId
             await KhSvc.CreateAsync(_plan, _currentUserId);
+
+            // ── Bước 3: Copy snapshot quy trình B→E cho từng Detail ─────
+            // Sau khi CreateAsync, _plan.Details đã có KhPlanDetailId từ DB
+            foreach (var detail in _plan.Details)
+            {
+                // Chỉ copy nếu Part đã tồn tại trong PartMaster (có PartId)
+                if (!_partLookup.TryGetValue(detail.PartNo, out var pm)) continue;
+
+                await KhSvc.CopyRouteSnapshotAsync(
+                    detail.KhPlanDetailId,
+                    pm.PartId,
+                    _currentUserId);
+            }
+
             Nav.NavigateTo("/kh-plan");
         }
         catch (Exception ex)
