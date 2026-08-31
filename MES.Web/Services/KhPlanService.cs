@@ -612,6 +612,40 @@ public class KhPlanService
         };
         return result;
     }
+
+    /// <summary>
+    /// Lấy toàn bộ WTS production logs của 1 KhPlanDetail.
+    /// Group theo ProcessGroup + NC để View hiển thị inline.
+    /// </summary>
+    public async Task<List<WtsProductionLog>> GetWtsLogsAsync(int khPlanDetailId)
+    {
+        return await _db.WtsProductionLogs
+            .Include(x => x.Worker)
+            .Where(x => x.KhPlanDetailId == khPlanDetailId)
+            .OrderBy(x => x.ProcessGroup)
+            .ThenBy(x => x.NC)
+            .ThenBy(x => x.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Tính tổng SL hoàn thành cho từng NC/WtsCode của 1 KhPlanDetail.
+    /// Key: "ProcessGroup|NC" hoặc "ProcessGroup|WtsCode"
+    /// Value: tổng QtyDone (chỉ tính IsVoided=false)
+    /// </summary>
+    public async Task<Dictionary<string, decimal>> GetWtsQtySummaryAsync(int khPlanDetailId)
+    {
+        var logs = await _db.WtsProductionLogs
+            .Where(x => x.KhPlanDetailId == khPlanDetailId && !x.IsVoided)
+            .ToListAsync();
+
+        return logs
+            .GroupBy(x => x.NC != null
+                ? $"{x.ProcessGroup}|{x.NC}"
+                : $"{x.ProcessGroup}|{x.WtsCode}")
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyDone));
+    }
     /// <summary>
     /// Copy toàn bộ quy trình B→E từ PartMaster vào snapshot của KhPlanDetail.
     /// Chỉ copy các step IsActive = true.

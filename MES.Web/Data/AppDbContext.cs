@@ -64,6 +64,9 @@ public class AppDbContext : DbContext
     public DbSet<KhPlanRouteSnapshotInspection>  KhPlanRouteSnapshotInspection  => Set<KhPlanRouteSnapshotInspection>();
     public DbSet<KhPlanRouteSnapshotPackaging>   KhPlanRouteSnapshotPackaging   => Set<KhPlanRouteSnapshotPackaging>();
 
+    // ==== WTS Production Log (công nhân submit WTS thực tế) ====
+    public DbSet<WtsProductionLog> WtsProductionLogs => Set<WtsProductionLog>();
+
     protected override void OnModelCreating(ModelBuilder mb)
     {
         // ==== Explicit Primary Keys ====
@@ -436,6 +439,26 @@ public class AppDbContext : DbContext
         mb.Entity<KhPlanRouteSnapshotPackaging>()
             .HasOne(x => x.SnapshotByUser).WithMany()
             .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== WtsProductionLog ====
+        mb.Entity<WtsProductionLog>().HasKey(x => x.WtsLogId);
+        mb.Entity<WtsProductionLog>().Property(x => x.QtyDone).HasPrecision(10, 2);
+        mb.Entity<WtsProductionLog>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.ProcessGroup, x.NC });
+        mb.Entity<WtsProductionLog>()
+            .HasIndex(x => new { x.WorkerId, x.CreatedAt });
+        mb.Entity<WtsProductionLog>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<WtsProductionLog>()
+            .HasOne(x => x.Worker).WithMany()
+            .HasForeignKey(x => x.WorkerId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<WtsProductionLog>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
         base.OnModelCreating(mb);

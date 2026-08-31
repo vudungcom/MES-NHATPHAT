@@ -380,8 +380,8 @@ else
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
                                 <tr>
-                                    <th style="width: 70px;">NC</th>
-                                    <th style="width: 70px;">Mã CV</th>
+                                    <th style="width: 110px;">NC</th>
+                                    <th style="width: 110px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
@@ -411,7 +411,7 @@ else
                                         </td>
                                         @* Cột Công đoạn chuẩn WTS *@
                                         <td>
-                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            @if (edit.State == EditState.New && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTaskTaro(edit, e.Value?.ToString(), _taroTasks)">
                                                     <option value="">-- Chọn WTS Taro --</option>
@@ -434,7 +434,7 @@ else
                                             }
                                             @if (_canEditC)
                                             {
-                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1"
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_taroEdits, edit, (nc, parent) => new TaroEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
                                                 </button>
@@ -463,7 +463,7 @@ else
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
                                 <tr>
-                                    <th style="width: 70px;">Mã CV</th>
+                                    <th style="width: 110px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
@@ -482,7 +482,7 @@ else
                                             </div>
                                         </td>
                                         <td>
-                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            @if (edit.State == EditState.New && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _baviaTasks)">
                                                     <option value="">-- Chọn WTS Bavia --</option>
@@ -506,7 +506,7 @@ else
                                             }
                                             @if (_canEditC)
                                             {
-                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_baviaEdits, edit, (nc, parent) => new BaviaEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
                                                 </button>
@@ -535,7 +535,7 @@ else
                         <table class="table table-sm align-middle mb-0" style="font-size: 0.75rem;">
                             <thead class="table-light text-center">
                                 <tr>
-                                    <th style="width: 70px;">Mã CV</th>
+                                    <th style="width: 110px;">Mã CV</th>
                                     <th>Công đoạn chuẩn (WTS)</th>
                                     <th style="width: 85px;">T.Chuẩn<br/><span class="text-muted fw-normal">(phút)</span></th>
                                     <th style="width: @(_canEditC ? "85px" : "40px");">Thao tác</th>
@@ -554,7 +554,7 @@ else
                                             </div>
                                         </td>
                                         <td>
-                                            @if (edit.State == EditState.New && !edit.IsBackup && _canEditC)
+                                            @if (edit.State == EditState.New && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _washingTasks)">
                                                     <option value="">-- Chọn WTS Rửa --</option>
@@ -578,7 +578,7 @@ else
                                             }
                                             @if (_canEditC)
                                             {
-                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" 
+                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_washingEdits, edit, (nc, parent) => new WashingEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
                                                 </button>
@@ -1299,7 +1299,14 @@ else
 
     private void AddMachiningRow()
     {
-        _machiningEdits.Add(new MachiningEdit { State = EditState.New, IsBackup = false });
+        // NC tự tăng: lấy max số nguyên trong các dòng chính (bỏ qua dự phòng)
+        // User vẫn có thể sửa lại NC sau khi thêm
+        var maxNc = _machiningEdits
+            .Where(e => e.State != EditState.Deleted && !e.IsBackup && !string.IsNullOrEmpty(e.NC))
+            .Select(e => { int n; return int.TryParse(e.NC, out n) ? n : 0; })
+            .DefaultIfEmpty(0)
+            .Max();
+        _machiningEdits.Add(new MachiningEdit { State = EditState.New, IsBackup = false, NC = (maxNc + 1).ToString() });
         _hasChanges = true;
         _isDraftSaved = false;
         StateHasChanged();
