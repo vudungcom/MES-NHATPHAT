@@ -1,0 +1,1228 @@
+@page "/handover"
+@using MES.Web.Services
+@using MES.Web.Data
+@using MES.Web.Data.Entities
+@using MES.Web.Constants
+@using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
+@inject HandoverService HandoverSvc
+@inject UserService UserSvc
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+@rendermode InteractiveServer
+
+<PageTitle>Giao nhận hàng</PageTitle>
+
+<style>
+    .col-filter-wrap { position: relative; display: inline-block; }
+    .col-filter-btn { background: none; border: none; padding: 0 2px; cursor: pointer; color: #555; font-size: 0.7rem; vertical-align: middle; }
+    .col-filter-btn.active { color: #0d6efd; }
+    .col-filter-dropdown {
+        position: fixed; z-index: 9999;
+        background: #fff; border: 1px solid #ccc; border-radius: 4px;
+        min-width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 8px 0;
+    }
+    .col-filter-dropdown .sort-btn { display: block; width: 100%; text-align: left; background: none; border: none; padding: 4px 10px; font-size: 0.82rem; cursor: pointer; }
+    .col-filter-dropdown .sort-btn:hover { background: #f0f0f0; }
+    .col-filter-dropdown .divider { border-top: 1px solid #eee; margin: 4px 0; }
+    .col-filter-dropdown .search-box { width: calc(100% - 20px); margin: 4px 10px; padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.8rem; }
+    .col-filter-dropdown .value-list { max-height: 200px; overflow-y: auto; padding: 2px 10px; }
+    .col-filter-dropdown .value-list label { display: block; font-size: 0.8rem; cursor: pointer; padding: 1px 0; }
+    .col-filter-dropdown .footer { padding: 6px 10px; display: flex; gap: 6px; justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px; }
+</style>
+
+
+@if (!_loaded)
+{
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span></div>
+}
+else if (!_canView)
+{
+    <div class="alert alert-warning mt-3">Bạn không có quyền xem trang này.</div>
+}
+else
+{
+    <div class="d-flex align-items-center gap-2 mb-3">
+        <h5 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Giao nhận hàng</h5>
+        @if (!_canEditAny) { <span class="badge bg-secondary">Chỉ xem</span> }
+    </div>
+
+    <div class="card mb-3 border-0 shadow-sm">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-center">
+                <div class="col-auto">
+                    <select class="form-select form-select-sm" @bind="_filterCustomerId" @bind:after="LoadDataAsync">
+                        <option value="0">Tất cả khách hàng</option>
+                        @foreach (var c in _customers) { <option value="@c.CustomerId">@c.CustomerName</option> }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <select class="form-select form-select-sm" @bind="_filterMonth" @bind:after="LoadDataAsync">
+                        <option value="0">Tất cả tháng</option>
+                        @for (int m = 1; m <= 12; m++) { <option value="@m">Tháng @m</option> }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <select class="form-select form-select-sm" @bind="_filterYear" @bind:after="LoadDataAsync">
+                        @for (int y = 2025; y <= DateTime.Now.Year + 1; y++) { <option value="@y">Năm @y</option> }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ResetFilterAsync">
+                        <i class="bi bi-x-circle me-1"></i>Xoá filter
+                    </button>
+                </div>
+                <div class="col-auto ms-auto d-flex align-items-center gap-2">
+                    @if (HasActiveColFilters)
+                    {
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => { _colFilters.Clear(); _sortColHdv = null; BuildColFilters(); }">
+                            <i class="bi bi-x-circle me-1"></i>Xoá filter cột
+                        </button>
+                    }
+                    <small class="text-muted">@FilteredRows.Count() / @_rows.Count dòng</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-responsive border rounded" @onclick="() => _openColFilter = null">
+        <table class="table table-sm table-hover mb-0 align-middle" style="font-size:11px;min-width:1400px">
+            <thead class="table-light">
+                <tr>
+                    <th rowspan="2" class="border-end" style="width:85px">@HdvColHeader("PlanNo", "Mã PO")</th>
+                    <th rowspan="2" class="border-end" style="width:80px">@HdvColHeader("PurchaseOrder", "PO KH")</th>
+                    <th rowspan="2" class="border-end" style="width:100px">@HdvColHeader("PartNo", "Part No")</th>
+                    <th rowspan="2" class="text-center border-end" style="width:42px">KH</th>
+                    @* Kho: 2 cột *@
+                    <th colspan="2" class="text-center border-end" style="background:#e1f5ee55">Kho</th>
+                    @* GC: 4 cột *@
+                    <th colspan="4" class="text-center border-end" style="background:#e6f1fb55">Gia công</th>
+                    @* HTSP: 4 cột *@
+                    <th colspan="4" class="text-center border-end" style="background:#faeeda55">HTSP</th>
+                    @* KCS: 4 cột *@
+                    <th colspan="4" class="text-center border-end" style="background:#eaf3de55">KCS</th>
+                    @* PKG: 4 cột *@
+                    <th colspan="4" class="text-center border-end" style="background:#fbeaf055">Đóng gói</th>
+                    <th rowspan="2" class="text-center" style="width:100px">Thao tác</th>
+                </tr>
+                <tr style="font-size:10px;color:#666">
+                    @* Kho *@
+                    <th class="text-end">OK nhận</th>
+                    <th class="text-end text-danger">NG</th>
+                    <th class="text-end fw-semibold text-warning border-end">Còn lại</th>
+                    @* GC / HTSP / KCS / PKG — 4 cột mỗi nhóm *@
+                    @for (int i = 0; i < 4; i++)
+                    {
+                        <th class="text-end">Đã nhận</th>
+                        <th class="text-end text-danger">NG</th>
+                        <th class="text-end text-primary">WTS OK</th>
+                        <th class="text-end fw-semibold border-end" title="Đã nhận - NG - Đã giao đi">Còn tồn</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @if (!_rows.Any())
+                {
+                    <tr><td colspan="23" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox me-2"></i>Không có dữ liệu
+                    </td></tr>
+                }
+                @foreach (var row in FilteredRows)
+                {
+                    <tr class="@(row.HasNg ? "table-warning" : "")"
+                        style="cursor:pointer" title="Double-click để xem log"
+                        @ondblclick="() => ShowLogAsync(row.KhPlanDetailId)">
+                        <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
+                        <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
+                        <td class="border-end fw-semibold">@row.PartNo</td>
+                        <td class="text-center border-end">@row.PlanQty.ToString("0.##")</td>
+
+                        @* Kho — 3 cột *@
+                        <td class="text-end @(row.KhoOk > 0 ? "text-success" : "text-muted")">
+                            @(row.KhoOk > 0 ? row.KhoOk.ToString("0.##") : "—")
+                        </td>
+                        <td class="text-end @(row.KhoNg > 0 ? "text-danger fw-semibold" : "text-muted")">
+                            @(row.KhoNg > 0 ? row.KhoNg.ToString("0.##") : "—")
+                        </td>
+                        @{
+                            // Còn lại Kho = KhoOk (nhận vào) - KhoNg - SL đã giao sang GC
+                            // SL đã giao sang GC = row.Gc.ReceivedOk (SL GC nhận OK từ KHO)
+                            // + SL GC nhận nhưng báo NG (Gc.NgReturned từ KHO)
+                            var _khoGiaoRa = row.Gc.ReceivedOk + row.Gc.NgReturned;
+                            var _khoConLai = Math.Max(0, row.KhoOk - row.KhoNg - _khoGiaoRa);
+                        }
+                        <td class="text-end border-end fw-semibold @(_khoConLai > 0 ? "text-warning" : row.KhoOk > 0 ? "text-success" : "text-muted")">
+                            @(row.KhoOk > 0 ? _khoConLai.ToString("0.##") : "—")
+                        </td>
+
+                        @* GC — 4 cột *@
+                        @RenderGroup4Cells(row.Gc)
+
+                        @* HTSP — 4 cột *@
+                        @RenderGroup4Cells(row.Htsp)
+
+                        @* KCS — 4 cột *@
+                        @RenderGroup4Cells(row.Kcs)
+
+                        @* PKG — 4 cột *@
+                        @RenderGroup4Cells(row.Pkg)
+
+                        <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
+                            <div class="d-flex gap-1 justify-content-center flex-wrap">
+                                @if (_canEditAny)
+                                {
+                                    <button class="btn btn-xs btn-outline-primary"
+                                            style="font-size:10px;padding:1px 6px"
+                                            @onclick="() => OpenIssueModal(row)">
+                                        <i class="bi bi-box-arrow-right"></i> Giao
+                                    </button>
+                                    <button class="btn btn-xs @(GetPendingCount(row.KhPlanDetailId) > 0 ? "btn-success" : "btn-outline-success") position-relative"
+                                            style="font-size:10px;padding:1px 8px"
+                                            @onclick="() => OpenReceiveModal(row)">
+                                        <i class="bi bi-box-arrow-in-left"></i> Nhận
+                                        @if (GetPendingCount(row.KhPlanDetailId) > 0)
+                                        {
+                                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                                                  style="font-size:9px;min-width:16px;height:16px;line-height:16px;padding:0 4px;">
+                                                @GetPendingCount(row.KhPlanDetailId)
+                                            </span>
+                                        }
+                                    </button>
+                                }
+                                <button class="btn btn-xs btn-outline-secondary"
+                                        style="font-size:10px;padding:1px 6px"
+                                        @onclick="() => ShowLogAsync(row.KhPlanDetailId)">
+                                    <i class="bi bi-clock-history"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mt-2 d-flex gap-4 flex-wrap" style="font-size:11px;color:#888">
+        <span><strong>Đã nhận</strong> = OK từ nhóm trước xác nhận</span>
+        <span><strong class="text-danger">NG</strong> = bên nhận trả về nhóm giao</span>
+        <span><strong class="text-primary">WTS OK</strong> = công nhân làm xong</span>
+        <span><strong>Còn tồn</strong> = Đã nhận − NG − Đã giao đi</span>
+        <span><span class="badge bg-warning text-dark">■</span> Có NG</span>
+    </div>
+}
+
+@* ── MODAL GIAO HÀNG ── *@
+@if (_showIssueModal && _selectedRow != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:420px">
+            <div class="mes-modal-header">
+                <h6 class="mb-0"><i class="bi bi-box-arrow-right me-2"></i>Giao hàng</h6>
+                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
+            </div>
+            <div class="mes-modal-body">
+                <div class="mb-2 p-2 bg-light rounded" style="font-size:12px">
+                    <strong>@_selectedRow.PartNo</strong>
+                    <span class="text-muted ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold">Giao từ nhóm</label>
+                    @if (_issueFromGroupOptions.Count == 1)
+                    {
+                        <div class="p-2 border rounded bg-light" style="font-size:13px">
+                            <strong>@GetGroupLabel(_issueFromGroupOptions[0].Code)</strong>
+                            @if (_issueFromGroupOptions[0].Remaining > 0)
+                            {
+                                <span class="text-muted ms-2 small">còn lại: @_issueFromGroupOptions[0].Remaining.ToString("0.##")</span>
+                            }
+                        </div>
+                    }
+                    else if (_issueFromGroupOptions.Count > 1)
+                    {
+                        <div class="alert alert-warning py-1 small mb-2">
+                            <i class="bi bi-exclamation-triangle me-1"></i>Bạn có quyền nhiều nhóm — chọn đúng nhóm đang giao.
+                        </div>
+                        <select class="form-select form-select-sm" @bind="_issueFromGroup"
+                                @bind:after="OnIssueFromGroupChangedAsync">
+                            <option value="">-- Chọn nhóm giao --</option>
+                            @foreach (var opt in _issueFromGroupOptions)
+                            {
+                                <option value="@opt.Code">@opt.Label (còn: @opt.Remaining.ToString("0.##"))</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <div class="alert alert-info py-1 small">Không có nhóm nào để giao.</div>
+                    }
+                </div>
+
+                @* ── Chế độ giao theo NC cụ thể (inter-group) ── *@
+                @if (!string.IsNullOrEmpty(EffectiveFromGroup) && _ncOptions.Any())
+                {
+                    <div class="mb-3 p-2 border rounded" style="background:#fffbf0">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="ncModeSwitch"
+                                       @bind="_useNcMode" />
+                                <label class="form-check-label small fw-semibold" for="ncModeSwitch">
+                                    Giao theo NC cụ thể
+                                    <i class="bi bi-info-circle text-muted ms-1"
+                                       title="Dùng khi giao inter-group: GC→HTSP taro một NC, hoặc HTSP→GC sau khi taro xong. SL tối đa = QtyDone của NC đó."></i>
+                                </label>
+                            </div>
+                        </div>
+
+                        @if (_useNcMode)
+                        {
+                            <select class="form-select form-select-sm mb-2" @bind="_issueFromNC"
+                                    @bind:after="OnNcSelected">
+                                <option value="">-- Chọn NC nguồn --</option>
+                                @foreach (var nc in _ncOptions)
+                                {
+                                    <option value="@nc.NC">@nc.Label</option>
+                                }
+                            </select>
+
+                            @if (!string.IsNullOrEmpty(_issueFromNC) && _ncMaxQty == 0)
+                            {
+                                <div class="alert alert-warning py-1 small">NC này chưa có sản lượng hoàn thành.</div>
+                            }
+                        }
+                    </div>
+                }
+
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
+                    <select class="form-select form-select-sm" @bind="_issueToGroup">
+                        <option value="">-- Chọn nhóm nhận --</option>
+                        @foreach (var g in _allGroupDefs.Where(g => g.Code != EffectiveFromGroup))
+                        {
+                            <option value="@g.Code">@g.Label</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold">
+                        Số lượng giao
+                        @{
+                            var _dispMax = _useNcMode ? _ncMaxQty : IssueMaxQty;
+                        }
+                        @if (_dispMax > 0)
+                        {
+                            <span class="text-muted fw-normal small">(tối đa @_dispMax.ToString("0.##"))</span>
+                        }
+                    </label>
+                    <input type="number" class="form-control form-control-sm"
+                           @bind="_issueQty" min="0.01" max="@(_useNcMode ? _ncMaxQty : IssueMaxQty)" step="0.01" />
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label form-label-sm @(_useNcMode ? "fw-semibold text-danger" : "")">
+                        Ghi chú @(_useNcMode ? "*" : "(tuỳ chọn)")
+                    </label>
+                    <input type="text" class="form-control form-control-sm @(_useNcMode ? "border-warning" : "")"
+                           @bind="_issueNotes"
+                           placeholder="@(_useNcMode ? "Bắt buộc khi giao NC: VD: Taro NC1 xong, giao lại GC làm NC3..." : "VD: Lô buổi sáng...")" />
+                </div>
+
+                @if (_useNcMode)
+                {
+                    <div class="alert alert-warning py-1 small">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        <strong>Giao inter-group NC @_issueFromNC:</strong>
+                        SL tối đa = QtyDone của NC đó chưa được giao. Note bắt buộc để tránh nhầm lẫn số lượng.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-secondary py-1 small">
+                        <i class="bi bi-info-circle me-1"></i>Bên nhận sẽ xác nhận OK/NG sau khi kiểm hàng.
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(_modalError))
+                {
+                    <div class="alert alert-danger py-1 small">@_modalError</div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
+                <button class="btn btn-sm btn-primary" @onclick="ConfirmIssueAsync" disabled="@_saving">
+                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Xác nhận giao
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── MODAL NHẬN HÀNG — list phiếu expand inline ── *@
+@if (_showReceiveModal && _selectedRow != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:85vh;display:flex;flex-direction:column">
+            <div class="mes-modal-header">
+                <div>
+                    <h6 class="mb-0"><i class="bi bi-box-arrow-in-left me-2"></i>Nhận hàng</h6>
+                    <div style="font-size:12px;color:#888;margin-top:2px">
+                        <strong>@_selectedRow.PartNo</strong>
+                        <span class="ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
+                    </div>
+                </div>
+                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
+            </div>
+            <div class="mes-modal-body" style="overflow-y:auto;flex:1;padding:0">
+
+                @* Nhóm nhận *@
+                <div class="p-3 border-bottom">
+                    <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào nhóm</label>
+                    @if (_myEditGroups.Count == 1)
+                    {
+                        <div class="p-2 border rounded bg-light" style="font-size:13px">
+                            <i class="bi bi-people me-1 text-primary"></i>
+                            <strong>@GetGroupLabel(_myEditGroups[0])</strong>
+                        </div>
+                    }
+                    else
+                    {
+                        <select class="form-select form-select-sm" @bind="_receiveToGroup" @bind:after="LoadPendingAsync">
+                            <option value="">-- Chọn nhóm --</option>
+                            @foreach (var g in _myEditGroups)
+                            {
+                                <option value="@g">@GetGroupLabel(g)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                @* Danh sách phiếu đang chờ *@
+                @if (!string.IsNullOrEmpty(_receiveToGroup))
+                {
+                    @if (_pendingTxs.Any())
+                    {
+                        <div class="p-2 border-bottom bg-light" style="font-size:11px;color:#666">
+                            <i class="bi bi-list-ul me-1"></i>
+                            @_pendingTxs.Count phiếu đang chờ — click để mở và nhập xác nhận
+                        </div>
+
+                        @foreach (var p in _pendingTxs)
+                        {
+                            var isExpanded = _expandedTxId == p.HandoverTxId;
+                            <div class="border-bottom">
+                                @* Header phiếu — click để expand *@
+                                <div class="d-flex align-items-center gap-2 px-3 py-2"
+                                     style="cursor:pointer;background:@(isExpanded ? "#f0f7ff" : "white")"
+                                     @onclick="() => ToggleExpandTx(p.HandoverTxId)">
+                                    <i class="bi @(isExpanded ? "bi-caret-down-fill" : "bi-caret-right-fill") text-primary" style="font-size:11px"></i>
+                                    <div style="flex:1">
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                            <span class="badge bg-primary" style="font-size:10px">Từ @p.FromGroupCode</span>
+                                            <span style="font-size:12px;font-weight:500">
+                                                Còn: <strong class="text-primary">@p.QtyRemaining.ToString("0.##")</strong> chiếc
+                                            </span>
+                                            <span style="font-size:11px;color:#888">
+                                                @p.IssuedAt.ToString("dd/MM HH:mm")
+                                            </span>
+                                        </div>
+                                        <div style="font-size:11px;color:#666;margin-top:2px">
+                                            <i class="bi bi-person me-1"></i>@p.IssuedByName
+                                            @if (p.QtyReceivedSoFar > 0)
+                                            {
+                                                <span class="text-success ms-2">
+                                                    <i class="bi bi-check me-1"></i>Đã nhận @p.QtyReceivedSoFar.ToString("0.##") / @p.QtyIssued.ToString("0.##")
+                                                </span>
+                                            }
+                                        </div>
+                                    </div>
+                                    @if (!isExpanded)
+                                    {
+                                        <span class="badge bg-warning text-dark" style="font-size:10px">Chờ xác nhận</span>
+                                    }
+                                </div>
+
+                                @* Form nhập OK/NG — expand khi click *@
+                                @if (isExpanded)
+                                {
+                                    <div class="px-3 pb-3 pt-2" style="background:#f0f7ff">
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-6">
+                                                <label class="form-label form-label-sm fw-semibold">Số lượng OK</label>
+                                                <input type="number" class="form-control form-control-sm border-success"
+                                                       @bind="_receiveQtyOk" min="0" placeholder="0" />
+                                                <div class="text-muted" style="font-size:10px;margin-top:2px">
+                                                    Tối đa: @p.QtyRemaining.ToString("0.##") chiếc
+                                                </div>
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label form-label-sm fw-semibold text-danger">
+                                                    Số lượng NG <small class="fw-normal">(trả lại)</small>
+                                                </label>
+                                                <input type="number" class="form-control form-control-sm border-danger"
+                                                       @bind="_receiveQtyNg" min="0" placeholder="0" />
+                                            </div>
+                                        </div>
+
+                                        @if (_receiveQtyNg > 0)
+                                        {
+                                            <div class="mb-2">
+                                                <label class="form-label form-label-sm fw-semibold text-danger">Lý do NG *</label>
+                                                <input type="text" class="form-control form-control-sm border-danger"
+                                                       @bind="_receiveNgReason" placeholder="Bắt buộc khi có NG..." />
+                                            </div>
+                                        }
+
+                                        <div class="mb-2">
+                                            <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
+                                            <input type="text" class="form-control form-control-sm" @bind="_receiveNotes" />
+                                        </div>
+
+                                        @if (!string.IsNullOrEmpty(_modalError))
+                                        {
+                                            <div class="alert alert-danger py-1 small mb-2">@_modalError</div>
+                                        }
+
+                                        <div class="d-flex gap-2 justify-content-end">
+                                            <button class="btn btn-sm btn-outline-secondary"
+                                                    @onclick="() => ToggleExpandTx(p.HandoverTxId)">
+                                                Thu gọn
+                                            </button>
+                                            <button class="btn btn-sm btn-success"
+                                                    @onclick="() => ConfirmReceiveAsync(p.HandoverTxId)"
+                                                    disabled="@_saving">
+                                                @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                                <i class="bi bi-check-circle me-1"></i>Xác nhận nhận
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="alert alert-info py-2 small m-3">
+                            <i class="bi bi-info-circle me-1"></i>Không có phiếu giao nào đang chờ nhóm này.
+                        </div>
+                    }
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Đóng</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── MODAL LOG CHI TIẾT ── *@
+@if (_showLogModal)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:720px;max-height:82vh;overflow-y:auto">
+            <div class="mes-modal-header">
+                <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Lịch sử giao nhận — @_logPartNo</h6>
+                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
+            </div>
+            <div class="mes-modal-body p-0">
+                @if (!_logItems.Any())
+                {
+                    <p class="text-muted text-center py-4">Chưa có lịch sử giao nhận.</p>
+                }
+                @foreach (var tx in _logItems)
+                {
+                    <div class="border-bottom p-3 @(tx.IsVoided ? "bg-light" : "")">
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
+                                @tx.FromGroupCode → @tx.ToGroupCode
+                            </span>
+                            <span class="badge @GetStatusBadge(tx.Status)">@tx.Status</span>
+                            <span class="small text-muted">@tx.IssuedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                            <span class="small text-muted">by @tx.IssuedByName</span>
+                            @if (tx.IsVoided) { <span class="badge bg-secondary">ĐÃ HUỶ</span> }
+                            @* Nút huỷ phiếu — chỉ hiện khi PENDING và chưa có receive nào *@
+                            @if (!tx.IsVoided && tx.Status == "PENDING" && !tx.Receives.Any()
+                                 && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
+                            {
+                                <button class="btn btn-xs btn-outline-danger ms-auto"
+                                        style="font-size:10px;padding:1px 6px"
+                                        @onclick="() => VoidIssueFromLogAsync(tx.HandoverTxId)">
+                                    <i class="bi bi-trash me-1"></i>Huỷ phiếu giao
+                                </button>
+                            }
+                        </div>
+                        <div class="small mb-2 text-muted">
+                            Giao: <strong class="text-dark">@tx.QtyIssued.ToString("0.##") chiếc</strong>
+                            @if (!string.IsNullOrEmpty(tx.FromNC))
+                            {
+                                <span class="badge bg-warning text-dark ms-1" style="font-size:10px">
+                                    NC @tx.FromNC
+                                </span>
+                            }
+                            @if (!string.IsNullOrEmpty(tx.Notes)) { <span class="ms-1"> — @tx.Notes</span> }
+                        </div>
+
+                        @if (tx.Receives.Any())
+                        {
+                            <table class="table table-bordered mb-0" style="font-size:11px">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Thời gian</th>
+                                        <th>Người nhận</th>
+                                        <th class="text-end text-success">OK</th>
+                                        <th class="text-end text-danger">NG (trả lại)</th>
+                                        <th>Lý do NG</th>
+                                        <th>TT</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var r in tx.Receives)
+                                    {
+                                        <tr class="@(r.IsVoided ? "text-muted" : "")">
+                                            <td>@r.ReceivedAt.ToString("dd/MM HH:mm")</td>
+                                            <td>@r.ReceivedByName</td>
+                                            <td class="text-end text-success fw-semibold">@r.QtyOk.ToString("0.##")</td>
+                                            <td class="text-end text-danger fw-semibold">
+                                                @(r.QtyNg > 0 ? r.QtyNg.ToString("0.##") : "—")
+                                            </td>
+                                            <td class="text-danger small">@(r.NgReason ?? "—")</td>
+                                            <td>
+                                                @if (r.IsVoided) { <span class="badge bg-secondary" title="@r.VoidReason">Đã huỷ</span> }
+                                                else { <span class="badge bg-success">OK</span> }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                        else
+                        {
+                            <div class="small text-muted fst-italic">Chưa có lần nhận nào.</div>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Đóng</button>
+            </div>
+        </div>
+    </div>
+}
+
+
+@* ── EXCEL COLUMN FILTER DROPDOWN ── *@
+@if (_openColFilter != null && _colFilters.TryGetValue(_openColFilter, out var _cfd))
+{
+    <div class="col-filter-dropdown" style="top:@(_cfTop)px;left:@(_cfLeft)px"
+         @onclick:stopPropagation>
+        <div class="section">
+            <button class="sort-btn" @onclick="() => { _sortColHdv = _openColFilter; _sortAscHdv = true; _openColFilter = null; }">
+                <i class="bi bi-sort-alpha-down"></i> Sort A → Z
+                @if (_sortColHdv == _openColFilter && _sortAscHdv) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+            </button>
+            <button class="sort-btn" @onclick="() => { _sortColHdv = _openColFilter; _sortAscHdv = false; _openColFilter = null; }">
+                <i class="bi bi-sort-alpha-up"></i> Sort Z → A
+                @if (_sortColHdv == _openColFilter && !_sortAscHdv) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+            </button>
+        </div>
+        <div class="divider"></div>
+        @if (_cfd.SelectedValues.Count < _cfd.AllValues.Count)
+        {
+            <button class="sort-btn text-danger" @onclick="() => { _cfd.SelectedValues = new HashSet<string>(_cfd.AllValues); _openColFilter = null; }">
+                <i class="bi bi-x-circle"></i> Xóa filter cột này
+            </button>
+            <div class="divider"></div>
+        }
+        <input class="search-box" placeholder="Tìm..."
+               @bind="_cfd.SearchText" @bind:event="oninput" />
+        <div class="value-list">
+            @{
+                var _vis = _cfd.AllValues
+                    .Where(v => string.IsNullOrEmpty(_cfd.SearchText)
+                             || v.Contains(_cfd.SearchText, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                bool _allSel = _vis.All(v => _cfd.SelectedValues.Contains(v));
+            }
+            <label>
+                <input type="checkbox" checked="@_allSel"
+                       @onchange="e => { var s = (bool)(e.Value ?? false); foreach (var v in _vis) { if (s) _cfd.SelectedValues.Add(v); else _cfd.SelectedValues.Remove(v); } }" />
+                <strong>(Chọn tất cả)</strong>
+            </label>
+            @foreach (var val in _vis)
+            {
+                var v = val;
+                <label>
+                    <input type="checkbox" checked="@_cfd.SelectedValues.Contains(v)"
+                           @onchange="e => { if ((bool)(e.Value ?? false)) _cfd.SelectedValues.Add(v); else _cfd.SelectedValues.Remove(v); }" />
+                    @v
+                </label>
+            }
+        </div>
+        <div class="footer">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _openColFilter = null">Hủy</button>
+            <button class="btn btn-sm btn-primary" @onclick="() => _openColFilter = null">OK</button>
+        </div>
+    </div>
+}
+
+@* ── MODAL XÁC NHẬN HUỶ PHIẾU GIAO ── *@
+@if (_showVoidConfirm)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:380px">
+            <div class="mes-modal-header">
+                <h6 class="mb-0 text-danger"><i class="bi bi-trash me-2"></i>Huỷ phiếu giao</h6>
+                <button class="btn-close btn-sm" @onclick="() => _showVoidConfirm = false"></button>
+            </div>
+            <div class="mes-modal-body">
+                <div class="alert alert-warning py-2 small">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Chỉ huỷ được phiếu <strong>PENDING</strong> chưa có ai xác nhận nhận.
+                    Sau khi huỷ, số lượng sẽ trả về nhóm giao.
+                </div>
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold text-danger">Lý do huỷ *</label>
+                    <input type="text" class="form-control form-control-sm border-danger"
+                           @bind="_voidReason" placeholder="Nhập lý do (ít nhất 3 ký tự)..." />
+                </div>
+                @if (!string.IsNullOrEmpty(_modalError))
+                {
+                    <div class="alert alert-danger py-1 small">@_modalError</div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="() => _showVoidConfirm = false">Hủy</button>
+                <button class="btn btn-sm btn-danger" @onclick="ConfirmVoidIssueAsync" disabled="@_saving">
+                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    <i class="bi bi-trash me-1"></i>Xác nhận huỷ phiếu
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    bool _loaded;
+    bool _canView;
+    bool _canEditAny;
+    int  _currentUserId;
+    Dictionary<string, bool> _canViewGroup = new();
+    Dictionary<string, bool> _canEditGroup = new();
+    List<string> _myEditGroups = new();
+
+    int _filterCustomerId;
+    int _filterMonth;
+    int _filterYear = DateTime.Now.Year;
+
+    List<HandoverSummaryRow> _rows      = new();
+    List<Customer>           _customers = new();
+
+    HandoverSummaryRow? _selectedRow;
+    bool   _showIssueModal;
+    bool   _showReceiveModal;
+    bool   _showLogModal;
+    bool   _saving;
+    string _modalError = "";
+
+    record IssueGroupOption(string Code, string Label, decimal Remaining);
+    List<IssueGroupOption> _issueFromGroupOptions = new();
+    string  _issueFromGroup = "";
+    string  _issueToGroup   = "";
+    decimal _issueQty       = 1;
+    string  _issueNotes     = "";
+
+    // NC selector — giao inter-group theo NC cụ thể
+    bool              _useNcMode    = false;
+    string            _issueFromNC  = "";
+    List<NcOption>    _ncOptions    = new();
+    decimal           _ncMaxQty     = 0;
+
+    string  EffectiveFromGroup => _issueFromGroupOptions.Count == 1
+        ? _issueFromGroupOptions[0].Code : _issueFromGroup;
+    decimal IssueMaxQty => _issueFromGroupOptions.Count == 1
+        ? _issueFromGroupOptions[0].Remaining
+        : _issueFromGroupOptions.FirstOrDefault(o => o.Code == _issueFromGroup)?.Remaining ?? 0;
+
+    string  _receiveToGroup  = "";
+    List<HandoverTxPending> _pendingTxs = new();
+    long    _selectedTxId    = 0;
+    decimal _receiveQtyOk;
+    decimal _receiveQtyNg;
+    string  _receiveNgReason = "";
+    string  _receiveNotes    = "";
+
+    List<HandoverLogItem> _logItems  = new();
+    string                _logPartNo = "";
+
+    // Badge đỏ: số phiếu PENDING/PARTIAL đang chờ nhóm user này nhận
+    // Key = KhPlanDetailId, Value = số phiếu
+    Dictionary<int, int> _pendingCountPerDetail = new();
+
+    // Expand state trong modal Nhận — phiếu nào đang mở form nhập OK/NG
+    long _expandedTxId = 0;
+
+    // ── Excel-style column filter cho PO và PartNo ──
+    private Dictionary<string, HandoverColFilterDef> _colFilters = new();
+    private string? _openColFilter;
+    private double  _cfTop, _cfLeft;
+    private string? _sortColHdv;
+    private bool    _sortAscHdv = true;
+
+    record GroupDef(string Code, string Label);
+    static readonly List<GroupDef> _allGroupDefs = new()
+    {
+        new("KHO",  "Kho"),
+        new("GC",   "Gia công"),
+        new("HTSP", "HTSP"),
+        new("KCS",  "KCS"),
+        new("PKG",  "Đóng gói"),
+    };
+
+    static readonly Dictionary<string, string> GroupPermKey = new()
+    {
+        ["KHO"]  = SystemPermissions.HandoverKho,
+        ["GC"]   = SystemPermissions.HandoverGc,
+        ["HTSP"] = SystemPermissions.HandoverHtsp,
+        ["KCS"]  = SystemPermissions.HandoverKcs,
+        ["PKG"]  = SystemPermissions.HandoverPkg,
+    };
+
+    string GetGroupLabel(string code) =>
+        _allGroupDefs.FirstOrDefault(g => g.Code == code)?.Label ?? code;
+
+    int GetPendingCount(int khPlanDetailId) =>
+        _pendingCountPerDetail.TryGetValue(khPlanDetailId, out var c) ? c : 0;
+
+    decimal GetGroupRemaining(HandoverSummaryRow row, string code) => code switch
+    {
+        "KHO"  => row.KhoOk - row.KhoNg,
+        "GC"   => row.Gc.Remaining,
+        "HTSP" => row.Htsp.Remaining,
+        "KCS"  => row.Kcs.Remaining,
+        "PKG"  => row.Pkg.Remaining,
+        _      => 0
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var claimUser = authState.User;
+        var userIdStr = claimUser.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (!int.TryParse(userIdStr, out _currentUserId))
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        bool isAdmin = claimUser.IsInRole("ADMIN")
+                    || claimUser.FindFirst("GroupCode")?.Value == "ADMIN"
+                    || claimUser.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                    || claimUser.Identity?.Name?.ToLower() == "admin";
+
+        var allPerms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+
+        foreach (var (grp, key) in GroupPermKey)
+        {
+            if (isAdmin) { _canViewGroup[grp] = true; _canEditGroup[grp] = true; }
+            else
+            {
+                allPerms.TryGetValue(key, out var p);
+                _canViewGroup[grp] = p.CanView;
+                _canEditGroup[grp] = p.CanEdit;
+            }
+        }
+
+        _canView      = _canViewGroup.Values.Any(v => v);
+        _canEditAny   = _canEditGroup.Values.Any(v => v);
+        _myEditGroups = _canEditGroup.Where(kv => kv.Value).Select(kv => kv.Key).ToList();
+        _loaded       = true;
+
+        if (_canView)
+        {
+            _customers = await Db.Customers
+                .Where(c => c.IsActive).OrderBy(c => c.CustomerName).ToListAsync();
+            await LoadDataAsync();
+        }
+    }
+
+    IEnumerable<HandoverSummaryRow> FilteredRows
+    {
+        get
+        {
+            var q = _rows.AsEnumerable();
+
+            // Excel column filters
+            foreach (var (key, def) in _colFilters)
+            {
+                if (def.SelectedValues.Count == def.AllValues.Count) continue;
+                q = key switch
+                {
+                    "PlanNo"        => q.Where(r => def.SelectedValues.Contains(r.PlanNo)),
+                    "PurchaseOrder" => q.Where(r => def.SelectedValues.Contains(r.PurchaseOrder)),
+                    "PartNo"        => q.Where(r => def.SelectedValues.Contains(r.PartNo)),
+                    _ => q
+                };
+            }
+
+            // Sort
+            if (_sortColHdv != null)
+            {
+                Func<HandoverSummaryRow, string> key = _sortColHdv switch
+                {
+                    "PlanNo"        => r => r.PlanNo,
+                    "PurchaseOrder" => r => r.PurchaseOrder,
+                    "PartNo"        => r => r.PartNo,
+                    _ => r => r.PlanNo
+                };
+                q = _sortAscHdv ? q.OrderBy(key) : q.OrderByDescending(key);
+            }
+
+            return q;
+        }
+    }
+
+    bool HasActiveColFilters =>
+        _colFilters.Any(kv => kv.Value.SelectedValues.Count < kv.Value.AllValues.Count)
+        || _sortColHdv != null;
+
+    // ColHeader với funnel button — đúng pattern Part Master
+    RenderFragment HdvColHeader(string colKey, string label) => __builder =>
+    {
+        var hasFilter = _colFilters.TryGetValue(colKey, out var def)
+                     && def.SelectedValues.Count < def.AllValues.Count;
+        var isSorted  = _sortColHdv == colKey;
+
+        <span class="col-filter-wrap">
+            <span style="cursor:pointer;user-select:none"
+                  @onclick="() => { _sortColHdv = colKey; _sortAscHdv = _sortColHdv == colKey ? !_sortAscHdv : true; }">
+                @label
+                @if (isSorted)
+                {
+                    <i class="bi @(_sortAscHdv ? "bi-arrow-up" : "bi-arrow-down") ms-1" style="font-size:0.65rem"></i>
+                }
+            </span>
+            <button class="col-filter-btn @(hasFilter ? "active" : "")"
+                    @onclick:stopPropagation
+                    @onclick="async e => { _openColFilter = _openColFilter == colKey ? null : colKey; _cfTop = e.ClientY + 10; _cfLeft = e.ClientX - 10; if (_cfLeft > 1200) _cfLeft = 1200; await Task.CompletedTask; }">
+                <i class="bi @(hasFilter ? "bi-funnel-fill" : "bi-funnel")"></i>
+            </button>
+        </span>
+    };
+
+    async Task LoadDataAsync()
+    {
+        _rows = await HandoverSvc.GetSummaryAsync(
+            customerId: _filterCustomerId > 0 ? _filterCustomerId : null,
+            month:      _filterMonth > 0      ? _filterMonth      : null,
+            year:       _filterYear);
+
+        // Load pending counts cho badge đỏ — chỉ khi user có nhóm Edit
+        if (_myEditGroups.Any())
+        {
+            var detailIds = _rows.Select(r => r.KhPlanDetailId).ToList();
+            _pendingCountPerDetail = await HandoverSvc.GetPendingCountPerDetailAsync(
+                detailIds, _myEditGroups);
+        }
+
+        BuildColFilters();
+        StateHasChanged();
+    }
+
+    void BuildColFilters()
+    {
+        if (!_rows.Any()) return;
+        _colFilters = new Dictionary<string, HandoverColFilterDef>
+        {
+            ["PlanNo"]       = HandoverColFilterDef.Build(_rows, r => r.PlanNo),
+            ["PurchaseOrder"]= HandoverColFilterDef.Build(_rows, r => r.PurchaseOrder),
+            ["PartNo"]       = HandoverColFilterDef.Build(_rows, r => r.PartNo),
+        };
+    }
+
+    async Task ResetFilterAsync()
+    {
+        _filterCustomerId = 0; _filterMonth = 0; _filterYear = DateTime.Now.Year;
+        await LoadDataAsync();
+    }
+
+    // Render 4 cột cho 1 nhóm sản xuất
+    RenderFragment RenderGroup4Cells(HandoverGroupQty g) => __builder =>
+    {
+        // Đã nhận
+        __builder.OpenElement(0, "td");
+        __builder.AddAttribute(1, "class", g.ReceivedOk > 0 ? "text-end text-success" : "text-end text-muted");
+        __builder.AddContent(2, g.ReceivedOk > 0 ? g.ReceivedOk.ToString("0.##") : "—");
+        __builder.CloseElement();
+
+        // NG
+        __builder.OpenElement(3, "td");
+        __builder.AddAttribute(4, "class", g.NgReturned > 0 ? "text-end text-danger fw-semibold" : "text-end text-muted");
+        __builder.AddContent(5, g.NgReturned > 0 ? g.NgReturned.ToString("0.##") : "—");
+        __builder.CloseElement();
+
+        // WTS Done
+        __builder.OpenElement(6, "td");
+        __builder.AddAttribute(7, "class", g.WtsDone > 0 ? "text-end text-primary" : "text-end text-muted");
+        __builder.AddContent(8, g.WtsDone > 0 ? g.WtsDone.ToString("0.##") : "—");
+        __builder.CloseElement();
+
+        // Còn tồn
+        var remClass = g.Remaining > 0  ? "text-end fw-semibold text-warning border-end"
+                     : g.ReceivedOk > 0 ? "text-end text-muted border-end"
+                     : "text-end text-muted border-end";
+        __builder.OpenElement(9, "td");
+        __builder.AddAttribute(10, "class", remClass);
+        __builder.AddContent(11, g.ReceivedOk > 0 ? g.Remaining.ToString("0.##") : "—");
+        __builder.CloseElement();
+    };
+
+    void OpenIssueModal(HandoverSummaryRow row)
+    {
+        _selectedRow    = row;
+        _issueFromGroup = "";
+        _issueToGroup   = "";
+        _issueQty       = 1;
+        _issueNotes     = "";
+        _modalError     = "";
+
+        _issueFromGroupOptions = _myEditGroups
+            .Select(grp => new IssueGroupOption(grp, GetGroupLabel(grp), GetGroupRemaining(row, grp)))
+            .Where(o => o.Remaining > 0)
+            .ToList();
+
+        if (_issueFromGroupOptions.Count == 1)
+            _issueFromGroup = _issueFromGroupOptions[0].Code;
+
+        _showIssueModal = true;
+        // Load NC options cho nhóm đã auto-detect
+        if (!string.IsNullOrEmpty(_issueFromGroup))
+            _ = OnIssueFromGroupChangedAsync();
+    }
+
+    async Task OnIssueFromGroupChangedAsync()
+    {
+        _useNcMode   = false;
+        _issueFromNC = "";
+        _ncOptions   = new();
+        _ncMaxQty    = 0;
+        if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromGroup))
+            _ncOptions = await HandoverSvc.GetNcOptionsAsync(
+                _selectedRow.KhPlanDetailId, _issueFromGroup);
+    }
+
+    void OnNcSelected()
+    {
+        if (string.IsNullOrEmpty(_issueFromNC)) { _ncMaxQty = 0; return; }
+        var opt = _ncOptions.FirstOrDefault(o => o.NC == _issueFromNC);
+        _ncMaxQty = opt?.QtyDone ?? 0;
+        _issueQty = _ncMaxQty;
+    }
+
+    async Task ConfirmIssueAsync()
+    {
+        if (_selectedRow == null) return;
+        _modalError = "";
+        var fromGroup = EffectiveFromGroup;
+        if (string.IsNullOrEmpty(fromGroup))     { _modalError = "Chọn nhóm giao."; return; }
+        if (string.IsNullOrEmpty(_issueToGroup)) { _modalError = "Chọn nhóm nhận."; return; }
+        if (_issueQty <= 0)                      { _modalError = "Số lượng phải lớn hơn 0."; return; }
+        if (_issueQty > IssueMaxQty)             { _modalError = $"Vượt quá còn lại ({IssueMaxQty:0.##})."; return; }
+
+        if (_useNcMode && string.IsNullOrEmpty(_issueFromNC))
+        {
+            _modalError = "Chọn NC nguồn khi bật chế độ giao NC.";
+            return;
+        }
+        if (_useNcMode && string.IsNullOrWhiteSpace(_issueNotes))
+        {
+            _modalError = "Bắt buộc nhập ghi chú khi giao inter-group NC.";
+            return;
+        }
+
+        _saving = true;
+        (bool ok, string err) = await HandoverSvc.IssueAsync(
+            _selectedRow.KhPlanDetailId, fromGroup, _issueToGroup,
+            _issueQty, _currentUserId,
+            fromNC: _useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,
+            notes:  _issueNotes);
+        _saving = false;
+        if (!ok) { _modalError = err; return; }
+        CloseModals();
+        await LoadDataAsync();
+    }
+
+    void OpenReceiveModal(HandoverSummaryRow row)
+    {
+        _selectedRow      = row;
+        _receiveToGroup   = _myEditGroups.Count == 1 ? _myEditGroups[0] : "";
+        _pendingTxs       = new();
+        _selectedTxId     = 0;
+        _expandedTxId     = 0;
+        _receiveQtyOk     = 0;
+        _receiveQtyNg     = 0;
+        _receiveNgReason  = "";
+        _receiveNotes     = "";
+        _modalError       = "";
+        _showReceiveModal = true;
+        if (_myEditGroups.Count == 1) _ = LoadPendingAsync();
+    }
+
+    void ToggleExpandTx(long txId)
+    {
+        if (_expandedTxId == txId)
+        {
+            // Thu gọn
+            _expandedTxId    = 0;
+            _receiveQtyOk    = 0;
+            _receiveQtyNg    = 0;
+            _receiveNgReason = "";
+            _receiveNotes    = "";
+            _modalError      = "";
+        }
+        else
+        {
+            // Mở phiếu mới — reset form
+            _expandedTxId    = txId;
+            _selectedTxId    = txId;
+            _receiveQtyOk    = 0;
+            _receiveQtyNg    = 0;
+            _receiveNgReason = "";
+            _receiveNotes    = "";
+            _modalError      = "";
+        }
+    }
+
+    async Task LoadPendingAsync()
+    {
+        if (_selectedRow == null || string.IsNullOrEmpty(_receiveToGroup)) return;
+        _selectedTxId    = 0;
+        _expandedTxId    = 0;
+        _receiveQtyOk    = 0;
+        _receiveQtyNg    = 0;
+        _receiveNgReason = "";
+        _pendingTxs      = await HandoverSvc.GetPendingForGroupAsync(
+            _selectedRow.KhPlanDetailId, _receiveToGroup);
+        StateHasChanged();
+    }
+
+    async Task ConfirmReceiveAsync()
+    {
+        if (_selectedTxId == 0) { _modalError = "Chọn phiếu giao cần nhận."; return; }
+        await ConfirmReceiveAsync(_selectedTxId);
+    }
+
+    async Task ConfirmReceiveAsync(long txId)
+    {
+        _modalError = "";
+        _saving     = true;
+        (bool ok, string err) = await HandoverSvc.ReceiveAsync(
+            txId, _receiveQtyOk, _receiveQtyNg, _receiveNgReason,
+            _currentUserId, _receiveNotes);
+        _saving = false;
+        if (!ok) { _modalError = err; return; }
+
+        // Reload pending list — không đóng modal, để user xử lý tiếp phiếu khác
+        _expandedTxId    = 0;
+        _receiveQtyOk    = 0;
+        _receiveQtyNg    = 0;
+        _receiveNgReason = "";
+        _receiveNotes    = "";
+
+        // Reload pending cho nhóm này
+        if (_selectedRow != null)
+            _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(
+                _selectedRow.KhPlanDetailId, _receiveToGroup);
+
+        // Reload bảng + badge
+        await LoadDataAsync();
+        StateHasChanged();
+    }
+
+    async Task ShowLogAsync(int khPlanDetailId)
+    {
+        _logItems  = await HandoverSvc.GetLogsAsync(khPlanDetailId);
+        _logPartNo = _rows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.PartNo ?? "";
+        _showLogModal = true;
+    }
+
+    // ── Void phiếu Giao ──
+    long   _voidingTxId  = 0;
+    string _voidReason   = "";
+    bool   _showVoidConfirm = false;
+
+    void VoidIssueFromLogAsync(long txId)
+    {
+        _voidingTxId    = txId;
+        _voidReason     = "";
+        _modalError     = "";
+        _showVoidConfirm = true;
+    }
+
+    async Task ConfirmVoidIssueAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_voidReason) || _voidReason.Trim().Length < 3)
+        {
+            _modalError = "Nhập lý do huỷ (ít nhất 3 ký tự).";
+            return;
+        }
+        _saving = true;
+        (bool ok, string err) = await HandoverSvc.VoidIssueAsync(_voidingTxId, _voidReason.Trim(), _currentUserId);
+        _saving = false;
+
+        if (!ok) { _modalError = err; return; }
+
+        _showVoidConfirm = false;
+        _voidingTxId     = 0;
+        _modalError      = "";
+
+        // Reload log của PO hiện tại
+        if (_selectedRow != null)
+            _logItems = await HandoverSvc.GetLogsAsync(_selectedRow.KhPlanDetailId);
+
+        await LoadDataAsync();
+        StateHasChanged();
+    }
+
+    void CloseModals()
+    {
+        _showIssueModal   = false; _showReceiveModal = false;
+        _showLogModal     = false; _showVoidConfirm  = false;
+        _selectedRow      = null;  _modalError       = "";
+        _expandedTxId     = 0;     _pendingTxs       = new();
+        _receiveQtyOk     = 0;     _receiveQtyNg     = 0;
+        _receiveNgReason  = "";    _receiveNotes     = "";
+        _voidingTxId      = 0;     _voidReason       = "";
+        _useNcMode        = false; _issueFromNC      = "";
+        _ncOptions        = new(); _ncMaxQty         = 0;
+    }
+
+    string GetStatusBadge(string status) => status switch
+    {
+        "PENDING"   => "bg-warning text-dark",
+        "PARTIAL"   => "bg-info text-dark",
+        "COMPLETED" => "bg-success",
+        _           => "bg-secondary"
+    };
+
+    // ── ColFilterDef — đúng pattern Part Master ──
+    private class HandoverColFilterDef
+    {
+        public List<string>   AllValues      { get; set; } = new();
+        public HashSet<string> SelectedValues { get; set; } = new();
+        public string          SearchText    { get; set; } = string.Empty;
+
+        public static HandoverColFilterDef Build(
+            List<HandoverSummaryRow> rows, Func<HandoverSummaryRow, string> selector)
+        {
+            var all = rows.Select(selector).Distinct().OrderBy(v => v).ToList();
+            return new HandoverColFilterDef
+            {
+                AllValues      = all,
+                SelectedValues = new HashSet<string>(all)
+            };
+        }
+    }
+}

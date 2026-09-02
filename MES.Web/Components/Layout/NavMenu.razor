@@ -47,6 +47,15 @@
             </li>
         }
 
+        @if (CanViewHandover())
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/handover">
+                    <i class="bi bi-arrow-left-right"></i> Giao nhận
+                </NavLink>
+            </li>
+        }
+
         <li class="nav-item">
             <NavLink class="nav-link" href="/hieu-suat-may">
                 <i class="bi bi-cpu"></i> Hiệu suất máy
@@ -168,5 +177,15 @@
             || CanView("PART_HTSP") 
             || CanView("PART_KCS") 
             || CanView("PART_DONGGOI");
+    }
+
+    private bool CanViewHandover()
+    {
+        if (isAdmin) return true;
+        return CanView(SystemPermissions.HandoverKho)
+            || CanView(SystemPermissions.HandoverGc)
+            || CanView(SystemPermissions.HandoverHtsp)
+            || CanView(SystemPermissions.HandoverKcs)
+            || CanView(SystemPermissions.HandoverPkg);
     }
 }

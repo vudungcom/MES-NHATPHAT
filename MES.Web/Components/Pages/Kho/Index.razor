@@ -5,6 +5,7 @@
 @using MES.Web.Constants
 @using MES.Web.Services
 @inject KhoVatLieuService KhoSvc
+@inject HandoverService HandoverSvc
 @inject UserService UserSvc
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
@@ -97,10 +98,10 @@
     <div class="col-md-3">
         <select class="form-select form-select-sm" @bind="_filterStatus">
             <option value="">-- Tất cả trạng thái phôi --</option>
-            <option value="ChuaNhan">Chưa nhận phôi (Ngày nhận: No)</option>
+            <option value="ChuaNhan">Chưa nhận phôi</option>
             <option value="DaNhan">Đã nhận phôi</option>
-            <option value="DaCap">Đã cấp phôi vào sản xuất</option>
-            <option value="ChuaCap">Đã nhận nhưng chưa cấp</option>
+            <option value="DaCap">Đã giao hết cho GC</option>
+            <option value="ChuaCap">Đã nhận nhưng chưa giao hết</option>
         </select>
     </div>
     <div class="col-md-5 d-flex justify-content-end align-items-center gap-2">
@@ -130,8 +131,8 @@ else
                     <th colspan="8" class="text-center bg-primary bg-opacity-10 text-primary fw-bold border-end">
                         <i class="bi bi-link-45deg"></i> CỘT A - H: DỮ LIỆU LINK TỪ KẾ HOẠCH
                     </th>
-                    <th colspan="7" class="text-center bg-warning bg-opacity-10 text-dark fw-bold border-end">
-                        <i class="bi bi-box-seam"></i> CỘT I - O: KHO NHẬP THỰC TẾ & CẤP PHÁT
+                    <th colspan="8" class="text-center bg-warning bg-opacity-10 text-dark fw-bold border-end">
+                        <i class="bi bi-box-seam"></i> CỘT I - O: KHO NHẬP THỰC TẾ &amp; CẤP PHÁT
                     </th>
                     @* Thao tác + Trạng thái ra ngoài cùng bên phải *@
                     <th colspan="2" class="text-center bg-light">Thao tác & Trạng thái</th>
@@ -156,8 +157,9 @@ else
                     <th style="min-width:110px;" class="bg-warning bg-opacity-10">@ColHeader("OrderVL", "Order VL", "K")</th>
                     <th style="min-width:85px;" class="bg-warning bg-opacity-10">@ColHeader("ViTriDe", "Vị trí để", "L")</th>
                     <th style="min-width:90px;" class="bg-warning bg-opacity-10">@ColHeader("TinhTrang", "Tình trạng", "M")</th>
-                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayCap", "Ngày cấp", "N")</th>
-                    <th style="width:75px;" class="bg-warning bg-opacity-10 border-end">@ColHeader("SlCap", "SL cấp", "O")</th>
+                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayCap", "Ngày giao GC", "N")</th>
+                    <th style="width:75px;" class="bg-warning bg-opacity-10">@ColHeader("SlCap", "SL đã giao", "O")</th>
+                    <th style="width:75px;" class="bg-warning bg-opacity-10 border-end text-warning fw-bold">Còn lại</th>
 
                     @* Thao tác + Trạng thái — ngoài cùng bên phải *@
                     <th style="width:90px;">Thao tác</th>
@@ -200,11 +202,40 @@ else
                         <td class="bg-warning bg-opacity-10 font-monospace text-start">@(string.IsNullOrEmpty(row.OrderVatLieu) ? "—" : row.OrderVatLieu)</td>
                         <td class="bg-warning bg-opacity-10 fw-bold text-info">@(string.IsNullOrEmpty(row.ViTriDePhoi) ? "—" : row.ViTriDePhoi)</td>
                         <td class="bg-warning bg-opacity-10 text-start">@(string.IsNullOrEmpty(row.TinhTrangPhoi) ? "—" : row.TinhTrangPhoi)</td>
-                        <td class="bg-warning bg-opacity-10 @(row.NgayCapPhoi.HasValue ? "text-dark fw-bold" : "text-muted")">
-                            @(row.NgayCapPhoi.HasValue ? row.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")
+                        @* Cột N: Ngày giao GC — từ HandoverTransactions (ngày ISSUE đầu tiên từ KHO→GC) *@
+                        <td class="bg-warning bg-opacity-10 @(_khoIssuedAt.TryGetValue(row.KhPlanDetailId, out var ia) && ia.HasValue ? "text-dark fw-bold" : "text-muted")">
+                            @(_khoIssuedAt.TryGetValue(row.KhPlanDetailId, out var iat) && iat.HasValue ? iat.Value.ToString("dd/MM/yyyy") : "No")
                         </td>
-                        <td class="bg-warning bg-opacity-10 fw-bold border-end @(row.SoLuongCap.HasValue ? "text-primary" : "text-muted")">
-                            @(row.SoLuongCap?.ToString() ?? "—")
+                        @* Cột O: SL đã giao (GC xác nhận) + đang chờ *@
+                        @{
+                            var _io   = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var _iov) ? _iov : 0m;
+                            var _iop2 = _khoIssuedPending.TryGetValue(row.KhPlanDetailId, out var _iopv) ? _iopv : 0m;
+                        }
+                        <td class="bg-warning bg-opacity-10 fw-bold @(_io > 0 || _iop2 > 0 ? "text-primary" : "text-muted")"
+                            title="@(_iop2 > 0 ? $"Xác nhận: {_io.ToString("0.##")} | Chờ xác nhận: {_iop2.ToString("0.##")}" : "")">
+                            @if (_io > 0 || _iop2 > 0)
+                            {
+                                @_io.ToString("0.##")
+                                @if (_iop2 > 0)
+                                {
+                                    <span class="text-muted" style="font-size:10px"> (+@_iop2.ToString("0.##")⏳)</span>
+                                }
+                            }
+                            else { <text>—</text> }
+                        </td>
+                        @* Còn lại tại Kho = SoLuongThucNhan - SL GC đã xác nhận nhận *@
+                        @{
+                            var _confirmed  = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var ioR) ? ioR : 0m;
+                            var _pending    = _khoIssuedPending.TryGetValue(row.KhPlanDetailId, out var iop) ? iop : 0m;
+                            var _khoRemain  = (row.SoLuongThucNhan ?? 0) - _confirmed;
+                        }
+                        <td class="bg-warning bg-opacity-10 fw-bold border-end @(_khoRemain > 0 ? "text-warning" : _khoRemain == 0 && row.SoLuongThucNhan > 0 ? "text-success" : "text-muted")"
+                            title="@(_pending > 0 ? $"⚠ Đang có {_pending.ToString("0.##")} chiếc trên phiếu chờ GC xác nhận" : "")">
+                            @(row.SoLuongThucNhan.HasValue ? _khoRemain.ToString("0.##") : "—")
+                            @if (_pending > 0)
+                            {
+                                <span class="badge bg-warning text-dark ms-1" style="font-size:9px" title="Đang chờ GC xác nhận">+@_pending.ToString("0.##")⏳</span>
+                            }
                         </td>
 
                         @* Thao tác — ngoài cùng phải; stopPropagation để không trigger dblclick *@
@@ -223,15 +254,27 @@ else
                             </button>
                         </td>
 
-                        @* Trạng thái — ngoài cùng phải *@
+                        @* Trạng thái — tính từ giao nhận *@
                         <td>
-                            @if (row.NgayCapPhoi.HasValue)
+                            @{
+                                var _issued = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var _ioSt) ? _ioSt : 0m;
+                                var _rcv    = row.SoLuongThucNhan ?? 0;
+                            }
+                            @if (_issued > 0 && _issued >= _rcv && _rcv > 0)
                             {
-                                <span class="badge bg-success">Đã cấp phôi</span>
+                                <span class="badge bg-success">Đã giao GC</span>
+                            }
+                            else if (_issued > 0 && _issued < _rcv)
+                            {
+                                <span class="badge bg-info text-dark">Giao một phần</span>
+                            }
+                            else if (row.NgayNhanPhoi.HasValue && _rcv > 0)
+                            {
+                                <span class="badge bg-primary">Sẵn sàng giao</span>
                             }
                             else if (row.NgayNhanPhoi.HasValue)
                             {
-                                <span class="badge bg-primary">Đã nhận phôi</span>
+                                <span class="badge bg-warning text-dark">Đã nhận phôi</span>
                             }
                             else
                             {
@@ -358,15 +401,13 @@ else
                             <input class="form-control form-control-sm" @bind="_editTinhTrang" placeholder="VD: OK, NG, có bvxn, cắt đạt..." />
                         </div>
 
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Ngày cấp phôi (Cột N)</label>
-                            <input type="date" class="form-control form-control-sm"
-                                   value="@(_editNgayCap?.ToString("yyyy-MM-dd"))"
-                                   @onchange="(e) => _editNgayCap = string.IsNullOrEmpty(e.Value?.ToString()) ? null : DateTime.Parse(e.Value.ToString()!)" />
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Số lượng cấp (Cột O)</label>
-                            <input type="number" min="0" class="form-control form-control-sm text-end fw-bold text-primary" @bind="_editSlCap" placeholder="Nhập SL cấp sản xuất..." />
+                        @* Cột N (Ngày giao) và O (SL đã giao) ẨN khỏi form sửa — lấy tự động từ Giao nhận *@
+                        <div class="col-12">
+                            <div class="alert alert-info py-2 small mb-0">
+                                <i class="bi bi-info-circle me-1"></i>
+                                <strong>Ngày giao GC</strong> và <strong>Số lượng đã giao</strong> (Cột N, O) được tính tự động từ module
+                                <a href="/handover" class="alert-link">Giao nhận</a> — không nhập thủ công tại đây.
+                            </div>
                         </div>
 
                         <div class="col-12">
@@ -498,6 +539,11 @@ else
     private KhoVatLieuViewItem? _selectedRow;
     private List<KhoVatLieuChangeLogItem> _historyLogs = new();
 
+    // Dữ liệu từ HandoverService
+    private Dictionary<int, decimal> _khoIssuedOut = new();     // SL GC đã nhận xác nhận
+    private Dictionary<int, decimal> _khoIssuedPending = new(); // SL đang chờ GC xác nhận
+    private Dictionary<int, DateTime?> _khoIssuedAt = new();
+
     // ================================================================
     // INIT
     // ================================================================
@@ -531,7 +577,26 @@ else
     private async Task LoadDataAsync()
     {
         _items = await KhoSvc.GetAllAsync();
+        await LoadHandoverDataAsync();
         BuildColDefs();
+    }
+
+    /// <summary>
+    /// Batch load SL đã giao đi từ KHO và ngày giao đầu tiên từ HandoverTransactions.
+    /// Tính 1 lần cho toàn bộ danh sách — không query từng dòng.
+    /// </summary>
+    private async Task LoadHandoverDataAsync()
+    {
+        if (!_items.Any()) return;
+
+        var detailIds = _items.Select(i => i.KhPlanDetailId).ToList();
+
+        // Batch query: tất cả HandoverTransactions từ KHO (không bị void)
+        var khoTxs = await HandoverSvc.GetKhoIssueSummaryAsync(detailIds);
+
+        _khoIssuedOut     = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.TotalConfirmed);
+        _khoIssuedPending = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.TotalPending);
+        _khoIssuedAt      = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.FirstIssuedAt);
     }
 
     // ================================================================
@@ -659,8 +724,14 @@ else
                 {
                     "ChuaNhan" => q.Where(k => !k.NgayNhanPhoi.HasValue),
                     "DaNhan"   => q.Where(k => k.NgayNhanPhoi.HasValue),
-                    "DaCap"    => q.Where(k => k.NgayCapPhoi.HasValue),
-                    "ChuaCap"  => q.Where(k => k.NgayNhanPhoi.HasValue && !k.NgayCapPhoi.HasValue),
+                    // DaCap = đã giao hết cho GC (từ HandoverTransactions)
+                    "DaCap"    => q.Where(k =>
+                        _khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io) && io > 0
+                        && io >= (k.SoLuongThucNhan ?? 0)),
+                    // ChuaCap = đã nhận phôi nhưng chưa giao hết
+                    "ChuaCap"  => q.Where(k =>
+                        k.NgayNhanPhoi.HasValue &&
+                        (!_khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io2) || io2 < (k.SoLuongThucNhan ?? 0))),
                     _ => q
                 };
             }

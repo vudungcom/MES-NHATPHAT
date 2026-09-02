@@ -67,6 +67,13 @@ public class AppDbContext : DbContext
     // ==== WTS Production Log (công nhân submit WTS thực tế) ====
     public DbSet<WtsProductionLog> WtsProductionLogs => Set<WtsProductionLog>();
 
+    // ==== Worker Activity Log (thời gian chết / hoạt động không link PO) ====
+    public DbSet<WorkerActivityLog> WorkerActivityLogs => Set<WorkerActivityLog>();
+
+    // ==== Handover — Giao nhận hàng giữa các nhóm công đoạn ====
+    public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
+    public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
+
     protected override void OnModelCreating(ModelBuilder mb)
     {
         // ==== Explicit Primary Keys ====
@@ -457,6 +464,72 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.WorkerId)
             .OnDelete(DeleteBehavior.NoAction);
         mb.Entity<WtsProductionLog>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== WorkerActivityLog ====
+        mb.Entity<WorkerActivityLog>().HasKey(x => x.ActivityLogId);
+        mb.Entity<WorkerActivityLog>()
+            .HasIndex(x => new { x.WorkerId, x.WorkDate });
+        mb.Entity<WorkerActivityLog>()
+            .HasIndex(x => x.WorkDate);
+        mb.Entity<WorkerActivityLog>()
+            .HasOne(x => x.Worker).WithMany()
+            .HasForeignKey(x => x.WorkerId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<WorkerActivityLog>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== HandoverTransaction ====
+        mb.Entity<HandoverTransaction>().HasKey(x => x.HandoverTxId);
+        mb.Entity<HandoverTransaction>().Property(x => x.QtyIssued).HasPrecision(10, 2);
+        mb.Entity<HandoverTransaction>().Property(x => x.FromNC).HasMaxLength(20);
+        mb.Entity<HandoverTransaction>().Property(x => x.FromGroupCode).HasMaxLength(20).IsRequired();
+        mb.Entity<HandoverTransaction>().Property(x => x.ToGroupCode).HasMaxLength(20).IsRequired();
+        mb.Entity<HandoverTransaction>().Property(x => x.Status).HasMaxLength(20).IsRequired().HasDefaultValue("PENDING");
+        mb.Entity<HandoverTransaction>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverTransaction>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverTransaction>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
+        mb.Entity<HandoverTransaction>()
+            .HasIndex(x => new { x.FromGroupCode, x.IssuedAt });
+        mb.Entity<HandoverTransaction>()
+            .HasIndex(x => new { x.ToGroupCode, x.IssuedAt });
+        mb.Entity<HandoverTransaction>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverTransaction>()
+            .HasOne(x => x.IssuedByUser).WithMany()
+            .HasForeignKey(x => x.IssuedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverTransaction>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== HandoverReceive ====
+        mb.Entity<HandoverReceive>().HasKey(x => x.ReceiveId);
+        mb.Entity<HandoverReceive>().Property(x => x.QtyOk).HasPrecision(10, 2).HasDefaultValue(0m);
+        mb.Entity<HandoverReceive>().Property(x => x.QtyNg).HasPrecision(10, 2).HasDefaultValue(0m);
+        mb.Entity<HandoverReceive>().Property(x => x.NgReason).HasMaxLength(500);
+        mb.Entity<HandoverReceive>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverReceive>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverReceive>()
+            .HasIndex(x => new { x.HandoverTxId, x.IsVoided });
+        mb.Entity<HandoverReceive>()
+            .HasOne(x => x.Transaction)
+            .WithMany(t => t.Receives)
+            .HasForeignKey(x => x.HandoverTxId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverReceive>()
+            .HasOne(x => x.ReceivedByUser).WithMany()
+            .HasForeignKey(x => x.ReceivedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverReceive>()
             .HasOne(x => x.VoidedByUser).WithMany()
             .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);

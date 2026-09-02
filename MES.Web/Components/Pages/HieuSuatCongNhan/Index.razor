@@ -5,25 +5,25 @@
 @using MES.Web.Data
 @using MES.Web.Data.Entities
 @using MES.Web.Services
+@using MES.Web.Constants
 @inject AppDbContext Db
 @inject KhPlanService KhSvc
+@inject StandardWtsTaskService WtsSvc
+@inject UserService UserSvc
+@inject HandoverService HandoverSvc
 @inject AuthenticationStateProvider AuthState
-@inject NavigationManager Nav
 
 <PageTitle>Nhập WTS - MES</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <h1 class="mb-1">Nhập WTS Sản xuất</h1>
-        <p class="text-muted small mb-0">
-            Chọn phiếu KH → chọn NC → điền thông tin thực tế
-        </p>
+        <p class="text-muted small mb-0">Ghi nhận công việc theo timeline ca làm — mỗi dòng = 1 khoảng thời gian</p>
     </div>
     @if (_currentWorker != null)
     {
         <div class="text-end">
-            <span class="badge bg-primary fs-6">@_currentWorker.FullName</span>
-            <br/>
+            <span class="badge bg-primary fs-6 px-3">@_currentWorker.FullName</span><br />
             <small class="text-muted">@(_currentWorker.Group?.GroupName ?? _currentWorker.Group?.GroupCode)</small>
         </div>
     }
@@ -33,353 +33,379 @@
 {
     <div class="alert alert-warning">
         <i class="bi bi-shield-exclamation"></i>
-        Tài khoản của bạn chưa được phân nhóm sản xuất. Vui lòng liên hệ Admin.
+        Tài khoản chưa được phân nhóm sản xuất. Vui lòng liên hệ Admin.
     </div>
 }
 else
 {
-    @* ── Bước 1: Chọn phiếu KH ── *@
+    @* ── Header: Chọn ngày + tổng phút ── *@
     <div class="card mb-3">
-        <div class="card-header py-2 fw-semibold">
-            <i class="bi bi-1-circle-fill text-primary me-1"></i> Chọn phiếu KH cần làm
-        </div>
-        <div class="card-body">
-            <div class="row g-2 align-items-end">
-                <div class="col-md-5">
-                    <label class="form-label small">Tìm theo PO / Part No / Số phiếu</label>
-                    <input class="form-control form-control-sm" placeholder="Nhập để tìm..."
-                           @bind="_searchPO" @bind:event="oninput" />
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-center">
+                <div class="col-auto">
+                    <label class="form-label small mb-0 fw-semibold">Ngày làm việc</label>
+                    <input type="date" class="form-control form-control-sm" style="width:150px;"
+                           @bind="_workDate" @bind:after="OnWorkDateChanged" />
                 </div>
-                <div class="col-md-3">
-                    <label class="form-label small">Trạng thái</label>
-                    <select class="form-select form-select-sm" @bind="_filterStatus">
-                        <option value="">-- Tất cả --</option>
-                        <option value="FullyReceived">Nhập đủ phôi</option>
-                        <option value="InProduction">Đang SX</option>
-                        <option value="WaitingSupplierOrder">Chờ phôi</option>
-                    </select>
+                <div class="col-auto ms-auto d-flex flex-column gap-1">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="toggleNoSnap"
+                               @bind="_showWithoutSnapshot" />
+                        <label class="form-check-label small" for="toggleNoSnap">
+                            Hiện phiếu chưa có quy trình
+                            <i class="bi bi-info-circle text-muted ms-1"
+                               title="Mặc định chỉ hiện phiếu đã có quy trình từ Part Master (snapshot). Bật tùy chọn này để thấy phiếu chưa đủ quy trình — cẩn thận: công nhân sẽ không thấy NC cần làm, dễ nhầm lẫn. Chỉ dùng khi Kỹ thuật chưa cập nhật Part Master kịp."></i>
+                        </label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="toggleNoHandover"
+                               @bind="_showWithoutHandover" />
+                        <label class="form-check-label small" for="toggleNoHandover">
+                            Hiện phiếu chưa nhận hàng
+                            <i class="bi bi-exclamation-triangle text-warning ms-1"
+                               title="Mặc định chỉ hiện phiếu mà kho/nhóm trước đã bàn giao hàng sang nhóm này. Bật để thấy tất cả — cẩn thận: nhóm chưa nhận hàng không nên nhập WTS."></i>
+                        </label>
+                    </div>
+                </div>
+                <div class="col">
+                    @{
+                        var totalMin = _rows.Where(r => r.Saved).Sum(r => r.Minutes);
+                        var pct = Math.Min(100, (int)(totalMin / 4.8));
+                        var barColor = pct >= 100 ? "success" : (pct >= 60 ? "warning" : "danger");
+                    }
+                    <div class="d-flex align-items-center gap-3 mt-3">
+                        <span class="small fw-semibold">Tổng hôm nay:</span>
+                        <span class="fw-bold @(totalMin >= 480 ? "text-success" : "text-warning")">
+                            @totalMin / 480 phút
+                        </span>
+                        <div class="progress flex-grow-1" style="height:12px; max-width:300px;">
+                            <div class="progress-bar bg-@barColor" style="width:@pct%"></div>
+                        </div>
+                        <span class="small text-muted">@pct%</span>
+                    </div>
                 </div>
             </div>
-
-            @if (_rows != null)
-            {
-                var filtered = FilteredRows.ToList();
-                @if (filtered.Count == 0)
-                {
-                    <div class="alert alert-secondary mt-2 py-2 small mb-0">
-                        <i class="bi bi-inbox"></i> Không tìm thấy phiếu phù hợp
-                    </div>
-                }
-                else
-                {
-                    <div class="table-responsive mt-2">
-                        <table class="table table-sm table-hover table-bordered small mb-0" style="font-size:0.82rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Số phiếu</th>
-                                    <th>PO</th>
-                                    <th>Part No</th>
-                                    <th class="text-end">SL</th>
-                                    <th>STD</th>
-                                    <th>Ưu tiên</th>
-                                    <th>Trạng thái</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var r in filtered.Take(30))
-                                {
-                                    var isSelected = _selectedDetail?.KhPlanDetailId == r.KhPlanDetailId;
-                                    <tr class="@(isSelected ? "table-primary" : "")" style="cursor:pointer;"
-                                        @onclick="() => SelectDetail(r)">
-                                        <td><code>@r.PlanNo</code></td>
-                                        <td><code>@r.PurchaseOrder</code></td>
-                                        <td><code class="text-danger">@r.PartNo</code></td>
-                                        <td class="text-end">@r.Quantity.ToString("0.####") @r.Unit</td>
-                                        <td class="text-nowrap">@r.STD.ToString("dd/MM/yy")</td>
-                                        <td>@(r.Priority ?? "—")</td>
-                                        <td><span class="badge bg-@GetStatusColor(r.Status)" style="font-size:0.7rem;">@r.Status</span></td>
-                                        <td>
-                                            @if (isSelected)
-                                            { <i class="bi bi-check-circle-fill text-primary"></i> }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                    @if (filtered.Count > 30)
-                    {
-                        <small class="text-muted">Hiển thị 30 / @filtered.Count dòng. Nhập thêm để lọc.</small>
-                    }
-                }
-            }
         </div>
     </div>
 
-    @* ── Bước 2: Chọn NC ── *@
-    @if (_selectedDetail != null && _snapshot != null)
-    {
-        <div class="card mb-3">
-            <div class="card-header py-2 fw-semibold">
-                <i class="bi bi-2-circle-fill text-primary me-1"></i>
-                Chọn NC cần làm —
-                <code class="text-danger">@_selectedDetail.PartNo</code> /
-                <code>@_selectedDetail.PurchaseOrder</code>
-                <span class="ms-2 text-muted small">(SL: @_selectedDetail.Quantity.ToString("0.####") @_selectedDetail.Unit)</span>
-            </div>
-            <div class="card-body p-2">
-                @if (!_snapshot.Machining.Any())
+    @* ── Bảng timeline ── *@
+    <div class="card mb-3">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <span class="fw-semibold"><i class="bi bi-clock me-1"></i> Timeline ca làm việc</span>
+            <div class="d-flex align-items-center gap-2">
+                @if (!IsToday)
                 {
-                    <div class="alert alert-warning py-2 small mb-0">
-                        <i class="bi bi-exclamation-triangle"></i>
-                        Phiếu này chưa có snapshot quy trình gia công.
-                    </div>
+                    <span class="badge bg-warning text-dark">
+                        <i class="bi bi-lock me-1"></i>Ngày cũ — chỉ xem
+                    </span>
                 }
-                else
-                {
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover table-bordered mb-0" style="font-size:0.82rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width:60px;">#</th>
-                                    <th style="width:80px;">NC</th>
-                                    <th>Máy đăng ký</th>
-                                    <th>Đồ gá</th>
-                                    <th>Loại dao</th>
-                                    <th class="text-end">T.Gá lắp<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
-                                    <th class="text-end">T.Gia công<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
-                                    <th class="text-end">T.Kiểm tra<br/><small class="text-muted fw-normal">(chuẩn)</small></th>
-                                    <th class="text-center">Đã HT</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var s in _snapshot.Machining)
-                                {
-                                    var isSelNC = _selectedNC?.NC == s.NC && _selectedNC?.StepOrder == s.StepOrder;
-                                    var done = _qtySummary.TryGetValue($"GC|{s.NC}", out var q) ? q : 0m;
-                                    var doneColor = done == 0 ? "danger" : (done >= _selectedDetail.Quantity ? "success" : "warning");
-                                    <tr class="@(isSelNC ? "table-success" : "") @(s.IsBackup ? "table-warning" : "")"
-                                        style="cursor:pointer;" @onclick="() => SelectNC(s)">
-                                        <td class="text-center">@s.StepOrder @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
-                                        <td><code class="fw-bold">@s.NC</code></td>
-                                        <td>@(s.MachineRegistered ?? "—")</td>
-                                        <td>@(s.FixtureType ?? "—")</td>
-                                        <td>@(s.ToolType ?? "—")</td>
-                                        <td class="text-end text-muted">@FmtTime(s.SetupTime)</td>
-                                        <td class="text-end text-muted">@FmtTime(s.MachiningTime)</td>
-                                        <td class="text-end text-muted">@FmtTime(s.InspectionTime)</td>
-                                        <td class="text-center">
-                                            <span class="badge bg-@doneColor" style="font-size:0.68rem;">@done.ToString("0.##")/@_selectedDetail.Quantity.ToString("0.##")</span>
-                                        </td>
-                                        <td class="text-center">
-                                            @if (isSelNC) { <i class="bi bi-check-circle-fill text-success"></i> }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                }
+                <button class="btn btn-sm btn-outline-primary" @onclick="AddRow" disabled="@(!IsToday)">
+                    <i class="bi bi-plus-lg me-1"></i>Thêm dòng
+                </button>
             </div>
         </div>
-
-        @* ── Bước 3: Form nhập thực tế ── *@
-        @if (_selectedNC != null)
-        {
-            <div class="card mb-3 border-success">
-                <div class="card-header py-2 fw-semibold" style="background:#e8f5e9;">
-                    <i class="bi bi-3-circle-fill text-success me-1"></i>
-                    Nhập thực tế — NC <code class="text-success fw-bold">@_selectedNC.NC</code>
-                    @if (!string.IsNullOrEmpty(_selectedNC.MachineRegistered))
-                    { <span class="text-muted small ms-2">Máy đăng ký: @_selectedNC.MachineRegistered</span> }
-                </div>
-                <div class="card-body">
-                    @if (!string.IsNullOrEmpty(_error))
-                    {
-                        <div class="alert alert-danger py-2 small">@_error</div>
-                    }
-                    @if (_savedOk)
-                    {
-                        <div class="alert alert-success py-2 small">
-                            <i class="bi bi-check-circle me-1"></i> Đã ghi nhận WTS thành công!
-                        </div>
-                    }
-
-                    <div class="row g-3">
-                        @* SL chạy *@
-                        <div class="col-md-2">
-                            <label class="form-label small fw-semibold">SL chạy <span class="text-danger">*</span></label>
-                            <input type="number" step="1" min="1" class="form-control form-control-sm text-end fw-bold"
-                                   @bind="_form.QtyDone" placeholder="0" />
-                            <div class="form-text small">
-                                Còn lại: @((_selectedDetail.Quantity - (_qtySummary.TryGetValue($"GC|{_selectedNC.NC}", out var qq) ? qq : 0m)).ToString("0.##"))
-                            </div>
-                        </div>
-
-                        @* Máy dùng *@
-                        <div class="col-md-3">
-                            <label class="form-label small fw-semibold">Máy dùng <span class="text-danger">*</span></label>
-                            <input class="form-control form-control-sm font-monospace"
-                                   @bind="_form.MachineUsed"
-                                   placeholder="@(_selectedNC.MachineRegistered ?? "Nhập mã máy...")" />
-                            @if (!string.IsNullOrEmpty(_selectedNC.MachineAlternative))
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.82rem;">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width:100px;">T.Bắt đầu</th>
+                            <th style="width:100px;">T.Kết thúc</th>
+                            <th style="width:60px;" class="text-center">Phút</th>
+                            <th style="width:180px;">PO <span class="text-muted fw-normal">(tùy chọn)</span></th>
+                            <th style="width:110px;">Part No</th>
+                            <th style="width:120px;">NC / Mục</th>
+                            <th style="width:180px;">Mã WTS khác <span class="text-muted fw-normal">(nếu không có PO)</span></th>
+                            <th style="width:70px;" class="text-end">SL</th>
+                            <th>Ghi chú</th>
+                            <th style="width:80px;" class="text-center">Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _rows)
+                        {
+                            var idx = _rows.IndexOf(row);
+                            @if (row.Saved)
                             {
-                                <div class="form-text small">Đồng dạng: @_selectedNC.MachineAlternative</div>
-                            }
-                        </div>
-
-                        @* T.Bắt đầu *@
-                        <div class="col-md-2">
-                            <label class="form-label small fw-semibold">T.Bắt đầu <span class="text-danger">*</span></label>
-                            <input type="datetime-local" class="form-control form-control-sm"
-                                   @bind="_form.StartTime" />
-                        </div>
-
-                        @* T.Hoàn thành *@
-                        <div class="col-md-2">
-                            <label class="form-label small fw-semibold">T.Hoàn thành <span class="text-danger">*</span></label>
-                            <input type="datetime-local" class="form-control form-control-sm"
-                                   @bind="_form.EndTime" />
-                        </div>
-                    </div>
-
-                    <hr class="my-3"/>
-                    <p class="small text-muted fw-semibold mb-2">Thời gian thực tế (phút) — để trống nếu không áp dụng</p>
-                    <div class="row g-2">
-                        <div class="col-md-2">
-                            <label class="form-label small">T.Gá lắp
-                                @if (_selectedNC.SetupTime.HasValue)
-                                { <span class="text-muted">(chuẩn: @_selectedNC.SetupTime.Value.ToString("0.#"))</span> }
-                            </label>
-                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
-                                   @bind="_form.SetupTime_Actual" placeholder="—" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small">T.Gia công
-                                @if (_selectedNC.MachiningTime.HasValue)
-                                { <span class="text-muted">(chuẩn: @_selectedNC.MachiningTime.Value.ToString("0.#"))</span> }
-                            </label>
-                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
-                                   @bind="_form.MachiningTime_Actual" placeholder="—" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small">T.Kiểm tra
-                                @if (_selectedNC.InspectionTime.HasValue)
-                                { <span class="text-muted">(chuẩn: @_selectedNC.InspectionTime.Value.ToString("0.#"))</span> }
-                            </label>
-                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
-                                   @bind="_form.InspectionTime_Actual" placeholder="—" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small">T.Chuẩn bị
-                                @if (_selectedNC.PreparationTime.HasValue)
-                                { <span class="text-muted">(chuẩn: @_selectedNC.PreparationTime.Value.ToString("0.#"))</span> }
-                            </label>
-                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
-                                   @bind="_form.PreparationTime_Actual" placeholder="—" />
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small">T.Chạy thử
-                                @if (_selectedNC.TrialRunTime.HasValue)
-                                { <span class="text-muted">(chuẩn: @_selectedNC.TrialRunTime.Value.ToString("0.#"))</span> }
-                            </label>
-                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end"
-                                   @bind="_form.TrialRunTime_Actual" placeholder="—" />
-                        </div>
-                    </div>
-
-                    <div class="row g-2 mt-1">
-                        <div class="col-md-8">
-                            <label class="form-label small">Ghi chú</label>
-                            <input class="form-control form-control-sm" @bind="_form.Notes"
-                                   placeholder="VD: máy bị rung ở bước cuối, tăng tốc độ cut..." />
-                        </div>
-                    </div>
-
-                    <div class="d-flex justify-content-end gap-2 mt-3">
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm">
-                            <i class="bi bi-x-lg me-1"></i>Hủy
-                        </button>
-                        <button class="btn btn-success" @onclick="SubmitWtsAsync" disabled="@_saving">
-                            <i class="bi bi-check-lg me-1"></i>
-                            @(_saving ? "Đang lưu..." : "Xác nhận ghi WTS")
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            @* Lịch sử WTS đã ghi cho NC này *@
-            @if (_wtsLogs.Any(x => x.ProcessGroup == "GC" && x.NC == _selectedNC.NC && !x.IsVoided))
-            {
-                <div class="card mb-3">
-                    <div class="card-header py-2 small fw-semibold">
-                        <i class="bi bi-clock-history me-1"></i> Lịch sử WTS đã ghi — NC <code>@_selectedNC.NC</code>
-                    </div>
-                    <div class="card-body p-0">
-                        <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Worker</th>
-                                    <th class="text-center">SL</th>
-                                    <th>Máy dùng</th>
-                                    <th class="text-center">Bắt đầu</th>
-                                    <th class="text-center">Hoàn thành</th>
-                                    <th class="text-end">T.Gá lắp</th>
-                                    <th class="text-end">T.GC</th>
-                                    <th class="text-end">T.KT</th>
-                                    <th>Ghi chú</th>
+                                @* Dòng đã lưu — hiện read-only *@
+                                <tr class="@(row.HasWarning ? "table-warning" : "table-success bg-opacity-10")">
+                                    <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
+                                    <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
+                                    <td class="text-center fw-bold">@row.Minutes</td>
+                                    <td><code class="small">@(row.PO ?? "—")</code></td>
+                                    <td><code class="small text-danger">@(row.PartNo ?? "—")</code></td>
+                                    <td><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
+                                    <td class="small text-muted">@row.WtsName</td>
+                                    <td class="text-end">@(row.QtyDone > 0 ? row.QtyDone.ToString("0.##") : "—")</td>
+                                    <td class="small text-muted">@row.Notes</td>
+                                    <td class="text-center text-nowrap">
+                                        @if (row.HasWarning)
+                                        {
+                                            <span class="badge bg-warning text-dark me-1" title="@row.WarningMsg">
+                                                <i class="bi bi-exclamation-triangle"></i>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <i class="bi bi-check-circle-fill text-success me-1"></i>
+                                        }
+                                        @if (IsToday)
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                                                    title="Sửa dòng này (chỉ cho phép trong ngày)"
+                                                    @onclick="() => EditRow(row)">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted" title="Ngày cũ — cần quyền cao hơn để sửa">
+                                                <i class="bi bi-lock"></i>
+                                            </span>
+                                        }
+                                    </td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var log in _wtsLogs.Where(x => x.ProcessGroup == "GC" && x.NC == _selectedNC.NC && !x.IsVoided))
+                            }
+                            else
+                            {
+                                @* Dòng đang nhập *@
+                                <tr class="@(!string.IsNullOrEmpty(row.ErrorMsg) ? "table-danger bg-opacity-10" : "")">
+                                    @* T.Bắt đầu *@
+                                    <td>
+                                        <input type="time" class="form-control form-control-sm"
+                                               value="@row.StartTime.ToString("HH:mm")"
+                                               @onchange="e => OnTimeChanged(row, true, e.Value?.ToString())" />
+                                    </td>
+                                    @* T.Kết thúc *@
+                                    <td>
+                                        <input type="time" class="form-control form-control-sm"
+                                               value="@row.EndTime.ToString("HH:mm")"
+                                               @onchange="e => OnTimeChanged(row, false, e.Value?.ToString())" />
+                                    </td>
+                                    @* Phút tự tính *@
+                                    <td class="text-center fw-bold @(row.Minutes < 0 ? "text-danger" : "")">
+                                        @(row.Minutes >= 0 ? row.Minutes.ToString() : "!")
+                                    </td>
+                                    @* PO *@
+                                    <td>
+                                        <select class="form-select form-select-sm"
+                                                @onchange="e => OnPOChanged(row, e.Value?.ToString())">
+                                            <option value="">-- Không chọn PO --</option>
+                                            @foreach (var r in PriorityRows)
+                                            {
+                                                var label = $"{(r.Priority == "Gấp" ? "🔴 " : "")}{r.PurchaseOrder} — {r.PartNo} ({r.Quantity.ToString("0.##")} {r.Unit}, STD: {r.STD.ToString("dd/MM")})";
+                                                <option value="@r.PurchaseOrder">@label</option>
+                                            }
+                                        </select>
+                                    </td>
+                                    @* Part No — tự lấy từ PO đã chọn *@
+                                    <td>
+                                        <input class="form-control form-control-sm font-monospace text-danger bg-light"
+                                               value="@(row.PartNo ?? "—")" readonly />
+                                    </td>
+                                    @* NC / Mục — chỉ hiện khi có PO, lấy từ snapshot *@
+                                    <td>
+                                        @if (!string.IsNullOrEmpty(row.PO))
+                                        {
+                                            @if (row.AvailableNCs.Any())
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        @onchange="e => OnNCChanged(row, e.Value?.ToString())">
+                                                    <option value="">-- Chọn NC --</option>
+                                                    @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
+                                                    {
+                                                        var done = _qtySummaryCache.TryGetValue($"{row.KhPlanDetailId}|GC|{nc.NC}", out var d) ? d : 0m;
+                                                        var det = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+                                                        var remaining = (det?.Quantity ?? 0) - done;
+                                                        var isDone = remaining <= 0;
+                                                        var icon = isDone ? "✅" : (done > 0 ? "🟡" : "⬜");
+                                                        var lbl = isDone
+                                                            ? $"✅ NC{nc.NC} — ĐÃ ĐỦ SL ({det?.Quantity.ToString("0.##")} {det?.Unit})"
+                                                            : $"{icon} NC{nc.NC} — {nc.MachineRegistered ?? "?"} (còn {remaining.ToString("0.##")})";
+                                                        <option value="@nc.NC" disabled="@isDone">@lbl</option>
+                                                    }
+                                                    @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
+                                                    {
+                                                        <option value="@nc.NC">↩ DP: NC@nc.NC — @(nc.MachineRegistered ?? "?")</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted small fst-italic ps-1">← Chọn PO trước</span>
+                                        }
+                                    </td>
+                                    @* Mã WTS khác — chỉ hiện khi KHÔNG chọn PO, lọc theo nhóm *@
+                                    <td>
+                                        @if (string.IsNullOrEmpty(row.PO))
+                                        {
+                                            <select class="form-select form-select-sm"
+                                                    @onchange="e => OnWtsOtherChanged(row, e.Value?.ToString())">
+                                                <option value="">-- Chọn mã WTS --</option>
+                                                @foreach (var grp in WtsTasksForGroup.GroupBy(t => t.CategoryName))
+                                                {
+                                                    <optgroup label="@grp.Key">
+                                                        @foreach (var t in grp)
+                                                        {
+                                                            <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option>
+                                                        }
+                                                    </optgroup>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted small fst-italic ps-1">— (đã chọn PO)</span>
+                                        }
+                                    </td>
+                                    @* SL *@
+                                    <td>
+                                        <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
+                                               @bind="row.QtyDone" placeholder="0" />
+                                    </td>
+                                    @* Ghi chú *@
+                                    <td>
+                                        <input class="form-control form-control-sm"
+                                               @bind="row.Notes" placeholder="Ghi chú..." />
+                                    </td>
+                                    @* Thao tác *@
+                                    <td class="text-center text-nowrap">
+                                        <button class="btn btn-sm btn-success py-0 px-2 me-1"
+                                                @onclick="() => SaveRowAsync(row)"
+                                                title="Lưu dòng này">
+                                            <i class="bi bi-check-lg"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger py-0 px-2"
+                                                @onclick="() => RemoveRow(row)"
+                                                title="Xóa dòng">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                @if (!string.IsNullOrEmpty(row.ErrorMsg))
                                 {
-                                    <tr>
-                                        <td class="fw-semibold text-primary">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                        <td class="text-center fw-bold text-success">@log.QtyDone.ToString("0.##")</td>
-                                        <td>@(log.MachineUsed ?? "—")</td>
-                                        <td class="text-center">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                        <td class="text-center">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                        <td class="text-end">@FmtTime(log.SetupTime_Actual)</td>
-                                        <td class="text-end">@FmtTime(log.MachiningTime_Actual)</td>
-                                        <td class="text-end">@FmtTime(log.InspectionTime_Actual)</td>
-                                        <td class="text-muted">@log.Notes</td>
+                                    <tr class="table-danger">
+                                        <td colspan="9" class="small text-danger py-1 ps-3">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>@row.ErrorMsg
+                                        </td>
                                     </tr>
                                 }
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            }
-        }
-    }
+                            }
+                        }
+                        @if (!_rows.Any())
+                        {
+                            <tr>
+                                <td colspan="9" class="text-center text-muted py-3 fst-italic">
+                                    Chưa có dòng nào. Bấm "Thêm dòng" để bắt đầu ghi WTS.
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
     private bool _canSubmit;
     private User? _currentWorker;
     private int _currentUserId;
+    private Dictionary<string, (bool CanView, bool CanEdit)> _perms = new();
+
+    private DateTime _workDate = DateTime.Today;
 
     // Data
-    private List<KhPlanDetailRow>? _rows;
-    private List<WtsProductionLog> _wtsLogs = new();
-    private Dictionary<string, decimal> _qtySummary = new();
+    private List<KhPlanDetailRow> _allRows = new(); // tất cả phiếu KH
+    private List<StandardWtsTask> _wtsTasks = new(); // tất cả WTS active
+    private string _groupCode = ""; // GroupCode của công nhân hiện tại
 
-    // Selection
-    private KhPlanDetailRow? _selectedDetail;
-    private RouteSnapshotData? _snapshot;
-    private KhPlanRouteSnapshotMachining? _selectedNC;
+    /// <summary>
+    /// Danh sách WTS tasks lọc theo nhóm công nhân.
+    /// PRODUCTION → GC + KT_NC
+    /// FINISHING → TARO + BAVIA + RUA
+    /// QC → KCS
+    /// ADMIN/TECHNICAL → tất cả
+    /// </summary>
+    private IEnumerable<StandardWtsTask> WtsTasksForGroup
+    {
+        get
+        {
+            var result = new List<StandardWtsTask>();
+            var isAdmin = _groupCode == "ADMIN";
 
-    // Filter
-    private string _searchPO = "";
-    private string _filterStatus = "";
+            // Lọc WTS theo quyền được cấp — không hardcode GroupCode
+            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsGc, out var g) && g.CanView))
+                result.AddRange(_wtsTasks.Where(t => t.CategoryCode is "GIA CÔNG" or "KT_NC"));
 
-    // Form
-    private WtsForm _form = new();
-    private bool _saving;
-    private bool _savedOk;
-    private string? _error;
+            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView))
+                result.AddRange(_wtsTasks.Where(t => t.CategoryCode is "TARO" or "BAVIA" or "RUA"));
+
+            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsKcs, out var k) && k.CanView))
+                result.AddRange(_wtsTasks.Where(t => t.CategoryCode == "KCS"));
+
+            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView))
+                result.AddRange(_wtsTasks.Where(t => t.CategoryCode == "DONG_GOI"));
+
+            return result.DistinctBy(t => t.TaskId);
+        }
+    }
+
+    /// <summary>
+    /// Danh sách PO cho công nhân chọn — sort ưu tiên.
+    /// Gate 1: Chỉ hiện phiếu đã có snapshot quy trình (bật _showWithoutSnapshot để bypass).
+    /// Gate 2: Chỉ hiện phiếu nhóm này đã nhận hàng từ giao nhận (bật _showWithoutHandover để bypass).
+    /// </summary>
+    private IEnumerable<KhPlanDetailRow> PriorityRows => _allRows
+        .Where(r => _showWithoutSnapshot || _hasSnapshotForGroup.Contains(r.KhPlanDetailId))
+        .Where(r => _showWithoutHandover  || _hasReceivedForGroup.Contains(r.KhPlanDetailId))
+        .OrderBy(r => r.Priority == "Gấp" ? 0 : 1)
+        .ThenBy(r => r.STD)
+        .ThenBy(r => r.PurchaseOrder);
+
+    // Toggle hiển thị phiếu chưa có snapshot — mặc định OFF
+    private bool _showWithoutSnapshot = false;
+
+    // Toggle hiển thị phiếu chưa có hàng giao nhận — mặc định OFF
+    private bool _showWithoutHandover = false;
+
+    // Set các KhPlanDetailId mà nhóm này đã nhận hàng (từ HandoverReceives)
+    private HashSet<int> _hasReceivedForGroup = new();
+
+    // GroupCode handover tương ứng với quyền WTS của công nhân
+    private string HandoverGroupCode
+    {
+        get
+        {
+            if (_groupCode == "ADMIN") return "GC"; // admin thấy hết
+            if (_perms.TryGetValue(SystemPermissions.WtsGc,      out var g) && g.CanView) return "GC";
+            if (_perms.TryGetValue(SystemPermissions.WtsHtsp,    out var h) && h.CanView) return "HTSP";
+            if (_perms.TryGetValue(SystemPermissions.WtsKcs,     out var k) && k.CanView) return "KCS";
+            if (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView) return "PKG";
+            return "GC";
+        }
+    }
+
+    private bool IsToday => _workDate.Date == DateTime.Today;
+
+    // Cache: KhPlanDetailId → có snapshot phù hợp với nhóm không
+    private HashSet<int> _hasSnapshotForGroup = new();
+
+    // Snapshot cache: PO → list NC
+    private Dictionary<string, List<KhPlanRouteSnapshotMachining>> _snapshotCache = new();
+    private Dictionary<string, decimal> _qtySummaryCache = new(); // "detailId|NC" → qty done
+
+    // Cache: KhPlanDetailId → SL đã nhận vào nhóm này (từ HandoverReceives)
+    // Dùng để giới hạn SL tối đa trong CheckQtyWarning
+    private Dictionary<int, decimal> _receivedOkCache = new();
+
+    // Timeline rows
+    private List<WtsRow> _rows = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -387,171 +413,486 @@ else
         var userIdStr = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!int.TryParse(userIdStr, out _currentUserId)) return;
 
-        // Load user + group
         _currentWorker = await Db.Users
             .Include(u => u.Group)
             .FirstOrDefaultAsync(u => u.UserId == _currentUserId);
 
-        // Xác định quyền submit WTS
         var gc = _currentWorker?.Group?.GroupCode ?? "";
-        _canSubmit = gc is "PRODUCTION" or "ADMIN" or "TECHNICAL";
+        _groupCode = gc;
+
+        // Load permissions từ bảng phân quyền — không hardcode GroupCode
+        _perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+        _canSubmit = _perms.TryGetValue(SystemPermissions.WtsGc,      out var p1) && p1.CanView
+                  || _perms.TryGetValue(SystemPermissions.WtsHtsp,    out var p2) && p2.CanView
+                  || _perms.TryGetValue(SystemPermissions.WtsKcs,     out var p3) && p3.CanView
+                  || _perms.TryGetValue(SystemPermissions.WtsDongGoi, out var p4) && p4.CanView
+                  || gc == "ADMIN";
 
         if (_canSubmit)
         {
-            // Load danh sách phiếu KH
-            _rows = await KhSvc.GetDetailRowsAsync();
+            _allRows  = await KhSvc.GetDetailRowsAsync();
+            _wtsTasks = await WtsSvc.GetAllActiveAsync();
 
-            // Pre-fill máy và thời gian
-            _form.StartTime = DateTime.Now.AddHours(-1);
-            _form.EndTime = DateTime.Now;
+            // Build danh sách phiếu có snapshot phù hợp nhóm
+            await BuildSnapshotFilterAsync();
+
+            // Build danh sách phiếu nhóm này đã nhận hàng (handover gate)
+            await BuildHandoverFilterAsync();
+
+            await LoadSavedRowsAsync();
+            AddRow();
         }
     }
 
-    private IEnumerable<KhPlanDetailRow> FilteredRows
+    // ── Filter phiếu theo nhóm công nhân ─────────────────────
+    private async Task BuildSnapshotFilterAsync()
     {
-        get
+        _hasSnapshotForGroup.Clear();
+        if (!_allRows.Any()) return;
+
+        var detailIds = _allRows.Select(r => r.KhPlanDetailId).ToList();
+
+        // Query theo nhóm — chỉ lấy phiếu có snapshot phù hợp
+        List<int> withSnap;
+
+        var isAdminOrTech = _groupCode is "ADMIN" or "TECHNICAL";
+        if (isAdminOrTech)
         {
-            if (_rows == null) return Enumerable.Empty<KhPlanDetailRow>();
-            var q = _rows.AsEnumerable();
-
-            if (!string.IsNullOrEmpty(_filterStatus))
-                q = q.Where(r => r.Status == _filterStatus);
-
-            if (!string.IsNullOrEmpty(_searchPO))
-            {
-                var s = _searchPO.Trim().ToLowerInvariant();
-                q = q.Where(r =>
-                    r.PurchaseOrder.ToLowerInvariant().Contains(s) ||
-                    r.PartNo.ToLowerInvariant().Contains(s) ||
-                    r.PlanNo.ToLowerInvariant().Contains(s));
-            }
-
-            return q.OrderBy(r => r.STD);
+            // Thấy tất cả phiếu có bất kỳ snapshot nào
+            withSnap = await Db.KhPlanRouteSnapshotMachining
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
         }
-    }
-
-    private async Task SelectDetail(KhPlanDetailRow row)
-    {
-        _selectedDetail = row;
-        _selectedNC = null;
-        _savedOk = false;
-        _error = null;
-
-        // Load snapshot và WTS logs
-        _snapshot = await KhSvc.GetRouteSnapshotAsync(row.KhPlanDetailId);
-        _wtsLogs = await KhSvc.GetWtsLogsAsync(row.KhPlanDetailId);
-        _qtySummary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId);
-        ResetForm();
-    }
-
-    private void SelectNC(KhPlanRouteSnapshotMachining nc)
-    {
-        _selectedNC = nc;
-        _savedOk = false;
-        _error = null;
-        // Pre-fill máy đăng ký nếu chưa nhập
-        if (string.IsNullOrEmpty(_form.MachineUsed))
-            _form.MachineUsed = nc.MachineRegistered ?? "";
-    }
-
-    private async Task SubmitWtsAsync()
-    {
-        _error = null;
-        _savedOk = false;
-
-        // Validate
-        if (_selectedDetail == null || _selectedNC == null) return;
-        if (_form.QtyDone <= 0) { _error = "SL chạy phải > 0"; return; }
-        if (string.IsNullOrWhiteSpace(_form.MachineUsed)) { _error = "Nhập mã máy dùng"; return; }
-        if (_form.EndTime <= _form.StartTime) { _error = "T.Hoàn thành phải sau T.Bắt đầu"; return; }
-
-        // Validate không vượt SL
-        var alreadyDone = _qtySummary.TryGetValue($"GC|{_selectedNC.NC}", out var ad) ? ad : 0m;
-        if (alreadyDone + _form.QtyDone > _selectedDetail.Quantity)
+        else if (_perms.TryGetValue(SystemPermissions.WtsGc, out var wg) && wg.CanView)
         {
-            _error = $"Tổng SL sẽ vượt quá SL kế hoạch ({_selectedDetail.Quantity}). " +
-                     $"Đã hoàn thành: {alreadyDone}, đang nhập: {_form.QtyDone}";
+            withSnap = await Db.KhPlanRouteSnapshotMachining
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+        }
+        else if (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var wh) && wh.CanView)
+        {
+            var taro  = await Db.KhPlanRouteSnapshotTaro
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+            var bavia = await Db.KhPlanRouteSnapshotBavia
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+            var rua   = await Db.KhPlanRouteSnapshotWashing
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+            withSnap  = taro.Union(bavia).Union(rua).ToList();
+        }
+        else if (_perms.TryGetValue(SystemPermissions.WtsKcs, out var wk) && wk.CanView)
+        {
+            withSnap = await Db.KhPlanRouteSnapshotInspection
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+        }
+        else if (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var wd) && wd.CanView)
+        {
+            withSnap = await Db.KhPlanRouteSnapshotPackaging
+                .Where(s => detailIds.Contains(s.KhPlanDetailId))
+                .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
+        }
+        else
+        {
+            withSnap = new List<int>();
+        }
+
+        foreach (var id in withSnap)
+            _hasSnapshotForGroup.Add(id);
+    }
+
+    // ── Build handover gate: phiếu nhóm này đã nhận hàng ────
+    private async Task BuildHandoverFilterAsync()
+    {
+        _hasReceivedForGroup.Clear();
+        if (!_allRows.Any()) return;
+
+        var detailIds = _allRows.Select(r => r.KhPlanDetailId).ToList();
+        var groupCode = HandoverGroupCode;
+
+        // Admin thấy tất cả — không cần filter
+        if (_groupCode == "ADMIN")
+        {
+            foreach (var id in detailIds) _hasReceivedForGroup.Add(id);
             return;
         }
 
-        _saving = true;
-        try
+        var receivedIds = await HandoverSvc.GetDetailIdsWithReceivedAsync(detailIds, groupCode);
+        _hasReceivedForGroup = receivedIds;
+    }
+
+    // ── Load dòng đã lưu trong ngày ─────────────────────────
+    private async Task LoadSavedRowsAsync()
+    {
+        var start = _workDate.Date;
+        var end   = start.AddDays(1);
+        var workDate = DateOnly.FromDateTime(_workDate);
+
+        // Loại 1: WtsProductionLogs (link PO/NC)
+        var prodLogs = await Db.WtsProductionLogs
+            .Include(x => x.Worker)
+            .Where(x => x.WorkerId == _currentUserId
+                     && x.StartTime >= start && x.StartTime < end
+                     && !x.IsVoided)
+            .OrderBy(x => x.StartTime)
+            .AsNoTracking()
+            .ToListAsync();
+
+        // Loại 2: WorkerActivityLogs (không link PO)
+        var actLogs = await Db.WorkerActivityLogs
+            .Where(x => x.WorkerId == _currentUserId
+                     && x.WorkDate == workDate
+                     && !x.IsVoided)
+            .OrderBy(x => x.StartTime)
+            .AsNoTracking()
+            .ToListAsync();
+
+        // Gộp và sắp theo StartTime
+        var rows = new List<WtsRow>();
+
+        foreach (var log in prodLogs)
         {
-            var log = new WtsProductionLog
+            var po = _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.KhPlanDetailId)?.PurchaseOrder;
+            rows.Add(new WtsRow
             {
-                KhPlanDetailId        = _selectedDetail.KhPlanDetailId,
-                ProcessGroup          = "GC",
-                NC                    = _selectedNC.NC,
-                WorkerId              = _currentUserId,
-                MachineUsed           = _form.MachineUsed.Trim(),
-                QtyDone               = _form.QtyDone,
-                StartTime             = _form.StartTime,
-                EndTime               = _form.EndTime,
-                SetupTime_Actual      = _form.SetupTime_Actual,
-                MachiningTime_Actual  = _form.MachiningTime_Actual,
-                InspectionTime_Actual = _form.InspectionTime_Actual,
-                PreparationTime_Actual= _form.PreparationTime_Actual,
-                TrialRunTime_Actual   = _form.TrialRunTime_Actual,
-                Notes                 = _form.Notes,
-                CreatedAt             = DateTime.Now,
-                IsVoided              = false,
-            };
-
-            Db.WtsProductionLogs.Add(log);
-            await Db.SaveChangesAsync();
-
-            // Reload summary
-            _wtsLogs = await KhSvc.GetWtsLogsAsync(_selectedDetail.KhPlanDetailId);
-            _qtySummary = await KhSvc.GetWtsQtySummaryAsync(_selectedDetail.KhPlanDetailId);
-
-            _savedOk = true;
-            ResetForm();
+                WtsLogId       = log.WtsLogId,
+                KhPlanDetailId = log.KhPlanDetailId,
+                StartTime      = log.StartTime,
+                EndTime        = log.EndTime,
+                PO             = po,
+                NC             = log.NC,
+                PartNo         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.KhPlanDetailId)?.PartNo,
+                WtsCode        = null,
+                WtsName        = null,
+                QtyDone        = log.QtyDone,
+                Notes          = log.Notes,
+                Saved          = true,
+            });
         }
-        catch (Exception ex)
+
+        foreach (var log in actLogs)
         {
-            _error = "Lỗi khi lưu: " + ex.Message;
+            rows.Add(new WtsRow
+            {
+                ActivityLogId = log.ActivityLogId,
+                StartTime     = log.StartTime,
+                EndTime       = log.EndTime,
+                PO            = null,
+                NC            = null,
+                WtsCode       = log.WtsCode,
+                WtsName       = log.WtsName,
+                QtyDone       = 0,
+                Notes         = log.Notes,
+                Saved         = true,
+            });
         }
-        finally
+
+        _rows = rows.OrderBy(r => r.StartTime).ToList();
+    }
+
+    private async Task OnWorkDateChanged()
+    {
+        _rows.Clear();
+        await LoadSavedRowsAsync();
+        AddRow();
+    }
+
+    // ── Thêm dòng mới ────────────────────────────────────────
+    private void AddRow()
+    {
+        if (!IsToday) return; // Không cho thêm dòng ngày cũ
+        var lastEnd = _rows.LastOrDefault()?.EndTime
+                      ?? _workDate.Date.AddHours(8);
+        _rows.Add(new WtsRow
         {
-            _saving = false;
+            StartTime = lastEnd,
+            EndTime   = lastEnd.AddHours(2),
+        });
+    }
+
+    private void RemoveRow(WtsRow row) => _rows.Remove(row);
+
+    /// <summary>
+    /// Void dòng đã lưu trong ngày + mở lại để sửa.
+    /// Cơ chế: đánh dấu Saved=false, giữ WtsLogId/ActivityLogId để void khi save lại.
+    /// </summary>
+    private void EditRow(WtsRow row)
+    {
+        if (!IsToday) return;
+        row.Saved    = false;
+        row.IsEditing = true; // đánh dấu đang sửa (sẽ void + tạo mới khi save)
+    }
+
+    // ── Time input ────────────────────────────────────────────
+    private void OnTimeChanged(WtsRow row, bool isStart, string? val)
+    {
+        if (string.IsNullOrEmpty(val)) return;
+        if (!TimeSpan.TryParse(val, out var ts)) return;
+        var dt = _workDate.Date.Add(ts);
+        if (isStart) row.StartTime = dt;
+        else         row.EndTime   = dt;
+    }
+
+    // ── PO chọn → load NC từ snapshot ────────────────────────
+    private async Task OnPOChanged(WtsRow row, string? po)
+    {
+        row.PO = po;
+        row.NC = null;
+        row.PartNo = null;
+        row.WtsCode = null;
+        row.WtsName = null;
+        row.AvailableNCs.Clear();
+        row.KhPlanDetailId = null;
+
+        if (string.IsNullOrEmpty(po)) return;
+
+        var detail = _allRows.FirstOrDefault(r => r.PurchaseOrder == po);
+        if (detail == null) return;
+        row.KhPlanDetailId = detail.KhPlanDetailId;
+        row.PartNo = detail.PartNo;
+
+        // Load snapshot NC
+        if (!_snapshotCache.ContainsKey(po))
+        {
+            var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
+            _snapshotCache[po] = snap.Machining;
+        }
+        row.AvailableNCs = _snapshotCache[po];
+
+        // Load qty summary
+        var key = detail.KhPlanDetailId.ToString();
+        if (!_qtySummaryCache.ContainsKey(key))
+        {
+            var summary = await KhSvc.GetWtsQtySummaryAsync(detail.KhPlanDetailId);
+            foreach (var kv in summary)
+                _qtySummaryCache[$"{detail.KhPlanDetailId}|{kv.Key}"] = kv.Value;
+        }
+
+        // Load SL đã nhận vào nhóm này từ giao nhận — dùng để giới hạn SL tối đa khi nhập WTS
+        if (!_receivedOkCache.ContainsKey(detail.KhPlanDetailId))
+        {
+            var groupCode = HandoverGroupCode;
+            var receivedOk = await HandoverSvc.GetReceivedOkAsync(detail.KhPlanDetailId, groupCode);
+            _receivedOkCache[detail.KhPlanDetailId] = receivedOk > 0 ? receivedOk : detail.Quantity;
         }
     }
 
-    private void ResetForm()
+    private void OnNCChanged(WtsRow row, string? nc)
     {
-        _form = new WtsForm
-        {
-            StartTime = DateTime.Now.AddHours(-1),
-            EndTime   = DateTime.Now,
-            MachineUsed = _selectedNC?.MachineRegistered ?? ""
-        };
+        row.NC      = nc;
+        row.WtsCode = null; // NC và WtsCode loại trừ nhau
+        row.WtsName = null;
+        CheckQtyWarning(row);
     }
 
-    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.#") : "—";
-
-    private string GetStatusColor(string status) => status switch
+    private void OnWtsOtherChanged(WtsRow row, string? code)
     {
-        "WaitingSupplierOrder" => "info",
-        "Ordered"              => "primary",
-        "PartialReceived"      => "primary",
-        "FullyReceived"        => "success",
-        "InProduction"         => "success",
-        "Completed"            => "success",
-        "Cancelled"            => "secondary",
-        _                      => "secondary"
-    };
+        row.WtsCode = code;
+        row.WtsName = _wtsTasks.FirstOrDefault(t => t.TaskCode == code)?.TaskName;
+    }
 
-    public class WtsForm
+    private void CheckQtyWarning(WtsRow row)
     {
+        row.HasWarning  = false;
+        row.WarningMsg  = null;
+        if (row.KhPlanDetailId == null || string.IsNullOrEmpty(row.NC)) return;
+
+        var detail = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+        if (detail == null) return;
+
+        var cacheKey = $"{row.KhPlanDetailId}|GC|{row.NC}";
+        var done = _qtySummaryCache.TryGetValue(cacheKey, out var d) ? d : 0m;
+
+        // Giới hạn tối đa = SL nhóm này đã nhận từ giao nhận (không phải Quantity KH)
+        // Nếu chưa có cache handover thì dùng Quantity KH làm fallback
+        var receivedOk = _receivedOkCache.TryGetValue(row.KhPlanDetailId!.Value, out var ro) ? ro : detail.Quantity;
+        var remaining  = receivedOk - done;
+
+        if (remaining <= 0)
+        {
+            row.HasWarning = true;
+            row.WarningMsg = $"NC {row.NC} đã hoàn thành đủ SL nhận ({receivedOk} {detail.Unit}). Kiểm tra lại.";
+        }
+        else if (row.QtyDone > remaining)
+        {
+            row.HasWarning = true;
+            row.WarningMsg = $"SL nhập ({row.QtyDone}) vượt quá SL còn lại ({remaining} {detail.Unit}). Cảnh báo!";
+        }
+    }
+
+    // ── Lưu 1 dòng ───────────────────────────────────────────
+    private async Task SaveRowAsync(WtsRow row)
+    {
+        row.ErrorMsg = null;
+
+        if (!IsToday)
+        { row.ErrorMsg = "Chỉ được nhập WTS cho ngày hôm nay. Ngày cũ cần quyền cao hơn."; return; }
+
+        // Validate chung
+        if (row.Minutes <= 0)
+        { row.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu"; return; }
+
+        if (string.IsNullOrEmpty(row.NC) && string.IsNullOrEmpty(row.WtsCode))
+        { row.ErrorMsg = "Chọn NC (nếu có PO) hoặc Mã WTS khác"; return; }
+
+        // Nếu đang sửa dòng cũ → void record cũ trước
+        if (row.IsEditing)
+        {
+            if (row.WtsLogId.HasValue)
+            {
+                await Db.Database.ExecuteSqlRawAsync(
+                    "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
+                    _currentUserId, DateTime.Now, row.WtsLogId.Value);
+            }
+            if (row.ActivityLogId.HasValue)
+            {
+                await Db.Database.ExecuteSqlRawAsync(
+                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
+                    _currentUserId, DateTime.Now, row.ActivityLogId.Value);
+            }
+            row.WtsLogId      = null;
+            row.ActivityLogId = null;
+            row.IsEditing     = false;
+        }
+
+        // ── Loại 1: Có NC → link PO → WtsProductionLog ──────
+        if (!string.IsNullOrEmpty(row.NC))
+        {
+            if (row.KhPlanDetailId == null)
+            { row.ErrorMsg = "Chọn PO để link với NC"; return; }
+
+            CheckQtyWarning(row);
+
+            // Block save nếu SL vượt hoặc NC đã đủ
+            if (row.HasWarning && row.WarningMsg != null && row.WarningMsg.Contains("vượt"))
+            { row.ErrorMsg = row.WarningMsg; return; }
+            if (row.HasWarning && row.WarningMsg != null && row.WarningMsg.Contains("đủ SL"))
+            { row.ErrorMsg = row.WarningMsg + " Chọn NC khác hoặc kiểm tra lại."; return; }
+
+            try
+            {
+                var log = new WtsProductionLog
+                {
+                    KhPlanDetailId        = row.KhPlanDetailId.Value,
+                    ProcessGroup          = "GC",
+                    NC                    = row.NC,
+                    WtsCode               = null,
+                    WorkerId              = _currentUserId,
+                    MachineUsed           = null,
+                    QtyDone               = row.QtyDone,
+                    StartTime             = row.StartTime,
+                    EndTime               = row.EndTime,
+                    Notes                 = row.Notes,
+                    CreatedAt             = DateTime.Now,
+                    IsVoided              = false,
+                };
+                Db.WtsProductionLogs.Add(log);
+                await Db.SaveChangesAsync();
+                row.WtsLogId = log.WtsLogId;
+                Db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
+
+                // Reload qty cache
+                var summary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId.Value);
+                foreach (var kv in summary)
+                    _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
+            }
+            catch (Exception ex) { row.ErrorMsg = "Lỗi khi lưu: " + ex.Message; return; }
+        }
+        // ── Loại 2: Mã WTS khác (không link PO) → WorkerActivityLog ──
+        else
+        {
+            try
+            {
+                var actLog = new WorkerActivityLog
+                {
+                    WorkerId  = _currentUserId,
+                    WorkDate  = DateOnly.FromDateTime(_workDate),
+                    StartTime = row.StartTime,
+                    EndTime   = row.EndTime,
+                    WtsCode   = row.WtsCode,
+                    WtsName   = row.WtsName,
+                    Notes     = row.Notes,
+                    CreatedAt = DateTime.Now,
+                    IsVoided  = false,
+                };
+                Db.WorkerActivityLogs.Add(actLog);
+                await Db.SaveChangesAsync();
+                row.ActivityLogId = actLog.ActivityLogId;
+                Db.ChangeTracker.Clear();
+            }
+            catch (Exception ex) { row.ErrorMsg = "Lỗi khi lưu: " + ex.Message; return; }
+        }
+
+        row.Saved = true;
+
+        // Reload lại toàn bộ: danh sách dòng đã lưu + qty summary cho tất cả PO
+        var unsavedRows = _rows.Where(r => !r.Saved).ToList();
+        await LoadSavedRowsAsync();
+        // Giữ lại các dòng chưa lưu
+        _rows.AddRange(unsavedRows);
+
+        // Reload qty summary cho tất cả PO đang có trong session
+        _qtySummaryCache.Clear();
+        foreach (var po in _rows.Where(r => r.KhPlanDetailId.HasValue)
+                                 .Select(r => r.KhPlanDetailId!.Value)
+                                 .Distinct())
+        {
+            var sum = await KhSvc.GetWtsQtySummaryAsync(po);
+            foreach (var kv in sum)
+                _qtySummaryCache[$"{po}|{kv.Key}"] = kv.Value;
+        }
+
+        // Reload receivedOk cache cho PO vừa lưu
+        if (row.KhPlanDetailId.HasValue)
+        {
+            var grp = HandoverGroupCode;
+            var ro  = await HandoverSvc.GetReceivedOkAsync(row.KhPlanDetailId.Value, grp);
+            var det = _allRows.FirstOrDefault(d => d.KhPlanDetailId == row.KhPlanDetailId.Value);
+            _receivedOkCache[row.KhPlanDetailId.Value] = ro > 0 ? ro : (det?.Quantity ?? ro);
+        }
+
+        // Reload snapshot cache cho các PO đang dùng
+        foreach (var r in _rows.Where(r => !string.IsNullOrEmpty(r.PO) && r.KhPlanDetailId.HasValue && !r.Saved))
+        {
+            if (!_snapshotCache.ContainsKey(r.PO!))
+            {
+                var snap = await KhSvc.GetRouteSnapshotAsync(r.KhPlanDetailId!.Value);
+                _snapshotCache[r.PO!] = snap.Machining;
+                r.AvailableNCs = snap.Machining;
+            }
+        }
+
+        AddRow(); // mở sẵn dòng trống tiếp theo
+    }
+
+    // ── Classes ───────────────────────────────────────────────
+    public class WtsRow
+    {
+        public long? WtsLogId      { get; set; } // WtsProductionLog
+        public long? ActivityLogId { get; set; } // WorkerActivityLog
+        public int? KhPlanDetailId { get; set; }
+
+        public DateTime StartTime { get; set; }
+        public DateTime EndTime   { get; set; }
+        public int Minutes => EndTime > StartTime ? (int)(EndTime - StartTime).TotalMinutes : -1;
+
+        public string? PO      { get; set; }
+        public string? PartNo  { get; set; } // Tự lấy từ KhPlanDetailRow khi chọn PO
+        public string? NC      { get; set; }
+        public string? WtsCode { get; set; }
+        public string? WtsName { get; set; }
+
+        public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
+
         public decimal QtyDone { get; set; }
-        public string MachineUsed { get; set; } = "";
-        public DateTime StartTime { get; set; } = DateTime.Now.AddHours(-1);
-        public DateTime EndTime { get; set; } = DateTime.Now;
-        public decimal? SetupTime_Actual { get; set; }
-        public decimal? MachiningTime_Actual { get; set; }
-        public decimal? InspectionTime_Actual { get; set; }
-        public decimal? PreparationTime_Actual { get; set; }
-        public decimal? TrialRunTime_Actual { get; set; }
-        public string? Notes { get; set; }
+        public string? Notes   { get; set; }
+
+        public bool    Saved      { get; set; }
+        public bool    IsEditing  { get; set; } // đang sửa dòng cũ → void + tạo mới khi save
+        public string? ErrorMsg   { get; set; }
+        public bool    HasWarning { get; set; }
+        public string? WarningMsg { get; set; }
     }
 }
