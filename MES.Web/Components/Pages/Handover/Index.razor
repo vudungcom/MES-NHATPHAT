@@ -233,10 +233,9 @@ else
                     {
                         <div class="p-2 border rounded bg-light" style="font-size:13px">
                             <strong>@GetGroupLabel(_issueFromGroupOptions[0].Code)</strong>
-                            @if (_issueFromGroupOptions[0].Remaining > 0)
-                            {
-                                <span class="text-muted ms-2 small">còn lại: @_issueFromGroupOptions[0].Remaining.ToString("0.##")</span>
-                            }
+                            <span class="text-muted ms-2 small">
+                                còn lại: @_issueFromGroupOptions[0].Remaining.ToString("0.##")
+                            </span>
                         </div>
                     }
                     else if (_issueFromGroupOptions.Count > 1)
@@ -255,7 +254,11 @@ else
                     }
                     else
                     {
-                        <div class="alert alert-info py-1 small">Không có nhóm nào để giao.</div>
+                        <div class="alert alert-warning py-1 small">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Tài khoản chưa được phân quyền nhóm Giao nhận. Liên hệ Admin cấp quyền HANDOVER_*.
+
+                        </div>
                     }
                 </div>
 
@@ -988,9 +991,10 @@ else
         _issueNotes     = "";
         _modalError     = "";
 
+        // Hiện tất cả nhóm user có quyền — không filter Remaining
+        // Service sẽ validate đủ hàng khi bấm Xác nhận
         _issueFromGroupOptions = _myEditGroups
             .Select(grp => new IssueGroupOption(grp, GetGroupLabel(grp), GetGroupRemaining(row, grp)))
-            .Where(o => o.Remaining > 0)
             .ToList();
 
         if (_issueFromGroupOptions.Count == 1)
