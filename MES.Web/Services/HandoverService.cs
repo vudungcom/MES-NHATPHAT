@@ -38,17 +38,22 @@ namespace MES.Web.Services
         /// <summary>NG bên nhận báo lại — hiện ở cột NG của nhóm giao</summary>
         public decimal NgReturned { get; set; }
 
-        /// <summary>SL công nhân đã làm xong (WtsProductionLogs.QtyDone)</summary>
+        /// <summary>SL công nhân đã làm xong NC cuối (WtsProductionLogs.QtyDone)</summary>
         public decimal WtsDone { get; set; }
 
-        /// <summary>SL đã giao đi từ nhóm này sang nhóm tiếp</summary>
+        /// <summary>SL đã giao đi từ nhóm này sang nhóm tiếp (đã được xác nhận nhận)</summary>
         public decimal IssuedOut { get; set; }
 
         /// <summary>
-        /// Còn tồn tại nhóm = ReceivedOk - NgReturned - IssuedOut
-        /// Đây là SL đã nhận nhưng chưa xử lý / chưa giao đi
+        /// Còn lại để giao sang nhóm tiếp:
+        /// - GC: WtsDone (NC cuối) - IssuedOut — chỉ giao được số đã hoàn thành NC cuối
+        /// - Nhóm khác: ReceivedOk - NgReturned - IssuedOut
+        /// Cờ IsGc được set bởi CalcGroupQty
         /// </summary>
-        public decimal Remaining => Math.Max(0, ReceivedOk - NgReturned - IssuedOut);
+        public bool    IsGc      { get; set; }
+        public decimal Remaining => IsGc
+            ? Math.Max(0, WtsDone - IssuedOut)
+            : Math.Max(0, ReceivedOk - NgReturned - IssuedOut);
     }
 
     public class HandoverTxPending
@@ -91,7 +96,7 @@ namespace MES.Web.Services
     }
 
     // ── Internal DTO ──────────────────────────────────────────────────────────
-    internal record WtsDoneItem(int KhPlanDetailId, string ProcessGroup, string? NC, int StepOrder, decimal QtyDone);
+    internal record WtsDoneItem(int KhPlanDetailId, string ProcessGroup, string? NC, int StepOrder, int MaxSnapshotStep, decimal QtyDone);
 
     /// <summary>NC option cho modal Giao — chọn NC nguồn khi giao inter-group</summary>
     public class NcOption
@@ -191,10 +196,15 @@ namespace MES.Web.Services
                 .GroupBy(s => new { s.KhPlanDetailId, s.NC })
                 .ToDictionary(g => (g.Key.KhPlanDetailId, g.Key.NC ?? ""), g => g.Max(x => x.StepOrder));
 
+            // Max StepOrder trong snapshot per detail (NC cuối của toàn quy trình)
+            var maxSnapshotStepPerDetail = gcSnapshots
+                .GroupBy(s => s.KhPlanDetailId)
+                .ToDictionary(g => g.Key, g => g.Max(x => x.StepOrder));
+
             var wtsLogs = wtsRaw.Select(w => new WtsDoneItem(
                 w.KhPlanDetailId, w.ProcessGroup, w.NC,
-                // Lấy StepOrder từ snapshot, nếu không có thì 0
                 ncStepOrder.TryGetValue((w.KhPlanDetailId, w.NC ?? ""), out var so) ? so : 0,
+                maxSnapshotStepPerDetail.TryGetValue(w.KhPlanDetailId, out var ms) ? ms : 0,
                 w.QtyDone
             )).ToList();
 
@@ -289,13 +299,22 @@ namespace MES.Web.Services
             {
                 var groupLogs = wts.Where(w => wtsProcessGroups.Contains(w.ProcessGroup)).ToList();
 
-                if (groupCode == "GC" && groupLogs.Any())
+                if (groupCode == "GC")
                 {
-                    // Lấy NC có StepOrder cao nhất
-                    var maxStep = groupLogs.Max(w => w.StepOrder);
-                    qty.WtsDone = groupLogs
-                        .Where(w => w.StepOrder == maxStep)
-                        .Sum(w => w.QtyDone);
+                    // WTS OK = QtyDone của NC có StepOrder = MaxSnapshotStep (NC cuối toàn quy trình)
+                    // MaxSnapshotStep được lưu trong từng WtsDoneItem
+                    // Nếu chưa có WTS ở NC cuối → WtsDone = 0 (chưa hoàn thành quy trình)
+                    if (groupLogs.Any())
+                    {
+                        // Lấy max snapshot step từ bất kỳ item nào (cùng detail → cùng giá trị)
+                        var maxSnapshotStep = groupLogs.Max(w => w.MaxSnapshotStep);
+
+                        // Chỉ lấy WTS của NC cuối
+                        var lastNcLogs = groupLogs.Where(w => w.StepOrder == maxSnapshotStep).ToList();
+
+                        // Nếu NC cuối chưa có WTS → WtsDone = 0
+                        qty.WtsDone = lastNcLogs.Any() ? lastNcLogs.Sum(w => w.QtyDone) : 0;
+                    }
                 }
                 else
                 {
@@ -303,6 +322,7 @@ namespace MES.Web.Services
                 }
             }
 
+            if (groupCode == "GC") qty.IsGc = true;
             return qty;
         }
 
@@ -766,17 +786,50 @@ namespace MES.Web.Services
         // ----------------------------------------------------------------
         public async Task<decimal> GetRemainingAsync(int khPlanDetailId, string groupCode)
         {
-            decimal receivedOk;
+            decimal baseQty;
 
             if (groupCode == "KHO")
             {
-                receivedOk = (decimal)(await _db.KhoVatLieus
+                // Kho: SL thực nhận từ KhoVatLieu
+                baseQty = (decimal)(await _db.KhoVatLieus
                     .Where(k => k.PlanDetailId == (long)khPlanDetailId && k.IsActive)
                     .SumAsync(k => (int?)k.SoLuongThucNhan) ?? 0);
             }
+            else if (groupCode == "GC")
+            {
+                // GC: chỉ được giao số lượng đã hoàn thành NC cuối cùng (WTS OK)
+                // Lấy NC cuối từ snapshot
+                var maxStep = await _db.KhPlanRouteSnapshotMachining
+                    .Where(s => s.KhPlanDetailId == khPlanDetailId && !s.IsBackup)
+                    .MaxAsync(s => (int?)s.StepOrder) ?? 0;
+
+                if (maxStep == 0)
+                {
+                    baseQty = 0; // chưa có snapshot → không cho giao
+                }
+                else
+                {
+                    // NC code của bước cuối
+                    var lastNc = await _db.KhPlanRouteSnapshotMachining
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId
+                                 && s.StepOrder == maxStep
+                                 && !s.IsBackup)
+                        .Select(s => s.NC)
+                        .FirstOrDefaultAsync();
+
+                    // WTS Done của NC cuối
+                    baseQty = await _db.WtsProductionLogs
+                        .Where(w => w.KhPlanDetailId == khPlanDetailId
+                                 && w.ProcessGroup == "GC"
+                                 && w.NC == lastNc
+                                 && !w.IsVoided)
+                        .SumAsync(w => (decimal?)w.QtyDone) ?? 0m;
+                }
+            }
             else
             {
-                receivedOk = await _db.HandoverReceives
+                // Nhóm khác: SL OK đã nhận vào từ nhóm trước
+                baseQty = await _db.HandoverReceives
                     .Where(r => !r.IsVoided
                              && !r.Transaction.IsVoided
                              && r.Transaction.KhPlanDetailId == khPlanDetailId
@@ -784,17 +837,7 @@ namespace MES.Web.Services
                     .SumAsync(r => (decimal?)r.QtyOk) ?? 0m;
             }
 
-            // NG bên nhận trả về → trừ khỏi remaining
-            var ngReturned = await _db.HandoverReceives
-                .Where(r => !r.IsVoided
-                         && !r.Transaction.IsVoided
-                         && r.Transaction.KhPlanDetailId == khPlanDetailId
-                         && r.Transaction.FromGroupCode == groupCode)
-                .SumAsync(r => (decimal?)r.QtyNg) ?? 0m;
-
-            // issuedOut chỉ tính SL đã được bên nhận xác nhận (QtyOk + QtyNg trong Receives)
-            // Phiếu PENDING chưa được nhận → không trừ vào remaining
-            // (tránh trừ nhầm khi phiếu giao chưa được xác nhận)
+            // Trừ SL đã được bên nhận xác nhận (PENDING không trừ)
             var issuedOut = await _db.HandoverReceives
                 .Where(r => !r.IsVoided
                          && !r.Transaction.IsVoided
@@ -802,7 +845,7 @@ namespace MES.Web.Services
                          && r.Transaction.FromGroupCode == groupCode)
                 .SumAsync(r => (decimal?)(r.QtyOk + r.QtyNg)) ?? 0m;
 
-            return Math.Max(0, receivedOk - ngReturned - issuedOut);
+            return Math.Max(0, baseQty - issuedOut);
         }
     }
 
