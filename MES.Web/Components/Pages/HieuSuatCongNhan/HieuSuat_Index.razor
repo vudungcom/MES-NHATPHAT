@@ -11,6 +11,7 @@
 @inject StandardWtsTaskService WtsSvc
 @inject UserService UserSvc
 @inject HandoverService HandoverSvc
+@inject ThietBiService ThietBiSvc
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Nhập WTS - MES</PageTitle>
@@ -115,6 +116,7 @@ else
                             <th style="width:180px;">PO <span class="text-muted fw-normal">(tùy chọn)</span></th>
                             <th style="width:110px;">Part No</th>
                             <th style="width:120px;">NC / Mục</th>
+                            <th style="width:100px;">Máy SD <span class="text-danger">*</span></th>
                             <th style="width:180px;">Mã WTS khác <span class="text-muted fw-normal">(nếu không có PO)</span></th>
                             <th style="width:70px;" class="text-end">SL</th>
                             <th>Ghi chú</th>
@@ -135,6 +137,7 @@ else
                                     <td><code class="small">@(row.PO ?? "—")</code></td>
                                     <td><code class="small text-danger">@(row.PartNo ?? "—")</code></td>
                                     <td><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
+                                    <td><code class="small text-primary">@(row.MachineUsed ?? "—")</code></td>
                                     <td class="small text-muted">@row.WtsName</td>
                                     <td class="text-end">@(row.QtyDone > 0 ? row.QtyDone.ToString("0.##") : "—")</td>
                                     <td class="small text-muted">@row.Notes</td>
@@ -214,21 +217,70 @@ else
                                                     <option value="">-- Chọn NC --</option>
                                                     @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
                                                     {
-                                                        var done = _qtySummaryCache.TryGetValue($"{row.KhPlanDetailId}|GC|{nc.NC}", out var d) ? d : 0m;
-                                                        var det = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+                                                        var done      = _qtySummaryCache.TryGetValue($"{row.KhPlanDetailId}|GC|{nc.NC}", out var d) ? d : 0m;
+                                                        var det       = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
                                                         var remaining = (det?.Quantity ?? 0) - done;
-                                                        var isDone = remaining <= 0;
-                                                        var icon = isDone ? "✅" : (done > 0 ? "🟡" : "⬜");
-                                                        var lbl = isDone
-                                                            ? $"✅ NC{nc.NC} — ĐÃ ĐỦ SL ({det?.Quantity.ToString("0.##")} {det?.Unit})"
-                                                            : $"{icon} NC{nc.NC} — {nc.MachineRegistered ?? "?"} (còn {remaining.ToString("0.##")})";
-                                                        <option value="@nc.NC" disabled="@isDone">@lbl</option>
+                                                        var isDone    = remaining <= 0;
+
+                                                        // Kiểm tra máy đăng ký + máy đồng dạng có đang hỏng không
+                                                        var regMachine  = nc.MachineRegistered ?? "";
+                                                        var altMachines = (nc.MachineAlternative ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                                                        var regBroken = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
+                                                        var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
+                                                        // Disabled nếu: đã đủ SL, hoặc máy đk hỏng VÀ không có máy đồng dạng khỏe nào
+                                                        var isDisabled = isDone || (regBroken && (altMachines.Length == 0 || allAltBroken));
+
+                                                        string icon, lbl;
+                                                        if (isDone)
+                                                        {
+                                                            icon = "✅";
+                                                            lbl  = $"✅ NC{nc.NC} — ĐÃ ĐỦ SL ({det?.Quantity.ToString("0.##")} {det?.Unit})";
+                                                        }
+                                                        else if (regBroken && (altMachines.Length == 0 || allAltBroken))
+                                                        {
+                                                            icon = "⛔";
+                                                            lbl  = $"⛔ NC{nc.NC} — {regMachine} ĐANG HỎNG — không thể sử dụng";
+                                                        }
+                                                        else if (regBroken && altMachines.Any(m => !_brokenMachines.Contains(m)))
+                                                        {
+                                                            // Máy đk hỏng nhưng có máy đồng dạng còn khỏe
+                                                            var okAlt = altMachines.Where(m => !_brokenMachines.Contains(m)).FirstOrDefault();
+                                                            icon = "⚠️";
+                                                            lbl  = $"⚠️ NC{nc.NC} — {regMachine} hỏng, dùng DP: {okAlt} (còn {remaining.ToString("0.##")})";
+                                                        }
+                                                        else
+                                                        {
+                                                            icon = done > 0 ? "🟡" : "⬜";
+                                                            lbl  = $"{icon} NC{nc.NC} — {regMachine} (còn {remaining.ToString("0.##")})";
+                                                        }
+                                                        <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
                                                     }
                                                     @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
                                                     {
-                                                        <option value="@nc.NC">↩ DP: NC@nc.NC — @(nc.MachineRegistered ?? "?")</option>
+                                                        // Máy DP cũng kiểm tra trạng thái
+                                                        var dpMachine = nc.MachineRegistered ?? "";
+                                                        var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
+                                                        var dpLbl     = dpBroken
+                                                            ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG"
+                                                            : $"↩ DP: NC{nc.NC} — {dpMachine}";
+                                                        <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
                                                     }
                                                 </select>
+                                            }
+                                            @if (!string.IsNullOrEmpty(row.NC))
+                                            {
+                                                @* Hiện cảnh báo nếu máy của NC đang chọn bị hỏng *@
+                                                var _selNc = row.AvailableNCs.FirstOrDefault(n => n.NC == row.NC);
+                                                var _selMachine = _selNc?.MachineRegistered ?? "";
+                                                @if (!string.IsNullOrEmpty(_selMachine) && _brokenMachines.Contains(_selMachine))
+                                                {
+                                                    <div class="text-warning small mt-1">
+                                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                                        Máy <strong>@_selMachine</strong> đang hỏng — dùng máy đồng dạng thay thế
+                                                    </div>
+                                                }
+                                            }
                                             }
                                             else
                                             {
@@ -240,6 +292,32 @@ else
                                             <span class="text-muted small fst-italic ps-1">← Chọn PO trước</span>
                                         }
                                     </td>
+                                    @* Máy sử dụng — bắt buộc khi có NC *@
+                                    <td>
+                                        @if (!string.IsNullOrEmpty(row.NC) && row.AvailableNCs.Any())
+                                        {
+                                            <select class="form-select form-select-sm @(string.IsNullOrEmpty(row.MachineUsed) ? "border-danger" : "")"
+                                                    @bind="row.MachineUsed">
+                                                <option value="">-- Chọn máy --</option>
+                                                @foreach (var m in GetMachineOptions(row))
+                                                {
+                                                    var isBroken = _brokenMachines.Contains(m);
+                                                    <option value="@m" disabled="@isBroken">
+                                                        @(isBroken ? $"⛔ {m} (hỏng)" : m)
+                                                    </option>
+                                                }
+                                            </select>
+                                            @if (string.IsNullOrEmpty(row.MachineUsed))
+                                            {
+                                                <div style="font-size:10px" class="text-danger">Bắt buộc chọn máy</div>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted small">—</span>
+                                        }
+                                    </td>
+
                                     @* Mã WTS khác — chỉ hiện khi KHÔNG chọn PO, lọc theo nhóm *@
                                     <td>
                                         @if (string.IsNullOrEmpty(row.PO))
@@ -275,6 +353,14 @@ else
                                     </td>
                                     @* Thao tác *@
                                     <td class="text-center text-nowrap">
+                                        @if (!string.IsNullOrEmpty(row.NC))
+                                        {
+                                            <button class="btn btn-sm @(row.ShowTimeDetail ? "btn-info" : "btn-outline-info") py-0 px-1 me-1"
+                                                    @onclick="() => row.ShowTimeDetail = !row.ShowTimeDetail"
+                                                    title="Nhập thời gian thực tế">
+                                                <i class="bi bi-clock"></i>
+                                            </button>
+                                        }
                                         <button class="btn btn-sm btn-success py-0 px-2 me-1"
                                                 @onclick="() => SaveRowAsync(row)"
                                                 title="Lưu dòng này">
@@ -287,10 +373,62 @@ else
                                         </button>
                                     </td>
                                 </tr>
+
+                                @* Row expand thời gian thực tế — chỉ nhóm GC, chỉ khi có NC *@
+                                @if (row.ShowTimeDetail && !string.IsNullOrEmpty(row.NC))
+                                {
+                                    <tr class="bg-info bg-opacity-10">
+                                        <td colspan="10" class="py-2 px-3">
+                                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                <span class="small fw-semibold text-info me-2">
+                                                    <i class="bi bi-clock me-1"></i>Thời gian thực tế (phút) —
+                                                    Tổng ca: <strong>@row.Minutes</strong> phút |
+                                                    Đã phân bổ: <strong class="@(row.TimeActualSum > row.Minutes ? "text-danger" : "text-success")">@row.TimeActualSum</strong> |
+                                                    Còn lại: <strong class="@(row.TimeActualRemaining < 0 ? "text-danger" : "")">@row.TimeActualRemaining</strong>
+                                                </span>
+                                            </div>
+                                            <div class="row g-2 mt-1" style="max-width:700px">
+                                                <div class="col">
+                                                    <label class="form-label form-label-sm mb-0">Gá lắp</label>
+                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                           @bind="row.SetupTime_Actual" placeholder="0" />
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label form-label-sm mb-0">Gia công</label>
+                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                           @bind="row.MachiningTime_Actual" placeholder="0" />
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label form-label-sm mb-0">Kiểm tra</label>
+                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                           @bind="row.InspectionTime_Actual" placeholder="0" />
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label form-label-sm mb-0">Chuẩn bị</label>
+                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                           @bind="row.PreparationTime_Actual" placeholder="0" />
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label form-label-sm mb-0">Chạy thử</label>
+                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                           @bind="row.TrialRunTime_Actual" placeholder="0" />
+                                                </div>
+                                            </div>
+                                            @if (row.TimeActualSum > row.Minutes)
+                                            {
+                                                <div class="text-danger small mt-1">
+                                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                                    Tổng thời gian (@row.TimeActualSum phút) vượt quá thời gian ca (@row.Minutes phút).
+                                                </div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+
                                 @if (!string.IsNullOrEmpty(row.ErrorMsg))
                                 {
                                     <tr class="table-danger">
-                                        <td colspan="9" class="small text-danger py-1 ps-3">
+                                        <td colspan="10" class="small text-danger py-1 ps-3">
                                             <i class="bi bi-exclamation-triangle me-1"></i>@row.ErrorMsg
                                         </td>
                                     </tr>
@@ -300,7 +438,7 @@ else
                         @if (!_rows.Any())
                         {
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-3 fst-italic">
+                                <td colspan="10" class="text-center text-muted py-3 fst-italic">
                                     Chưa có dòng nào. Bấm "Thêm dòng" để bắt đầu ghi WTS.
                                 </td>
                             </tr>
@@ -398,6 +536,8 @@ else
 
     // Snapshot cache: PO → list NC
     private Dictionary<string, List<KhPlanRouteSnapshotMachining>> _snapshotCache = new();
+    // Máy đang hỏng/bảo trì — HashSet SoMay để lookup O(1)
+    private HashSet<string> _brokenMachines = new();
     private Dictionary<string, decimal> _qtySummaryCache = new(); // "detailId|NC" → qty done
 
     // Cache: KhPlanDetailId → SL đã nhận vào nhóm này (từ HandoverReceives)
@@ -433,6 +573,9 @@ else
             _allRows  = await KhSvc.GetDetailRowsAsync();
             _wtsTasks = await WtsSvc.GetAllActiveAsync();
 
+            // Load danh sách máy đang hỏng
+            await LoadBrokenMachinesAsync();
+
             // Build danh sách phiếu có snapshot phù hợp nhóm
             await BuildSnapshotFilterAsync();
 
@@ -442,6 +585,16 @@ else
             await LoadSavedRowsAsync();
             AddRow();
         }
+    }
+
+    // ── Load máy đang hỏng ───────────────────────────────────
+    private async Task LoadBrokenMachinesAsync()
+    {
+        var allMachines = await ThietBiSvc.GetAllActiveAsync();
+        _brokenMachines = allMachines
+            .Where(m => m.IsActive && m.TrangThai != "Hoạt động")
+            .Select(m => m.SoMay)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     // ── Filter phiếu theo nhóm công nhân ─────────────────────
@@ -681,9 +834,10 @@ else
 
     private void OnNCChanged(WtsRow row, string? nc)
     {
-        row.NC      = nc;
-        row.WtsCode = null; // NC và WtsCode loại trừ nhau
-        row.WtsName = null;
+        row.NC          = nc;
+        row.WtsCode     = null;
+        row.WtsName     = null;
+        row.MachineUsed = null; // reset máy khi đổi NC
         CheckQtyWarning(row);
     }
 
@@ -763,6 +917,17 @@ else
             if (row.KhPlanDetailId == null)
             { row.ErrorMsg = "Chọn PO để link với NC"; return; }
 
+            // Khuyến nghị chọn máy — cảnh báo nhưng vẫn cho save
+            if (string.IsNullOrEmpty(row.MachineUsed))
+            {
+                row.HasWarning = true;
+                row.WarningMsg = (row.WarningMsg ?? "") + " Chưa chọn máy sử dụng.";
+            }
+
+            // Validate tổng thời gian thực tế không vượt thời gian ca
+            if (row.TimeActualSum > row.Minutes && row.Minutes > 0)
+            { row.ErrorMsg = $"Tổng thời gian thực tế ({row.TimeActualSum} phút) vượt quá thời gian ca ({row.Minutes} phút)."; return; }
+
             CheckQtyWarning(row);
 
             // Block save nếu SL vượt hoặc NC đã đủ
@@ -775,18 +940,23 @@ else
             {
                 var log = new WtsProductionLog
                 {
-                    KhPlanDetailId        = row.KhPlanDetailId.Value,
-                    ProcessGroup          = "GC",
-                    NC                    = row.NC,
-                    WtsCode               = null,
-                    WorkerId              = _currentUserId,
-                    MachineUsed           = null,
-                    QtyDone               = row.QtyDone,
-                    StartTime             = row.StartTime,
-                    EndTime               = row.EndTime,
-                    Notes                 = row.Notes,
-                    CreatedAt             = DateTime.Now,
-                    IsVoided              = false,
+                    KhPlanDetailId          = row.KhPlanDetailId.Value,
+                    ProcessGroup            = "GC",
+                    NC                      = row.NC,
+                    WtsCode                 = null,
+                    WorkerId                = _currentUserId,
+                    MachineUsed             = row.MachineUsed,
+                    QtyDone                 = row.QtyDone,
+                    StartTime               = row.StartTime,
+                    EndTime                 = row.EndTime,
+                    Notes                   = row.Notes,
+                    SetupTime_Actual        = row.SetupTime_Actual,
+                    MachiningTime_Actual    = row.MachiningTime_Actual,
+                    InspectionTime_Actual   = row.InspectionTime_Actual,
+                    PreparationTime_Actual  = row.PreparationTime_Actual,
+                    TrialRunTime_Actual     = row.TrialRunTime_Actual,
+                    CreatedAt               = DateTime.Now,
+                    IsVoided                = false,
                 };
                 Db.WtsProductionLogs.Add(log);
                 await Db.SaveChangesAsync();
@@ -798,7 +968,12 @@ else
                 foreach (var kv in summary)
                     _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
             }
-            catch (Exception ex) { row.ErrorMsg = "Lỗi khi lưu: " + ex.Message; return; }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException?.Message ?? ex.Message;
+                row.ErrorMsg = "Lỗi khi lưu: " + inner;
+                return;
+            }
         }
         // ── Loại 2: Mã WTS khác (không link PO) → WorkerActivityLog ──
         else
@@ -822,7 +997,12 @@ else
                 row.ActivityLogId = actLog.ActivityLogId;
                 Db.ChangeTracker.Clear();
             }
-            catch (Exception ex) { row.ErrorMsg = "Lỗi khi lưu: " + ex.Message; return; }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException?.Message ?? ex.Message;
+                row.ErrorMsg = "Lỗi khi lưu: " + inner;
+                return;
+            }
         }
 
         row.Saved = true;
@@ -868,10 +1048,24 @@ else
     }
 
     // ── Classes ───────────────────────────────────────────────
+    private List<string> GetMachineOptions(WtsRow row)
+    {
+        var snap = row.AvailableNCs.FirstOrDefault(n => n.NC == row.NC);
+        var opts = new List<string>();
+        if (snap == null) return opts;
+        if (!string.IsNullOrEmpty(snap.MachineRegistered))
+            opts.Add(snap.MachineRegistered);
+        if (!string.IsNullOrEmpty(snap.MachineAlternative))
+            foreach (var m in snap.MachineAlternative.Split(',',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (!opts.Contains(m)) opts.Add(m);
+        return opts;
+    }
+
     public class WtsRow
     {
-        public long? WtsLogId      { get; set; } // WtsProductionLog
-        public long? ActivityLogId { get; set; } // WorkerActivityLog
+        public long? WtsLogId      { get; set; }
+        public long? ActivityLogId { get; set; }
         public int? KhPlanDetailId { get; set; }
 
         public DateTime StartTime { get; set; }
@@ -879,18 +1073,39 @@ else
         public int Minutes => EndTime > StartTime ? (int)(EndTime - StartTime).TotalMinutes : -1;
 
         public string? PO      { get; set; }
-        public string? PartNo  { get; set; } // Tự lấy từ KhPlanDetailRow khi chọn PO
+        public string? PartNo  { get; set; }
         public string? NC      { get; set; }
         public string? WtsCode { get; set; }
         public string? WtsName { get; set; }
 
         public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
 
+        /// <summary>Máy thực tế sử dụng — bắt buộc khi có NC (nhóm GC)</summary>
+        public string? MachineUsed { get; set; }
+
         public decimal QtyDone { get; set; }
         public string? Notes   { get; set; }
 
+        // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime
+        public decimal? SetupTime_Actual      { get; set; }
+        public decimal? MachiningTime_Actual  { get; set; }
+        public decimal? InspectionTime_Actual { get; set; }
+        public decimal? PreparationTime_Actual{ get; set; }
+        public decimal? TrialRunTime_Actual   { get; set; }
+
+        // Tổng thời gian thực tế đã nhập (phút)
+        public decimal TimeActualSum =>
+            (SetupTime_Actual ?? 0) + (MachiningTime_Actual ?? 0) +
+            (InspectionTime_Actual ?? 0) + (PreparationTime_Actual ?? 0) +
+            (TrialRunTime_Actual ?? 0);
+
+        // Còn lại chưa phân bổ (phút)
+        public decimal TimeActualRemaining => Minutes - TimeActualSum;
+
+        public bool    ShowTimeDetail { get; set; } // toggle expand thời gian thực tế
+
         public bool    Saved      { get; set; }
-        public bool    IsEditing  { get; set; } // đang sửa dòng cũ → void + tạo mới khi save
+        public bool    IsEditing  { get; set; }
         public string? ErrorMsg   { get; set; }
         public bool    HasWarning { get; set; }
         public string? WarningMsg { get; set; }
