@@ -37,6 +37,13 @@ public class PartMaster
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// Ngưng sử dụng — Part vẫn còn trong DB và hiện trong lịch sử,
+    /// nhưng bị ẩn khỏi dropdown tạo mới và có badge "Ngưng" trong danh sách.
+    /// Không ảnh hưởng các phiếu KhPlan/Kho đã tạo trước đó.
+    /// </summary>
+    public bool IsObsolete { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
     // ==== CỜ TRẠNG THÁI XÁC NHẬN MASTER DATA ====

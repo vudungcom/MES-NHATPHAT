@@ -8,9 +8,10 @@ namespace MES.Web.Services;
 /// Service query dữ liệu cho trang Part Master Index (list + expand).
 ///
 /// Thiết kế:
-///  - `GetAllRowsAsync` load 1 lượt tất cả Part + Customer + attribute default + preview NC của 6 bảng step.
+///  - `GetAllRowsAsync` load 1 lượt tất cả Part active + Customer + attribute default + preview NC của 6 bảng step.
 ///    Tránh N+1: chỉ query 1 lần cho toàn bộ list, không phải query lặp lại cho mỗi row.
 ///  - `GetDetailForExpandAsync` load lazy khi user click ▶: chỉ query 6 bảng cho 1 Part cụ thể.
+///  - Part có IsObsolete = true vẫn hiện trong list (có badge "Ngưng"), không bị filter ra.
 /// </summary>
 public class PartMasterListService
 {
@@ -23,15 +24,17 @@ public class PartMasterListService
 
     /// <summary>
     /// Load toàn bộ Part active + Customer + attribute default + preview NC 6 bảng step.
-    /// Trả về list đã sort theo PartNo.
+    /// Bao gồm cả Part IsObsolete = true (hiện với badge "Ngưng" trong UI).
+    /// Trả về list đã sort: Part Obsolete xuống cuối, trong mỗi nhóm sort theo CreatedAt DESC.
     /// </summary>
     public async Task<List<PartMasterListRow>> GetAllRowsAsync()
     {
-        // 1. PartMasters + Customer
+        // 1. PartMasters + Customer (bao gồm cả Obsolete, chỉ loại IsActive = false)
         var parts = await _db.PartMasters
             .Include(p => p.Customer)
             .Where(p => p.IsActive)
-            .OrderByDescending(p => p.CreatedAt)
+            .OrderBy(p => p.IsObsolete)          // false (đang dùng) lên trước
+            .ThenByDescending(p => p.CreatedAt)
             .AsNoTracking()
             .ToListAsync();
 
@@ -47,13 +50,12 @@ public class PartMasterListService
             .AsNoTracking()
             .ToListAsync();
 
-        // Map: (partId, attributeType) -> value
         var attrLookup = attributes
             .GroupBy(a => a.PartId)
             .ToDictionary(g => g.Key,
                           g => g.ToDictionary(x => x.AttributeType, x => x.Value));
 
-        // 3-8. Preview NC của 6 bảng step (lọc bỏ các dòng dự phòng IsBackup = true)
+        // 3-8. Preview NC của 6 bảng step
         var machiningPreview = await LoadNcPreviewAsync(
             _db.PartMachiningSteps.Where(s => partIds.Contains(s.PartId) && s.IsActive && !s.IsBackup)
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
@@ -84,7 +86,6 @@ public class PartMasterListService
                 .OrderBy(s => s.PartId).ThenBy(s => s.StepOrder)
                 .Select(s => new NcPreviewRaw { PartId = s.PartId, NC = s.NC }));
 
-        // Compose result
         return parts.Select(p => new PartMasterListRow
         {
             PartId = p.PartId,
@@ -95,20 +96,21 @@ public class PartMasterListService
             Material       = GetAttr(attrLookup, p.PartId, "Material"),
             MaterialConfig = GetAttr(attrLookup, p.PartId, "MaterialConfig"),
             MaterialNote   = GetAttr(attrLookup, p.PartId, "MaterialNote"),
-            
-            // Cờ xác nhận từ bảng PartMaster
-            IsPlanConfirmed = p.IsPlanConfirmed,
-            IsMachiningConfirmed = p.IsMachiningConfirmed,
-            IsHtspConfirmed = p.IsHtspConfirmed,
-            IsKcsConfirmed = p.IsKcsConfirmed,
-            IsPkgConfirmed = p.IsPkgConfirmed,
 
-            MachiningNcs   = machiningPreview.GetValueOrDefault(p.PartId) ?? new(),
-            TaroNcs        = taroPreview.GetValueOrDefault(p.PartId) ?? new(),
-            BaviaNcs       = baviaPreview.GetValueOrDefault(p.PartId) ?? new(),
-            WashingNcs     = washingPreview.GetValueOrDefault(p.PartId) ?? new(),
-            InspectionNcs  = inspectionPreview.GetValueOrDefault(p.PartId) ?? new(),
-            PkgNcs         = pkgPreview.GetValueOrDefault(p.PartId) ?? new(),
+            IsObsolete = p.IsObsolete,
+
+            IsPlanConfirmed      = p.IsPlanConfirmed,
+            IsMachiningConfirmed = p.IsMachiningConfirmed,
+            IsHtspConfirmed      = p.IsHtspConfirmed,
+            IsKcsConfirmed       = p.IsKcsConfirmed,
+            IsPkgConfirmed       = p.IsPkgConfirmed,
+
+            MachiningNcs  = machiningPreview.GetValueOrDefault(p.PartId) ?? new(),
+            TaroNcs       = taroPreview.GetValueOrDefault(p.PartId) ?? new(),
+            BaviaNcs      = baviaPreview.GetValueOrDefault(p.PartId) ?? new(),
+            WashingNcs    = washingPreview.GetValueOrDefault(p.PartId) ?? new(),
+            InspectionNcs = inspectionPreview.GetValueOrDefault(p.PartId) ?? new(),
+            PkgNcs        = pkgPreview.GetValueOrDefault(p.PartId) ?? new(),
         }).ToList();
     }
 
@@ -155,18 +157,17 @@ public class PartMasterListService
 
         return new PartMasterExpandDetail
         {
-            Machining = machining,
-            Taro = taro,
-            Bavia = bavia,
-            Washing = washing,
+            Machining  = machining,
+            Taro       = taro,
+            Bavia      = bavia,
+            Washing    = washing,
             Inspection = inspection,
-            Packaging = pkg
+            Packaging  = pkg
         };
     }
 
     // ==== PRIVATE ====
 
-    /// <summary>Load NC preview thành dict PartId -> List of NC (đã sort theo StepOrder).</summary>
     private static async Task<Dictionary<int, List<string>>> LoadNcPreviewAsync(IQueryable<NcPreviewRaw> query)
     {
         var raw = await query.AsNoTracking().ToListAsync();
@@ -189,10 +190,9 @@ public class PartMasterListService
 }
 
 // ============================================================================
-// DTO — dùng cho UI, không map trực tiếp DB
+// DTO
 // ============================================================================
 
-/// <summary>1 dòng trong bảng list Part Master.</summary>
 public class PartMasterListRow
 {
     public int PartId { get; set; }
@@ -204,37 +204,40 @@ public class PartMasterListRow
     public string? MaterialConfig { get; set; }
     public string? MaterialNote { get; set; }
 
+    /// <summary>True = Part ngưng sử dụng — vẫn hiện trong list, có badge "Ngưng".</summary>
+    public bool IsObsolete { get; set; }
+
     public bool IsPlanConfirmed { get; set; }
     public bool IsMachiningConfirmed { get; set; }
     public bool IsHtspConfirmed { get; set; }
     public bool IsKcsConfirmed { get; set; }
     public bool IsPkgConfirmed { get; set; }
 
-    // Đánh giá 1 Part đã được các phòng ban nhập đủ OK 100% hay chưa
-    public bool IsFullyConfirmed => IsPlanConfirmed && IsMachiningConfirmed && IsHtspConfirmed && IsKcsConfirmed && IsPkgConfirmed;
+    public bool IsFullyConfirmed =>
+        IsPlanConfirmed && IsMachiningConfirmed && IsHtspConfirmed && IsKcsConfirmed && IsPkgConfirmed;
 
     public List<string> MachiningNcs { get; set; } = new();
-    public List<string> TaroNcs { get; set; } = new();
-    public List<string> BaviaNcs { get; set; } = new();
-    public List<string> WashingNcs { get; set; } = new();
+    public List<string> TaroNcs      { get; set; } = new();
+    public List<string> BaviaNcs     { get; set; } = new();
+    public List<string> WashingNcs   { get; set; } = new();
     public List<string> InspectionNcs { get; set; } = new();
-    public List<string> PkgNcs { get; set; } = new();
+    public List<string> PkgNcs       { get; set; } = new();
 
-    /// <summary>Tổng số công đoạn (tất cả 6 loại). Dùng để hiển thị "Chưa có" nếu = 0.</summary>
     public int TotalSteps =>
-        MachiningNcs.Count + TaroNcs.Count + BaviaNcs.Count + WashingNcs.Count + InspectionNcs.Count + PkgNcs.Count;
+        MachiningNcs.Count + TaroNcs.Count + BaviaNcs.Count +
+        WashingNcs.Count + InspectionNcs.Count + PkgNcs.Count;
 }
 
-/// <summary>Data chi tiết cho phần expand — chứa 6 list step entity đầy đủ.</summary>
 public class PartMasterExpandDetail
 {
-    public List<PartMachiningStep> Machining { get; set; } = new();
-    public List<PartTaroStep> Taro { get; set; } = new();
-    public List<PartBaviaStep> Bavia { get; set; } = new();
-    public List<PartWashingStep> Washing { get; set; } = new();
+    public List<PartMachiningStep>  Machining  { get; set; } = new();
+    public List<PartTaroStep>       Taro       { get; set; } = new();
+    public List<PartBaviaStep>      Bavia      { get; set; } = new();
+    public List<PartWashingStep>    Washing    { get; set; } = new();
     public List<PartInspectionStep> Inspection { get; set; } = new();
-    public List<PartPackagingStep> Packaging { get; set; } = new();
+    public List<PartPackagingStep>  Packaging  { get; set; } = new();
 
     public int TotalSteps =>
-        Machining.Count + Taro.Count + Bavia.Count + Washing.Count + Inspection.Count + Packaging.Count;
+        Machining.Count + Taro.Count + Bavia.Count +
+        Washing.Count + Inspection.Count + Packaging.Count;
 }

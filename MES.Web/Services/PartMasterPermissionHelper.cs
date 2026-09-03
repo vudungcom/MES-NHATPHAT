@@ -16,6 +16,8 @@ public enum PartMasterArea
 public static class PartMasterPermissionHelper
 {
     public const string GroupAdmin = "ADMIN";
+    
+    // Giữ lại các hằng số nếu hệ thống đang dùng ở nơi khác, nhưng TUYỆT ĐỐI KHÔNG dùng để hardcode quyền
     public const string GroupViewer = "VIEWER";
     public const string GroupPlanning = "PLANNING";
     public const string GroupWarehouse = "WAREHOUSE";
@@ -57,8 +59,8 @@ public static class PartMasterPermissionHelper
     /// </summary>
     public static bool CheckPermission(UserGroup? group, string sectionCode, bool requireEdit = false)
     {
+        if (group != null && group.GroupCode == GroupAdmin) return true;
         if (group == null || !group.IsActive) return false;
-        if (group.GroupCode == GroupAdmin) return true;
 
         if (string.IsNullOrWhiteSpace(group.Permissions)) return false;
         try
@@ -84,26 +86,16 @@ public static class PartMasterPermissionHelper
         return CheckPermission(group, ToSectionCode(area), requireEdit: false);
     }
 
-    // Tương thích ngược: Hàm cho Service gọi kiểu cũ
+    // Tương thích ngược: XÓA SẠCH HARDCODE (Trả về false toàn bộ ngoại trừ Admin gốc)
     public static bool CanEditArea(string? groupCode, string? role, PartMasterArea area)
     {
         if (groupCode == GroupAdmin) return true;
-        return false;
+        return false; 
     }
 
-    // KHÔI PHỤC LẠI HÀM BỊ THIẾU Ở CREATE.RAZOR
-    /// <summary>
-    /// Có được tạo Part Master mới không?
-    /// ADMIN: được. Leader của 1 trong các group chuyên môn: được. Còn lại: không.
-    /// </summary>
     public static bool CanCreatePartMaster(string? groupCode, string? role)
     {
         if (groupCode == GroupAdmin) return true;
-        if (role != RoleLeader) return false;
-        return groupCode == GroupPlanning
-            || groupCode == GroupTechnical
-            || groupCode == GroupFinishing
-            || groupCode == GroupInspection
-            || groupCode == GroupPackaging;
+        return false;
     }
 }

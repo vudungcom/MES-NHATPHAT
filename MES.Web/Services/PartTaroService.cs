@@ -65,7 +65,8 @@ public class PartTaroService
 
         var snapshot = JsonSerializer.Serialize(new
         {
-            newStep.StepOrder, newStep.NC, newStep.StepName, newStep.StandardTime, newStep.IsBackup, newStep.ParentNC
+            newStep.StepOrder, newStep.NC, newStep.WtsTaskCode, newStep.StepName,
+            newStep.StandardTime, newStep.IsBackup, newStep.ParentNC
         });
         _db.PartProcessStepChangeLogs.Add(BuildLog(
             newStep.StepId, partId, ProcessStepAction.Created, null, snapshot, userId, reason));
@@ -81,13 +82,14 @@ public class PartTaroService
 
         var existing = await _db.PartTaroSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
-        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
+        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
 
         var pid = existing.PartId;
         var changedCount = 0;
         var now = DateTime.Now;
 
         changedCount += LogStringDiff("NC",           existing.NC,           updated.NC,           stepId, pid, userId, reason, now);
+        changedCount += LogStringDiff("WtsTaskCode",  existing.WtsTaskCode,  updated.WtsTaskCode,  stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("StepName",     existing.StepName,     updated.StepName,     stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("ParentNC",     existing.ParentNC,     updated.ParentNC,     stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("StandardTime", existing.StandardTime, updated.StandardTime, stepId, pid, userId, reason, now);
@@ -95,6 +97,7 @@ public class PartTaroService
         if (changedCount == 0) return;
 
         existing.NC = updated.NC;
+        existing.WtsTaskCode = updated.WtsTaskCode;
         existing.StepName = updated.StepName;
         existing.StandardTime = updated.StandardTime;
         existing.IsBackup = updated.IsBackup;
@@ -105,6 +108,11 @@ public class PartTaroService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// XÓA HẲN dòng công đoạn khỏi bảng chính. Trước khi xóa, INSERT snapshot JSON
+    /// của toàn bộ field vào PartProcessStepChangeLogs để truy vết được. Append-only ChangeLog.
+    /// Không thể khôi phục — Restore đã bị bỏ.
+    /// </summary>
     public async Task SoftDeleteAsync(long stepId, int userId, string reason)
     {
         ValidateReason(reason);
@@ -112,34 +120,20 @@ public class PartTaroService
 
         var existing = await _db.PartTaroSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (!existing.IsActive) throw new InvalidOperationException("Dòng này đã bị xóa trước đó");
 
-        existing.IsActive = false;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
-
-        _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Deleted, null, null, userId, reason));
-
-        await _db.SaveChangesAsync();
-    }
-
-    public async Task RestoreAsync(long stepId, int userId, string reason)
-    {
-        ValidateReason(reason);
-        await EnsurePermissionAsync(userId);
-
-        var existing = await _db.PartTaroSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
-        if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (existing.IsActive) throw new InvalidOperationException("Dòng đang active, không cần khôi phục");
-
-        existing.IsActive = true;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
+        var snapshot = JsonSerializer.Serialize(new
+        {
+            existing.StepOrder, existing.NC, existing.WtsTaskCode, existing.StepName,
+            existing.StandardTime, existing.IsBackup, existing.ParentNC,
+            existing.CreatedBy, existing.CreatedAt, existing.UpdatedBy, existing.UpdatedAt
+        });
+        var partId = existing.PartId;
 
         _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Restored, null, null, userId, reason));
+            stepId, partId, ProcessStepAction.Deleted,
+            oldValue: snapshot, newValue: null, userId, reason));
 
+        _db.PartTaroSteps.Remove(existing);
         await _db.SaveChangesAsync();
     }
 

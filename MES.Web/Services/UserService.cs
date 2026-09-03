@@ -151,4 +151,58 @@ public class UserService
         await db.SaveChangesAsync();
         return (true, null);
     }
+
+    /// <summary>
+    /// Kiểm tra user có CanDelete = true cho 1 section cụ thể không.
+    /// Dùng cho các quyền đặc biệt chưa có trong tuple (CanView, CanEdit).
+    /// ADMIN luôn trả về true.
+    /// </summary>
+    public async Task<bool> GetCanDeleteAsync(int userId, string sectionCode)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var user = await db.Users.Include(u => u.Group)
+            .FirstOrDefaultAsync(u => u.UserId == userId && u.IsActive);
+        if (user == null || user.Group == null) return false;
+
+        // ADMIN luôn có toàn quyền
+        if (user.Group.GroupCode == "ADMIN" || user.Username.ToLower() == "admin")
+            return true;
+
+        if (string.IsNullOrEmpty(user.Group.Permissions)) return false;
+        try
+        {
+            var perms = System.Text.Json.JsonSerializer
+                .Deserialize<List<GroupPermissionSetting>>(user.Group.Permissions);
+            var p = perms?.FirstOrDefault(x => x.SectionCode == sectionCode);
+            return p?.CanDelete ?? false;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Admin reset PIN của user về null.
+    /// User sẽ cần vào trang Profile để tự đặt PIN mới.
+    /// Chỉ ADMIN mới được gọi method này (kiểm tra ở UI + service).
+    /// </summary>
+    public async Task<(bool Success, string? Error)> ResetPinAsync(int targetUserId, int requestedByUserId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Verify người yêu cầu phải là ADMIN
+        var requester = await db.Users.Include(u => u.Group)
+            .FirstOrDefaultAsync(u => u.UserId == requestedByUserId && u.IsActive);
+        if (requester == null) return (false, "Không xác định được người thực hiện.");
+        bool isAdmin = requester.Group?.GroupCode == "ADMIN" || requester.Username.ToLower() == "admin";
+        if (!isAdmin) return (false, "Chỉ ADMIN mới có thể reset PIN.");
+
+        var target = await db.Users.FirstOrDefaultAsync(u => u.UserId == targetUserId);
+        if (target == null) return (false, "Không tìm thấy User.");
+
+        target.PIN = null;
+        await db.SaveChangesAsync();
+        return (true, null);
+    }
 }

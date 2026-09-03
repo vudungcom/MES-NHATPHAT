@@ -87,4 +87,9 @@ public class GroupPermissionSetting
     public string SectionCode { get; set; } = "";
     public bool CanView { get; set; }
     public bool CanEdit { get; set; }
+    /// <summary>
+    /// Quyền xóa (ngưng sử dụng). Hiện chỉ áp dụng cho PART_TAO_MOI.
+    /// ADMIN luôn có quyền này bất kể cấu hình.
+    /// </summary>
+    public bool CanDelete { get; set; }
 }

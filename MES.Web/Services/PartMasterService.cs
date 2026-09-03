@@ -162,6 +162,9 @@ public class PartMasterService
             PartName = string.IsNullOrWhiteSpace(partName) ? null : partName.Trim(),
             CustomerId = customerId,
             IsActive = true,
+            // EnsurePermissionAAsync đã xác nhận createdBy có quyền PART_TAO_MOI.
+            // Người tạo = người đã xác nhận Section A → confirmed ngay khi tạo.
+            IsPlanConfirmed = true,
             CreatedAt = DateTime.Now
         };
         _db.PartMasters.Add(pm);
@@ -201,8 +204,51 @@ public class PartMasterService
         if (part.PartName == trimmed) return;
 
         part.PartName = trimmed;
-        // Bỏ part.UpdatedAt và part.UpdatedBy vì class PartMaster không có
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Đánh dấu Part "Ngưng sử dụng" (IsObsolete = true).
+    /// Có quyền nếu: ADMIN, hoặc nhóm có CanDelete = true trong section PART_TAO_MOI.
+    /// Part vẫn còn trong DB và hiện trong danh sách với badge "Ngưng".
+    /// Không ảnh hưởng phiếu KhPlan/Kho đã tạo trước đó.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> SetObsoleteAsync(int partId, int requestedByUserId, bool obsolete)
+    {
+        // Kiểm tra quyền
+        var requester = await _db.Users.Include(u => u.Group)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == requestedByUserId && u.IsActive);
+        if (requester == null) return (false, "Không xác định được người thực hiện.");
+
+        bool isAdmin = requester.Group?.GroupCode == "ADMIN" || requester.Username.ToLower() == "admin";
+        if (!isAdmin)
+        {
+            // Kiểm tra CanDelete trong PART_TAO_MOI qua JSON permissions của group
+            var canDelete = false;
+            if (!string.IsNullOrEmpty(requester.Group?.Permissions))
+            {
+                try
+                {
+                    var perms = System.Text.Json.JsonSerializer
+                        .Deserialize<List<MES.Web.Constants.GroupPermissionSetting>>(requester.Group.Permissions);
+                    var p = perms?.FirstOrDefault(x => x.SectionCode == MES.Web.Constants.SystemPermissions.PartTaoMoi);
+                    canDelete = p?.CanDelete ?? false;
+                }
+                catch { /* JSON lỗi → không có quyền */ }
+            }
+            if (!canDelete)
+                return (false, "Bạn không có quyền thực hiện thao tác này.");
+        }
+
+        var part = await _db.PartMasters.FirstOrDefaultAsync(p => p.PartId == partId);
+        if (part == null) return (false, "Không tìm thấy Part.");
+        if (part.IsObsolete == obsolete)
+            return (false, obsolete ? "Part này đã được đánh dấu Ngưng rồi." : "Part này đang hoạt động bình thường.");
+
+        part.IsObsolete = obsolete;
+        await _db.SaveChangesAsync();
+        return (true, null);
     }
 
     public async Task<PartMaster?> GetByPartNoAsync(string partNo)

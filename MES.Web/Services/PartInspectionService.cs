@@ -81,7 +81,7 @@ public class PartInspectionService
 
         var existing = await _db.PartInspectionSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
-        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
+        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
 
         var pid = existing.PartId;
         var changedCount = 0;
@@ -105,6 +105,10 @@ public class PartInspectionService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// XÓA HẲN dòng khỏi bảng chính. Snapshot toàn bộ field vào ChangeLog trước khi xóa
+    /// để truy vết được lịch sử. Không thể khôi phục.
+    /// </summary>
     public async Task SoftDeleteAsync(long stepId, int userId, string reason)
     {
         ValidateReason(reason);
@@ -112,34 +116,20 @@ public class PartInspectionService
 
         var existing = await _db.PartInspectionSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (!existing.IsActive) throw new InvalidOperationException("Dòng này đã bị xóa trước đó");
 
-        existing.IsActive = false;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
-
-        _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Deleted, null, null, userId, reason));
-
-        await _db.SaveChangesAsync();
-    }
-
-    public async Task RestoreAsync(long stepId, int userId, string reason)
-    {
-        ValidateReason(reason);
-        await EnsurePermissionAsync(userId);
-
-        var existing = await _db.PartInspectionSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
-        if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (existing.IsActive) throw new InvalidOperationException("Dòng đang active, không cần khôi phục");
-
-        existing.IsActive = true;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
+        var snapshot = JsonSerializer.Serialize(new
+        {
+            existing.StepOrder, existing.NC, existing.StepName, existing.StandardTime,
+            existing.IsBackup, existing.ParentNC,
+            existing.CreatedBy, existing.CreatedAt, existing.UpdatedBy, existing.UpdatedAt
+        });
+        var partId = existing.PartId;
 
         _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Restored, null, null, userId, reason));
+            stepId, partId, ProcessStepAction.Deleted,
+            oldValue: snapshot, newValue: null, userId, reason));
 
+        _db.PartInspectionSteps.Remove(existing);
         await _db.SaveChangesAsync();
     }
 
@@ -154,9 +144,8 @@ public class PartInspectionService
         var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
         if (user == null || !user.IsActive) throw new UnauthorizedAccessException("User không hợp lệ hoặc đã bị khóa");
 
-        var groupCode = user.Group?.GroupCode;
-        if (!PartMasterPermissionHelper.CanEditArea(groupCode, null, Area))
-            throw new UnauthorizedAccessException($"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)}.");
+        if (!PartMasterPermissionHelper.CanEditArea(user.Group, Area))
+            throw new UnauthorizedAccessException($"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(Area)} .");
     }
 
     private int LogStringDiff(string field, string? oldVal, string? newVal, long stepId, int partId, int userId, string reason, DateTime now)

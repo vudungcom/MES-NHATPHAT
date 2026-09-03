@@ -92,6 +92,27 @@ else
         </div>
         <div class="d-flex gap-2 align-items-start">
             <a href="/part-master" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Quay lại</a>
+            @if (_canDelete)
+            {
+                @if (!_part.IsObsolete)
+                {
+                    <button class="btn btn-outline-warning shadow-sm"
+                            title="Đánh dấu Ngưng sử dụng — Part vẫn còn trong DB và lịch sử"
+                            @onclick="() => { _showDeleteConfirm = true; _deleteError = string.Empty; }">
+                        <i class="bi bi-slash-circle"></i> Ngưng sử dụng
+                    </button>
+                }
+                else
+                {
+                    <button class="btn btn-outline-success shadow-sm"
+                            title="Kích hoạt lại Part"
+                            @onclick="KhoiPhucPartAsync"
+                            disabled="@_deleteLoading">
+                        @if (_deleteLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        <i class="bi bi-check-circle"></i> Kích hoạt lại
+                    </button>
+                }
+            }
             @if (CanEditAnyArea)
             {
                 <div class="d-flex flex-column align-items-center">
@@ -115,6 +136,14 @@ else
         </div>
     </div>
 
+    @if (_part.IsObsolete)
+    {
+        <div class="alert alert-warning py-2 small mb-3 border-0 shadow-sm">
+            <i class="bi bi-slash-circle-fill me-2"></i>
+            Part này đang ở trạng thái <b>Ngưng sử dụng</b>. Dữ liệu và lịch sử vẫn còn đầy đủ.
+            @if (_canDelete) { <span>Nhấn <b>Kích hoạt lại</b> để dùng lại.</span> }
+        </div>
+    }
     @if (!CanEditAnyArea)
     {
         <div class="alert alert-warning py-2 small mb-3 border-0 shadow-sm">
@@ -124,10 +153,6 @@ else
 
     @if (CanEditAnyArea)
     {
-        <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" id="chkShowDeleted" @bind="_showDeleted" @bind:after="ReloadDeletedAsync" />
-            <label class="form-check-label small fw-bold text-muted" for="chkShowDeleted">Hiển thị lịch sử các dòng công đoạn đã xóa (Soft-deleted)</label>
-        </div>
     }
 
     @* ==================== VÙNG A ==================== *@
@@ -204,7 +229,7 @@ else
                             }
                             @foreach (var (edit, idx) in _machiningEdits.Select((e, i) => (e, i)))
                             {
-                                <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                                <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                     <td class="text-center">
                                         @(idx + 1)@StateBadge(edit)
                                         @if (edit.IsBackup) { <span class="badge bg-warning text-dark mt-1" style="font-size: 0.65rem;">Dự phòng</span> }
@@ -391,7 +416,7 @@ else
                                 @if (_taroEdits.Count == 0) { <tr><td colspan="5" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _taroEdits)
                                 {
-                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                                    <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                         @* Cột NC — nhập thủ công *@
                                         <td>
                                             <div class="d-flex align-items-center">
@@ -406,7 +431,7 @@ else
                                             @if (edit is TaroEdit taroEdit)
                                             {
                                                 <input class="form-control form-control-sm text-center fw-bold text-success"
-                                                       value="@(string.IsNullOrEmpty(taroEdit.WtsCode) ? "..." : taroEdit.WtsCode)" readonly />
+                                                       value="@(string.IsNullOrEmpty(taroEdit.WtsTaskCode) ? "..." : taroEdit.WtsTaskCode)" readonly />
                                             }
                                         </td>
                                         @* Cột Công đoạn chuẩn WTS *@
@@ -473,7 +498,7 @@ else
                                 @if (_baviaEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _baviaEdits)
                                 {
-                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                                    <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
@@ -545,7 +570,7 @@ else
                                 @if (_washingEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-2"><em>Trống</em></td></tr> }
                                 @foreach (var edit in _washingEdits)
                                 {
-                                    <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                                    <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
@@ -620,7 +645,7 @@ else
                         @if (_inspectionEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình kiểm tra KCS.</em></td></tr> }
                         @foreach (var edit in _inspectionEdits)
                         {
-                            <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                            <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                 <td>
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
@@ -693,7 +718,7 @@ else
                         @if (_packagingEdits.Count == 0) { <tr><td colspan="4" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình đóng gói.</em></td></tr> }
                         @foreach (var edit in _packagingEdits)
                         {
-                            <tr class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
+                            <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                 <td>
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
@@ -985,6 +1010,39 @@ else
 
 <PinConfirmModal IsOpen="_showPinModal" Title="Xác nhận đổi Master Data" Description="Việc thay đổi tham số chuẩn sẽ ảnh hưởng đến các Kế hoạch trong tương lai. Vui lòng nhập mã PIN." Changes="@_pendingDefaultChanges" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
 
+@if (_showDeleteConfirm && _part != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" style="max-width: 420px;" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0 fw-bold text-warning"><i class="bi bi-slash-circle me-2"></i>Xác nhận Ngưng sử dụng</h5>
+                <button class="btn-close" @onclick="() => _showDeleteConfirm = false"></button>
+            </div>
+            <div class="mes-modal-body">
+                <p class="mb-1">Bạn sắp đánh dấu Ngưng sử dụng Part:</p>
+                <p class="fw-bold fs-5 mb-3"><code>@_part.PartNo</code> @(string.IsNullOrEmpty(_part.PartName) ? "" : $"— {_part.PartName}")</p>
+                <div class="alert alert-info py-2 small mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Part vẫn còn trong database và lịch sử. Các phiếu Kế hoạch đã tạo <b>không bị ảnh hưởng</b>. Có thể kích hoạt lại bất cứ lúc nào.
+                </div>
+                @if (!string.IsNullOrEmpty(_deleteError))
+                {
+                    <div class="alert alert-danger py-2 small mt-2 mb-0">
+                        <i class="bi bi-exclamation-triangle me-1"></i> @_deleteError
+                    </div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-secondary" @onclick="() => _showDeleteConfirm = false">Hủy</button>
+                <button class="btn btn-warning fw-bold" @onclick="XoaPartAsync" disabled="@_deleteLoading">
+                    @if (_deleteLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    <i class="bi bi-slash-circle me-1"></i> Xác nhận Ngưng
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "partNo")]
     public string? PartNo { get; set; }
@@ -1000,8 +1058,15 @@ else
     private PartMaster? _part;
     private int _currentUserId;
 
+    private bool _isAdmin;
     private bool _canViewA, _canViewB, _canViewC, _canViewD, _canViewE;
     private bool _canEditA, _canEditB, _canEditC, _canEditD, _canEditE;
+
+    // Ngưng/Kích hoạt Part
+    private bool _canDelete = false;
+    private bool _showDeleteConfirm = false;
+    private bool _deleteLoading = false;
+    private string _deleteError = string.Empty;
 
     private bool CanViewAnyArea => _canViewA || _canViewB || _canViewC || _canViewD || _canViewE;
     private bool CanEditAnyArea => _canEditA || _canEditB || _canEditC || _canEditD || _canEditE;
@@ -1129,7 +1194,6 @@ else
     private int ActivePackagingCount => _packagingEdits.Count(e => e.State != EditState.Deleted);
 
     private string _reason = string.Empty;
-    private bool _showDeleted = false;
 
     private bool _showPinModal = false;
     private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
@@ -1149,15 +1213,16 @@ else
         var userIdStr = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         int.TryParse(userIdStr, out _currentUserId);
 
-        var isAdmin = user.IsInRole("ADMIN") 
-                   || user.FindFirst("GroupCode")?.Value == "ADMIN" 
-                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
-                   || user.Identity?.Name?.ToLower() == "admin";
+        _isAdmin = user.IsInRole("ADMIN")
+                || user.FindFirst("GroupCode")?.Value == "ADMIN"
+                || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                || user.Identity?.Name?.ToLower() == "admin";
 
-        if (isAdmin)
+        if (_isAdmin)
         {
             _canViewA = _canViewB = _canViewC = _canViewD = _canViewE = true;
             _canEditA = _canEditB = _canEditC = _canEditD = _canEditE = true;
+            _canDelete = true;
         }
         else if (_currentUserId > 0)
         {
@@ -1165,6 +1230,9 @@ else
             
             _canViewA = perms.TryGetValue("PART_TAO_MOI", out var pvA) && pvA.CanView;
             _canEditA = perms.TryGetValue("PART_TAO_MOI", out var pA) && pA.CanEdit;
+            // CanDelete không có trong tuple (bool CanView, bool CanEdit) của GetAllUserPermissionsAsync
+            // → đọc trực tiếp từ GroupPermissionSetting JSON của user
+            _canDelete = await UserSvc.GetCanDeleteAsync(_currentUserId, MES.Web.Constants.SystemPermissions.PartTaoMoi);
 
             _canViewB = perms.TryGetValue("PART_GC", out var pvB) && pvB.CanView;
             _canEditB = perms.TryGetValue("PART_GC", out var pB) && pB.CanEdit;
@@ -1203,6 +1271,16 @@ else
 
         await LoadAllAsync();
         _hasChanges = false;
+
+        // Nếu tất cả vùng user có quyền edit đã được confirmed → set savedSuccessfully
+        // để nút "Lưu & Xác nhận OK" hiện trạng thái "đã lưu" thay vì luôn enabled.
+        _savedSuccessfully = (!_canEditA || _part.IsPlanConfirmed)
+                          && (!_canEditB || _part.IsMachiningConfirmed)
+                          && (!_canEditC || _part.IsHtspConfirmed)
+                          && (!_canEditD || _part.IsKcsConfirmed)
+                          && (!_canEditE || _part.IsPkgConfirmed)
+                          && CanEditAnyArea; // chỉ set khi user thực sự có quyền edit
+
         _loading = false;
     }
 
@@ -1232,16 +1310,9 @@ else
         List<PartInspectionStep> iSteps;
         List<PartPackagingStep> pSteps;
 
-        if (_showDeleted)
-        {
-            mSteps = await MachiningSvc.GetAllByPartAsync(pid);
-            tSteps = await TaroSvc.GetAllByPartAsync(pid);
-            bSteps = await BaviaSvc.GetAllByPartAsync(pid);
-            wSteps = await WashingSvc.GetAllByPartAsync(pid);
-            iSteps = await InspectionSvc.GetAllByPartAsync(pid);
-            pSteps = await PackagingSvc.GetAllByPartAsync(pid);
-        }
-        else
+        // Sau v0.7: xóa dòng công đoạn là hard delete, không còn IsActive=false trong DB.
+        // Chỉ dùng GetActiveByPartAsync — GetAllByPartAsync giữ lại cho tương thích ngược
+        // với dữ liệu cũ đã bị soft-delete trước v0.7 (nếu cần xem lịch sử, query trực tiếp DB).
         {
             mSteps = await MachiningSvc.GetActiveByPartAsync(pid);
             tSteps = await TaroSvc.GetActiveByPartAsync(pid);
@@ -1312,11 +1383,11 @@ else
         StateHasChanged();
     }
 
-    private void AddTaroRow()        { _taroEdits.Add(new TaroEdit { State = EditState.New });               _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
-    private void AddBaviaRow()       { _baviaEdits.Add(new BaviaEdit { State = EditState.New });             _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
-    private void AddWashingRow()     { _washingEdits.Add(new WashingEdit { State = EditState.New });         _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
-    private void AddInspectionRow()  { _inspectionEdits.Add(new InspectionEdit { State = EditState.New });   _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
-    private void AddPackagingRow()   { _packagingEdits.Add(new PackagingEdit { State = EditState.New });     _hasChanges = true; _isDraftSaved = false; StateHasChanged(); }
+    private void AddTaroRow()        { _taroEdits.Add(new TaroEdit { State = EditState.New });               _hasChanges = true; _isDraftSaved = false; _savedSuccessfully = false; StateHasChanged(); }
+    private void AddBaviaRow()       { _baviaEdits.Add(new BaviaEdit { State = EditState.New });             _hasChanges = true; _isDraftSaved = false; _savedSuccessfully = false; StateHasChanged(); }
+    private void AddWashingRow()     { _washingEdits.Add(new WashingEdit { State = EditState.New });         _hasChanges = true; _isDraftSaved = false; _savedSuccessfully = false; StateHasChanged(); }
+    private void AddInspectionRow()  { _inspectionEdits.Add(new InspectionEdit { State = EditState.New });   _hasChanges = true; _isDraftSaved = false; _savedSuccessfully = false; StateHasChanged(); }
+    private void AddPackagingRow()   { _packagingEdits.Add(new PackagingEdit { State = EditState.New });     _hasChanges = true; _isDraftSaved = false; _savedSuccessfully = false; StateHasChanged(); }
 
     private void AddBackupRow<T>(List<T> list, T parent, Func<string, string, T> factory) where T : StepEditBase
     {
@@ -1341,6 +1412,7 @@ else
         }
         _hasChanges = true;
         _isDraftSaved = false;
+        _savedSuccessfully = false;
     }
 
     private void OpenAlternativeModal(MachiningEdit edit)
@@ -1478,7 +1550,7 @@ else
     }
 
     /// <summary>
-    /// Dùng riêng cho Taro — khi chọn WTS fill StepName, StandardTime và WtsCode,
+    /// Dùng riêng cho Taro — khi chọn WTS fill StepName, StandardTime và WtsTaskCode,
     /// KHÔNG fill NC (NC Taro do người dùng nhập thủ công).
     /// </summary>
     private void OnSelectWtsTaskTaro(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
@@ -1487,7 +1559,7 @@ else
         if (task != null)
         {
             if (edit is TaroEdit taroEdit)
-                taroEdit.WtsCode = task.TaskCode;
+                taroEdit.WtsTaskCode = task.TaskCode;
             edit.StepName = task.TaskName;
             if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
             {
@@ -1498,7 +1570,7 @@ else
         else
         {
             if (edit is TaroEdit taroEdit)
-                taroEdit.WtsCode = "";
+                taroEdit.WtsTaskCode = "";
             edit.StepName = "";
         }
     }
@@ -1528,6 +1600,7 @@ else
         }
         _hasChanges = true;
         _isDraftSaved = false;
+        _savedSuccessfully = false;  // Bật lại nút "Lưu & Xác nhận OK" sau khi user thao tác
     }
 
     private string RowCssClass(StepEditBase e)
@@ -1642,19 +1715,10 @@ else
 
         _pendingDefaultChanges = CollectDefaultChanges();
 
-        // Mở popup khi có check ô Default, hoặc có sửa các dòng quy trình.
-        if (_pendingDefaultChanges.Count > 0 || RequiresReason)
+        // PIN chỉ yêu cầu khi đổi default attribute (Material/Config/Note).
+        // RequiresReason (sửa tên, sửa bước quy trình) chỉ cần nhập lý do text — không cần PIN.
+        if (_pendingDefaultChanges.Count > 0)
         {
-            if (_pendingDefaultChanges.Count == 0)
-            {
-                _pendingDefaultChanges.Add(new PinConfirmModal.DefaultChangeInfo 
-                { 
-                    PartNo = _part!.PartNo, 
-                    AttributeType = "Cập nhật Quy trình", 
-                    OldValue = "Dữ liệu cũ", 
-                    NewValue = "Đã thay đổi/Xóa" 
-                });
-            }
             _isDraftConfirming = isDraft;
             _showPinModal = true;
         }
@@ -1693,6 +1757,34 @@ else
     private void OnPinCancelled()
     {
         _showPinModal = false;
+    }
+
+    private async Task XoaPartAsync()
+    {
+        if (_part == null) return;
+        _deleteLoading = true;
+        _deleteError = string.Empty;
+        var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: true);
+        _deleteLoading = false;
+        if (res.Success)
+        {
+            _showDeleteConfirm = false;
+            _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
+        }
+        else
+        {
+            _deleteError = res.Error ?? "Lỗi không xác định.";
+        }
+    }
+
+    private async Task KhoiPhucPartAsync()
+    {
+        if (_part == null) return;
+        _deleteLoading = true;
+        var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: false);
+        _deleteLoading = false;
+        if (res.Success)
+            _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
     }
 
     /// <summary>
@@ -1785,8 +1877,7 @@ else
                     catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {ex.Message}"); }
                 }
 
-                _part!.IsPlanConfirmed = confirmOk;
-                Db.PartMasters.Update(_part);
+                _part!.IsPlanConfirmed = confirmOk; // sẽ ghi vào DB ở cuối
             }
 
             if (_canEditB)
@@ -1795,11 +1886,10 @@ else
                     e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => MachiningSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => MachiningSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Machining", log, errors);
 
                 _part!.IsMachiningConfirmed = confirmOk;
-                Db.PartMasters.Update(_part);
             }
 
             if (_canEditC)
@@ -1808,25 +1898,24 @@ else
                     e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => TaroSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => TaroSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Taro", log, errors);
 
                 await SaveStepListAsync(_baviaEdits,
                     e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => BaviaSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => BaviaSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => BaviaSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Bavia", log, errors);
 
                 await SaveStepListAsync(_washingEdits,
                     e => WashingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => WashingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => WashingSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => WashingSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Rửa", log, errors);
 
                 _part!.IsHtspConfirmed = confirmOk;
-                Db.PartMasters.Update(_part);
             }
 
             if (_canEditD)
@@ -1835,11 +1924,10 @@ else
                     e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => InspectionSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => InspectionSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Kiểm tra", log, errors);
 
                 _part!.IsKcsConfirmed = confirmOk;
-                Db.PartMasters.Update(_part);
             }
 
             if (_canEditE)
@@ -1848,16 +1936,40 @@ else
                     e => PackagingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => PackagingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => PackagingSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => PackagingSvc.RestoreAsync(id, _currentUserId, reason),
+                    id => Task.CompletedTask, // Hard delete: không thể restore
                     "Đóng gói", log, errors);
 
                 _part!.IsPkgConfirmed = confirmOk;
-                Db.PartMasters.Update(_part);
+            }
+
+            // Ghi các cờ confirmed vào DB bằng entity tracked (tránh conflict với _part detached từ AsNoTracking).
+            // Load fresh từ DB → set các flag → SaveChanges một lần cuối.
+            if (_part != null)
+            {
+                var trackedPart = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part.PartId);
+                if (trackedPart != null)
+                {
+                    // Section A: user có canView có thể confirm (đủ để KH tự xác nhận A khi tạo Part).
+                    //           user có canEdit mới được unconfirm (chuyển về NG).
+                    if (_canViewA)
+                    {
+                        if (confirmOk) trackedPart.IsPlanConfirmed = true;
+                        else if (_canEditA) trackedPart.IsPlanConfirmed = false;
+                    }
+
+                    // Section B/C/D/E: chỉ user canEdit mới được confirm/unconfirm.
+                    if (_canEditB) trackedPart.IsMachiningConfirmed = confirmOk;
+                    if (_canEditC) trackedPart.IsHtspConfirmed = confirmOk;
+                    if (_canEditD) trackedPart.IsKcsConfirmed = confirmOk;
+                    if (_canEditE) trackedPart.IsPkgConfirmed = confirmOk;
+
+                    await Db.SaveChangesAsync();
+                    _part = trackedPart;
+                }
             }
 
             if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
             {
-                await Db.SaveChangesAsync();
                 log.Add(confirmOk ? "✓ Đã lưu & Xác nhận OK." : "✓ Đã lưu nháp (trạng thái chuyển về NG).");
             }
         }
@@ -2059,13 +2171,14 @@ else
 
     public class TaroEdit : SimpleStepEditBase
     {
-        /// <summary>Mã công việc WTS — auto fill từ dropdown, độc lập với NC thủ công. Chỉ lưu trong UI, chưa persist DB.</summary>
-        public string? WtsCode { get; set; }
+        /// <summary>Mã công việc WTS — auto fill từ dropdown, độc lập với NC thủ công. Persist vào DB cột WtsTaskCode từ v0.7.</summary>
+        public string? WtsTaskCode { get; set; }
 
         public static TaroEdit FromEntity(PartTaroStep s) => new TaroEdit
         {
             StepId = s.StepId,
             NC = s.NC,
+            WtsTaskCode = s.WtsTaskCode,
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,
@@ -2082,6 +2195,7 @@ else
         {
             StepId = StepId,
             NC = NC,
+            WtsTaskCode = WtsTaskCode,
             StepName = StepName,
             StandardTime = StandardTime,
             IsBackup = IsBackup,

@@ -81,7 +81,7 @@ public class PartBaviaService
 
         var existing = await _db.PartBaviaSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
-        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa. Khôi phục trước rồi mới sửa.");
+        if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
 
         var pid = existing.PartId;
         var changedCount = 0;
@@ -105,6 +105,10 @@ public class PartBaviaService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// XÓA HẲN dòng khỏi bảng chính. Snapshot toàn bộ field vào ChangeLog trước khi xóa
+    /// để truy vết được lịch sử. Không thể khôi phục.
+    /// </summary>
     public async Task SoftDeleteAsync(long stepId, int userId, string reason)
     {
         ValidateReason(reason);
@@ -112,34 +116,20 @@ public class PartBaviaService
 
         var existing = await _db.PartBaviaSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (!existing.IsActive) throw new InvalidOperationException("Dòng này đã bị xóa trước đó");
 
-        existing.IsActive = false;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
-
-        _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Deleted, null, null, userId, reason));
-
-        await _db.SaveChangesAsync();
-    }
-
-    public async Task RestoreAsync(long stepId, int userId, string reason)
-    {
-        ValidateReason(reason);
-        await EnsurePermissionAsync(userId);
-
-        var existing = await _db.PartBaviaSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
-        if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
-        if (existing.IsActive) throw new InvalidOperationException("Dòng đang active, không cần khôi phục");
-
-        existing.IsActive = true;
-        existing.UpdatedBy = userId;
-        existing.UpdatedAt = DateTime.Now;
+        var snapshot = JsonSerializer.Serialize(new
+        {
+            existing.StepOrder, existing.NC, existing.StepName, existing.StandardTime,
+            existing.IsBackup, existing.ParentNC,
+            existing.CreatedBy, existing.CreatedAt, existing.UpdatedBy, existing.UpdatedAt
+        });
+        var partId = existing.PartId;
 
         _db.PartProcessStepChangeLogs.Add(BuildLog(
-            stepId, existing.PartId, ProcessStepAction.Restored, null, null, userId, reason));
+            stepId, partId, ProcessStepAction.Deleted,
+            oldValue: snapshot, newValue: null, userId, reason));
 
+        _db.PartBaviaSteps.Remove(existing);
         await _db.SaveChangesAsync();
     }
 

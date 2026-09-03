@@ -4,8 +4,10 @@
 @using System.Security.Claims
 @using MES.Web.Components.Shared
 @using MES.Web.Services
+@using MES.Web.Data
 @inject KhPlanService KhSvc
 @inject UserService UserSvc
+@inject AppDbContext Db
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 
@@ -252,6 +254,9 @@ else
                                     <button class="btn btn-sm btn-outline-warning py-0 px-1" @onclick="() => OpenSplit(r)" title="Tách PO">
                                         <i class="bi bi-diagram-3"></i>
                                     </button>
+                                    <button class="btn btn-sm btn-outline-danger py-0 px-1" @onclick="() => OpenDelete(r)" title="Xóa phiếu KH này">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
                                 }
                                 <button class="btn btn-sm btn-outline-secondary py-0 px-1" @onclick="() => OpenHistory(r)" title="Lịch sử sửa">
                                     <i class="bi bi-clock-history"></i>
@@ -324,6 +329,47 @@ else
     OnSplitDone="OnSplitDoneAsync"
     OnCancelled="CloseSplit" />
 
+@* Modal xóa phiếu KH *@
+@if (_deleteTarget != null)
+{
+    <div class="mes-modal-backdrop" @onclick="CloseDelete">
+        <div class="mes-modal" style="max-width:480px;" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0 text-danger">
+                    <i class="bi bi-trash me-1"></i> Xóa phiếu KH
+                </h5>
+                <button class="btn-close" @onclick="CloseDelete"></button>
+            </div>
+            <div class="mes-modal-body">
+                <div class="alert alert-danger py-2 small mb-3">
+                    <strong>Cảnh báo:</strong> Hành động này sẽ xóa vĩnh viễn phiếu KH và toàn bộ dữ liệu liên quan (snapshot quy trình, lịch sử thay đổi). Không thể hoàn tác.
+                </div>
+                <p class="mb-2 small">Phiếu cần xóa:</p>
+                <ul class="small mb-3">
+                    <li>Số phiếu: <code>@_deleteTarget.PlanNo</code></li>
+                    <li>PO: <code>@_deleteTarget.PurchaseOrder</code></li>
+                    <li>Part No: <code class="text-danger">@_deleteTarget.PartNo</code></li>
+                    <li>SL: @_deleteTarget.Quantity.ToString("0.####") @_deleteTarget.Unit</li>
+                </ul>
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold">Nhập PIN xác nhận <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control form-control-sm" style="max-width:180px;"
+                           @bind="_deletePin" placeholder="PIN của bạn" />
+                </div>
+                @if (!string.IsNullOrEmpty(_deleteError))
+                {
+                    <div class="alert alert-danger py-2 small">@_deleteError</div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseDelete">Hủy</button>
+                <button class="btn btn-sm btn-danger ms-2" @onclick="ConfirmDeleteAsync" disabled="@_deleting">
+                    <i class="bi bi-trash me-1"></i>@(_deleting ? "Đang xóa..." : "Xác nhận xóa")
+                </button>
+            </div>
+        </div>
+    </div>
+}
 @if (_history != null)
 {
     <div class="mes-modal-backdrop" @onclick="CloseHistory">
@@ -589,6 +635,68 @@ else
 
     private void OpenSplit(KhPlanDetailRow row) { _splitSource = row; _showSplitModal = true; }
     private void CloseSplit() { _showSplitModal = false; _splitSource = null; }
+
+    // ── Xóa phiếu KH ──
+    private KhPlanDetailRow? _deleteTarget;
+    private string _deletePin = "";
+    private string? _deleteError;
+    private bool _deleting;
+
+    private void OpenDelete(KhPlanDetailRow row)
+    {
+        _deleteTarget = row;
+        _deletePin = "";
+        _deleteError = null;
+    }
+
+    private void CloseDelete()
+    {
+        _deleteTarget = null;
+        _deletePin = "";
+        _deleteError = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_deleteTarget == null) return;
+        _deleteError = null;
+
+        if (string.IsNullOrWhiteSpace(_deletePin))
+        { _deleteError = "Vui lòng nhập PIN."; return; }
+
+        // Verify PIN qua UserService
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var userIdStr = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdStr, out var uid))
+        { _deleteError = "Không xác định được user."; return; }
+
+        var user = await Db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == uid);
+        if (user == null || !PasswordHasher.Verify(_deletePin, user.PasswordHash))
+        {
+            _deleteError = "PIN không đúng. Vui lòng thử lại.";
+            _deletePin = "";
+            return;
+        }
+
+        _deleting = true;
+        try
+        {
+            var (ok, err) = await KhSvc.DeleteDetailAsync(_deleteTarget.KhPlanDetailId, uid);
+            if (!ok) { _deleteError = err ?? "Lỗi khi xóa."; return; }
+
+            CloseDelete();
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            _deleteError = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            _deleting = false;
+        }
+    }
 
     private async Task OnSplitDoneAsync()
     {

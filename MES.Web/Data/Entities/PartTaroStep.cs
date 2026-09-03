@@ -22,6 +22,13 @@ public class PartTaroStep
     [MaxLength(20)]
     public string NC { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Mã công việc WTS chuẩn (VD: "3T", "5T"). Copy từ StandardWtsTasks.TaskCode
+    /// khi user chọn từ dropdown. Trước v0.7 chỉ tồn tại trong UI state, giờ persist.
+    /// </summary>
+    [MaxLength(20)]
+    public string? WtsTaskCode { get; set; }
+
     [MaxLength(500)]
     public string? StepName { get; set; }
 

@@ -442,6 +442,73 @@ public class KhPlanService
         return result;
     }
 
+    /// <summary>
+    /// Xóa 1 KhPlanDetail và toàn bộ dữ liệu liên quan:
+    /// snapshot quy trình B→E, WTS logs, change logs, KhoVatLieu.
+    /// Nếu KhPlan không còn detail nào → xóa luôn KhPlan.
+    /// Bắt buộc xác thực PIN trước khi gọi method này.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> DeleteDetailAsync(int khPlanDetailId, int deletedBy)
+    {
+        var detail = await _db.KhPlanDetails
+            .Include(d => d.KhPlan)
+            .FirstOrDefaultAsync(d => d.KhPlanDetailId == khPlanDetailId);
+
+        if (detail == null) return (false, "Không tìm thấy phiếu KH.");
+
+        try
+        {
+            // Xóa snapshot quy trình B→E
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotMachining WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotTaro WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotBavia WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotWashing WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotInspection WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotPackaging WHERE KhPlanDetailId = {0}", khPlanDetailId);
+
+            // Xóa WTS production logs
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM WtsProductionLogs WHERE KhPlanDetailId = {0}", khPlanDetailId);
+
+            // Xóa change logs
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanDetailChangeLogs WHERE KhPlanDetailId = {0}", khPlanDetailId);
+
+            // Xóa KhoVatLieu nếu có
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhoVatLieus WHERE PlanDetailId = {0}", khPlanDetailId);
+
+            // Xóa detail
+            _db.KhPlanDetails.Remove(detail);
+            await _db.SaveChangesAsync();
+
+            // Nếu KhPlan không còn detail nào → xóa luôn KhPlan
+            var remaining = await _db.KhPlanDetails
+                .CountAsync(d => d.KhPlanId == detail.KhPlanId);
+            if (remaining == 0)
+            {
+                var plan = await _db.KhPlans.FindAsync(detail.KhPlanId);
+                if (plan != null)
+                {
+                    _db.KhPlans.Remove(plan);
+                    await _db.SaveChangesAsync();
+                }
+            }
+
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     public async Task<List<KhPlanDetailChangeLog>> GetChangeHistoryAsync(int khPlanDetailId, string? fieldName = null)
     {
         var q = _db.KhPlanDetailChangeLogs
