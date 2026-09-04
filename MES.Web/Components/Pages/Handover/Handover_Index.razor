@@ -50,6 +50,21 @@ else
 
     <div class="card mb-3 border-0 shadow-sm">
         <div class="card-body py-2">
+            <div class="row g-2 align-items-center mb-2">
+                <div class="col-md-5">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+                        <input class="form-control" placeholder="Tìm theo Mã PO / PO KH / Part No / Khách hàng..."
+                               @bind="_search" @bind:event="oninput" />
+                        @if (!string.IsNullOrEmpty(_search))
+                        {
+                            <button class="btn btn-outline-secondary" @onclick='() => _search = string.Empty' title="Xóa tìm kiếm">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
             <div class="row g-2 align-items-center">
                 <div class="col-auto">
                     <select class="form-select form-select-sm" @bind="_filterCustomerId" @bind:after="LoadDataAsync">
@@ -76,7 +91,7 @@ else
                 <div class="col-auto ms-auto d-flex align-items-center gap-2">
                     @if (HasActiveColFilters)
                     {
-                        <button class="btn btn-sm btn-outline-warning" @onclick="() => { _colFilters.Clear(); _sortColHdv = null; BuildColFilters(); }">
+                        <button class="btn btn-sm btn-outline-warning" @onclick="() => { foreach (var d in _colFilters.Values) { d.ExcludedValues.Clear(); d.SearchText = string.Empty; } _sortColHdv = null; }">
                             <i class="bi bi-x-circle me-1"></i>Xoá filter cột
                         </button>
                     }
@@ -631,9 +646,9 @@ else
             </button>
         </div>
         <div class="divider"></div>
-        @if (_cfd.SelectedValues.Count < _cfd.AllValues.Count)
+        @if (_cfd.IsActive)
         {
-            <button class="sort-btn text-danger" @onclick="() => { _cfd.SelectedValues = new HashSet<string>(_cfd.AllValues); _openColFilter = null; }">
+            <button class="sort-btn text-danger" @onclick="() => { _cfd.ExcludedValues.Clear(); _cfd.SearchText = string.Empty; _openColFilter = null; }">
                 <i class="bi bi-x-circle"></i> Xóa filter cột này
             </button>
             <div class="divider"></div>
@@ -646,19 +661,19 @@ else
                     .Where(v => string.IsNullOrEmpty(_cfd.SearchText)
                              || v.Contains(_cfd.SearchText, StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                bool _allSel = _vis.All(v => _cfd.SelectedValues.Contains(v));
+                bool _allSel = _vis.All(v => _cfd.IsChecked(v));
             }
             <label>
                 <input type="checkbox" checked="@_allSel"
-                       @onchange="e => { var s = (bool)(e.Value ?? false); foreach (var v in _vis) { if (s) _cfd.SelectedValues.Add(v); else _cfd.SelectedValues.Remove(v); } }" />
+                       @onchange="e => { var s = (bool)(e.Value ?? false); foreach (var v in _vis) { if (s) _cfd.ExcludedValues.Remove(v); else _cfd.ExcludedValues.Add(v); } }" />
                 <strong>(Chọn tất cả)</strong>
             </label>
             @foreach (var val in _vis)
             {
                 var v = val;
                 <label>
-                    <input type="checkbox" checked="@_cfd.SelectedValues.Contains(v)"
-                           @onchange="e => { if ((bool)(e.Value ?? false)) _cfd.SelectedValues.Add(v); else _cfd.SelectedValues.Remove(v); }" />
+                    <input type="checkbox" checked="@_cfd.IsChecked(v)"
+                           @onchange="e => { if ((bool)(e.Value ?? false)) _cfd.ExcludedValues.Remove(v); else _cfd.ExcludedValues.Add(v); }" />
                     @v
                 </label>
             }
@@ -766,6 +781,9 @@ else
     // Expand state trong modal Nhận — phiếu nào đang mở form nhập OK/NG
     long _expandedTxId = 0;
 
+    // ── Quick search ──
+    private string _search = string.Empty;
+
     // ── Excel-style column filter cho PO và PartNo ──
     private Dictionary<string, HandoverColFilterDef> _colFilters = new();
     private string? _openColFilter;
@@ -857,15 +875,26 @@ else
         {
             var q = _rows.AsEnumerable();
 
+            // Quick search
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var s = _search.Trim();
+                q = q.Where(r =>
+                    r.PlanNo.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    r.PurchaseOrder.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    r.PartNo.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (r.CustomerName ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+
             // Excel column filters
             foreach (var (key, def) in _colFilters)
             {
-                if (def.SelectedValues.Count == def.AllValues.Count) continue;
+                if (!def.IsActive) continue;
                 q = key switch
                 {
-                    "PlanNo"        => q.Where(r => def.SelectedValues.Contains(r.PlanNo)),
-                    "PurchaseOrder" => q.Where(r => def.SelectedValues.Contains(r.PurchaseOrder)),
-                    "PartNo"        => q.Where(r => def.SelectedValues.Contains(r.PartNo)),
+                    "PlanNo"        => q.Where(r => def.Passes(r.PlanNo)),
+                    "PurchaseOrder" => q.Where(r => def.Passes(r.PurchaseOrder)),
+                    "PartNo"        => q.Where(r => def.Passes(r.PartNo)),
                     _ => q
                 };
             }
@@ -888,14 +917,13 @@ else
     }
 
     bool HasActiveColFilters =>
-        _colFilters.Any(kv => kv.Value.SelectedValues.Count < kv.Value.AllValues.Count)
+        _colFilters.Any(kv => kv.Value.IsActive)
         || _sortColHdv != null;
 
     // ColHeader với funnel button — đúng pattern Part Master
     RenderFragment HdvColHeader(string colKey, string label) => __builder =>
     {
-        var hasFilter = _colFilters.TryGetValue(colKey, out var def)
-                     && def.SelectedValues.Count < def.AllValues.Count;
+        var hasFilter = _colFilters.TryGetValue(colKey, out var def) && def.IsActive;
         var isSorted  = _sortColHdv == colKey;
 
         <span class="col-filter-wrap">
@@ -1211,22 +1239,24 @@ else
         _           => "bg-secondary"
     };
 
-    // ── ColFilterDef — đúng pattern Part Master ──
+    // ── ColFilterDef — ExcludedValues + SearchText apply realtime ──
     private class HandoverColFilterDef
     {
-        public List<string>   AllValues      { get; set; } = new();
-        public HashSet<string> SelectedValues { get; set; } = new();
-        public string          SearchText    { get; set; } = string.Empty;
+        public List<string>    AllValues      { get; set; } = new();
+        public HashSet<string> ExcludedValues { get; set; } = new();
+        public string          SearchText     { get; set; } = string.Empty;
+
+        public bool IsActive   => !string.IsNullOrEmpty(SearchText) || ExcludedValues.Count > 0;
+        public bool IsChecked(string v) => !ExcludedValues.Contains(v);
+        public bool Passes(string v) =>
+            (string.IsNullOrEmpty(SearchText) || v.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+            && !ExcludedValues.Contains(v);
 
         public static HandoverColFilterDef Build(
             List<HandoverSummaryRow> rows, Func<HandoverSummaryRow, string> selector)
         {
             var all = rows.Select(selector).Distinct().OrderBy(v => v).ToList();
-            return new HandoverColFilterDef
-            {
-                AllValues      = all,
-                SelectedValues = new HashSet<string>(all)
-            };
+            return new HandoverColFilterDef { AllValues = all };
         }
     }
 }

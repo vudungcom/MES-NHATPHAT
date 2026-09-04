@@ -284,7 +284,7 @@ else
                 </div>
                 <div class="divider"></div>
                 <button class="sort-btn text-danger"
-                        style="visibility: @(colDef.SelectedValues.Count < colDef.AllValues.Count ? "visible" : "hidden")"
+                        style="visibility: @(colDef.IsActive ? "visible" : "hidden")"
                         @onclick="() => ClearColFilter(_openDropdown!)">
                     <i class="bi bi-x-circle"></i> Xóa filter cột này
                 </button>
@@ -297,7 +297,7 @@ else
                             .Where(v => string.IsNullOrEmpty(colDef.SearchText)
                                      || v.Contains(colDef.SearchText, StringComparison.OrdinalIgnoreCase))
                             .ToList();
-                        bool allSelected = visibleVals.All(v => colDef.SelectedValues.Contains(v));
+                        bool allSelected = visibleVals.All(v => colDef.IsChecked(v));
                     }
                     <label>
                         <input type="checkbox" checked="@allSelected"
@@ -308,7 +308,7 @@ else
                     {
                         var v = val;
                         <label>
-                            <input type="checkbox" checked="@colDef.SelectedValues.Contains(v)"
+                            <input type="checkbox" checked="@colDef.IsChecked(v)"
                                    @onchange="e => ToggleColValue(colDef, v, (bool)(e.Value ?? false))" />
                             @(string.IsNullOrEmpty(v) ? "(Trống)" : v)
                         </label>
@@ -502,7 +502,7 @@ else
     private RenderFragment ColHeader(string colKey, string label) => __builder =>
     {
         var hasFilter = _colDefs.TryGetValue(colKey, out var def)
-                     && def.SelectedValues.Count < def.AllValues.Count;
+                     && def.IsActive;
         var isSorted = _sortCol == colKey;
         <span class="col-filter-wrap">
             <span style="cursor: pointer; user-select: none;"
@@ -534,14 +534,16 @@ else
 
     private void ToggleSelectAll(ColFilterDef def, List<string> visible, bool select)
     {
-        if (select) foreach (var v in visible) def.SelectedValues.Add(v);
-        else        foreach (var v in visible) def.SelectedValues.Remove(v);
+        if (select)
+            foreach (var v in visible) def.ExcludedValues.Remove(v);
+        else
+            foreach (var v in visible) def.ExcludedValues.Add(v);
     }
 
     private void ToggleColValue(ColFilterDef def, string val, bool selected)
     {
-        if (selected) def.SelectedValues.Add(val);
-        else          def.SelectedValues.Remove(val);
+        if (selected) def.ExcludedValues.Remove(val);
+        else          def.ExcludedValues.Add(val);
     }
 
     private void ApplyColFilter(string colKey) => _openDropdown = null;
@@ -549,19 +551,25 @@ else
     private void ClearColFilter(string colKey)
     {
         if (_colDefs.TryGetValue(colKey, out var def))
-            def.SelectedValues = new HashSet<string>(def.AllValues);
+        {
+            def.ExcludedValues.Clear();
+            def.SearchText = string.Empty;
+        }
         _openDropdown = null;
     }
 
     private void ClearAllColFilters()
     {
         foreach (var def in _colDefs.Values)
-            def.SelectedValues = new HashSet<string>(def.AllValues);
+        {
+            def.ExcludedValues.Clear();
+            def.SearchText = string.Empty;
+        }
         _sortCol = null;
     }
 
     private bool HasActiveColFilters =>
-        _colDefs.Any(kv => kv.Value.SelectedValues.Count < kv.Value.AllValues.Count)
+        _colDefs.Any(kv => kv.Value.IsActive)
         || _sortCol != null;
 
     private void SetSort(string col, bool asc)
@@ -594,17 +602,17 @@ else
 
             foreach (var (key, def) in _colDefs)
             {
-                if (def.SelectedValues.Count == def.AllValues.Count) continue;
+                if (!def.IsActive) continue;
                 q = key switch
                 {
-                    "PlanNo"       => q.Where(r => def.SelectedValues.Contains(r.PlanNo)),
-                    "PlanDate"     => q.Where(r => def.SelectedValues.Contains(r.PlanDate.ToString("dd/MM/yy"))),
-                    "ReceivedDate" => q.Where(r => def.SelectedValues.Contains(r.ReceivedDate.HasValue ? r.ReceivedDate.Value.ToString("dd/MM/yy") : "(Chưa có)")),
-                    "CustomerName" => q.Where(r => def.SelectedValues.Contains(r.CustomerName)),
-                    "PartNo"       => q.Where(r => def.SelectedValues.Contains(r.PartNo)),
-                    "Unit"         => q.Where(r => def.SelectedValues.Contains(r.Unit)),
-                    "Type"         => q.Where(r => def.SelectedValues.Contains(r.Type ?? "")),
-                    "Priority"     => q.Where(r => def.SelectedValues.Contains(r.Priority ?? "")),
+                    "PlanNo"       => q.Where(r => def.Passes(r.PlanNo)),
+                    "PlanDate"     => q.Where(r => def.Passes(r.PlanDate.ToString("dd/MM/yy"))),
+                    "ReceivedDate" => q.Where(r => def.Passes(r.ReceivedDate.HasValue ? r.ReceivedDate.Value.ToString("dd/MM/yy") : "(Chưa có)")),
+                    "CustomerName" => q.Where(r => def.Passes(r.CustomerName)),
+                    "PartNo"       => q.Where(r => def.Passes(r.PartNo)),
+                    "Unit"         => q.Where(r => def.Passes(r.Unit)),
+                    "Type"         => q.Where(r => def.Passes(r.Type ?? "")),
+                    "Priority"     => q.Where(r => def.Passes(r.Priority ?? "")),
                     _ => q
                 };
             }
@@ -727,17 +735,29 @@ else
     private class ColFilterDef
     {
         public List<string> AllValues { get; set; } = new();
-        public HashSet<string> SelectedValues { get; set; } = new();
+
+        // Các item bị bỏ tick tường minh bởi user
+        public HashSet<string> ExcludedValues { get; set; } = new();
+
+        // Search text trong dropdown — apply thẳng vào Filtered (realtime)
         public string SearchText { get; set; } = string.Empty;
+
+        // Cột đang active filter khi có SearchText hoặc có item bị exclude
+        public bool IsActive =>
+            !string.IsNullOrEmpty(SearchText) || ExcludedValues.Count > 0;
+
+        // Item có đang được tick không (dùng để render checkbox)
+        public bool IsChecked(string v) => !ExcludedValues.Contains(v);
+
+        // Row value có pass filter không (dùng trong Filtered)
+        public bool Passes(string v) =>
+            (string.IsNullOrEmpty(SearchText) || v.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+            && !ExcludedValues.Contains(v);
 
         public static ColFilterDef Build(List<KhPlanDetailRow> rows, Func<KhPlanDetailRow, string> selector)
         {
             var all = rows.Select(selector).Distinct().OrderBy(v => v).ToList();
-            return new ColFilterDef
-            {
-                AllValues = all,
-                SelectedValues = new HashSet<string>(all) // mặc định chọn tất cả = không lọc
-            };
+            return new ColFilterDef { AllValues = all };
         }
     }
 }

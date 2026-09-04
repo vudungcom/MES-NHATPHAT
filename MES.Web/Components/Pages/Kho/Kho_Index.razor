@@ -306,7 +306,7 @@ else
             <div class="divider"></div>
 
             @* Clear filter cột này — chỉ hiện khi đang active *@
-            @if (colDef.SelectedValues.Count > 0 && colDef.SelectedValues.Count < colDef.AllValues.Count)
+            @if (colDef.IsActive)
             {
                 <button class="sort-btn text-danger" @onclick="() => ClearColFilter(_openDropdown!)">
                     <i class="bi bi-x-circle"></i> Xóa filter cột này
@@ -325,7 +325,7 @@ else
                         .Where(v => string.IsNullOrEmpty(colDef.SearchText)
                                  || v.Contains(colDef.SearchText, StringComparison.OrdinalIgnoreCase))
                         .ToList();
-                    bool allSelected = visibleVals.All(v => colDef.SelectedValues.Contains(v));
+                    bool allSelected = visibleVals.All(v => colDef.IsChecked(v));
                 }
                 <label>
                     <input type="checkbox" checked="@allSelected"
@@ -336,7 +336,7 @@ else
                 {
                     var v = val;
                     <label>
-                        <input type="checkbox" checked="@colDef.SelectedValues.Contains(v)"
+                        <input type="checkbox" checked="@colDef.IsChecked(v)"
                                @onchange="e => ToggleColValue(colDef, v, (bool)(e.Value ?? false))" />
                         @v
                     </label>
@@ -629,9 +629,7 @@ else
     // ================================================================
     private RenderFragment ColHeader(string colKey, string label, string colLetter) => __builder =>
     {
-        var hasFilter = _colDefs.TryGetValue(colKey, out var def)
-                     && def.SelectedValues.Count > 0
-                     && def.SelectedValues.Count < def.AllValues.Count;
+        var hasFilter = _colDefs.TryGetValue(colKey, out var def) && def.IsActive;
         var isSorted = _sortCol == colKey;
 
         <span class="col-filter-wrap">
@@ -670,30 +668,25 @@ else
 
     private void ToggleSelectAll(ColFilterDef def, List<string> visible, bool select)
     {
-        var updated = new HashSet<string>(def.SelectedValues);
-        if (select) foreach (var v in visible) updated.Add(v);
-        else        foreach (var v in visible) updated.Remove(v);
-        def.SelectedValues = updated;
+        if (select) foreach (var v in visible) def.ExcludedValues.Remove(v);
+        else        foreach (var v in visible) def.ExcludedValues.Add(v);
     }
 
     private void ToggleColValue(ColFilterDef def, string val, bool selected)
     {
-        var updated = new HashSet<string>(def.SelectedValues);
-        if (selected) updated.Add(val);
-        else          updated.Remove(val);
-        def.SelectedValues = updated;
+        if (selected) def.ExcludedValues.Remove(val);
+        else          def.ExcludedValues.Add(val);
     }
 
-    private void ApplyColFilter(string colKey)
-    {
-        _openDropdown = null;
-        StateHasChanged();
-    }
+    private void ApplyColFilter(string colKey) => _openDropdown = null;
 
     private void ClearColFilter(string colKey)
     {
         if (_colDefs.TryGetValue(colKey, out var def))
-            def.SelectedValues = new HashSet<string>(def.AllValues);
+        {
+            def.ExcludedValues.Clear();
+            def.SearchText = string.Empty;
+        }
         _openDropdown = null;
     }
 
@@ -704,8 +697,7 @@ else
     }
 
     private bool HasActiveColFilters =>
-        _colDefs.Any(kv => kv.Value.SelectedValues.Count > 0
-                        && kv.Value.SelectedValues.Count < kv.Value.AllValues.Count)
+        _colDefs.Any(kv => kv.Value.IsActive)
         || _sortCol != null;
 
     // ================================================================
@@ -751,24 +743,24 @@ else
             // Excel-style column filters — giống Part Master
             foreach (var (key, def) in _colDefs)
             {
-                if (def.SelectedValues.Count == def.AllValues.Count) continue; // không lọc nếu chọn tất cả
+                if (!def.IsActive) continue;
                 q = key switch
                 {
-                    "SoPO"        => q.Where(k => def.SelectedValues.Contains(k.SoPO)),
-                    "PartNo"      => q.Where(k => def.SelectedValues.Contains(k.PartNo)),
-                    "DonViTinh"   => q.Where(k => def.SelectedValues.Contains(k.DonViTinh ?? "—")),
-                    "SoLuongKH"   => q.Where(k => def.SelectedValues.Contains(k.SoLuongKeHoach.ToString("0.####"))),
-                    "ThoiHan"     => q.Where(k => def.SelectedValues.Contains(k.ThoiHan.ToString("dd/MM/yyyy"))),
-                    "MaVatLieu"   => q.Where(k => def.SelectedValues.Contains(k.MaVatLieu ?? "—")),
-                    "CauHinhPhoi" => q.Where(k => def.SelectedValues.Contains(k.CauHinhPhoi ?? "—")),
-                    "GhiChuPhoi"  => q.Where(k => def.SelectedValues.Contains(k.GhiChuPhoi ?? "—")),
-                    "NgayNhan"    => q.Where(k => def.SelectedValues.Contains(k.NgayNhanPhoi.HasValue ? k.NgayNhanPhoi.Value.ToString("dd/MM/yyyy") : "No")),
-                    "SlNhan"      => q.Where(k => def.SelectedValues.Contains(k.SoLuongThucNhan?.ToString() ?? "—")),
-                    "OrderVL"     => q.Where(k => def.SelectedValues.Contains(k.OrderVatLieu ?? "—")),
-                    "ViTriDe"     => q.Where(k => def.SelectedValues.Contains(k.ViTriDePhoi ?? "—")),
-                    "TinhTrang"   => q.Where(k => def.SelectedValues.Contains(k.TinhTrangPhoi ?? "—")),
-                    "NgayCap"     => q.Where(k => def.SelectedValues.Contains(k.NgayCapPhoi.HasValue ? k.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")),
-                    "SlCap"       => q.Where(k => def.SelectedValues.Contains(k.SoLuongCap?.ToString() ?? "—")),
+                    "SoPO"        => q.Where(k => def.Passes(k.SoPO)),
+                    "PartNo"      => q.Where(k => def.Passes(k.PartNo)),
+                    "DonViTinh"   => q.Where(k => def.Passes(k.DonViTinh ?? "—")),
+                    "SoLuongKH"   => q.Where(k => def.Passes(k.SoLuongKeHoach.ToString("0.####"))),
+                    "ThoiHan"     => q.Where(k => def.Passes(k.ThoiHan.ToString("dd/MM/yyyy"))),
+                    "MaVatLieu"   => q.Where(k => def.Passes(k.MaVatLieu ?? "—")),
+                    "CauHinhPhoi" => q.Where(k => def.Passes(k.CauHinhPhoi ?? "—")),
+                    "GhiChuPhoi"  => q.Where(k => def.Passes(k.GhiChuPhoi ?? "—")),
+                    "NgayNhan"    => q.Where(k => def.Passes(k.NgayNhanPhoi.HasValue ? k.NgayNhanPhoi.Value.ToString("dd/MM/yyyy") : "No")),
+                    "SlNhan"      => q.Where(k => def.Passes(k.SoLuongThucNhan?.ToString() ?? "—")),
+                    "OrderVL"     => q.Where(k => def.Passes(k.OrderVatLieu ?? "—")),
+                    "ViTriDe"     => q.Where(k => def.Passes(k.ViTriDePhoi ?? "—")),
+                    "TinhTrang"   => q.Where(k => def.Passes(k.TinhTrangPhoi ?? "—")),
+                    "NgayCap"     => q.Where(k => def.Passes(k.NgayCapPhoi.HasValue ? k.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")),
+                    "SlCap"       => q.Where(k => def.Passes(k.SoLuongCap?.ToString() ?? "—")),
                     _ => q
                 };
             }
@@ -810,7 +802,10 @@ else
         _globalSearch = string.Empty;
         _filterStatus = string.Empty;
         foreach (var def in _colDefs.Values)
-            def.SelectedValues = new HashSet<string>(def.AllValues);
+        {
+            def.ExcludedValues.Clear();
+            def.SearchText = string.Empty;
+        }
         _sortCol = null;
         _openDropdown = null;
     }
@@ -889,22 +884,24 @@ else
     }
 
     // ================================================================
-    // ColFilterDef — copy nguyên từ Part Master, chỉ đổi generic type
+    // ColFilterDef — ExcludedValues + SearchText apply realtime
     // ================================================================
     private class ColFilterDef
     {
         public List<string> AllValues { get; set; } = new();
-        public HashSet<string> SelectedValues { get; set; } = new();
+        public HashSet<string> ExcludedValues { get; set; } = new();
         public string SearchText { get; set; } = string.Empty;
+
+        public bool IsActive => !string.IsNullOrEmpty(SearchText) || ExcludedValues.Count > 0;
+        public bool IsChecked(string v) => !ExcludedValues.Contains(v);
+        public bool Passes(string v) =>
+            (string.IsNullOrEmpty(SearchText) || v.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+            && !ExcludedValues.Contains(v);
 
         public static ColFilterDef Build(List<KhoVatLieuViewItem> rows, Func<KhoVatLieuViewItem, string> selector)
         {
             var all = rows.Select(selector).Distinct().OrderBy(v => v).ToList();
-            return new ColFilterDef
-            {
-                AllValues = all,
-                SelectedValues = new HashSet<string>(all) // mặc định chọn tất cả = không lọc
-            };
+            return new ColFilterDef { AllValues = all };
         }
     }
 }

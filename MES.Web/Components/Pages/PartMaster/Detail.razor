@@ -151,10 +151,6 @@ else
         </div>
     }
 
-    @if (CanEditAnyArea)
-    {
-    }
-
     @* ==================== VÙNG A ==================== *@
     @if (_canViewA)
     {
@@ -213,7 +209,7 @@ else
                                 <th style="min-width: 160px;">Máy đồng dạng</th>
                                 <th style="min-width: 130px;">Đồ gá</th>
                                 <th style="min-width: 140px;">Loại dao (Cột B)</th>
-                                <th style="min-width: 120px;">Máy bấm giờ</th>
+                                <th style="min-width: 160px;">Máy bấm giờ</th>
                                 <th style="width: 80px;">T.Gá lắp<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Gia công<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Kiểm tra<br/><span class="text-muted fw-normal">(phút)</span></th>
@@ -261,8 +257,10 @@ else
                                     <td>
                                         <div class="input-group input-group-sm">
                                             <input class="form-control form-control-sm"
-                                                   @bind="edit.MachineAlternative" @bind:after="() => MarkAsModified(edit)"
-                                                   placeholder="Chọn máy..."
+                                                   style="background-color: #e9ecef;"
+                                                   readonly
+                                                   value="@edit.MachineAlternative"
+                                                   placeholder="-- Chọn máy --"
                                                    disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
                                             {
@@ -275,43 +273,76 @@ else
                                         </div>
                                     </td>
 
-                                    @* Đồ gá — datalist *@
+                                    @* Đồ gá — chọn nhiều *@
                                     <td>
-                                        <input class="form-control form-control-sm" list="dl-doga-@edit.StepId"
-                                               value="@edit.FixtureType"
-                                               placeholder="-- Chọn đồ gá --"
-                                               @oninput="e => { edit.FixtureType = e.Value?.ToString(); MarkAsModified(edit); }"
-                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
-                                        <datalist id="dl-doga-@edit.StepId">
-                                            @foreach (var g in _doGaList)
-                                            { <option value="@g.TenDoGa">@g.TenDoGa</option> }
-                                        </datalist>
+                                        @{
+                                            var doGaItems = (edit.FixtureType ?? "")
+                                                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                                .Where(d => !string.IsNullOrEmpty(d)).ToList();
+                                            var doGaRows = Math.Max(1, doGaItems.Count);
+                                        }
+                                        <div class="input-group input-group-sm">
+                                            <textarea class="form-control form-control-sm"
+                                                      style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:100px;"
+                                                      rows="@doGaRows"
+                                                      readonly
+                                                      placeholder="-- Chọn đồ gá --"
+                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@string.Join("\n", doGaItems)</textarea>
+                                            @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
+                                            {
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                        title="Chọn nhiều đồ gá"
+                                                        @onclick="() => OpenAltDoGaModal(edit)">
+                                                    <i class="bi bi-list-check"></i>
+                                                </button>
+                                            }
+                                        </div>
                                     </td>
 
-                                    @* Loại dao — datalist *@
+                                    @* Loại dao — chọn nhiều *@
                                     <td>
-                                        <input class="form-control form-control-sm font-monospace" list="dl-dao-@edit.StepId"
-                                               value="@edit.ToolType"
-                                               placeholder="-- Chọn dao --"
-                                               @oninput="e => { edit.ToolType = e.Value?.ToString(); MarkAsModified(edit); }"
-                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
-                                        <datalist id="dl-dao-@edit.StepId">
-                                            @foreach (var d in _daoList)
-                                            { <option value="@d.TenDao">@d.TenDao</option> }
-                                        </datalist>
+                                        @{
+                                            var daoItems = (edit.ToolType ?? "")
+                                                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                                .Where(d => !string.IsNullOrEmpty(d)).ToList();
+                                            var daoRows = Math.Max(1, daoItems.Count);
+                                        }
+                                        <div class="input-group input-group-sm">
+                                            <textarea class="form-control form-control-sm font-monospace"
+                                                      style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:120px;"
+                                                      rows="@daoRows"
+                                                      readonly
+                                                      placeholder="-- Chọn dao --"
+                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@string.Join("\n", daoItems)</textarea>
+                                            @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
+                                            {
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                        title="Chọn nhiều loại dao"
+                                                        @onclick="() => OpenAltDaoModal(edit)">
+                                                    <i class="bi bi-list-check"></i>
+                                                </button>
+                                            }
+                                        </div>
                                     </td>
 
-                                    @* Máy bấm giờ — datalist từ _thietBiList (SoMay) *@
+                                    @* Máy bấm giờ — chọn nhiều (đã update) *@
                                     <td>
-                                        <input class="form-control form-control-sm" list="dl-timing-@edit.StepId"
-                                               value="@edit.TimingMachine"
-                                               placeholder="Chọn máy bấm giờ..."
-                                               @oninput="e => { edit.TimingMachine = e.Value?.ToString(); MarkAsModified(edit); }"
-                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
-                                        <datalist id="dl-timing-@edit.StepId">
-                                            @foreach (var m in _thietBiList)
-                                            { <option value="@m.SoMay">@m.SoMay - @m.TenMay</option> }
-                                        </datalist>
+                                        <div class="input-group input-group-sm">
+                                            <input class="form-control form-control-sm"
+                                                   style="background-color: #e9ecef;"
+                                                   readonly
+                                                   value="@edit.TimingMachine"
+                                                   placeholder="-- Chọn máy --"
+                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
+                                            {
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                        title="Chọn nhiều máy bấm giờ"
+                                                        @onclick="() => OpenAltTimingModal(edit)">
+                                                    <i class="bi bi-list-check"></i>
+                                                </button>
+                                            }
+                                        </div>
                                     </td>
 
                                     @* Các cột thời gian — tự gõ *@
@@ -871,7 +902,7 @@ else
                     </button>
                     @if (_isDraftSaved && !_hasChanges)
                     {
-                        <small class="text-danger fw-bold mt-1">Đã lưu nháp (Trạng thái: NG)</small>
+                        <small class="text-danger fw-bold mt-1" style="font-size: 0.75rem;">Đã lưu nháp (NG)</small>
                     }
                 </div>
                 <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") px-4 fw-bold" style="height: 38px;"
@@ -930,6 +961,178 @@ else
                 <div class="modal-footer py-2 bg-light">
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAlternativeModal">Hủy</button>
                     <button type="button" class="btn btn-sm btn-primary" @onclick="SaveAlternativeModal">
+                        <i class="bi bi-check-lg"></i> Xác nhận
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ==================== MODAL CHỌN NHIỀU ĐỒ GÁ ==================== *@
+@if (_showAltDoGaModal && _currentEditingAltDoGa != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-success text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-tools"></i> Chọn đồ gá cho NC <b>@_currentEditingAltDoGa.NC</b>
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseAltDoGaModal"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="Tìm theo tên đồ gá..."
+                               @bind="_altDoGaSearch" @bind:event="oninput" />
+                    </div>
+                    <div class="list-group list-group-flush border rounded" style="max-height: 340px; overflow-y: auto;">
+                        @if (!FilteredAltDoGas.Any())
+                        {
+                            <div class="p-3 text-center text-muted small"><em>Không tìm thấy đồ gá phù hợp</em></div>
+                        }
+                        @foreach (var dg in FilteredAltDoGas)
+                        {
+                            var dgSelected = _selectedAltDoGas.Contains(dg.TenDoGa ?? string.Empty);
+                            <label class="list-group-item list-group-item-action d-flex align-items-center py-2 px-3" style="cursor: pointer;">
+                                <input class="form-check-input me-2 flex-shrink-0" type="checkbox"
+                                       checked="@dgSelected"
+                                       @onchange="(e) => ToggleAltDoGaSelection(dg.TenDoGa ?? string.Empty, (bool)(e.Value ?? false))" />
+                                <span style="font-size: 0.82rem;">@dg.TenDoGa</span>
+                            </label>
+                        }
+                    </div>
+                    @if (_selectedAltDoGas.Count > 0)
+                    {
+                        <div class="mt-2 small">
+                            <span class="text-muted">Đã chọn (@_selectedAltDoGas.Count):</span>
+                            <div class="mt-1 d-flex flex-wrap gap-1">
+                                @foreach (var dg in _selectedAltDoGas.OrderBy(x => x))
+                                {
+                                    <span class="badge bg-success" style="font-size:0.72rem;">@dg</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAltDoGaModal">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-success" @onclick="SaveAltDoGaModal">
+                        <i class="bi bi-check-lg"></i> Xác nhận (@_selectedAltDoGas.Count đồ gá)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ==================== MODAL CHỌN NHIỀU LOẠI DAO ==================== *@
+@if (_showAltDaoModal && _currentEditingAltDao != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-dark text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-tools"></i> Chọn loại dao cho NC <b>@_currentEditingAltDao.NC</b>
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseAltDaoModal"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="Tìm theo tên dao / mã dao..."
+                               @bind="_altDaoSearch" @bind:event="oninput" />
+                    </div>
+                    <div class="list-group list-group-flush border rounded" style="max-height: 340px; overflow-y: auto;">
+                        @if (!FilteredAltDaos.Any())
+                        {
+                            <div class="p-3 text-center text-muted small"><em>Không tìm thấy dao phù hợp</em></div>
+                        }
+                        @foreach (var d in FilteredAltDaos)
+                        {
+                            var isSelected = _selectedAltDaos.Contains(d.TenDao ?? string.Empty);
+                            <label class="list-group-item list-group-item-action d-flex align-items-center py-2 px-3" style="cursor: pointer;">
+                                <input class="form-check-input me-2 flex-shrink-0" type="checkbox"
+                                       checked="@isSelected"
+                                       @onchange="(e) => ToggleAltDaoSelection(d.TenDao ?? string.Empty, (bool)(e.Value ?? false))" />
+                                <div class="flex-grow-1 font-monospace" style="font-size: 0.82rem;">
+                                    <strong class="text-dark">@d.TenDao</strong>
+                                </div>
+                            </label>
+                        }
+                    </div>
+                    @if (_selectedAltDaos.Count > 0)
+                    {
+                        <div class="mt-2 small">
+                            <span class="text-muted">Đã chọn (@_selectedAltDaos.Count):</span>
+                            <div class="mt-1 d-flex flex-wrap gap-1">
+                                @foreach (var dao in _selectedAltDaos.OrderBy(x => x))
+                                {
+                                    <span class="badge bg-dark font-monospace" style="font-size:0.72rem;">@dao</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAltDaoModal">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-dark" @onclick="SaveAltDaoModal">
+                        <i class="bi bi-check-lg"></i> Xác nhận (@_selectedAltDaos.Count dao)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ==================== MODAL CHỌN NHIỀU MÁY BẤM GIỜ ==================== *@
+@if (_showAltTimingModal && _currentEditingAltTiming != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-secondary text-white py-2">
+                    <h6 class="modal-title mb-0">
+                        <i class="bi bi-stopwatch"></i> Chọn máy bấm giờ cho công đoạn <b>@_currentEditingAltTiming.NC</b>
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseAltTimingModal"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input class="form-control" placeholder="Tìm theo Số máy / Tên máy / Bộ phận..."
+                               @bind="_altTimingSearch" @bind:event="oninput" />
+                    </div>
+                    <div class="list-group list-group-flush border rounded" style="max-height: 320px; overflow-y: auto;">
+                        @if (!FilteredAltTimings.Any())
+                        {
+                            <div class="p-3 text-center text-muted small"><em>Không tìm thấy thiết bị phù hợp</em></div>
+                        }
+                        @foreach (var m in FilteredAltTimings)
+                        {
+                            var isSelected = _selectedAltTimings.Contains(m.SoMay);
+                            <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3" style="cursor: pointer;">
+                                <div class="form-check mb-0">
+                                    <input class="form-check-input me-2" type="checkbox"
+                                           checked="@isSelected"
+                                           @onchange="(e) => ToggleAltTimingSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                                    <strong class="text-secondary">@m.SoMay</strong>
+                                    <span class="text-dark ms-2">@m.TenMay</span>
+                                    <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
+                                </div>
+                                <span class="small text-muted">@m.LoaiMay</span>
+                            </label>
+                        }
+                    </div>
+                    <div class="small text-muted mt-2">
+                        Đã chọn: <strong class="text-secondary">@(_selectedAltTimings.Count > 0 ? string.Join(", ", _selectedAltTimings) : "Chưa chọn")</strong>
+                    </div>
+                </div>
+                <div class="modal-footer py-2 bg-light">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAltTimingModal">Hủy</button>
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="SaveAltTimingModal">
                         <i class="bi bi-check-lg"></i> Xác nhận
                     </button>
                 </div>
@@ -1122,7 +1325,7 @@ else
     private bool _savedSuccessfully = false;
     private bool _hasChanges = false;
     private bool _isDraftSaved = false;
-    private bool _isDraftConfirming = false; // Theo dõi xem popup PIN được mở từ Lưu Nháp hay Lưu OK
+    private bool _isDraftConfirming = false;
 
     private PartMaster? _part;
     private int _currentUserId;
@@ -1131,7 +1334,6 @@ else
     private bool _canViewA, _canViewB, _canViewC, _canViewD, _canViewE;
     private bool _canEditA, _canEditB, _canEditC, _canEditD, _canEditE;
 
-    // Ngưng/Kích hoạt Part
     private bool _canDelete = false;
     private bool _showDeleteConfirm = false;
     private bool _deleteLoading = false;
@@ -1196,7 +1398,6 @@ else
     private string? _materialConfig;
     private string? _materialNote;
     
-    // Đã trả lại đủ 3 cờ check logic
     private bool _setDefaultMaterial;
     private bool _setDefaultConfig;
     private bool _setDefaultNote;
@@ -1229,12 +1430,48 @@ else
     private HashSet<string> _selectedAltMachines = new();
     private string _altMachineSearch = string.Empty;
 
-    // --- Danh sách máy loại trừ (global setting) ---
+    private bool _showAltDoGaModal = false;
+    private MachiningEdit? _currentEditingAltDoGa;
+    private HashSet<string> _selectedAltDoGas = new();
+    private string _altDoGaSearch = string.Empty;
+
+    private bool _showAltDaoModal = false;
+    private MachiningEdit? _currentEditingAltDao;
+    private HashSet<string> _selectedAltDaos = new();
+    private string _altDaoSearch = string.Empty;
+
+    private bool _showAltTimingModal = false;
+    private MachiningEdit? _currentEditingAltTiming;
+    private HashSet<string> _selectedAltTimings = new();
+    private string _altTimingSearch = string.Empty;
+
     private List<MachineExcludeSetting> _excludeSettings = new();
     private bool _showExcludeModal = false;
     private HashSet<string> _selectedExcludeMachines = new();
     private string _excludeMachineSearch = string.Empty;
     private bool _excludeSaving = false;
+
+    private IEnumerable<DoGa> FilteredAltDoGas
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_altDoGaSearch)) return _doGaList;
+            var s = _altDoGaSearch.Trim();
+            return _doGaList.Where(d =>
+                (d.TenDoGa ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private IEnumerable<Dao> FilteredAltDaos
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_altDaoSearch)) return _daoList;
+            var s = _altDaoSearch.Trim();
+            return _daoList.Where(d =>
+                (d.TenDao ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+        }
+    }  
 
     private IEnumerable<ThietBi> FilteredAltMachines
     {
@@ -1242,6 +1479,20 @@ else
         {
             if (string.IsNullOrWhiteSpace(_altMachineSearch)) return _thietBiList;
             var s = _altMachineSearch.Trim();
+            return _thietBiList.Where(m =>
+                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private IEnumerable<ThietBi> FilteredAltTimings
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_altTimingSearch)) return _thietBiList;
+            var s = _altTimingSearch.Trim();
             return _thietBiList.Where(m =>
                 m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
                 m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
@@ -1299,8 +1550,7 @@ else
             
             _canViewA = perms.TryGetValue("PART_TAO_MOI", out var pvA) && pvA.CanView;
             _canEditA = perms.TryGetValue("PART_TAO_MOI", out var pA) && pA.CanEdit;
-            // CanDelete không có trong tuple (bool CanView, bool CanEdit) của GetAllUserPermissionsAsync
-            // → đọc trực tiếp từ GroupPermissionSetting JSON của user
+            
             _canDelete = await UserSvc.GetCanDeleteAsync(_currentUserId, MES.Web.Constants.SystemPermissions.PartTaoMoi);
 
             _canViewB = perms.TryGetValue("PART_GC", out var pvB) && pvB.CanView;
@@ -1341,14 +1591,12 @@ else
         await LoadAllAsync();
         _hasChanges = false;
 
-        // Nếu tất cả vùng user có quyền edit đã được confirmed → set savedSuccessfully
-        // để nút "Lưu & Xác nhận OK" hiện trạng thái "đã lưu" thay vì luôn enabled.
         _savedSuccessfully = (!_canEditA || _part.IsPlanConfirmed)
                           && (!_canEditB || _part.IsMachiningConfirmed)
                           && (!_canEditC || _part.IsHtspConfirmed)
                           && (!_canEditD || _part.IsKcsConfirmed)
                           && (!_canEditE || _part.IsPkgConfirmed)
-                          && CanEditAnyArea; // chỉ set khi user thực sự có quyền edit
+                          && CanEditAnyArea; 
 
         _loading = false;
     }
@@ -1379,9 +1627,6 @@ else
         List<PartInspectionStep> iSteps;
         List<PartPackagingStep> pSteps;
 
-        // Sau v0.7: xóa dòng công đoạn là hard delete, không còn IsActive=false trong DB.
-        // Chỉ dùng GetActiveByPartAsync — GetAllByPartAsync giữ lại cho tương thích ngược
-        // với dữ liệu cũ đã bị soft-delete trước v0.7 (nếu cần xem lịch sử, query trực tiếp DB).
         {
             mSteps = await MachiningSvc.GetActiveByPartAsync(pid);
             tSteps = await TaroSvc.GetActiveByPartAsync(pid);
@@ -1439,8 +1684,6 @@ else
 
     private void AddMachiningRow()
     {
-        // NC tự tăng: lấy max số nguyên trong các dòng chính (bỏ qua dự phòng)
-        // User vẫn có thể sửa lại NC sau khi thêm
         var maxNc = _machiningEdits
             .Where(e => e.State != EditState.Deleted && !e.IsBackup && !string.IsNullOrEmpty(e.NC))
             .Select(e => { int n; return int.TryParse(e.NC, out n) ? n : 0; })
@@ -1484,6 +1727,72 @@ else
         _savedSuccessfully = false;
     }
 
+    private void OpenAltDoGaModal(MachiningEdit edit)
+    {
+        _currentEditingAltDoGa = edit;
+        _selectedAltDoGas = (edit.FixtureType ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altDoGaSearch = string.Empty;
+        _showAltDoGaModal = true;
+    }
+
+    private void ToggleAltDoGaSelection(string tenDoGa, bool isChecked)
+    {
+        if (isChecked) _selectedAltDoGas.Add(tenDoGa);
+        else _selectedAltDoGas.Remove(tenDoGa);
+    }
+
+    private void CloseAltDoGaModal()
+    {
+        _showAltDoGaModal = false;
+        _currentEditingAltDoGa = null;
+    }
+
+    private void SaveAltDoGaModal()
+    {
+        if (_currentEditingAltDoGa != null)
+        {
+            _currentEditingAltDoGa.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            MarkAsModified(_currentEditingAltDoGa);
+        }
+        _showAltDoGaModal = false;
+        _currentEditingAltDoGa = null;
+    }
+
+    private void OpenAltDaoModal(MachiningEdit edit)
+    {
+        _currentEditingAltDao = edit;
+        _selectedAltDaos = (edit.ToolType ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altDaoSearch = string.Empty;
+        _showAltDaoModal = true;
+    }
+
+    private void ToggleAltDaoSelection(string tenDao, bool isChecked)
+    {
+        if (isChecked) _selectedAltDaos.Add(tenDao);
+        else _selectedAltDaos.Remove(tenDao);
+    }
+
+    private void CloseAltDaoModal()
+    {
+        _showAltDaoModal = false;
+        _currentEditingAltDao = null;
+    }
+
+    private void SaveAltDaoModal()
+    {
+        if (_currentEditingAltDao != null)
+        {
+            _currentEditingAltDao.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            MarkAsModified(_currentEditingAltDao);
+        }
+        _showAltDaoModal = false;
+        _currentEditingAltDao = null;
+    }
+
     private void OpenAlternativeModal(MachiningEdit edit)
     {
         _currentEditingAltMachining = edit;
@@ -1515,6 +1824,39 @@ else
         }
         _showAltMachineModal = false;
         _currentEditingAltMachining = null;
+    }
+
+    private void OpenAltTimingModal(MachiningEdit edit)
+    {
+        _currentEditingAltTiming = edit;
+        _selectedAltTimings = (edit.TimingMachine ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altTimingSearch = string.Empty;
+        _showAltTimingModal = true;
+    }
+
+    private void ToggleAltTimingSelection(string soMay, bool isChecked)
+    {
+        if (isChecked) _selectedAltTimings.Add(soMay);
+        else _selectedAltTimings.Remove(soMay);
+    }
+
+    private void CloseAltTimingModal()
+    {
+        _showAltTimingModal = false;
+        _currentEditingAltTiming = null;
+    }
+
+    private void SaveAltTimingModal()
+    {
+        if (_currentEditingAltTiming != null)
+        {
+            _currentEditingAltTiming.TimingMachine = string.Join(", ", _selectedAltTimings.OrderBy(x => x));
+            MarkAsModified(_currentEditingAltTiming);
+        }
+        _showAltTimingModal = false;
+        _currentEditingAltTiming = null;
     }
 
     // ===== DANH SÁCH MÁY LOẠI TRỪ (global setting) =====
@@ -1558,16 +1900,13 @@ else
         _excludeSaving = true;
         try
         {
-            // Fresh read để tránh EF tracking conflict
             var current = await Db.MachineExcludeSettings.ToListAsync();
             var currentSet = current.Select(x => x.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // Xóa máy bị bỏ tick
             var toRemove = current.Where(x => !_selectedExcludeMachines.Contains(x.SoMay)).ToList();
             if (toRemove.Any())
                 Db.MachineExcludeSettings.RemoveRange(toRemove);
 
-            // Thêm máy mới được tick
             foreach (var soMay in _selectedExcludeMachines.Where(s => !currentSet.Contains(s)))
             {
                 await Db.MachineExcludeSettings.AddAsync(new MachineExcludeSetting
@@ -1580,7 +1919,6 @@ else
 
             await Db.SaveChangesAsync();
 
-            // Reload list hiển thị
             _excludeSettings = await Db.MachineExcludeSettings
                 .OrderBy(x => x.SoMay)
                 .AsNoTracking()
@@ -1618,10 +1956,6 @@ else
         }
     }
 
-    /// <summary>
-    /// Dùng riêng cho Taro — khi chọn WTS fill StepName, StandardTime và WtsTaskCode,
-    /// KHÔNG fill NC (NC Taro do người dùng nhập thủ công).
-    /// </summary>
     private void OnSelectWtsTaskTaro(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
     {
         var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
@@ -1669,7 +2003,7 @@ else
         }
         _hasChanges = true;
         _isDraftSaved = false;
-        _savedSuccessfully = false;  // Bật lại nút "Lưu & Xác nhận OK" sau khi user thao tác
+        _savedSuccessfully = false; 
     }
 
     private string RowCssClass(StepEditBase e)
@@ -1743,10 +2077,6 @@ else
         builder.CloseElement();
     };
 
-    /// <summary>
-    /// Chỉ bật Popup Modal nhập PIN khi người dùng CHỦ ĐỘNG tích chọn Checkbox Đặt làm mặc định.
-    /// Logic này đã trả lại sự nhất quán cho cả 3 cột Vùng A.
-    /// </summary>
     private List<PinConfirmModal.DefaultChangeInfo> CollectDefaultChanges()
     {
         var list = new List<PinConfirmModal.DefaultChangeInfo>();
@@ -1782,18 +2112,32 @@ else
             return;
         }
 
-        // Validate datalist fields — check giá trị có trong list không
         var validationErrors = new List<string>();
         foreach (var e in _machiningEdits.Where(e => e.State is EditState.New or EditState.Modified))
         {
             if (!string.IsNullOrEmpty(e.MachineRegistered) && !_thietBiList.Any(m => m.SoMay == e.MachineRegistered))
                 validationErrors.Add($"NC {e.NC}: Máy đăng ký '{e.MachineRegistered}' không có trong danh sách thiết bị.");
-            if (!string.IsNullOrEmpty(e.FixtureType) && !_doGaList.Any(d => d.TenDoGa == e.FixtureType))
-                validationErrors.Add($"NC {e.NC}: Đồ gá '{e.FixtureType}' không có trong danh mục đồ gá.");
-            if (!string.IsNullOrEmpty(e.ToolType) && !_daoList.Any(d => d.TenDao == e.ToolType))
-                validationErrors.Add($"NC {e.NC}: Loại dao '{e.ToolType}' không có trong danh mục dao.");
-            if (!string.IsNullOrEmpty(e.TimingMachine) && !_thietBiList.Any(m => m.SoMay == e.TimingMachine))
-                validationErrors.Add($"NC {e.NC}: Máy bấm giờ '{e.TimingMachine}' không có trong danh sách thiết bị.");
+            if (!string.IsNullOrEmpty(e.FixtureType))
+            {
+                var doGaItems = e.FixtureType.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var dg in doGaItems)
+                    if (!_doGaList.Any(d => d.TenDoGa == dg))
+                        validationErrors.Add($"NC {e.NC}: Đồ gá '{dg}' không có trong danh mục.");
+            }
+            if (!string.IsNullOrEmpty(e.ToolType))
+            {
+                var daoItems = e.ToolType.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var dao in daoItems)
+                    if (!_daoList.Any(d => d.TenDao == dao))
+                        validationErrors.Add($"NC {e.NC}: Loại dao '{dao}' không có trong danh mục.");
+            }
+            if (!string.IsNullOrEmpty(e.TimingMachine))
+            {
+                var timingItems = e.TimingMachine.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var tm in timingItems)
+                    if (!_thietBiList.Any(m => m.SoMay == tm))
+                        validationErrors.Add($"NC {e.NC}: Máy bấm giờ '{tm}' không có trong danh sách thiết bị.");
+            }
         }
         if (validationErrors.Count > 0)
         {
@@ -1805,8 +2149,6 @@ else
 
         _pendingDefaultChanges = CollectDefaultChanges();
 
-        // PIN chỉ yêu cầu khi đổi default attribute (Material/Config/Note).
-        // RequiresReason (sửa tên, sửa bước quy trình) chỉ cần nhập lý do text — không cần PIN.
         if (_pendingDefaultChanges.Count > 0)
         {
             _isDraftConfirming = isDraft;
@@ -1877,10 +2219,6 @@ else
             _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
     }
 
-    /// <summary>
-    /// HÀM SỬA LỖI MẤT "ssss": Cập nhật cờ Default trực tiếp qua EF Core,
-    /// TUYỆT ĐỐI KHÔNG ghi đè giá trị cũ, để đảm bảo danh sách vẫn giữ đủ mọi lịch sử.
-    /// </summary>
     private async Task SafeSetDefaultAsync(string attrType, string? newValue)
     {
         if (string.IsNullOrWhiteSpace(newValue)) return;
@@ -1892,7 +2230,6 @@ else
         var target = attrs.FirstOrDefault(x => x.Value == newValue) 
                   ?? Db.PartMasterAttributes.Local.FirstOrDefault(x => x.PartId == _part!.PartId && x.AttributeType == attrType && x.Value == newValue);
 
-        // Chỉ tắt các cờ cũ nếu như tìm thấy record mới để bật
         if (target != null)
         {
             bool hasChanges = false;
@@ -1940,15 +2277,12 @@ else
                     }
                 }
 
-                // LƯU CÁC GIÁ TRỊ VÀO DATABASE (NẾU CHƯA CÓ TRONG LIST)
                 await TryAddAttrValue("Material", _material, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialConfig", _materialConfig, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialNote", _materialNote, _currentUserId, log, errors);
 
-                // ÉP DB LƯU TỨC THÌ ĐỂ CÁC RECORD MỚI SINH RA ID TRƯỚC KHI CHẠY DEFAULT
                 await Db.SaveChangesAsync();
 
-                // CẬP NHẬT DEFAULT (CHỈ KHI NGƯỜI DÙNG TÍCH CHỌN)
                 if (_setDefaultMaterial)
                 {
                     try { await SafeSetDefaultAsync("Material", _material); log.Add($"✓ Đặt default Material = {_material}"); }
@@ -1967,7 +2301,7 @@ else
                     catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {ex.Message}"); }
                 }
 
-                _part!.IsPlanConfirmed = confirmOk; // sẽ ghi vào DB ở cuối
+                _part!.IsPlanConfirmed = confirmOk; 
             }
 
             if (_canEditB)
@@ -1976,7 +2310,7 @@ else
                     e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => MachiningSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Machining", log, errors);
 
                 _part!.IsMachiningConfirmed = confirmOk;
@@ -1988,21 +2322,21 @@ else
                     e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => TaroSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Taro", log, errors);
 
                 await SaveStepListAsync(_baviaEdits,
                     e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => BaviaSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => BaviaSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Bavia", log, errors);
 
                 await SaveStepListAsync(_washingEdits,
                     e => WashingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => WashingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => WashingSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Rửa", log, errors);
 
                 _part!.IsHtspConfirmed = confirmOk;
@@ -2014,7 +2348,7 @@ else
                     e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => InspectionSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Kiểm tra", log, errors);
 
                 _part!.IsKcsConfirmed = confirmOk;
@@ -2026,28 +2360,23 @@ else
                     e => PackagingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => PackagingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => PackagingSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, // Hard delete: không thể restore
+                    id => Task.CompletedTask, 
                     "Đóng gói", log, errors);
 
                 _part!.IsPkgConfirmed = confirmOk;
             }
 
-            // Ghi các cờ confirmed vào DB bằng entity tracked (tránh conflict với _part detached từ AsNoTracking).
-            // Load fresh từ DB → set các flag → SaveChanges một lần cuối.
             if (_part != null)
             {
                 var trackedPart = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part.PartId);
                 if (trackedPart != null)
                 {
-                    // Section A: user có canView có thể confirm (đủ để KH tự xác nhận A khi tạo Part).
-                    //           user có canEdit mới được unconfirm (chuyển về NG).
                     if (_canViewA)
                     {
                         if (confirmOk) trackedPart.IsPlanConfirmed = true;
                         else if (_canEditA) trackedPart.IsPlanConfirmed = false;
                     }
 
-                    // Section B/C/D/E: chỉ user canEdit mới được confirm/unconfirm.
                     if (_canEditB) trackedPart.IsMachiningConfirmed = confirmOk;
                     if (_canEditC) trackedPart.IsHtspConfirmed = confirmOk;
                     if (_canEditD) trackedPart.IsKcsConfirmed = confirmOk;
@@ -2168,13 +2497,11 @@ else
             get => _standardTime; 
             set => _standardTime = value.HasValue ? Math.Round(value.Value, 1) : null; 
         }
-        /// <summary>UI-only: user bấm nút ✏️ để mở dropdown WTS và sửa dòng cũ.</summary>
         public bool IsEditingWts { get; set; } = false;
     }
 
     public class MachiningEdit : StepEditBase
     {
-        /// <summary>UI-only: user bấm ✏️ để unlock dòng sửa.</summary>
         public bool IsEditingWts { get; set; } = false;
         public string? Drawing { get; set; }
         public string? MachineRegistered { get; set; }
@@ -2265,7 +2592,6 @@ else
 
     public class TaroEdit : SimpleStepEditBase
     {
-        /// <summary>Mã công việc WTS — auto fill từ dropdown, độc lập với NC thủ công. Persist vào DB cột WtsTaskCode từ v0.7.</summary>
         public string? WtsTaskCode { get; set; }
 
         public static TaroEdit FromEntity(PartTaroStep s) => new TaroEdit
