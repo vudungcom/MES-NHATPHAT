@@ -64,6 +64,7 @@ public class StandardWtsTaskService
         model.TaskCode = model.TaskCode.Trim().ToUpper();
         model.TaskName = model.TaskName.Trim();
         model.DefaultUnit = string.IsNullOrWhiteSpace(model.DefaultUnit) ? "Chi tiết" : model.DefaultUnit.Trim();
+        // IsProductiveTask giữ nguyên giá trị từ form (default true)
 
         bool exists = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == model.TaskCode && x.IsActive);
         if (exists) return (false, $"Mã công việc '{model.TaskCode}' đã tồn tại trong danh mục.");
@@ -80,7 +81,7 @@ public class StandardWtsTaskService
             TaskId = model.TaskId,
             FieldName = "Tạo mới công việc",
             OldValue = null,
-            NewValue = $"[{model.TaskCode}] {model.TaskName} ({model.CategoryName})",
+            NewValue = $"[{model.TaskCode}] {model.TaskName} ({model.CategoryName}) | Có ích: {(model.IsProductiveTask ? "Có" : "Không")}",
             Reason = "Khởi tạo công việc tiêu chuẩn",
             ChangedAt = now,
             ChangedBy = currentUserId
@@ -132,6 +133,10 @@ public class StandardWtsTaskService
         CheckAndLog("Đơn vị tính", task.DefaultUnit, updatedModel.DefaultUnit);
         CheckAndLog("Thời gian chuẩn (s)", task.StandardTimeSec?.ToString(), updatedModel.StandardTimeSec?.ToString());
         CheckAndLog("Ghi chú", task.GhiChu, updatedModel.GhiChu);
+        // Log thay đổi IsProductiveTask
+        CheckAndLog("Phân loại có ích",
+            task.IsProductiveTask ? "Có ích" : "Vô ích",
+            updatedModel.IsProductiveTask ? "Có ích" : "Vô ích");
 
         if (logs.Any())
         {
@@ -143,9 +148,64 @@ public class StandardWtsTaskService
             task.StandardTimeSec = updatedModel.StandardTimeSec;
             task.DisplayOrder = updatedModel.DisplayOrder;
             task.GhiChu = updatedModel.GhiChu?.Trim();
+            task.IsProductiveTask = updatedModel.IsProductiveTask;
             task.UpdatedAt = now;
             task.UpdatedBy = currentUserId;
 
+            _db.StandardWtsTaskChangeLogs.AddRange(logs);
+            await _db.SaveChangesAsync();
+        }
+
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Lưu tổng nhiều thay đổi IsProductiveTask cùng 1 lần (bulk save từ UI).
+    /// Xác thực PIN 1 lần duy nhất, ghi ChangeLog cho từng item thực sự thay đổi.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> BulkUpdateProductiveAsync(
+        List<(int TaskId, bool NewValue)> changes, int currentUserId, string pin)
+    {
+        if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
+        bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
+        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!changes.Any()) return (true, null);
+
+        var taskIds = changes.Select(c => c.TaskId).ToList();
+        var tasks = await _db.StandardWtsTasks
+            .Where(x => taskIds.Contains(x.TaskId) && x.IsActive)
+            .ToListAsync();
+
+        var now = DateTime.Now;
+        var logs = new List<StandardWtsTaskChangeLog>();
+
+        foreach (var (taskId, newValue) in changes)
+        {
+            var task = tasks.FirstOrDefault(x => x.TaskId == taskId);
+            if (task == null) continue;
+            if (task.IsProductiveTask == newValue) continue; // không thay đổi thực sự
+
+            var oldLabel = task.IsProductiveTask ? "Có ích" : "Vô ích";
+            var newLabel = newValue ? "Có ích" : "Vô ích";
+
+            task.IsProductiveTask = newValue;
+            task.UpdatedAt = now;
+            task.UpdatedBy = currentUserId;
+
+            logs.Add(new StandardWtsTaskChangeLog
+            {
+                TaskId    = task.TaskId,
+                FieldName = "Phân loại có ích",
+                OldValue  = oldLabel,
+                NewValue  = newLabel,
+                Reason    = "Cập nhật hàng loạt từ bảng danh mục",
+                ChangedAt = now,
+                ChangedBy = currentUserId
+            });
+        }
+
+        if (logs.Any())
+        {
             _db.StandardWtsTaskChangeLogs.AddRange(logs);
             await _db.SaveChangesAsync();
         }
@@ -197,20 +257,20 @@ public class StandardWtsTaskService
         var ws = workbook.Worksheets.Add("DS WTS tieu chuan");
 
         ws.Cell("A1").Value = "DANH MỤC CÔNG VIỆC TIÊU CHUẨN (WORK TIME SHEET)";
-        ws.Range("A1:F1").Merge().Style
+        ws.Range("A1:G1").Merge().Style
             .Font.SetBold(true)
             .Font.SetFontSize(14)
             .Font.SetFontColor(XLColor.FromHtml("#1e3a8a"))
             .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
 
         ws.Cell("A2").Value = $"Ngày xuất: {DateTime.Now:dd/MM/yyyy HH:mm} | Tổng số: {data.Count} công việc tiêu chuẩn";
-        ws.Range("A2:F2").Merge().Style
+        ws.Range("A2:G2").Merge().Style
             .Font.SetItalic(true)
             .Font.SetFontSize(10)
             .Font.SetFontColor(XLColor.FromHtml("#64748b"))
             .Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
 
-        var headers = new[] { "STT", "Nhóm công đoạn", "Mã công việc", "Tên công việc tiêu chuẩn", "Đơn vị tính", "Ghi chú" };
+        var headers = new[] { "STT", "Nhóm công đoạn", "Mã công việc", "Tên công việc tiêu chuẩn", "Đơn vị tính", "Phân loại", "Ghi chú" };
         for (int i = 0; i < headers.Length; i++)
         {
             var cell = ws.Cell(4, i + 1);
@@ -233,14 +293,15 @@ public class StandardWtsTaskService
             ws.Cell(r, 3).SetValue(t.TaskCode).Style.Font.SetBold(true).Font.SetFontColor(XLColor.FromHtml("#dc2626")).Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
             ws.Cell(r, 4).SetValue(t.TaskName);
             ws.Cell(r, 5).SetValue(t.DefaultUnit).Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
-            ws.Cell(r, 6).SetValue(t.GhiChu ?? "");
+            ws.Cell(r, 6).SetValue(t.IsProductiveTask ? "Có ích" : "Vô ích").Style.Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+            ws.Cell(r, 7).SetValue(t.GhiChu ?? "");
 
             ws.Row(r).Height = 20;
             r++;
             stt++;
         }
 
-        var dataRange = ws.Range(4, 1, r - 1, 6);
+        var dataRange = ws.Range(4, 1, r - 1, 7);
         dataRange.Style.Border.SetInsideBorder(XLBorderStyleValues.Thin)
                         .Border.SetOutsideBorder(XLBorderStyleValues.Medium);
         ws.Columns().AdjustToContents();

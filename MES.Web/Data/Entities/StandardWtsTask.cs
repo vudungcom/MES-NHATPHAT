@@ -30,6 +30,13 @@ public class StandardWtsTask
 
     public int DisplayOrder { get; set; } = 1;
 
+    /// <summary>
+    /// true = Công việc có ích (tính vào hiệu suất sản xuất)
+    /// false = Công việc vô ích / thời gian chết (không tính hiệu suất)
+    /// Mặc định true — admin tự đánh dấu những mã vô ích
+    /// </summary>
+    public bool IsProductiveTask { get; set; } = true;
+
     public bool IsActive { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;

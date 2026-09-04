@@ -42,6 +42,7 @@ builder.Services.AddScoped<StandardWtsTaskService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<PartPackagingService>();
 builder.Services.AddScoped<CustomerService>();
+builder.Services.AddScoped<WtsReportService>();
 builder.Services.AddScoped<HandoverService>();
 // Đăng ký tiến trình chạy ngầm duy trì bản quyền
 builder.Services.AddHostedService<MES.Web.Services.LicenseBackgroundWorker>();

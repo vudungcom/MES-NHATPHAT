@@ -12,6 +12,7 @@
 @inject UserService UserSvc
 @inject HandoverService HandoverSvc
 @inject ThietBiService ThietBiSvc
+@inject WtsReportService ReportSvc
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Nhập WTS - MES</PageTitle>
@@ -29,6 +30,23 @@
         </div>
     }
 </div>
+
+@* ── Tab switcher ── *@
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="@_TabInputCls" @onclick="SetTabInput">
+            <i class="bi bi-pencil-square me-1"></i>Nhập WTS
+        </button>
+    </li>
+    @if (_canViewReport)
+    {
+        <li class="nav-item">
+            <button class="@_TabReportCls" @onclick="SwitchToReport">
+                <i class="bi bi-bar-chart-line me-1"></i>WTS Report
+            </button>
+        </li>
+    }
+</ul>
 
 @if (!_canSubmit)
 {
@@ -450,11 +468,175 @@ else
     </div>
 }
 
+@if (_activeTab == "report" && _canViewReport)
+{
+    <div class="card shadow-sm border-0">
+        <div class="card-body">
+            @* ── Filter bar ── *@
+            <div class="row g-2 mb-3 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label small fw-bold mb-1">Công nhân</label>
+                    <select class="form-select form-select-sm" style="min-width: 180px;" @bind="_reportWorkerId">
+                        <option value="0">-- Tất cả công nhân --</option>
+                        @foreach (var w in _reportWorkers)
+                        {
+                            <option value="@w.Id">@w.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small fw-bold mb-1">Từ ngày</label>
+                    <input type="date" class="form-control form-control-sm" @bind="_reportDateFrom" />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small fw-bold mb-1">Đến ngày</label>
+                    <input type="date" class="form-control form-control-sm" @bind="_reportDateTo" />
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-primary btn-sm" @onclick="LoadReportAsync" disabled="@_reportLoading">
+                        @if (_reportLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-search me-1"></i>
+                        }
+                        Xem báo cáo
+                    </button>
+                </div>
+            </div>
+
+            @if (_reportResult != null)
+            {
+                @* ── Summary cards ── *@
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3">
+                        <div class="card border-0 bg-light text-center py-3">
+                            <div class="fs-4 fw-bold text-primary">@_reportResult.TotalMinutes</div>
+                            <div class="small text-muted">Tổng phút</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card border-0 text-center py-3" style="background-color: #f0fdf4;">
+                            <div class="fs-4 fw-bold text-success">@_reportResult.ProductiveMin</div>
+                            <div class="small text-muted">Phút có ích</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card border-0 text-center py-3" style="background-color: #fff7ed;">
+                            <div class="fs-4 fw-bold text-warning">@_reportResult.WasteMin</div>
+                            <div class="small text-muted">Phút vô ích</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card border-0 text-center py-3" style="background-color: #f0f9ff;">
+                            <div class="fs-4 fw-bold text-info">@_reportResult.EfficiencyPct%</div>
+                            <div class="small text-muted">Hiệu suất (chưa chính thức)</div>
+                        </div>
+                    </div>
+                </div>
+
+                @* ── Bảng chi tiết ── *@
+                @if (_reportResult.Rows.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                            <thead style="background-color: #f8fafc;">
+                                <tr>
+                                    <th style="width: 90px;">Ngày</th>
+                                    <th style="width: 120px;">Công nhân</th>
+                                    <th style="width: 80px;" class="text-center">Bắt đầu</th>
+                                    <th style="width: 80px;" class="text-center">Kết thúc</th>
+                                    <th style="width: 60px;" class="text-center">Phút</th>
+                                    <th style="width: 130px;">PO</th>
+                                    <th style="width: 110px;">Part No</th>
+                                    <th style="width: 80px;" class="text-center">NC</th>
+                                    <th style="width: 80px;" class="text-center">Máy</th>
+                                    <th style="width: 150px;">Mã WTS / Tên</th>
+                                    <th style="width: 60px;" class="text-center">SL</th>
+                                    <th style="width: 90px;" class="text-center">Phân loại</th>
+                                    <th>Ghi chú</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in _reportResult.Rows)
+                                {
+                                    var rowBg = row.IsProductiveTask ? "" : "background-color: #fff7ed;";
+                                    var productiveBadge = row.IsProductiveTask ? "badge bg-success" : "badge bg-secondary";
+                                    var productiveLabel = row.IsProductiveTask ? "Có ích" : "Vô ích";
+                                    <tr style="@rowBg">
+                                        <td class="small">@row.WorkDate.ToString("dd/MM/yyyy")</td>
+                                        <td class="small fw-bold">@row.WorkerName</td>
+                                        <td class="text-center small">@row.StartTime.ToString("HH:mm")</td>
+                                        <td class="text-center small">@row.EndTime.ToString("HH:mm")</td>
+                                        <td class="text-center fw-bold">@row.Minutes</td>
+                                        <td class="small"><code>@(string.IsNullOrEmpty(row.PurchaseOrder) ? "—" : row.PurchaseOrder)</code></td>
+                                        <td class="small"><code class="text-danger">@(string.IsNullOrEmpty(row.PartNo) ? "—" : row.PartNo)</code></td>
+                                        <td class="text-center small"><code>@(string.IsNullOrEmpty(row.NC) ? "—" : row.NC)</code></td>
+                                        <td class="text-center small text-primary">@(string.IsNullOrEmpty(row.MachineUsed) ? "—" : row.MachineUsed)</td>
+                                        <td class="small text-muted">
+                                            @if (!string.IsNullOrEmpty(row.WtsCode))
+                                            {
+                                                <code class="text-danger">@row.WtsCode</code>
+                                                <span> @row.WtsName</span>
+                                            }
+                                            else
+                                            {
+                                                <span>—</span>
+                                            }
+                                        </td>
+                                        <td class="text-center small">@(row.QtyDone > 0 ? row.QtyDone.ToString("0.##") : "—")</td>
+                                        <td class="text-center">
+                                            <span class="@productiveBadge" style="font-size: 0.7rem;">@productiveLabel</span>
+                                        </td>
+                                        <td class="small text-muted">@row.Notes</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="text-muted small mt-2">
+                        Tổng <b>@_reportResult.Rows.Count</b> dòng
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center py-5 text-muted">Không có dữ liệu WTS trong khoảng thời gian này.</div>
+                }
+            }
+            else if (!_reportLoading)
+            {
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-bar-chart-line fs-1 d-block mb-2 opacity-25"></i>
+                    Chọn khoảng ngày và nhấn "Xem báo cáo" để tải dữ liệu.
+                </div>
+            }
+        </div>
+    </div>
+}
+
+
 @code {
     private bool _canSubmit;
     private User? _currentWorker;
     private int _currentUserId;
     private Dictionary<string, (bool CanView, bool CanEdit)> _perms = new();
+
+    // ── Tab ──────────────────────────────────────────────────────────────
+    private string _activeTab = "input"; // "input" | "report"
+    private bool _canViewReport = false;
+    private string _TabInputCls  => _activeTab == "input"  ? "nav-link active" : "nav-link";
+    private string _TabReportCls => _activeTab == "report" ? "nav-link active" : "nav-link";
+    private void SetTabInput() { _activeTab = "input"; }
+
+    // ── Report state ─────────────────────────────────────────────────────
+    private DateTime _reportDateFrom = DateTime.Today;
+    private DateTime _reportDateTo   = DateTime.Today;
+    private int _reportWorkerId      = 0; // 0 = tất cả
+    private bool _reportLoading      = false;
+    private WtsReportResult? _reportResult = null;
+    private List<(int Id, string Name)> _reportWorkers = new();
 
     private DateTime _workDate = DateTime.Today;
 
@@ -567,6 +749,9 @@ else
                   || _perms.TryGetValue(SystemPermissions.WtsKcs,     out var p3) && p3.CanView
                   || _perms.TryGetValue(SystemPermissions.WtsDongGoi, out var p4) && p4.CanView
                   || gc == "ADMIN";
+
+        _canViewReport = (_perms.TryGetValue(SystemPermissions.WtsReport, out var pr) && pr.CanView)
+                      || gc == "ADMIN";
 
         if (_canSubmit)
         {
@@ -1110,4 +1295,38 @@ else
         public bool    HasWarning { get; set; }
         public string? WarningMsg { get; set; }
     }
+    // ── Report methods ────────────────────────────────────────────────────
+
+    private async Task SwitchToReport()
+    {
+        _activeTab = "report";
+        // Load danh sách workers có WTS trong 30 ngày gần nhất khi mở tab lần đầu
+        if (!_reportWorkers.Any())
+        {
+            var from = DateOnly.FromDateTime(DateTime.Today.AddDays(-30));
+            var to   = DateOnly.FromDateTime(DateTime.Today);
+            _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to);
+        }
+        // Tự load report hôm nay luôn
+        await LoadReportAsync();
+    }
+
+    private async Task LoadReportAsync()
+    {
+        _reportLoading = true;
+        _reportResult  = null;
+        StateHasChanged();
+
+        var from = DateOnly.FromDateTime(_reportDateFrom);
+        var to   = DateOnly.FromDateTime(_reportDateTo);
+        int? wId = _reportWorkerId == 0 ? null : _reportWorkerId;
+
+        _reportResult = await ReportSvc.GetReportAsync(from, to, wId);
+
+        // Cập nhật danh sách workers cho khoảng ngày mới
+        _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to);
+
+        _reportLoading = false;
+    }
+
 }
