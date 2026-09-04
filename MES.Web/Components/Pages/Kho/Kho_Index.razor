@@ -4,9 +4,11 @@
 @using System.Security.Claims
 @using MES.Web.Constants
 @using MES.Web.Services
+@using MES.Web.Data
 @inject KhoVatLieuService KhoSvc
 @inject HandoverService HandoverSvc
 @inject UserService UserSvc
+@inject AppDbContext Db
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
 
@@ -410,10 +412,28 @@ else
                             </div>
                         </div>
 
-                        <div class="col-12">
-                            <label class="form-label small fw-bold text-danger">Lý do thay đổi / cập nhật kho <span class="text-danger">*</span></label>
-                            <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập lý do cập nhật (bắt buộc, tối thiểu 3 ký tự)..." />
-                        </div>
+                        @if (IsFirstEntry)
+                        {
+                            <div class="col-12">
+                                <div class="alert alert-success py-2 small mb-0">
+                                    <i class="bi bi-star-fill me-1"></i>
+                                    <strong>Nhập lần đầu</strong> — không cần lý do hay PIN. Dữ liệu sẽ được lưu trực tiếp.
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="col-12">
+                                <label class="form-label small fw-bold text-danger">Lý do thay đổi / cập nhật kho <span class="text-danger">*</span></label>
+                                <input class="form-control form-control-sm border-danger" @bind="_editReason"
+                                       placeholder="Nhập lý do cập nhật (bắt buộc, tối thiểu 3 ký tự)..." />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-danger">PIN xác nhận <span class="text-danger">*</span></label>
+                                <input type="password" class="form-control form-control-sm border-danger"
+                                       @bind="_editPin" placeholder="Nhập PIN của bạn..." />
+                            </div>
+                        }
                     </div>
 
                     @if (!string.IsNullOrEmpty(_errorMessage))
@@ -531,7 +551,16 @@ else
     private DateTime? _editNgayCap;
     private int? _editSlCap;
     private string _editReason = string.Empty;
+    private string _editPin = string.Empty;
     private string? _errorMessage;
+
+    // Lần đầu nhập = tất cả cột I-O đang trống
+    private bool IsFirstEntry => _editingRow != null
+        && _editingRow.NgayNhanPhoi == null
+        && _editingRow.SoLuongThucNhan == null
+        && string.IsNullOrEmpty(_editingRow.OrderVatLieu)
+        && string.IsNullOrEmpty(_editingRow.ViTriDePhoi)
+        && string.IsNullOrEmpty(_editingRow.TinhTrangPhoi);
 
     // Modal History
     private bool _showHistoryModal = false;
@@ -838,6 +867,7 @@ else
         _editNgayCap  = row.NgayCapPhoi;
         _editSlCap    = row.SoLuongCap;
         _editReason   = string.Empty;
+        _editPin      = string.Empty;
         _errorMessage = null;
         _showEditModal= true;
     }
@@ -847,21 +877,40 @@ else
         _errorMessage = null;
         if (_editingRow == null) return;
 
-        if (string.IsNullOrWhiteSpace(_editReason) || _editReason.Trim().Length < 3)
+        if (!IsFirstEntry)
         {
-            _errorMessage = "Vui lòng nhập lý do thay đổi (tối thiểu 3 ký tự).";
-            return;
+            // Lần 2 trở đi: bắt buộc lý do + PIN
+            if (string.IsNullOrWhiteSpace(_editReason) || _editReason.Trim().Length < 3)
+            {
+                _errorMessage = "Vui lòng nhập lý do thay đổi (tối thiểu 3 ký tự).";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(_editPin))
+            {
+                _errorMessage = "Vui lòng nhập PIN để xác nhận thay đổi.";
+                return;
+            }
+            // Verify PIN
+            var user = await Db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+            if (user == null || !PasswordHasher.Verify(_editPin.Trim(), user.PasswordHash))
+            {
+                _errorMessage = "PIN không đúng. Vui lòng thử lại.";
+                _editPin = string.Empty;
+                return;
+            }
         }
 
         _saving = true;
         try
         {
+            var reason = IsFirstEntry ? "Nhập lần đầu" : _editReason.Trim();
             var (ok, err) = await KhoSvc.SaveKhoInputAsync(
                 _editingRow.KhPlanDetailId,
                 _editNgayNhan, _editSlNhan, _editOrderVl,
                 _editViTri, _editTinhTrang,
                 _editNgayCap, _editSlCap,
-                _editReason, _currentUserId);
+                reason, _currentUserId);
 
             if (!ok) { _errorMessage = err; return; }
 

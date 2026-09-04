@@ -22,6 +22,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject AppDbContext Db
+@inject IJSRuntime JS
 
 <style>
     /* Hiệu ứng làm mờ các vùng Chỉ Xem, sáng lại khi di chuột vào */
@@ -1519,6 +1520,39 @@ else
     private List<PinConfirmModal.DefaultChangeInfo> _pendingDefaultChanges = new();
     private string _saveResult = string.Empty;
     private bool _saveHasError = false;
+
+    private bool _jsAttached = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_jsAttached && !_loading)
+        {
+            _jsAttached = true;
+            await JS.InvokeVoidAsync("eval", @"
+                (function attachNumberInputGuards() {
+                    function guard(el) {
+                        if (el.dataset.guarded) return;
+                        el.dataset.guarded = '1';
+                        el.addEventListener('keydown', function(e) {
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
+                        });
+                        el.addEventListener('wheel', function(e) {
+                            e.preventDefault();
+                        }, { passive: false });
+                    }
+                    document.querySelectorAll('input[type=number]').forEach(guard);
+                    new MutationObserver(function(mutations) {
+                        mutations.forEach(function(m) {
+                            m.addedNodes.forEach(function(n) {
+                                if (n.querySelectorAll) n.querySelectorAll('input[type=number]').forEach(guard);
+                                if (n.type === 'number') guard(n);
+                            });
+                        });
+                    }).observe(document.body, { childList: true, subtree: true });
+                })();
+            ");
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
