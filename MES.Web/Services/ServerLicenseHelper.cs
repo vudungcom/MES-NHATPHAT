@@ -1,3 +1,4 @@
+#pragma warning disable CA1416
 #nullable disable
 using System;
 using System.IO;

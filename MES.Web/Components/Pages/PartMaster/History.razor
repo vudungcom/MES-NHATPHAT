@@ -1,0 +1,359 @@
+@page "/part-master/history"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using MES.Web.Data
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@using Microsoft.EntityFrameworkCore
+@inject AppDbContext Db
+@inject PartMasterService PmSvc
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Lịch sử thay đổi — @_partNo</PageTitle>
+
+<style>
+    .history-version-card {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        margin-bottom: 1.25rem;
+        overflow: hidden;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .history-version-header {
+        padding: 12px 18px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .history-version-header.created  { background: #d1e7dd; border-color: #a3cfbb; }
+    .history-version-header.deleted  { background: #f8d7da; border-color: #f1aeb5; }
+    .history-version-header.modified { background: #fff3cd; border-color: #ffe69c; }
+    .history-version-body { padding: 12px 18px; }
+    .change-row { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; font-size: 0.83rem; }
+    .change-label { font-weight: 600; min-width: 130px; color: #495057; }
+    .change-old { color: #842029; text-decoration: line-through; }
+    .change-new { color: #0a3622; font-weight: 500; }
+    .change-arrow { color: #6c757d; }
+    .version-badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 12px; font-weight: 700; }
+    .table-tag-badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; }
+    .section-pill {
+        display: inline-block; font-size: 0.72rem; padding: 1px 8px;
+        border-radius: 10px; font-weight: 600; margin-right: 4px;
+    }
+</style>
+
+<div class="container-fluid pt-3 pb-5" style="max-width: 1100px;">
+    @if (_loading)
+    {
+        <div class="text-center py-5"><span class="spinner-border text-primary"></span></div>
+    }
+    else if (_part == null)
+    {
+        <div class="alert alert-danger">Không tìm thấy Part <b>@_partNo</b>.</div>
+    }
+    else
+    {
+        @* ── HEADER ── *@
+        <div class="d-flex justify-content-between align-items-start mb-4">
+            <div>
+                <button class="btn btn-outline-secondary btn-sm mb-2" @onclick='() => Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(_partNo)}")'>
+                    <i class="bi bi-arrow-left"></i> Quay lại Detail
+                </button>
+                <h2 class="mb-0 fw-bold">
+                    <i class="bi bi-clock-history text-secondary me-2"></i>
+                    Lịch sử thay đổi
+                </h2>
+                <p class="text-muted mb-0">
+                    <code class="fs-5 fw-bold text-primary">@_partNo</code>
+                    @if (!string.IsNullOrEmpty(_part.PartName))
+                    { <span class="ms-1">— @_part.PartName</span> }
+                    <span class="ms-2 text-muted small">Khách hàng: @(_part.Customer?.CustomerName ?? "—")</span>
+                </p>
+            </div>
+            <div class="text-end">
+                <span class="badge bg-secondary">@_versions.Count phiên bản</span>
+                <br />
+                <span class="text-muted small">@_logs.Count thay đổi</span>
+            </div>
+        </div>
+
+        @if (_versions.Count == 0)
+        {
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                Chưa có lịch sử thay đổi nào được ghi lại cho Part này.
+            </div>
+        }
+        else
+        {
+            @* ── TIMELINE ── *@
+            @foreach (var (ver, idx) in _versions.Select((v, i) => (v, i)))
+            {
+                var headerClass = ver.DominantAction switch
+                {
+                    "Created"  => "created",
+                    "Deleted"  => "deleted",
+                    _          => "modified"
+                };
+                var versionNo = _versions.Count - idx; // V1 = đầu tiên, Vn = mới nhất
+
+                <div class="history-version-card">
+                    @* Version Header *@
+                    <div class="history-version-header @headerClass">
+                        @* Số thứ tự *@
+                        <span class="version-badge @(headerClass == "created" ? "bg-success" : headerClass == "deleted" ? "bg-danger" : "bg-warning text-dark")">
+                            V@(versionNo)
+                        </span>
+
+                        @* Icon action *@
+                        @if (ver.DominantAction == "Created")
+                        {
+                            <i class="bi bi-plus-circle-fill text-success"></i>
+                            <span class="fw-bold text-success">Thêm mới</span>
+                        }
+                        else if (ver.DominantAction == "Deleted")
+                        {
+                            <i class="bi bi-trash3-fill text-danger"></i>
+                            <span class="fw-bold text-danger">Xóa</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-pencil-fill text-warning"></i>
+                            <span class="fw-bold">Chỉnh sửa</span>
+                        }
+
+                        @* Vùng bị ảnh hưởng *@
+                        @foreach (var sectionName in ver.AffectedSections)
+{
+    <span class="section-pill @SectionPillClass(sectionName)">@sectionName</span>
+}
+
+                        <span class="text-muted small ms-auto">
+                            <i class="bi bi-person me-1"></i>@ver.ChangedByName
+                            <span class="ms-3"><i class="bi bi-calendar3 me-1"></i>@ver.ChangedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                        </span>
+                    </div>
+
+                    @* Version Body *@
+                    <div class="history-version-body">
+                        @* Lý do *@
+                        @if (!string.IsNullOrEmpty(ver.Reason))
+                        {
+                            <div class="mb-2 small">
+                                <i class="bi bi-chat-left-text text-muted me-1"></i>
+                                <span class="text-muted">Lý do:</span>
+                                <span class="fst-italic">@ver.Reason</span>
+                            </div>
+                        }
+
+                        @* Danh sách thay đổi *@
+                        @foreach (var grp in ver.Changes.GroupBy(c => c.StepTable))
+                        {
+                            <div class="mb-2">
+                                <span class="table-tag-badge @TableBadgeClass(grp.Key) me-2">@TableLabel(grp.Key)</span>
+                                @foreach (var chg in grp)
+                                {
+                                    <div class="change-row">
+                                        <span class="change-label">@FieldLabel(chg.FieldName)</span>
+                                        @if (chg.FieldName == ProcessStepAction.Created)
+                                        {
+                                            <span class="text-success"><i class="bi bi-plus-lg me-1"></i>@FormatSnapshot(chg.NewValue)</span>
+                                        }
+                                        else if (chg.FieldName == ProcessStepAction.Deleted)
+                                        {
+                                            <span class="text-danger"><i class="bi bi-trash3 me-1"></i>@FormatSnapshot(chg.OldValue)</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="change-old">@(chg.OldValue ?? "—")</span>
+                                            <span class="change-arrow">→</span>
+                                            <span class="change-new">@(chg.NewValue ?? "—")</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "partNo")]
+    public string PartNo { get; set; } = string.Empty;
+
+    private string _partNo = string.Empty;
+    private PartMaster? _part;
+    private bool _loading = true;
+    private List<PartProcessStepChangeLog> _logs = new();
+    private List<HistoryVersion> _versions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _partNo = Uri.UnescapeDataString(PartNo ?? "");
+        _part = await PmSvc.GetByPartNoAsync(_partNo);
+
+        if (_part != null)
+        {
+            _logs = await Db.PartProcessStepChangeLogs
+                .Where(l => l.PartId == _part.PartId)
+                .Include(l => l.ChangedByUser)
+                .OrderByDescending(l => l.ChangedAt)
+                .AsNoTracking()
+                .ToListAsync();
+
+            _versions = GroupIntoVersions(_logs);
+        }
+
+        _loading = false;
+    }
+
+    // ── Gom log thành versions ──────────────────────────────────────────────
+    // Logic: cùng ChangedBy + cùng Reason + trong vòng 30 giây = 1 version
+    private static List<HistoryVersion> GroupIntoVersions(List<PartProcessStepChangeLog> logs)
+    {
+        var versions = new List<HistoryVersion>();
+        if (logs.Count == 0) return versions;
+
+        HistoryVersion? current = null;
+
+        foreach (var log in logs) // đã OrderByDescending ChangedAt
+        {
+            var key = $"{log.ChangedBy}|{log.Reason}";
+
+            if (current == null
+                || current.GroupKey != key
+                || (current.ChangedAt - log.ChangedAt).TotalSeconds > 30)
+            {
+                current = new HistoryVersion
+                {
+                    GroupKey    = key,
+                    ChangedAt   = log.ChangedAt,
+                    ChangedByName = log.ChangedByUser?.FullName ?? $"User #{log.ChangedBy}",
+                    Reason      = log.Reason,
+                };
+                versions.Add(current);
+            }
+
+            current.Changes.Add(log);
+
+            // Cập nhật ChangedAt về mốc sớm nhất trong version (logs sort DESC)
+            if (log.ChangedAt < current.ChangedAt)
+                current.ChangedAt = log.ChangedAt;
+        }
+
+        // Tính dominant action và affected sections
+        foreach (var v in versions)
+        {
+            var actions = v.Changes.Select(c => c.FieldName).ToList();
+            v.DominantAction = actions.Contains(ProcessStepAction.Created)  ? "Created"
+                             : actions.Contains(ProcessStepAction.Deleted)   ? "Deleted"
+                             : "Modified";
+
+            v.AffectedSections = v.Changes
+                .Select(c => TableLabel(c.StepTable))
+                .Distinct()
+                .ToList();
+        }
+
+        return versions;
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    private static string TableLabel(string table) => table switch
+    {
+        ProcessStepTable.Machining  => "Gia công",
+        ProcessStepTable.Taro       => "Taro",
+        ProcessStepTable.Bavia      => "Bavia",
+        ProcessStepTable.Washing    => "Rửa",
+        ProcessStepTable.Inspection => "KCS",
+        "Packaging"                 => "Đóng gói",
+        _                           => table
+    };
+
+    private static string TableBadgeClass(string table) => table switch
+    {
+        ProcessStepTable.Machining  => "bg-primary text-white",
+        ProcessStepTable.Taro       => "bg-success text-white",
+        ProcessStepTable.Bavia      => "bg-success text-white",
+        ProcessStepTable.Washing    => "bg-success text-white",
+        ProcessStepTable.Inspection => "bg-warning text-dark",
+        "Packaging"                 => "bg-purple text-white",
+        _                           => "bg-secondary text-white"
+    };
+
+    private static string SectionPillClass(string section) => section switch
+    {
+        "Gia công" => "bg-primary text-white",
+        "Taro"     => "bg-success text-white",
+        "Bavia"    => "bg-success text-white",
+        "Rửa"      => "bg-success text-white",
+        "KCS"      => "bg-warning text-dark",
+        "Đóng gói" => "bg-secondary text-white",
+        _          => "bg-light text-dark"
+    };
+
+    private static string FieldLabel(string field) => field switch
+    {
+        "NC"                 => "Mã NC",
+        "WtsTaskCode"        => "Mã CV (WTS)",
+        "StepName"           => "Tên công đoạn",
+        "StandardTime"       => "T.Chuẩn (phút)",
+        "ParentNC"           => "NC cha",
+        "IsBackup"           => "Dự phòng",
+        "Drawing"            => "Bản vẽ",
+        "MachineRegistered"  => "Máy đăng ký",
+        "MachineAlternative" => "Máy đồng dạng",
+        "FixtureType"        => "Đồ gá",
+        "ToolType"           => "Loại dao",
+        "TimingMachine"      => "Máy bấm giờ",
+        "SetupTime"          => "T.Gá lắp",
+        "MachiningTime"      => "T.Gia công",
+        "InspectionTime"     => "T.Kiểm tra",
+        "PreparationTime"    => "T.Chuẩn bị",
+        "TrialRunTime"       => "T.Chạy thử",
+        ProcessStepAction.Created  => "✦ Tạo mới",
+        ProcessStepAction.Deleted  => "✦ Đã xóa",
+        ProcessStepAction.Restored => "✦ Khôi phục",
+        _ => field
+    };
+
+    private static string FormatSnapshot(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return "—";
+        // Parse JSON snapshot để lấy NC + StepName ngắn gọn
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var nc   = root.TryGetProperty("NC",       out var ncEl)   ? ncEl.GetString()   : null;
+            var name = root.TryGetProperty("StepName", out var nameEl) ? nameEl.GetString() : null;
+            var wts  = root.TryGetProperty("WtsTaskCode", out var wEl) ? wEl.GetString()    : null;
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(nc))   parts.Add($"NC: {nc}");
+            if (!string.IsNullOrEmpty(wts))  parts.Add($"Mã CV: {wts}");
+            if (!string.IsNullOrEmpty(name)) parts.Add(name);
+            return parts.Count > 0 ? string.Join(" · ", parts) : json[..Math.Min(80, json.Length)];
+        }
+        catch { return json[..Math.Min(80, json.Length)]; }
+    }
+
+    // ── Model ─────────────────────────────────────────────────────────────
+    private class HistoryVersion
+    {
+        public string GroupKey        { get; set; } = "";
+        public DateTime ChangedAt     { get; set; }
+        public string ChangedByName   { get; set; } = "";
+        public string Reason          { get; set; } = "";
+        public string DominantAction  { get; set; } = "Modified";
+        public List<string> AffectedSections { get; set; } = new();
+        public List<PartProcessStepChangeLog> Changes { get; set; } = new();
+    }
+}

@@ -90,6 +90,21 @@ else
 
     @* Thanh lọc nhanh *@
     <div class="row mb-2 g-2">
+        <div class="col-md-12 col-lg-5 mb-1">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+                <input class="form-control" placeholder="Tìm theo Part No / Tên chi tiết / Khách hàng / Mã VL..."
+                       @bind="_searchText" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(_searchText))
+                {
+                    <button class="btn btn-outline-secondary" @onclick='() => _searchText = ""' title="Xóa tìm kiếm">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="row mb-2 g-2">
         <div class="col-md-4">
             <select class="form-select form-select-sm" @bind="_customerFilter">
                 <option value="">-- Tất cả khách hàng --</option>
@@ -204,9 +219,15 @@ else
                             <td class="text-center">@ConfirmBadge(row.IsKcsConfirmed)</td>
                             <td class="text-center">@ConfirmBadge(row.IsPkgConfirmed)</td>
                             <td @onclick:stopPropagation @ondblclick:stopPropagation>
-                                <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)">
-                                    <i class="bi bi-arrow-right-circle"></i> Chi tiết
-                                </button>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => OpenDetail(row.PartNo)">
+                                        <i class="bi bi-arrow-right-circle"></i> Chi tiết
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" title="Xem lịch sử thay đổi"
+                                            @onclick="() => OpenHistory(row.PartNo)">
+                                        <i class="bi bi-clock-history"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>
 
@@ -307,6 +328,7 @@ else
     private Dictionary<int, PartMasterExpandDetail> _detailByPart = new();
 
     // Quick filters
+    private string _searchText = string.Empty;
     private string _customerFilter = string.Empty;
     private string _statusFilter = string.Empty;
     private bool _filterKH, _filterGC, _filterHTSP, _filterKCS, _filterPKG;
@@ -477,6 +499,17 @@ else
             if (_rows == null) return Enumerable.Empty<PartMasterListRow>();
             IEnumerable<PartMasterListRow> q = _rows;
 
+            // Search text — tìm nhanh theo Part No / PartName / CustomerName / Material
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                var s = _searchText.Trim();
+                q = q.Where(r =>
+                    r.PartNo.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (r.PartName ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (r.CustomerName ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (r.Material ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+
             // Quick filter khách hàng
             if (!string.IsNullOrEmpty(_customerFilter) && int.TryParse(_customerFilter, out var cid))
                 q = q.Where(r => r.CustomerId == cid);
@@ -562,6 +595,9 @@ else
 
     private void OpenDetail(string partNo) =>
         Nav.NavigateTo($"/part-master/detail?partNo={Uri.EscapeDataString(partNo)}");
+
+    private void OpenHistory(string partNo) =>
+        Nav.NavigateTo($"/part-master/history?partNo={Uri.EscapeDataString(partNo)}");
 
     private RenderFragment ConfirmBadge(bool confirmed) => builder =>
     {

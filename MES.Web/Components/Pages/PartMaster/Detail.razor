@@ -234,38 +234,40 @@ else
                                         @(idx + 1)@StateBadge(edit)
                                         @if (edit.IsBackup) { <span class="badge bg-warning text-dark mt-1" style="font-size: 0.65rem;">Dự phòng</span> }
                                     </td>
+                                    @* NC — tự gõ *@
                                     <td>
                                         <div class="d-flex align-items-center">
                                             @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
-                                            <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")" 
-                                                   @bind="edit.NC" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" />
+                                            <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")"
+                                                   @bind="edit.NC" @bind:after="() => MarkAsModified(edit)"
+                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                         </div>
                                     </td>
 
+                                    @* Máy đăng ký — datalist *@
                                     <td>
-                                        <select class="form-select form-select-sm" @bind="edit.MachineRegistered" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))">
-                                            <option value="">-- Chọn máy --</option>
-                                            @if (!string.IsNullOrEmpty(edit.MachineRegistered) && !_thietBiList.Any(m => m.SoMay == edit.MachineRegistered))
-                                            {
-                                                <option value="@edit.MachineRegistered">@edit.MachineRegistered (Khác)</option>
-                                            }
+                                        <input class="form-control form-control-sm" list="dl-thietbi-@edit.StepId"
+                                               value="@edit.MachineRegistered"
+                                               placeholder="-- Chọn máy --"
+                                               @oninput="e => { edit.MachineRegistered = e.Value?.ToString(); MarkAsModified(edit); }"
+                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                        <datalist id="dl-thietbi-@edit.StepId">
                                             @foreach (var m in _thietBiList)
-                                            {
-                                                <option value="@m.SoMay">@m.SoMay - @m.TenMay</option>
-                                            }
-                                        </select>
+                                            { <option value="@m.SoMay">@m.SoMay - @m.TenMay</option> }
+                                        </datalist>
                                     </td>
 
+                                    @* Máy đồng dạng — input + nút chọn nhiều *@
                                     <td>
                                         <div class="input-group input-group-sm">
-                                            <input class="form-control form-control-sm" 
+                                            <input class="form-control form-control-sm"
                                                    @bind="edit.MachineAlternative" @bind:after="() => MarkAsModified(edit)"
-                                                   placeholder="Chọn máy..." 
-                                                   disabled="@(!_canEditB || RowLocked(edit))" />
-                                            @if (_canEditB && !RowLocked(edit))
+                                                   placeholder="Chọn máy..."
+                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
                                             {
-                                                <button class="btn btn-outline-secondary" type="button" 
-                                                        title="Chọn nhiều máy đồng dạng" 
+                                                <button class="btn btn-outline-secondary" type="button"
+                                                        title="Chọn nhiều máy đồng dạng"
                                                         @onclick="() => OpenAlternativeModal(edit)">
                                                     <i class="bi bi-list-check"></i>
                                                 </button>
@@ -273,51 +275,51 @@ else
                                         </div>
                                     </td>
 
+                                    @* Đồ gá — datalist *@
                                     <td>
-                                        <select class="form-select form-select-sm" @bind="edit.FixtureType" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))">
-                                            <option value="">-- Chọn đồ gá --</option>
-                                            @if (!string.IsNullOrEmpty(edit.FixtureType) && !_doGaList.Any(d => d.TenDoGa == edit.FixtureType))
-                                            {
-                                                <option value="@edit.FixtureType">@edit.FixtureType (Khác)</option>
-                                            }
+                                        <input class="form-control form-control-sm" list="dl-doga-@edit.StepId"
+                                               value="@edit.FixtureType"
+                                               placeholder="-- Chọn đồ gá --"
+                                               @oninput="e => { edit.FixtureType = e.Value?.ToString(); MarkAsModified(edit); }"
+                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                        <datalist id="dl-doga-@edit.StepId">
                                             @foreach (var g in _doGaList)
-                                            {
-                                                <option value="@g.TenDoGa">@g.TenDoGa</option>
-                                            }
-                                        </select>
+                                            { <option value="@g.TenDoGa">@g.TenDoGa</option> }
+                                        </datalist>
                                     </td>
 
-                                    @* Cột Loại Dao: Dropdown giống Đồ gá *@
+                                    @* Loại dao — datalist *@
                                     <td>
-                                        <select class="form-select form-select-sm font-monospace"
-                                                @bind="edit.ToolType" @bind:after="() => MarkAsModified(edit)"
-                                                disabled="@(!_canEditB || RowLocked(edit))">
-                                            <option value="">-- Chọn dao --</option>
-                                            @if (!string.IsNullOrEmpty(edit.ToolType) && !_daoList.Any(d => d.TenDao == edit.ToolType))
-                                            {
-                                                <option value="@edit.ToolType">@edit.ToolType (Khác)</option>
-                                            }
+                                        <input class="form-control form-control-sm font-monospace" list="dl-dao-@edit.StepId"
+                                               value="@edit.ToolType"
+                                               placeholder="-- Chọn dao --"
+                                               @oninput="e => { edit.ToolType = e.Value?.ToString(); MarkAsModified(edit); }"
+                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                        <datalist id="dl-dao-@edit.StepId">
                                             @foreach (var d in _daoList)
-                                            {
-                                                <option value="@d.TenDao">@d.TenDao</option>
-                                            }
-                                        </select>
+                                            { <option value="@d.TenDao">@d.TenDao</option> }
+                                        </datalist>
                                     </td>
 
-                                    @* Cột Máy bấm giờ: Nhập tay tự do *@
+                                    @* Máy bấm giờ — datalist từ _thietBiList (SoMay) *@
                                     <td>
-                                        <input class="form-control form-control-sm" 
-                                               @bind="edit.TimingMachine" 
-                                               @bind:after="() => MarkAsModified(edit)" 
-                                               placeholder="Nhập máy bấm giờ..." 
-                                               disabled="@(!_canEditB || RowLocked(edit))" />
+                                        <input class="form-control form-control-sm" list="dl-timing-@edit.StepId"
+                                               value="@edit.TimingMachine"
+                                               placeholder="Chọn máy bấm giờ..."
+                                               @oninput="e => { edit.TimingMachine = e.Value?.ToString(); MarkAsModified(edit); }"
+                                               disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                        <datalist id="dl-timing-@edit.StepId">
+                                            @foreach (var m in _thietBiList)
+                                            { <option value="@m.SoMay">@m.SoMay - @m.TenMay</option> }
+                                        </datalist>
                                     </td>
 
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit))" /></td>
+                                    @* Các cột thời gian — tự gõ *@
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
+                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
                                     
                                     <td class="text-center text-nowrap">
                                         @if (edit.StepId > 0)
@@ -329,7 +331,15 @@ else
                                         }
                                         @if (_canEditB)
                                         {
-                                            <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
+                                            @if (edit.StepId > 0 && edit.State != EditState.Deleted)
+                                            {
+                                                <button class="btn btn-sm @(edit.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                        title="@(edit.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa dòng này")"
+                                                        @onclick="() => { edit.IsEditingWts = !edit.IsEditingWts; if(edit.IsEditingWts) MarkAsModified(edit); _savedSuccessfully = false; }">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                            }
+                                            <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng"
                                                     @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, TimingMachine = edit.TimingMachine, MachineAlternative = edit.MachineAlternative, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
                                                 <i class="bi bi-diagram-3"></i>
                                             </button>
@@ -436,16 +446,19 @@ else
                                         </td>
                                         @* Cột Công đoạn chuẩn WTS *@
                                         <td>
-                                            @if (edit.State == EditState.New && _canEditC)
+                                            @if (edit is TaroEdit te && (te.State == EditState.New || te.IsEditingWts) && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTaskTaro(edit, e.Value?.ToString(), _taroTasks)">
                                                     <option value="">-- Chọn WTS Taro --</option>
-                                                    @foreach (var t in _taroTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                    @foreach (var t in _taroTasks)
+                                                    {
+                                                        <option value="@t.TaskCode" selected="@(te.WtsTaskCode == t.TaskCode)">[@t.TaskCode] @t.TaskName</option>
+                                                    }
                                                 </select>
                                             }
                                             else
                                             {
-                                                <input class="form-control form-control-sm" value="@edit.StepName" @bind:event="oninput" @bind:after="() => MarkAsModified(edit)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
                                         <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
@@ -459,6 +472,14 @@ else
                                             }
                                             @if (_canEditC)
                                             {
+                                                @if (edit is TaroEdit te2 && edit.StepId > 0 && edit.State != EditState.Deleted)
+                                                {
+                                                    <button class="btn btn-sm @(te2.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                            title="@(te2.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa WTS dòng này")"
+                                                            @onclick="() => { te2.IsEditingWts = !te2.IsEditingWts; if(te2.IsEditingWts) MarkAsModified(te2); }">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                }
                                                 <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_taroEdits, edit, (nc, parent) => new TaroEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
@@ -502,21 +523,26 @@ else
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
-                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" 
-                                                       value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
+                                                       value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)"
+                                                       @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
+                                                       disabled="@(!_canEditC || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             </div>
                                         </td>
                                         <td>
-                                            @if (edit.State == EditState.New && _canEditC)
+                                            @if ((edit.State == EditState.New || edit.IsEditingWts) && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _baviaTasks)">
                                                     <option value="">-- Chọn WTS Bavia --</option>
-                                                    @foreach (var t in _baviaTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                    @foreach (var task in _baviaTasks)
+                                                    {
+                                                        <option value="@task.TaskCode" selected="@(edit.StepName == task.TaskName)">[@task.TaskCode] @task.TaskName</option>
+                                                    }
                                                 </select>
                                             }
                                             else
                                             {
-                                                <input class="form-control form-control-sm" value="@edit.StepName" @bind:event="oninput" @bind:after="() => MarkAsModified(edit)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
                                         <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
@@ -531,6 +557,14 @@ else
                                             }
                                             @if (_canEditC)
                                             {
+                                                @if (edit.StepId > 0 && edit.State != EditState.Deleted)
+                                                {
+                                                    <button class="btn btn-sm @(edit.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                            title="@(edit.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa dòng này")"
+                                                            @onclick="() => { edit.IsEditingWts = !edit.IsEditingWts; if(edit.IsEditingWts) MarkAsModified(edit); }">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                }
                                                 <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_baviaEdits, edit, (nc, parent) => new BaviaEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
@@ -574,21 +608,26 @@ else
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
-                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")" 
-                                                       value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
+                                                       value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)"
+                                                       @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
+                                                       disabled="@(!_canEditC || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             </div>
                                         </td>
                                         <td>
-                                            @if (edit.State == EditState.New && _canEditC)
+                                            @if ((edit.State == EditState.New || edit.IsEditingWts) && _canEditC)
                                             {
                                                 <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _washingTasks)">
                                                     <option value="">-- Chọn WTS Rửa --</option>
-                                                    @foreach (var t in _washingTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                                    @foreach (var task in _washingTasks)
+                                                    {
+                                                        <option value="@task.TaskCode" selected="@(edit.StepName == task.TaskName)">[@task.TaskCode] @task.TaskName</option>
+                                                    }
                                                 </select>
                                             }
                                             else
                                             {
-                                                <input class="form-control form-control-sm" value="@edit.StepName" @bind:event="oninput" @bind:after="() => MarkAsModified(edit)" readonly disabled="@(!_canEditC || RowLocked(edit))" />
+                                                <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
                                         <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
@@ -603,6 +642,14 @@ else
                                             }
                                             @if (_canEditC)
                                             {
+                                                @if (edit.StepId > 0 && edit.State != EditState.Deleted)
+                                                {
+                                                    <button class="btn btn-sm @(edit.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                            title="@(edit.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa dòng này")"
+                                                            @onclick="() => { edit.IsEditingWts = !edit.IsEditingWts; if(edit.IsEditingWts) MarkAsModified(edit); }">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                }
                                                 <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
                                                         @onclick="() => AddBackupRow(_washingEdits, edit, (nc, parent) => new WashingEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                                     <i class="bi bi-diagram-3"></i>
@@ -650,20 +697,23 @@ else
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                         <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-warning")" 
-                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditD || RowLocked(edit))" />
+                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                     </div>
                                 </td>
                                 <td>
-                                    @if (edit.State == EditState.New && !edit.IsBackup && _canEditD)
+                                    @if ((edit.State == EditState.New && !edit.IsBackup || edit.IsEditingWts) && _canEditD)
                                     {
                                         <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _inspectionTasks)">
                                             <option value="">-- Chọn công việc Kiểm tra từ danh mục --</option>
-                                            @foreach (var t in _inspectionTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                            @foreach (var task in _inspectionTasks)
+                                            {
+                                                <option value="@task.TaskCode" selected="@(edit.StepName == task.TaskName)">[@task.TaskCode] @task.TaskName</option>
+                                            }
                                         </select>
                                     }
                                     else
                                     {
-                                        <input class="form-control form-control-sm" value="@edit.StepName" @bind:event="oninput" @bind:after="() => MarkAsModified(edit)" readonly disabled="@(!_canEditD || RowLocked(edit))" />
+                                        <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit))" />
                                     }
                                 </td>
                                 <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditD || RowLocked(edit))" /></td>
@@ -678,6 +728,14 @@ else
                                     }
                                     @if (_canEditD)
                                     {
+                                        @if (edit.StepId > 0 && edit.State != EditState.Deleted)
+                                        {
+                                            <button class="btn btn-sm @(edit.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                    title="@(edit.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa dòng này")"
+                                                    @onclick="() => { edit.IsEditingWts = !edit.IsEditingWts; if(edit.IsEditingWts) MarkAsModified(edit); }">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        }
                                         <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
                                                 @onclick="() => AddBackupRow(_inspectionEdits, edit, (nc, parent) => new InspectionEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                             <i class="bi bi-diagram-3"></i>
@@ -723,20 +781,23 @@ else
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                         <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-primary")" 
-                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly disabled="@(!_canEditE || RowLocked(edit))" />
+                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                     </div>
                                 </td>
                                 <td>
-                                    @if (edit.State == EditState.New && !edit.IsBackup && _canEditE)
+                                    @if ((edit.State == EditState.New && !edit.IsBackup || edit.IsEditingWts) && _canEditE)
                                     {
                                         <select class="form-select form-select-sm" @onchange="(e) => OnSelectWtsTask(edit, e.Value?.ToString(), _packagingTasks)">
                                             <option value="">-- Chọn công việc Đóng gói từ danh mục --</option>
-                                            @foreach (var t in _packagingTasks) { <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option> }
+                                            @foreach (var task in _packagingTasks)
+                                            {
+                                                <option value="@task.TaskCode" selected="@(edit.StepName == task.TaskName)">[@task.TaskCode] @task.TaskName</option>
+                                            }
                                         </select>
                                     }
                                     else
                                     {
-                                        <input class="form-control form-control-sm" value="@edit.StepName" @bind:event="oninput" @bind:after="() => MarkAsModified(edit)" readonly disabled="@(!_canEditE || RowLocked(edit))" />
+                                        <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit))" />
                                     }
                                 </td>
                                 <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditE || RowLocked(edit))" /></td>
@@ -751,6 +812,14 @@ else
                                     }
                                     @if (_canEditE)
                                     {
+                                        @if (edit.StepId > 0 && edit.State != EditState.Deleted)
+                                        {
+                                            <button class="btn btn-sm @(edit.IsEditingWts ? "btn-warning" : "btn-outline-primary") p-0 px-1 me-1"
+                                                    title="@(edit.IsEditingWts ? "Đang sửa — click để khóa lại" : "Sửa dòng này")"
+                                                    @onclick="() => { edit.IsEditingWts = !edit.IsEditingWts; if(edit.IsEditingWts) MarkAsModified(edit); }">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        }
                                         <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng" 
                                                 @onclick="() => AddBackupRow(_packagingEdits, edit, (nc, parent) => new PackagingEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
                                             <i class="bi bi-diagram-3"></i>
@@ -1713,6 +1782,27 @@ else
             return;
         }
 
+        // Validate datalist fields — check giá trị có trong list không
+        var validationErrors = new List<string>();
+        foreach (var e in _machiningEdits.Where(e => e.State is EditState.New or EditState.Modified))
+        {
+            if (!string.IsNullOrEmpty(e.MachineRegistered) && !_thietBiList.Any(m => m.SoMay == e.MachineRegistered))
+                validationErrors.Add($"NC {e.NC}: Máy đăng ký '{e.MachineRegistered}' không có trong danh sách thiết bị.");
+            if (!string.IsNullOrEmpty(e.FixtureType) && !_doGaList.Any(d => d.TenDoGa == e.FixtureType))
+                validationErrors.Add($"NC {e.NC}: Đồ gá '{e.FixtureType}' không có trong danh mục đồ gá.");
+            if (!string.IsNullOrEmpty(e.ToolType) && !_daoList.Any(d => d.TenDao == e.ToolType))
+                validationErrors.Add($"NC {e.NC}: Loại dao '{e.ToolType}' không có trong danh mục dao.");
+            if (!string.IsNullOrEmpty(e.TimingMachine) && !_thietBiList.Any(m => m.SoMay == e.TimingMachine))
+                validationErrors.Add($"NC {e.NC}: Máy bấm giờ '{e.TimingMachine}' không có trong danh sách thiết bị.");
+        }
+        if (validationErrors.Count > 0)
+        {
+            _saveResult = "⚠️ Không thể lưu — giá trị không hợp lệ:\n" + string.Join("\n", validationErrors);
+            _saveHasError = true;
+            _saving = false;
+            return;
+        }
+
         _pendingDefaultChanges = CollectDefaultChanges();
 
         // PIN chỉ yêu cầu khi đổi default attribute (Material/Config/Note).
@@ -2078,10 +2168,14 @@ else
             get => _standardTime; 
             set => _standardTime = value.HasValue ? Math.Round(value.Value, 1) : null; 
         }
+        /// <summary>UI-only: user bấm nút ✏️ để mở dropdown WTS và sửa dòng cũ.</summary>
+        public bool IsEditingWts { get; set; } = false;
     }
 
     public class MachiningEdit : StepEditBase
     {
+        /// <summary>UI-only: user bấm ✏️ để unlock dòng sửa.</summary>
+        public bool IsEditingWts { get; set; } = false;
         public string? Drawing { get; set; }
         public string? MachineRegistered { get; set; }
         public string? MachineAlternative { get; set; }
