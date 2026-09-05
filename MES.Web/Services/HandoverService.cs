@@ -784,6 +784,28 @@ namespace MES.Web.Services
     // ----------------------------------------------------------------
         // HELPER: Tính SL còn lại tại 1 nhóm để validate khi giao
         // ----------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // QUERY: Đếm phiếu PENDING mình đã giao chưa được nhận — badge nút Giao
+        // ----------------------------------------------------------------
+        public async Task<Dictionary<int, int>> GetPendingIssuedCountPerDetailAsync(
+            IEnumerable<int> detailIds,
+            IEnumerable<string> fromGroupCodes)
+        {
+            var ids   = detailIds.ToList();
+            var codes = fromGroupCodes.ToList();
+
+            var counts = await _db.HandoverTransactions
+                .Where(t => ids.Contains(t.KhPlanDetailId)
+                         && codes.Contains(t.FromGroupCode)
+                         && t.Status != "COMPLETED"
+                         && !t.IsVoided)
+                .GroupBy(t => t.KhPlanDetailId)
+                .Select(g => new { KhPlanDetailId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            return counts.ToDictionary(x => x.KhPlanDetailId, x => x.Count);
+        }
+
         public async Task<decimal> GetRemainingAsync(int khPlanDetailId, string groupCode)
         {
             decimal baseQty;
@@ -837,15 +859,31 @@ namespace MES.Web.Services
                     .SumAsync(r => (decimal?)r.QtyOk) ?? 0m;
             }
 
-            // Trừ SL đã được bên nhận xác nhận (PENDING không trừ)
-            var issuedOut = await _db.HandoverReceives
+            // SL đã được bên nhận xác nhận (confirmed)
+            var confirmedOut = await _db.HandoverReceives
                 .Where(r => !r.IsVoided
                          && !r.Transaction.IsVoided
                          && r.Transaction.KhPlanDetailId == khPlanDetailId
                          && r.Transaction.FromGroupCode == groupCode)
                 .SumAsync(r => (decimal?)(r.QtyOk + r.QtyNg)) ?? 0m;
 
-            return Math.Max(0, baseQty - issuedOut);
+            // SL đang trên phiếu PENDING/PARTIAL chưa nhận hết — cùng nhóm giao
+            // Tránh 2 user cùng nhóm giao trùng số lượng
+            var pendingTxs = await _db.HandoverTransactions
+                .Where(t => !t.IsVoided
+                         && t.KhPlanDetailId == khPlanDetailId
+                         && t.FromGroupCode == groupCode   // chỉ tính trong cùng nhóm
+                         && t.Status != "COMPLETED")
+                .Include(t => t.Receives)
+                .ToListAsync();
+
+            var pendingOut = pendingTxs.Sum(t =>
+            {
+                var received = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+                return Math.Max(0, t.QtyIssued - received);
+            });
+
+            return Math.Max(0, baseQty - confirmedOut - pendingOut);
         }
     }
 

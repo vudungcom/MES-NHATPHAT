@@ -35,6 +35,12 @@ public class PartMaster
     [MaxLength(50)]
     public string? LocationDefault { get; set; }
 
+    /// <summary>
+    /// Ghi chú mạ — thông tin xử lý bề mặt, được snapshot sang KhPlanDetail khi tạo phiếu.
+    /// </summary>
+    [MaxLength(500)]
+    public string? GhiChuMa { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

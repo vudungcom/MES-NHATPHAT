@@ -131,7 +131,7 @@
                     }
                     else if (!string.IsNullOrEmpty(d.PartNo))
                     {
-                        <span class="badge bg-warning text-dark ms-2"><i class="bi bi-plus-circle"></i> Part mới - thêm vào PartMaster khi lưu</span>
+                        @* Part mới không còn được phép *@
                     }
                 </div>
                 <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveDetail(idx)">
@@ -149,8 +149,9 @@
                     <label class="form-label small">Part No <span class="text-danger">*</span></label>
                     <input class="form-control form-control-sm font-monospace"
                            list="partmaster-list"
-                           @bind="d.PartNo"
-                           @bind:after="() => OnPartNoChangedAsync(idx)" />
+                           placeholder="Gõ để tìm Part No..."
+                           value="@d.PartNo"
+                           @oninput="async e => { d.PartNo = e.Value?.ToString() ?? string.Empty; await OnPartNoChangedAsync(idx); }" />
                 </div>
                 <div class="col-md-2">
                     <label class="form-label small">SL <span class="text-danger">*</span></label>
@@ -212,6 +213,11 @@
                         ShowSetDefaultCheckbox="false"
                         @bind-Value="d.MaterialNotes" />
                 </div>
+                <div class="col-md-12">
+                    <label class="form-label small text-muted">Ghi chú mạ <span class="fst-italic">(từ PartMaster)</span></label>
+                    <textarea class="form-control form-control-sm bg-light" rows="2" readonly
+                              placeholder="— Chưa có —">@(_partLookup.TryGetValue(d.PartNo ?? "", out var _pm) ? (_pm.GhiChuMa ?? "") : "")</textarea>
+                </div>
             </div>
 
             <p class="small text-secondary fw-500 mb-2 mt-3">C. Thông tin nội bộ (không lấy từ PartMaster)</p>
@@ -236,9 +242,9 @@
 }
 
 <datalist id="partmaster-list">
-    @foreach (var p in _partLookup.Values)
+    @foreach (var p in _partLookup.Values.OrderBy(p => p.PartNo))
     {
-        <option value="@p.PartNo">@p.PartName</option>
+        <option value="@p.PartNo">@p.PartNo@(string.IsNullOrEmpty(p.PartName) ? "" : $" — {p.PartName}")</option>
     }
 </datalist>
 
@@ -276,7 +282,7 @@
     private async Task ReloadMasterDataAsync()
     {
         _customers = await CustomerSvc.GetAllAsync(includeInactive: false);
-        var parts = await Db.PartMasters.Where(p => p.IsActive).ToListAsync();
+        var parts = await Db.PartMasters.Where(p => p.IsActive && !p.IsObsolete).ToListAsync();
         _partLookup = parts.ToDictionary(p => p.PartNo, p => p);
     }
 
@@ -370,7 +376,8 @@
         if (!_details.Any()) { _error = "Thêm ít nhất 1 Part"; return; }
         foreach (var d in _details)
         {
-            if (string.IsNullOrWhiteSpace(d.PartNo)) { _error = "Nhập Part No cho mọi dòng"; return; }
+            if (string.IsNullOrWhiteSpace(d.PartNo)) { _error = "Chọn Part No cho mọi dòng"; return; }
+            if (!_partLookup.ContainsKey(d.PartNo)) { _error = $"Part No '{d.PartNo}' không tồn tại trong Part Master. Vui lòng tạo Part trước."; return; }
             if (string.IsNullOrWhiteSpace(d.PurchaseOrder)) { _error = "Nhập PO cho mọi dòng"; return; }
             if (d.Quantity <= 0) { _error = "SL phải > 0"; return; }
         }
@@ -385,20 +392,12 @@
         {
             foreach (var d in _details)
             {
-                if (!_partLookup.ContainsKey(d.PartNo))
+                // Chỉ cho phép Part đã có trong PartMaster — không tạo Part mới từ KhPlan
+                if (_partLookup.ContainsKey(d.PartNo))
                 {
-                    var initialAttrs = new Dictionary<string, string>();
-                    if (!string.IsNullOrWhiteSpace(d.Material)) initialAttrs[AttrMaterial] = d.Material;
-                    if (!string.IsNullOrWhiteSpace(d.MaterialConfig)) initialAttrs[AttrMaterialConfig] = d.MaterialConfig;
-                    if (!string.IsNullOrWhiteSpace(d.MaterialNotes)) initialAttrs[AttrMaterialNote] = d.MaterialNotes;
-
-                    var pm = await PartSvc.CreatePartMasterAsync(
-                        d.PartNo, _plan.CustomerId, initialAttrs, _currentUserId);
-                    _partLookup[d.PartNo] = pm;
-                }
-                else
-                {
+                    // Snapshot GhiChuMa từ PartMaster tại thời điểm tạo phiếu
                     var pm = _partLookup[d.PartNo];
+                    d.GhiChuMa = pm.GhiChuMa;
                     await MaybeAddNewValue(pm.PartId, AttrMaterial, d.Material);
                     await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
                     await MaybeAddNewValue(pm.PartId, AttrMaterialNote, d.MaterialNotes);
@@ -416,6 +415,7 @@
                 Priority = d.Priority,
                 Material = d.Material,
                 MaterialConfig = d.MaterialConfig,
+                GhiChuMa = d.GhiChuMa,
                 Location = d.Location,
                 MaterialNotes = d.MaterialNotes,
                 OrderVL = d.OrderVL,
@@ -464,6 +464,7 @@
     {
         public string PartNo { get; set; } = "";
         public string PurchaseOrder { get; set; } = "";
+        public string? GhiChuMa { get; set; }
         public decimal Quantity { get; set; }
         public string Unit { get; set; } = "EA";
         public DateTime STD { get; set; }

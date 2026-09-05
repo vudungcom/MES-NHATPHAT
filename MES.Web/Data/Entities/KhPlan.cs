@@ -79,12 +79,16 @@ public class KhPlanDetail
     [MaxLength(100)]
     public string? Priority { get; set; }
 
-    // ==== Snapshot từ PartMasterAttribute tại thời điểm tạo phiếu ====
+    // ==== Snapshot từ PartMaster tại thời điểm tạo phiếu ====
     [MaxLength(100)]
     public string? MaterialConfig { get; set; }
 
     [MaxLength(100)]
     public string? Material { get; set; }
+
+    /// <summary>Snapshot Ghi chú mạ từ PartMaster.GhiChuMa tại thời điểm tạo phiếu.</summary>
+    [MaxLength(500)]
+    public string? GhiChuMa { get; set; }
 
     // ==== Thông tin nội bộ ====
     [MaxLength(50)]

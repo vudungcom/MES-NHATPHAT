@@ -1,4 +1,5 @@
 @page "/handover"
+@implements IDisposable
 @using MES.Web.Services
 @using MES.Web.Data
 @using MES.Web.Data.Entities
@@ -187,10 +188,18 @@ else
                             <div class="d-flex gap-1 justify-content-center flex-wrap">
                                 @if (_canEditAny)
                                 {
-                                    <button class="btn btn-xs btn-outline-primary"
-                                            style="font-size:10px;padding:1px 6px"
+                                    <button class="btn btn-xs @(GetPendingIssuedCount(row.KhPlanDetailId) > 0 ? "btn-primary" : "btn-outline-primary") position-relative"
+                                            style="font-size:10px;padding:1px 8px"
                                             @onclick="() => OpenIssueModal(row)">
                                         <i class="bi bi-box-arrow-right"></i> Giao
+                                        @if (GetPendingIssuedCount(row.KhPlanDetailId) > 0)
+                                        {
+                                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                                                  style="font-size:9px;min-width:16px;height:16px;line-height:16px;padding:0 4px;"
+                                                  title="@GetPendingIssuedCount(row.KhPlanDetailId) phiếu đã giao chưa được xác nhận">
+                                                @GetPendingIssuedCount(row.KhPlanDetailId)
+                                            </span>
+                                        }
                                     </button>
                                     <button class="btn btn-xs @(GetPendingCount(row.KhPlanDetailId) > 0 ? "btn-success" : "btn-outline-success") position-relative"
                                             style="font-size:10px;padding:1px 8px"
@@ -248,9 +257,18 @@ else
                     {
                         <div class="p-2 border rounded bg-light" style="font-size:13px">
                             <strong>@GetGroupLabel(_issueFromGroupOptions[0].Code)</strong>
-                            <span class="text-muted ms-2 small">
-                                còn lại: @_issueFromGroupOptions[0].Remaining.ToString("0.##")
-                            </span>
+                            @if (_issueFromGroupOptions[0].Remaining > 0)
+                            {
+                                <span class="badge bg-success ms-2">
+                                    có thể giao: @_issueFromGroupOptions[0].Remaining.ToString("0.##")
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning text-dark ms-2">
+                                    đang chờ xác nhận / đã hết
+                                </span>
+                            }
                         </div>
                     }
                     else if (_issueFromGroupOptions.Count > 1)
@@ -263,7 +281,9 @@ else
                             <option value="">-- Chọn nhóm giao --</option>
                             @foreach (var opt in _issueFromGroupOptions)
                             {
-                                <option value="@opt.Code">@opt.Label (còn: @opt.Remaining.ToString("0.##"))</option>
+                                <option value="@opt.Code">
+                                    @opt.Label — có thể giao: @opt.Remaining.ToString("0.##")
+                                </option>
                             }
                         </select>
                     }
@@ -774,9 +794,13 @@ else
     List<HandoverLogItem> _logItems  = new();
     string                _logPartNo = "";
 
-    // Badge đỏ: số phiếu PENDING/PARTIAL đang chờ nhóm user này nhận
-    // Key = KhPlanDetailId, Value = số phiếu
+    // Badge đỏ nhận: phiếu chờ nhóm mình nhận
     Dictionary<int, int> _pendingCountPerDetail = new();
+    // Badge đỏ giao: phiếu mình đã giao chưa được xác nhận
+    Dictionary<int, int> _pendingIssuedCountPerDetail = new();
+    // Auto-refresh timer
+    private System.Threading.Timer? _refreshTimer;
+    private bool _isRefreshing = false;
 
     // Expand state trong modal Nhận — phiếu nào đang mở form nhập OK/NG
     long _expandedTxId = 0;
@@ -815,6 +839,9 @@ else
 
     int GetPendingCount(int khPlanDetailId) =>
         _pendingCountPerDetail.TryGetValue(khPlanDetailId, out var c) ? c : 0;
+
+    int GetPendingIssuedCount(int khPlanDetailId) =>
+        _pendingIssuedCountPerDetail.TryGetValue(khPlanDetailId, out var c) ? c : 0;
 
     decimal GetGroupRemaining(HandoverSummaryRow row, string code) => code switch
     {
@@ -866,8 +893,18 @@ else
             _customers = await Db.Customers
                 .Where(c => c.IsActive).OrderBy(c => c.CustomerName).ToListAsync();
             await LoadDataAsync();
+
+            _refreshTimer = new System.Threading.Timer(async _ =>
+            {
+                if (_isRefreshing) return;
+                _isRefreshing = true;
+                try { await LoadBadgesAsync(); await InvokeAsync(StateHasChanged); }
+                finally { _isRefreshing = false; }
+            }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
         }
     }
+
+    public void Dispose() => _refreshTimer?.Dispose();
 
     IEnumerable<HandoverSummaryRow> FilteredRows
     {
@@ -959,7 +996,16 @@ else
         }
 
         BuildColFilters();
+        await LoadBadgesAsync();
         StateHasChanged();
+    }
+
+    async Task LoadBadgesAsync()
+    {
+        if (!_myEditGroups.Any() || !_rows.Any()) return;
+        var _ids = _rows.Select(r => r.KhPlanDetailId).ToList();
+        _pendingCountPerDetail       = await HandoverSvc.GetPendingCountPerDetailAsync(_ids, _myEditGroups);
+        _pendingIssuedCountPerDetail = await HandoverSvc.GetPendingIssuedCountPerDetailAsync(_ids, _myEditGroups);
     }
 
     void BuildColFilters()
@@ -1018,20 +1064,34 @@ else
         _issueQty       = 1;
         _issueNotes     = "";
         _modalError     = "";
+        _useNcMode      = false;
+        _issueFromNC    = "";
+        _ncOptions      = new();
+        _ncMaxQty       = 0;
+        _issueFromGroupOptions = new(); // sẽ load async
+        _showIssueModal = true;
+        // Load remaining realtime từ service (tính cả PENDING)
+        _ = LoadIssueGroupOptionsAsync(row);
+    }
 
-        // Hiện tất cả nhóm user có quyền — không filter Remaining
-        // Service sẽ validate đủ hàng khi bấm Xác nhận
-        _issueFromGroupOptions = _myEditGroups
-            .Select(grp => new IssueGroupOption(grp, GetGroupLabel(grp), GetGroupRemaining(row, grp)))
-            .ToList();
+    async Task LoadIssueGroupOptionsAsync(HandoverSummaryRow row)
+    {
+        var opts = new List<IssueGroupOption>();
+        foreach (var grp in _myEditGroups)
+        {
+            // Gọi GetRemainingAsync — tính cả pending trong cùng nhóm
+            var remaining = await HandoverSvc.GetRemainingAsync(row.KhPlanDetailId, grp);
+            opts.Add(new IssueGroupOption(grp, GetGroupLabel(grp), remaining));
+        }
+        _issueFromGroupOptions = opts;
 
         if (_issueFromGroupOptions.Count == 1)
             _issueFromGroup = _issueFromGroupOptions[0].Code;
 
-        _showIssueModal = true;
-        // Load NC options cho nhóm đã auto-detect
+        StateHasChanged();
+
         if (!string.IsNullOrEmpty(_issueFromGroup))
-            _ = OnIssueFromGroupChangedAsync();
+            await OnIssueFromGroupChangedAsync();
     }
 
     async Task OnIssueFromGroupChangedAsync()

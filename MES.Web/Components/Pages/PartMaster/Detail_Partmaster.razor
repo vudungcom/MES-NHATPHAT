@@ -179,6 +179,20 @@ else
                         <AttributePicker Label="" Placeholder="Nhập ghi chú bổ sung..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialNote"))" @bind-Value="_materialNote" @bind-IsSetAsDefault="_setDefaultNote" Disabled="@(!_canEditA)" />
                     </div>
                 </div>
+                @* Ghi chú mạ *@
+                <div class="row g-3 mt-1">
+                    <div class="col-md-12">
+                        <label class="form-label small fw-bold mb-1">
+                            Ghi chú mạ
+                            <span class="text-muted fw-normal ms-1" style="font-size:0.78rem;">(xử lý bề mặt — hiện trong phiếu Kế hoạch)</span>
+                        </label>
+                        <textarea class="form-control form-control-sm" rows="2"
+                                  placeholder="VD: Mạ kẽm 8-12 micron, Anodize đen, Không mạ..."
+                                  @bind="_ghiChuMa"
+                                  @bind:after="() => { _hasChanges = true; _savedSuccessfully = false; }"
+                                  disabled="@(!_canEditA)"></textarea>
+                    </div>
+                </div>
             </div>
         </div>
     }
@@ -1353,6 +1367,7 @@ else
                 if (_material != _originalMaterial) return true;
                 if (_materialConfig != _originalConfig) return true;
                 if (_materialNote != _originalNote) return true;
+                if (_ghiChuMa != _originalGhiChuMa) return true;
                 if (_setDefaultMaterial || _setDefaultConfig || _setDefaultNote) return true;
             }
 
@@ -1398,7 +1413,8 @@ else
     private string? _material;
     private string? _materialConfig;
     private string? _materialNote;
-    
+    private string? _ghiChuMa;
+
     private bool _setDefaultMaterial;
     private bool _setDefaultConfig;
     private bool _setDefaultNote;
@@ -1407,6 +1423,7 @@ else
     private string? _originalMaterial;
     private string? _originalConfig;
     private string? _originalNote;
+    private string? _originalGhiChuMa;
 
     private List<MachiningEdit> _machiningEdits = new();
     private List<TaroEdit> _taroEdits = new();
@@ -1644,9 +1661,11 @@ else
         _material = _attrGroups.GetValueOrDefault("Material")?.FirstOrDefault(a => a.IsDefault)?.Value;
         _materialConfig = _attrGroups.GetValueOrDefault("MaterialConfig")?.FirstOrDefault(a => a.IsDefault)?.Value;
         _materialNote = _attrGroups.GetValueOrDefault("MaterialNote")?.FirstOrDefault(a => a.IsDefault)?.Value;
+        _ghiChuMa = _part.GhiChuMa;
         _originalMaterial = _material;
         _originalConfig = _materialConfig;
         _originalNote = _materialNote;
+        _originalGhiChuMa = _ghiChuMa;
 
         await ReloadStepsAsync();
     }
@@ -2308,6 +2327,25 @@ else
                     catch (Exception ex)
                     {
                         errors.Add("✗ Tên chi tiết: " + ex.Message);
+                    }
+                }
+
+                if (_ghiChuMa != _originalGhiChuMa)
+                {
+                    try
+                    {
+                        var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part!.PartId);
+                        if (pm != null)
+                        {
+                            pm.GhiChuMa = string.IsNullOrWhiteSpace(_ghiChuMa) ? null : _ghiChuMa.Trim();
+                            await Db.SaveChangesAsync();
+                            _originalGhiChuMa = pm.GhiChuMa;
+                            log.Add("✓ Cập nhật Ghi chú mạ");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add("✗ Ghi chú mạ: " + ex.Message);
                     }
                 }
 
