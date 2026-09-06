@@ -22,6 +22,7 @@ namespace MES.Web.Data.Entities
         /// Null = giao thông thường (không gắn với NC cụ thể).
         /// </summary>
         public string? FromNC { get; set; }
+		public string? ToNC { get; set; }   // v0.8 — NC đích ở nhóm nhận
 
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";

@@ -106,6 +106,7 @@ else
         <table class="table table-sm table-hover mb-0 align-middle" style="font-size:11px;min-width:1400px">
             <thead class="table-light">
                 <tr>
+                    <th rowspan="2" class="text-center border-end" style="width:26px" title="Xem chi tiết từng NC"></th>
                     <th rowspan="2" class="border-end" style="width:85px">@HdvColHeader("PlanNo", "Mã PO")</th>
                     <th rowspan="2" class="border-end" style="width:80px">@HdvColHeader("PurchaseOrder", "PO KH")</th>
                     <th rowspan="2" class="border-end" style="width:100px">@HdvColHeader("PartNo", "Part No")</th>
@@ -140,15 +141,23 @@ else
             <tbody>
                 @if (!_rows.Any())
                 {
-                    <tr><td colspan="23" class="text-center text-muted py-4">
+                    <tr><td colspan="24" class="text-center text-muted py-4">
                         <i class="bi bi-inbox me-2"></i>Không có dữ liệu
                     </td></tr>
                 }
                 @foreach (var row in FilteredRows)
                 {
+                    var isExpanded = _expandedDetailId == row.KhPlanDetailId;
                     <tr class="@(row.HasNg ? "table-warning" : "")"
                         style="cursor:pointer" title="Double-click để xem log"
                         @ondblclick="() => ShowLogAsync(row.KhPlanDetailId)">
+                        <td class="text-center border-end p-0" @onclick:stopPropagation @ondblclick:stopPropagation>
+                            <button class="btn btn-xs btn-link p-0" style="font-size:12px;line-height:1"
+                                    @onclick="() => ToggleExpandDetailAsync(row.KhPlanDetailId)"
+                                    title="@(isExpanded ? "Thu gọn" : "Xem chi tiết từng NC")">
+                                <i class="bi @(isExpanded ? "bi-caret-down-fill text-primary" : "bi-caret-right-fill text-muted")"></i>
+                            </button>
+                        </td>
                         <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
                         <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
                         <td class="border-end fw-semibold">@row.PartNo</td>
@@ -222,6 +231,16 @@ else
                             </div>
                         </td>
                     </tr>
+
+                    @* v0.8: Row expand — chi tiết per NC cho từng nhóm *@
+                    @if (isExpanded)
+                    {
+                        <tr class="table-light">
+                            <td colspan="24" class="p-3">
+                                @RenderNcFlowDetail(row)
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </table>
@@ -334,7 +353,7 @@ else
 
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
-                    <select class="form-select form-select-sm" @bind="_issueToGroup">
+                    <select class="form-select form-select-sm" @bind="_issueToGroup" @bind:after="OnIssueToGroupChangedAsync">
                         <option value="">-- Chọn nhóm nhận --</option>
                         @foreach (var g in _allGroupDefs.Where(g => g.Code != EffectiveFromGroup))
                         {
@@ -342,6 +361,46 @@ else
                         }
                     </select>
                 </div>
+
+                @* v0.8: ToNC — chọn NC đích ở nhóm nhận (không dùng với KHO) *@
+                @if (!string.IsNullOrEmpty(_issueToGroup) && _issueToGroup != "KHO")
+                {
+                    <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
+                        <label class="form-label form-label-sm fw-semibold mb-1">
+                            Nhận vào NC (tuỳ chọn)
+                            <i class="bi bi-info-circle text-muted ms-1"
+                               title="Chọn NC đích ở nhóm nhận. Trống = vào NC đầu tuyệt đối. Dùng khi trả về NC dùng máy loại trừ hoặc NC giữa chuỗi."></i>
+                        </label>
+                        @if (_toNcOptions.Count > 0)
+                        {
+                            <select class="form-select form-select-sm" @bind="_issueToNC">
+                                <option value="">-- NC đầu tuyệt đối (mặc định) --</option>
+                                @foreach (var nc in _toNcOptions)
+                                {
+                                    <option value="@nc.NC">@nc.Label</option>
+                                }
+                            </select>
+                            @if (!string.IsNullOrEmpty(_issueToNC))
+                            {
+                                var selected = _toNcOptions.FirstOrDefault(o => o.NC == _issueToNC);
+                                @if (selected != null && selected.IsExcluded)
+                                {
+                                    <div class="small text-warning-emphasis mt-1">
+                                        <i class="bi bi-slash-circle me-1"></i>NC này dùng máy loại trừ — cần nhận từ nhóm khác trả về.
+                                    </div>
+                                }
+                            }
+                        }
+                        else if (_toNcOptionsLoading)
+                        {
+                            <div class="small text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Đang tải NC...</div>
+                        }
+                        else
+                        {
+                            <div class="small text-muted fst-italic">Không có snapshot NC — nhận vào group không phân NC.</div>
+                        }
+                    </div>
+                }
 
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold">
@@ -791,6 +850,18 @@ else
     string  _receiveNgReason = "";
     string  _receiveNotes    = "";
 
+    // v0.8: ToNC selector trong modal Giao
+    string             _issueToNC          = "";
+    List<ToNcOption>   _toNcOptions        = new();
+    bool               _toNcOptionsLoading = false;
+
+    record ToNcOption(string NC, string Label, bool IsExcluded, bool IsFirst);
+
+    // v0.8: Expand chi tiết per NC — chỉ 1 PO expand tại 1 thời điểm
+    int? _expandedDetailId = null;
+    // Cache flow per (detailId, groupCode)
+    Dictionary<(int detailId, string group), List<NcFlowItem>> _flowCache = new();
+
     List<HandoverLogItem> _logItems  = new();
     string                _logPartNo = "";
 
@@ -1056,6 +1127,138 @@ else
         __builder.CloseElement();
     };
 
+    // v0.8b: Chi tiết per NC — xếp dọc 1 cột, thứ tự B(GC) → C(HTSP) → D(KCS) → E(PKG)
+    RenderFragment RenderNcFlowDetail(HandoverSummaryRow row) => __builder =>
+    {
+        <div class="d-flex flex-column gap-3">
+            @* Kho — đầu trang (không có NC) *@
+            <div class="border rounded p-2" style="background:#e1f5ee22">
+                <div class="fw-semibold small mb-1" style="color:#0d6b52">
+                    <i class="bi bi-box-seam me-1"></i>Kho — nhận từ khách hàng
+                </div>
+                <div class="d-flex flex-wrap gap-4 small">
+                    <span>OK nhận từ KH: <strong class="@(row.KhoOk > 0 ? "text-success" : "text-muted")">@row.KhoOk.ToString("0.##")</strong></span>
+                    <span>NG: <strong class="@(row.KhoNg > 0 ? "text-danger" : "text-muted")">@row.KhoNg.ToString("0.##")</strong></span>
+                    <span>Đã giao đi (→GC): <strong>@((row.Gc.ReceivedOk + row.Gc.NgReturned).ToString("0.##"))</strong></span>
+                    @{ var kl = Math.Max(0, row.KhoOk - row.KhoNg - row.Gc.ReceivedOk - row.Gc.NgReturned); }
+                    <span>Còn lại tại Kho: <strong class="@(kl > 0 ? "text-warning" : "text-muted")">@kl.ToString("0.##")</strong></span>
+                </div>
+            </div>
+
+            @* B → C → D → E *@
+            @foreach (var grp in new[] { "GC", "HTSP", "KCS", "PKG" })
+            {
+                var flow = _flowCache.TryGetValue((row.KhPlanDetailId, grp), out var f) ? f : new List<NcFlowItem>();
+                @RenderGroupNcTable(grp, flow, row)
+            }
+        </div>
+    };
+
+    static string GroupBgColor(string grp) => grp switch
+    {
+        "GC"   => "#e6f1fb33",
+        "HTSP" => "#faeeda33",
+        "KCS"  => "#eaf3de33",
+        "PKG"  => "#fbeaf033",
+        _      => "#f8f9fa"
+    };
+
+    static string GroupLabelText(string grp) => grp switch
+    {
+        "GC"   => "Gia công",
+        "HTSP" => "Hoàn thiện SP (Taro → Bavia → Rửa)",
+        "KCS"  => "Kiểm tra chất lượng",
+        "PKG"  => "Đóng gói",
+        _      => grp
+    };
+
+    RenderFragment RenderGroupNcTable(string grp, List<NcFlowItem> flow, HandoverSummaryRow row) => __builder =>
+    {
+        <div class="border rounded p-2 h-100" style="background:@GroupBgColor(grp)">
+            <div class="fw-semibold small mb-1" style="color:#333">
+                <i class="bi bi-diagram-3 me-1"></i>@GroupLabelText(grp)
+                @if (flow.Count == 0)
+                {
+                    <span class="text-muted fw-normal ms-2">— chưa có snapshot NC</span>
+                }
+            </div>
+            @if (flow.Count > 0)
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0" style="font-size:10.5px">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:90px">NC</th>
+                                @if (grp == "GC") { <th style="width:70px">Máy</th> }
+                                <th class="text-end" title="SL công nhân đã WTS tại NC này">Đã làm</th>
+                                <th class="text-end" title="SL Handover nhận VÀO NC này từ nhóm khác">Nhận vào</th>
+                                <th class="text-end" title="SL đã giao ra khỏi NC này (confirmed + pending)">Giao đi</th>
+                                <th class="text-end fw-semibold" style="color:#e08a00"
+                                    title="Còn tồn = Đã làm + Nhận vào - Giao đi">Còn tồn</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ string? lastSubGroup = null; }
+                            @foreach (var f in flow.Where(x => !x.IsBackup).OrderBy(x =>
+                                x.SubGroup switch { "TARO" => 1, "BAVIA" => 2, "WASHING" => 3, _ => 0 })
+                                .ThenBy(x => x.StepOrder))
+                            {
+                                // Divider giữa các sub-group của HTSP
+                                @if (grp == "HTSP" && f.SubGroup != lastSubGroup)
+                                {
+                                    <tr class="table-secondary" style="font-size:9.5px">
+                                        <td colspan="7" class="py-0 px-2 fw-semibold text-uppercase">@f.SubGroup</td>
+                                    </tr>
+                                    lastSubGroup = f.SubGroup;
+                                }
+
+                                var badgeCls = f.IsExcluded ? "bg-danger"
+                                             : f.IsFirstInChain ? "bg-info text-dark"
+                                             : f.IsLastInChain  ? "bg-secondary" : "";
+                                var badgeTxt = f.IsExcluded ? "loại trừ"
+                                             : f.IsFirstInChain ? "đầu" : f.IsLastInChain ? "cuối" : "";
+                                <tr class="@(f.IsExcluded ? "table-warning" : "")">
+                                    <td>
+                                        <code>@f.NC</code>
+                                        @if (!string.IsNullOrEmpty(badgeTxt))
+                                        {
+                                            <span class="badge @badgeCls ms-1" style="font-size:8.5px">@badgeTxt</span>
+                                        }
+                                        @if (f.IsExcluded)
+                                        {
+                                            <span class="ms-1" style="font-size:9px" title="Máy loại trừ — hàng sẽ chuyển sang nhóm khác tại bước này">⚙️</span>
+                                        }
+                                    </td>
+                                    @if (grp == "GC")
+                                    {
+                                        <td class="small text-muted">@(f.MachineRegistered ?? "—")</td>
+                                    }
+                                    <td class="text-end @(f.WtsDone > 0 ? "text-primary" : "text-muted")">@(f.WtsDone > 0 ? f.WtsDone.ToString("0.##") : "—")</td>
+                                    <td class="text-end @(f.HandoverIn > 0 ? "text-success" : "text-muted")">@(f.HandoverIn > 0 ? f.HandoverIn.ToString("0.##") : "—")</td>
+                                    <td class="text-end @(f.HandoverOut > 0 ? "text-danger" : "text-muted")">
+                                        @(f.HandoverOut > 0 ? f.HandoverOut.ToString("0.##") : "—")
+                                        @if (f.HandoverOutPending > 0)
+                                        {
+                                            <i class="bi bi-hourglass-split ms-1 text-warning" style="font-size:9px"
+                                               title="@(f.HandoverOutPending.ToString("0.##")) đang chờ nhận"></i>
+                                        }
+                                    </td>
+                                    @{
+                                        var rem    = f.Remaining;
+                                        var remCls = rem > 0 ? "fw-semibold" : rem < 0 ? "text-danger fw-semibold" : "text-muted";
+                                        var remTxt = rem.ToString("0.##");
+                                        var remTip = rem < 0 ? "Âm: đã giao/nhận nhiều hơn đã làm — kiểm tra lại luồng giao nhận" : "Còn tồn tại NC này";
+                                    }
+                                    <td class="text-end @remCls" title="@remTip" style="@(rem > 0 ? "color:#e08a00" : "")">@remTxt</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    };
+
     void OpenIssueModal(HandoverSummaryRow row)
     {
         _selectedRow    = row;
@@ -1068,6 +1271,9 @@ else
         _issueFromNC    = "";
         _ncOptions      = new();
         _ncMaxQty       = 0;
+        _issueToNC      = "";
+        _toNcOptions    = new();
+        _toNcOptionsLoading = false;
         _issueFromGroupOptions = new(); // sẽ load async
         _showIssueModal = true;
         // Load remaining realtime từ service (tính cả PENDING)
@@ -1139,11 +1345,76 @@ else
             _selectedRow.KhPlanDetailId, fromGroup, _issueToGroup,
             _issueQty, _currentUserId,
             fromNC: _useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,
-            notes:  _issueNotes);
+            notes:  _issueNotes,
+            toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC);   // v0.8
         _saving = false;
         if (!ok) { _modalError = err; return; }
+
+        // v0.8: Clear cache flow cho detail này (sau khi Issue đổi số liệu)
+        InvalidateFlowCache(_selectedRow.KhPlanDetailId);
+
         CloseModals();
         await LoadDataAsync();
+    }
+
+    // v0.8: Khi user chọn nhóm nhận → load list NC của nhóm đó để dropdown ToNC
+    async Task OnIssueToGroupChangedAsync()
+    {
+        _issueToNC   = "";
+        _toNcOptions = new();
+        if (_selectedRow == null || string.IsNullOrEmpty(_issueToGroup) || _issueToGroup == "KHO")
+            return;
+
+        _toNcOptionsLoading = true;
+        StateHasChanged();
+        try
+        {
+            var flow = await HandoverSvc.GetNcFlowAsync(_selectedRow.KhPlanDetailId, _issueToGroup);
+            _toNcOptions = flow
+                .Where(f => !f.IsBackup)
+                .Select(f =>
+                {
+                    var tags = new List<string>();
+                    if (f.IsExcluded) tags.Add("máy loại trừ");
+                    if (f.IsFirstInChain) tags.Add("NC đầu");
+                    if (f.IsLastInChain) tags.Add("NC cuối");
+                    var suffix = tags.Count > 0 ? " [" + string.Join(", ", tags) + "]" : "";
+                    var sub    = f.SubGroup != f.GroupCode ? $" ({f.SubGroup})" : "";
+                    var label  = $"NC {f.NC}{sub}{suffix}";
+                    return new ToNcOption(f.NC, label, f.IsExcluded, f.IsFirstInChain);
+                })
+                .ToList();
+        }
+        finally
+        {
+            _toNcOptionsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    // v0.8: Toggle expand chi tiết per NC — chỉ 1 PO tại 1 thời điểm
+    async Task ToggleExpandDetailAsync(int detailId)
+    {
+        if (_expandedDetailId == detailId)
+        {
+            _expandedDetailId = null;
+            return;
+        }
+        _expandedDetailId = detailId;
+        // Preload flow cho 4 group (KHO bỏ qua vì không có NC)
+        foreach (var grp in new[] { "GC", "HTSP", "KCS", "PKG" })
+        {
+            var key = (detailId, grp);
+            if (!_flowCache.ContainsKey(key))
+                _flowCache[key] = await HandoverSvc.GetNcFlowAsync(detailId, grp);
+        }
+        StateHasChanged();
+    }
+
+    void InvalidateFlowCache(int detailId)
+    {
+        var keys = _flowCache.Keys.Where(k => k.detailId == detailId).ToList();
+        foreach (var k in keys) _flowCache.Remove(k);
     }
 
     void OpenReceiveModal(HandoverSummaryRow row)
@@ -1216,6 +1487,10 @@ else
         _saving = false;
         if (!ok) { _modalError = err; return; }
 
+        // v0.8: Invalidate flow cache — Receive đổi số liệu
+        if (_selectedRow != null)
+            InvalidateFlowCache(_selectedRow.KhPlanDetailId);
+
         // Reload pending list — không đóng modal, để user xử lý tiếp phiếu khác
         _expandedTxId    = 0;
         _receiveQtyOk    = 0;
@@ -1269,6 +1544,10 @@ else
         _showVoidConfirm = false;
         _voidingTxId     = 0;
         _modalError      = "";
+
+        // v0.8: Invalidate flow cache
+        if (_selectedRow != null)
+            InvalidateFlowCache(_selectedRow.KhPlanDetailId);
 
         // Reload log của PO hiện tại
         if (_selectedRow != null)

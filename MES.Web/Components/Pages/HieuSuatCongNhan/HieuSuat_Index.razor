@@ -136,7 +136,9 @@ else
                             <th style="width:120px;">NC / Mục</th>
                             <th style="width:100px;">Máy SD <span class="text-danger">*</span></th>
                             <th style="width:180px;">Mã WTS khác <span class="text-muted fw-normal">(nếu không có PO)</span></th>
-                            <th style="width:70px;" class="text-end">SL</th>
+                            <th style="width:62px;" class="text-end text-success" title="Số lượng làm đúng">OK</th>
+                            <th style="width:62px;" class="text-end text-danger" title="Số lượng làm sai phát hiện tại NC">NG</th>
+                            <th style="width:140px;" class="text-danger" title="Lý do NG (bắt buộc khi có NG)">Lý do NG</th>
                             <th>Ghi chú</th>
                             <th style="width:80px;" class="text-center">Thao tác</th>
                         </tr>
@@ -157,8 +159,16 @@ else
                                     <td><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
                                     <td><code class="small text-primary">@(row.MachineUsed ?? "—")</code></td>
                                     <td class="small text-muted">@row.WtsName</td>
-                                    <td class="text-end">@(row.QtyDone > 0 ? row.QtyDone.ToString("0.##") : "—")</td>
-                                    <td class="small text-muted">@row.Notes</td>
+                                    <td class="text-end text-success fw-semibold">@(row.QtyOk > 0 ? row.QtyOk.ToString("0.##") : "—")</td>
+                                    <td class="text-end @(row.QtyNg > 0 ? "text-danger fw-semibold" : "text-muted")">@(row.QtyNg > 0 ? row.QtyNg.ToString("0.##") : "—")</td>
+                                    <td class="small @(row.QtyNg > 0 ? "text-danger" : "text-muted")">
+                                        @if (row.QtyNg > 0 && !string.IsNullOrEmpty(row.NgReason))
+                                        {
+                                            <span title="@row.NgReason"><i class="bi bi-exclamation-circle me-1"></i>@row.NgReason</span>
+                                        }
+                                        else { <span>—</span> }
+                                    </td>
+                                    <td class="small text-muted">@(string.IsNullOrEmpty(row.Notes) ? "—" : row.Notes)</td>
                                     <td class="text-center text-nowrap">
                                         @if (row.HasWarning)
                                         {
@@ -226,88 +236,44 @@ else
                                     </td>
                                     @* NC / Mục — chỉ hiện khi có PO, lấy từ snapshot *@
                                     <td>
-                                        @if (!string.IsNullOrEmpty(row.PO))
+                                        @if (string.IsNullOrEmpty(row.PO))
                                         {
-                                            @if (row.AvailableNCs.Any())
-                                            {
-                                                <select class="form-select form-select-sm"
-                                                        @onchange="e => OnNCChanged(row, e.Value?.ToString())">
-                                                    <option value="">-- Chọn NC --</option>
-                                                    @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
-                                                    {
-                                                        var done      = _qtySummaryCache.TryGetValue($"{row.KhPlanDetailId}|GC|{nc.NC}", out var d) ? d : 0m;
-                                                        var det       = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
-                                                        var remaining = (det?.Quantity ?? 0) - done;
-                                                        var isDone    = remaining <= 0;
-
-                                                        // Kiểm tra máy đăng ký + máy đồng dạng có đang hỏng không
-                                                        var regMachine  = nc.MachineRegistered ?? "";
-                                                        var altMachines = (nc.MachineAlternative ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-                                                        var regBroken = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
-                                                        var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
-                                                        // Disabled nếu: đã đủ SL, hoặc máy đk hỏng VÀ không có máy đồng dạng khỏe nào
-                                                        var isDisabled = isDone || (regBroken && (altMachines.Length == 0 || allAltBroken));
-
-                                                        string icon, lbl;
-                                                        if (isDone)
-                                                        {
-                                                            icon = "✅";
-                                                            lbl  = $"✅ NC{nc.NC} — ĐÃ ĐỦ SL ({det?.Quantity.ToString("0.##")} {det?.Unit})";
-                                                        }
-                                                        else if (regBroken && (altMachines.Length == 0 || allAltBroken))
-                                                        {
-                                                            icon = "⛔";
-                                                            lbl  = $"⛔ NC{nc.NC} — {regMachine} ĐANG HỎNG — không thể sử dụng";
-                                                        }
-                                                        else if (regBroken && altMachines.Any(m => !_brokenMachines.Contains(m)))
-                                                        {
-                                                            // Máy đk hỏng nhưng có máy đồng dạng còn khỏe
-                                                            var okAlt = altMachines.Where(m => !_brokenMachines.Contains(m)).FirstOrDefault();
-                                                            icon = "⚠️";
-                                                            lbl  = $"⚠️ NC{nc.NC} — {regMachine} hỏng, dùng DP: {okAlt} (còn {remaining.ToString("0.##")})";
-                                                        }
-                                                        else
-                                                        {
-                                                            icon = done > 0 ? "🟡" : "⬜";
-                                                            lbl  = $"{icon} NC{nc.NC} — {regMachine} (còn {remaining.ToString("0.##")})";
-                                                        }
-                                                        <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
-                                                    }
-                                                    @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
-                                                    {
-                                                        // Máy DP cũng kiểm tra trạng thái
-                                                        var dpMachine = nc.MachineRegistered ?? "";
-                                                        var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
-                                                        var dpLbl     = dpBroken
-                                                            ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG"
-                                                            : $"↩ DP: NC{nc.NC} — {dpMachine}";
-                                                        <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
-                                                    }
-                                                </select>
-                                            }
-                                            @if (!string.IsNullOrEmpty(row.NC))
-                                            {
-                                                @* Hiện cảnh báo nếu máy của NC đang chọn bị hỏng *@
-                                                var _selNc = row.AvailableNCs.FirstOrDefault(n => n.NC == row.NC);
-                                                var _selMachine = _selNc?.MachineRegistered ?? "";
-                                                @if (!string.IsNullOrEmpty(_selMachine) && _brokenMachines.Contains(_selMachine))
-                                                {
-                                                    <div class="text-warning small mt-1">
-                                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                                                        Máy <strong>@_selMachine</strong> đang hỏng — dùng máy đồng dạng thay thế
-                                                    </div>
-                                                }
-                                            }
-                                            }
-                                            else
-                                            {
-                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
-                                            }
+                                            <span class="text-muted small">—</span>
+                                        }
+                                        else if (!row.AvailableNCs.Any())
+                                        {
+                                            <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
                                         }
                                         else
                                         {
-                                            <span class="text-muted small fst-italic ps-1">← Chọn PO trước</span>
+                                            <select class="form-select form-select-sm"
+                                                    @onchange="e => OnNCChanged(row, e.Value?.ToString())">
+                                                <option value="">-- Chọn NC --</option>
+                                                @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
+                                                {
+                                                    var flow        = GetFlowItem(row.KhPlanDetailId, nc.NC);
+                                                    var wtsDoneAtNc = flow?.WtsDone ?? 0m;
+                                                    var det         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+                                                    var planQty     = det?.Quantity ?? 0m;
+                                                    var isDone      = planQty > 0 && wtsDoneAtNc >= planQty;
+                                                    var isExcluded  = flow?.IsExcluded == true;
+                                                    var regMachine  = nc.MachineRegistered ?? "";
+                                                    var altMachines = (nc.MachineAlternative ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                                                    var regBroken    = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
+                                                    var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
+                                                    var machineBlocked = regBroken && (altMachines.Length == 0 || allAltBroken);
+                                                    var isDisabled = isDone || machineBlocked;
+                                                    var lbl = BuildNcLabel(isDone, machineBlocked, isExcluded, regBroken, altMachines, nc.NC, regMachine, planQty, det?.Unit, wtsDoneAtNc);
+                                                    <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
+                                                }
+                                                @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
+                                                {
+                                                    var dpMachine = nc.MachineRegistered ?? "";
+                                                    var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
+                                                    var dpLbl     = dpBroken ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG" : $"↩ DP: NC{nc.NC} — {dpMachine}";
+                                                    <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
+                                                }
+                                            </select>
                                         }
                                     </td>
                                     @* Máy sử dụng — bắt buộc khi có NC *@
@@ -336,33 +302,51 @@ else
                                         }
                                     </td>
 
-                                    @* Mã WTS khác — chỉ hiện khi KHÔNG chọn PO, lọc theo nhóm *@
+                                    @* Mã WTS khác — datalist pattern giống Part Master máy đăng ký *@
                                     <td>
                                         @if (string.IsNullOrEmpty(row.PO))
                                         {
-                                            <select class="form-select form-select-sm"
-                                                    @onchange="e => OnWtsOtherChanged(row, e.Value?.ToString())">
-                                                <option value="">-- Chọn mã WTS --</option>
-                                                @foreach (var grp in WtsTasksForGroup.GroupBy(t => t.CategoryName))
+                                            var dlId = $"dl-wts-{_rows.IndexOf(row)}";
+                                            <input class="form-control form-control-sm"
+                                                   list="@dlId"
+                                                   value="@row.WtsCode"
+                                                   placeholder="Gõ mã hoặc tên..."
+                                                   @oninput="e => OnWtsCodeInput(row, e)" />
+                                            <datalist id="@dlId">
+                                                @foreach (var t in WtsTasksForGroup)
                                                 {
-                                                    <optgroup label="@grp.Key">
-                                                        @foreach (var t in grp)
-                                                        {
-                                                            <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option>
-                                                        }
-                                                    </optgroup>
+                                                    <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option>
                                                 }
-                                            </select>
+                                            </datalist>
                                         }
                                         else
                                         {
                                             <span class="text-muted small fst-italic ps-1">— (đã chọn PO)</span>
                                         }
                                     </td>
-                                    @* SL *@
+                                    @* OK *@
                                     <td>
                                         <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
-                                               @bind="row.QtyDone" placeholder="0" />
+                                               style="border-color:#198754"
+                                               value="@row.QtyOk"
+                                               @oninput="e => OnQtyOkInput(row, e)"
+                                               placeholder="0" title="Số lượng OK" />
+                                    </td>
+                                    @* NG *@
+                                    <td>
+                                        <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
+                                               style="@(row.QtyNg > 0 ? "border-color:#dc3545" : "")"
+                                               value="@row.QtyNg"
+                                               @oninput="e => OnQtyNgInput(row, e)"
+                                               placeholder="0" title="Số lượng NG phát hiện tại NC" />
+                                    </td>
+                                    @* Lý do NG *@
+                                    <td>
+                                        <input class="form-control form-control-sm"
+                                               style="@(row.QtyNg > 0 ? "border-color:#dc3545" : "")"
+                                               @bind="row.NgReason"
+                                               placeholder="@(row.QtyNg > 0 ? "Lý do NG *" : "Lý do NG")"
+                                               title="Bắt buộc khi có NG" />
                                     </td>
                                     @* Ghi chú *@
                                     <td>
@@ -396,7 +380,7 @@ else
                                 @if (row.ShowTimeDetail && !string.IsNullOrEmpty(row.NC))
                                 {
                                     <tr class="bg-info bg-opacity-10">
-                                        <td colspan="10" class="py-2 px-3">
+                                        <td colspan="13" class="py-2 px-3">
                                             <div class="d-flex align-items-center gap-2 flex-wrap">
                                                 <span class="small fw-semibold text-info me-2">
                                                     <i class="bi bi-clock me-1"></i>Thời gian thực tế (phút) —
@@ -446,7 +430,7 @@ else
                                 @if (!string.IsNullOrEmpty(row.ErrorMsg))
                                 {
                                     <tr class="table-danger">
-                                        <td colspan="10" class="small text-danger py-1 ps-3">
+                                        <td colspan="13" class="small text-danger py-1 ps-3">
                                             <i class="bi bi-exclamation-triangle me-1"></i>@row.ErrorMsg
                                         </td>
                                     </tr>
@@ -456,7 +440,7 @@ else
                         @if (!_rows.Any())
                         {
                             <tr>
-                                <td colspan="10" class="text-center text-muted py-3 fst-italic">
+                                <td colspan="13" class="text-center text-muted py-3 fst-italic">
                                     Chưa có dòng nào. Bấm "Thêm dòng" để bắt đầu ghi WTS.
                                 </td>
                             </tr>
@@ -723,8 +707,26 @@ else
     private Dictionary<string, decimal> _qtySummaryCache = new(); // "detailId|NC" → qty done
 
     // Cache: KhPlanDetailId → SL đã nhận vào nhóm này (từ HandoverReceives)
-    // Dùng để giới hạn SL tối đa trong CheckQtyWarning
+    // Dùng để giới hạn SL tối đa trong CheckQtyWarning (giữ lại cho backward-compat)
     private Dictionary<int, decimal> _receivedOkCache = new();
+
+    // v0.8: Flow per NC theo nhóm handover của công nhân — nguồn "sự thật" duy nhất
+    // cho: cascade check (NC sau phụ thuộc NC trước), enforce conservation.
+    // Key: KhPlanDetailId, Value: list NcFlowItem của HandoverGroupCode
+    private Dictionary<int, List<NcFlowItem>> _ncFlowCache = new();
+
+    private async Task ReloadFlowAsync(int khPlanDetailId)
+    {
+        var flow = await HandoverSvc.GetNcFlowAsync(khPlanDetailId, HandoverGroupCode);
+        _ncFlowCache[khPlanDetailId] = flow;
+    }
+
+    private NcFlowItem? GetFlowItem(int? detailId, string? nc)
+    {
+        if (detailId == null || string.IsNullOrEmpty(nc)) return null;
+        if (!_ncFlowCache.TryGetValue(detailId.Value, out var list)) return null;
+        return list.FirstOrDefault(f => !f.IsBackup && f.NC == nc);
+    }
 
     // Timeline rows
     private List<WtsRow> _rows = new();
@@ -905,6 +907,9 @@ else
                 WtsCode        = null,
                 WtsName        = null,
                 QtyDone        = log.QtyDone,
+                QtyOk          = log.QtyOk ?? log.QtyDone,   // fallback cho bản ghi cũ
+                QtyNg          = log.QtyNg ?? 0m,
+                NgReason       = log.NgReason,
                 Notes          = log.Notes,
                 Saved          = true,
             });
@@ -950,17 +955,60 @@ else
         });
     }
 
-    private void RemoveRow(WtsRow row) => _rows.Remove(row);
+    // v0.8: RemoveRow bây giờ async — nếu row có logId (đã lưu DB, đang sửa dở,
+    // hoặc user xóa hẳn) thì void ở DB + reload flow. Fix bug: xóa xong NC vẫn
+    // hiển thị "ĐÃ ĐỦ SL" vì log cũ chưa được void.
+    private async Task RemoveRow(WtsRow row)
+    {
+        if (row.WtsLogId.HasValue)
+        {
+            await Db.Database.ExecuteSqlRawAsync(
+                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
+                _currentUserId, DateTime.Now, row.WtsLogId.Value);
+        }
+        if (row.ActivityLogId.HasValue)
+        {
+            await Db.Database.ExecuteSqlRawAsync(
+                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
+                _currentUserId, DateTime.Now, row.ActivityLogId.Value);
+        }
+
+        _rows.Remove(row);
+
+        // Reload flow cho detail này để dropdown NC và cascade cập nhật ngay
+        if (row.KhPlanDetailId.HasValue)
+        {
+            Db.ChangeTracker.Clear();
+            await ReloadFlowAsync(row.KhPlanDetailId.Value);
+            // Reload qty summary luôn để nhất quán
+            var summary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId.Value);
+            foreach (var kv in summary)
+                _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
+        }
+    }
 
     /// <summary>
     /// Void dòng đã lưu trong ngày + mở lại để sửa.
     /// Cơ chế: đánh dấu Saved=false, giữ WtsLogId/ActivityLogId để void khi save lại.
+    /// v0.8: Reload flow + snapshot cho detail để dropdown NC hiển thị đúng ngay.
     /// </summary>
-    private void EditRow(WtsRow row)
+    private async Task EditRow(WtsRow row)
     {
         if (!IsToday) return;
-        row.Saved    = false;
+        row.Saved     = false;
         row.IsEditing = true; // đánh dấu đang sửa (sẽ void + tạo mới khi save)
+
+        // Đảm bảo snapshot NC + flow đã load cho detail này (row đã lưu → chưa chắc EnsureLoaded chạy)
+        if (row.KhPlanDetailId.HasValue && !string.IsNullOrEmpty(row.PO))
+        {
+            if (!_snapshotCache.ContainsKey(row.PO))
+            {
+                var snap = await KhSvc.GetRouteSnapshotAsync(row.KhPlanDetailId.Value);
+                _snapshotCache[row.PO] = snap.Machining;
+            }
+            row.AvailableNCs = _snapshotCache[row.PO];
+            await ReloadFlowAsync(row.KhPlanDetailId.Value);
+        }
     }
 
     // ── Time input ────────────────────────────────────────────
@@ -1015,6 +1063,12 @@ else
             var receivedOk = await HandoverSvc.GetReceivedOkAsync(detail.KhPlanDetailId, groupCode);
             _receivedOkCache[detail.KhPlanDetailId] = receivedOk > 0 ? receivedOk : detail.Quantity;
         }
+
+        // v0.8: Load NC flow — tính tồn per-NC (cascade + conservation)
+        if (!_ncFlowCache.ContainsKey(detail.KhPlanDetailId))
+        {
+            await ReloadFlowAsync(detail.KhPlanDetailId);
+        }
     }
 
     private void OnNCChanged(WtsRow row, string? nc)
@@ -1032,6 +1086,53 @@ else
         row.WtsName = _wtsTasks.FirstOrDefault(t => t.TaskCode == code)?.TaskName;
     }
 
+    // Datalist input handler — user gõ hoặc chọn từ list
+    private void OnWtsCodeInput(WtsRow row, ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString() ?? "";
+        row.WtsCode = val;
+        // Nếu khớp đúng 1 TaskCode → tự fill WtsName
+        var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == val);
+        row.WtsName = matched?.TaskName;
+    }
+
+    private static string BuildNcLabel(bool isDone, bool machineBlocked, bool isExcluded,
+        bool regBroken, string[] altMachines, string? ncCode, string regMachine,
+        decimal planQty, string? unit, decimal wtsDone)
+    {
+        if (isDone)        return $"✅ NC{ncCode} — ĐÃ ĐỦ SL ({planQty.ToString("0.##")} {unit})";
+        if (machineBlocked) return $"⛔ NC{ncCode} — {regMachine} ĐANG HỎNG";
+        if (isExcluded)    return $"⚙️ NC{ncCode} — {regMachine} (loại trừ)";
+        if (regBroken && altMachines.Any())
+        {
+            var okAlt = altMachines.FirstOrDefault(m => true); // caller đã lọc broken
+            return $"⚠️ NC{ncCode} — {regMachine} hỏng, dùng DP: {okAlt}";
+        }
+        var icon = wtsDone > 0 ? "🟡" : "⬜";
+        return $"{icon} NC{ncCode} — {regMachine} (đã làm: {wtsDone.ToString("0.##")})";
+    }
+
+    // Gọi khi user đổi QtyOk hoặc QtyNg — sync QtyDone + trigger warn
+    private void OnQtyChanged(WtsRow row)
+    {
+        row.QtyDone = row.QtyOk + row.QtyNg;
+        CheckQtyWarning(row);
+    }
+
+    // Xử lý input riêng từng cột — tránh lambda phức tạp trong Razor markup
+    // (Razor parser hiểu nhầm "out var v" thành HTML tag < var >)
+    private void OnQtyOkInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0m;
+        OnQtyChanged(row);
+    }
+
+    private void OnQtyNgInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0m;
+        OnQtyChanged(row);
+    }
+
     private void CheckQtyWarning(WtsRow row)
     {
         row.HasWarning  = false;
@@ -1041,23 +1142,30 @@ else
         var detail = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
         if (detail == null) return;
 
-        var cacheKey = $"{row.KhPlanDetailId}|GC|{row.NC}";
-        var done = _qtySummaryCache.TryGetValue(cacheKey, out var d) ? d : 0m;
+        // v0.8b: Không cascade lock — trong cùng nhóm làm NC nào cũng được.
+        // Chỉ warn khi QtyDone lần này vượt PlanQty (mỗi NC max = PlanQty).
+        var flow = GetFlowItem(row.KhPlanDetailId, row.NC);
+        var wtsDoneAtNc = flow?.WtsDone ?? 0m;
 
-        // Giới hạn tối đa = SL nhóm này đã nhận từ giao nhận (không phải Quantity KH)
-        // Nếu chưa có cache handover thì dùng Quantity KH làm fallback
-        var receivedOk = _receivedOkCache.TryGetValue(row.KhPlanDetailId!.Value, out var ro) ? ro : detail.Quantity;
-        var remaining  = receivedOk - done;
-
-        if (remaining <= 0)
+        // NC dùng máy loại trừ — warn nhẹ (không block)
+        if (flow?.IsExcluded == true)
         {
-            row.HasWarning = true;
-            row.WarningMsg = $"NC {row.NC} đã hoàn thành đủ SL nhận ({receivedOk} {detail.Unit}). Kiểm tra lại.";
+            // Chỉ warn info, không block save, không màu đỏ
+            row.HasWarning = false; // không tô vàng row
+            // Cảnh báo riêng hiển thị dưới dropdown
         }
-        else if (row.QtyDone > remaining)
+
+        // Warn khi nhập vượt PlanQty
+        if (row.QtyDone > detail.Quantity)
         {
             row.HasWarning = true;
-            row.WarningMsg = $"SL nhập ({row.QtyDone}) vượt quá SL còn lại ({remaining} {detail.Unit}). Cảnh báo!";
+            row.WarningMsg = $"SL nhập ({row.QtyDone}) vượt KH ({detail.Quantity} {detail.Unit}). Kiểm tra lại.";
+        }
+        // Warn khi tổng đã làm NC này + mới vượt PlanQty
+        else if (wtsDoneAtNc + row.QtyDone > detail.Quantity && wtsDoneAtNc > 0)
+        {
+            row.HasWarning = true;
+            row.WarningMsg = $"NC {row.NC} đã làm {wtsDoneAtNc:0.##} + nhập thêm {row.QtyDone} = {wtsDoneAtNc + row.QtyDone} vượt KH ({detail.Quantity} {detail.Unit}).";
         }
     }
 
@@ -1115,11 +1223,23 @@ else
 
             CheckQtyWarning(row);
 
-            // Block save nếu SL vượt hoặc NC đã đủ
-            if (row.HasWarning && row.WarningMsg != null && row.WarningMsg.Contains("vượt"))
-            { row.ErrorMsg = row.WarningMsg; return; }
-            if (row.HasWarning && row.WarningMsg != null && row.WarningMsg.Contains("đủ SL"))
-            { row.ErrorMsg = row.WarningMsg + " Chọn NC khác hoặc kiểm tra lại."; return; }
+            // v0.8b: Không block theo cascade. Chỉ block khi QtyDone > PlanQty.
+            if (row.QtyDone <= 0)
+            { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
+
+            if (row.QtyNg > 0 && string.IsNullOrWhiteSpace(row.NgReason))
+            { row.ErrorMsg = "Phải nhập lý do NG khi có số lượng NG."; return; }
+
+            var detForSave = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+            if (detForSave != null && row.QtyDone > detForSave.Quantity)
+            { row.ErrorMsg = $"Tổng OK+NG ({row.QtyDone}) vượt KH ({detForSave.Quantity} {detForSave.Unit}). Không được phép."; return; }
+
+            // Warn thêm nếu NC loại trừ (không block)
+            if (GetFlowItem(row.KhPlanDetailId, row.NC)?.IsExcluded == true)
+            {
+                row.HasWarning = true;
+                row.WarningMsg = (row.WarningMsg ?? "") + $" NC {row.NC} dùng máy loại trừ — thường do nhóm HTSP thực hiện.";
+            }
 
             try
             {
@@ -1131,7 +1251,10 @@ else
                     WtsCode                 = null,
                     WorkerId                = _currentUserId,
                     MachineUsed             = row.MachineUsed,
-                    QtyDone                 = row.QtyDone,
+                    QtyDone                 = row.QtyDone,   // = QtyOk + QtyNg
+                    QtyOk                   = row.QtyOk,
+                    QtyNg                   = row.QtyNg,
+                    NgReason                = row.QtyNg > 0 ? row.NgReason : null,
                     StartTime               = row.StartTime,
                     EndTime                 = row.EndTime,
                     Notes                   = row.Notes,
@@ -1148,10 +1271,11 @@ else
                 row.WtsLogId = log.WtsLogId;
                 Db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
 
-                // Reload qty cache
+                // Reload qty cache + flow (v0.8)
                 var summary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId.Value);
                 foreach (var kv in summary)
                     _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
+                await ReloadFlowAsync(row.KhPlanDetailId.Value);
             }
             catch (Exception ex)
             {
@@ -1198,8 +1322,9 @@ else
         // Giữ lại các dòng chưa lưu
         _rows.AddRange(unsavedRows);
 
-        // Reload qty summary cho tất cả PO đang có trong session
+        // Reload qty summary + flow cho tất cả PO đang có trong session (v0.8)
         _qtySummaryCache.Clear();
+        _ncFlowCache.Clear();
         foreach (var po in _rows.Where(r => r.KhPlanDetailId.HasValue)
                                  .Select(r => r.KhPlanDetailId!.Value)
                                  .Distinct())
@@ -1207,6 +1332,7 @@ else
             var sum = await KhSvc.GetWtsQtySummaryAsync(po);
             foreach (var kv in sum)
                 _qtySummaryCache[$"{po}|{kv.Key}"] = kv.Value;
+            await ReloadFlowAsync(po);
         }
 
         // Reload receivedOk cache cho PO vừa lưu
@@ -1268,7 +1394,10 @@ else
         /// <summary>Máy thực tế sử dụng — bắt buộc khi có NC (nhóm GC)</summary>
         public string? MachineUsed { get; set; }
 
-        public decimal QtyDone { get; set; }
+        public decimal QtyDone { get; set; }  // = QtyOk + QtyNg (tương thích backward)
+        public decimal QtyOk   { get; set; }  // SL làm đúng
+        public decimal QtyNg   { get; set; }  // SL làm sai phát hiện tại NC
+        public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0)
         public string? Notes   { get; set; }
 
         // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime

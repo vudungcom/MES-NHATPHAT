@@ -107,6 +107,60 @@ namespace MES.Web.Services
         public string   Label       => $"NC{StepOrder} ({NC}) — đã làm: {QtyDone:0.##}";
     }
 
+    // ── DTO cho GetNcFlowAsync — dòng chảy SL per NC ──────────────────────────
+    /// <summary>
+    /// 1 dòng "flow" cho 1 NC trong 1 nhóm handover. Dùng cho:
+    ///  - UI Handover expand row: hiển thị chi tiết từng NC
+    ///  - WTS validation cascade: NC sau chỉ được làm khi InputPool > 0
+    ///
+    /// Công thức (single source of truth):
+    ///   OutputPool  = WtsDone - PulledByNext - HandoverOut
+    ///   InputPool   =
+    ///     - Nếu IsFirstInChain hoặc IsExcluded: HandoverIn - WtsDone
+    ///     - Ngược lại (giữa chuỗi):            OutputPool(NC trước)
+    ///
+    /// Với NC dùng máy loại trừ: KHÔNG kéo tồn từ NC trước trong cùng nhóm,
+    /// SL vào phải đến từ Handover (bên khác trả về ToNC = NC này).
+    /// </summary>
+    public class NcFlowItem
+    {
+        // Định danh NC ------------------------------------------------------
+        public string   GroupCode         { get; set; } = string.Empty; // KHO|GC|HTSP|KCS|PKG
+        public string   SubGroup          { get; set; } = string.Empty; // GC|TARO|BAVIA|WASHING|KCS|PKG
+        public int      StepOrder         { get; set; }
+        public string   NC                { get; set; } = string.Empty;
+        public string?  ParentNC          { get; set; }
+        public bool     IsBackup          { get; set; }
+        public string?  StepName          { get; set; }  // tên công đoạn (C/D/E) hoặc null cho GC
+
+        // Machine info (chỉ có nghĩa với GC) --------------------------------
+        public string?  MachineRegistered { get; set; }
+        public bool     IsExcluded        { get; set; }  // MachineRegistered thuộc MachineExclude snapshot
+
+        // Vị trí trong chain (per SubGroup, non-backup) ---------------------
+        public bool     IsFirstInChain    { get; set; }
+        public bool     IsLastInChain     { get; set; }
+
+        // Số liệu ------------------------------------------------------------
+        /// <summary>SL công nhân đã làm xong tại NC này (WtsProductionLogs, gộp cả DP nếu có)</summary>
+        public decimal  WtsDone           { get; set; }
+        /// <summary>SL Handover nhận VÀO NC này (Receive.QtyOk với Tx.ToNC=NC và Tx.ToGroupCode=group)</summary>
+        public decimal  HandoverIn        { get; set; }
+        /// <summary>SL Handover đã confirmed ra khỏi NC này (Receive OK+NG với Tx.FromNC=NC)</summary>
+        public decimal  HandoverOutConfirmed { get; set; }
+        /// <summary>SL Handover đang PENDING/PARTIAL từ NC này (chưa được nhận xác nhận)</summary>
+        public decimal  HandoverOutPending   { get; set; }
+        public decimal  HandoverOut       => HandoverOutConfirmed + HandoverOutPending;
+        /// <summary>SL NC kế tiếp (không excluded) đã tự lấy để làm — bằng WtsDone(next)</summary>
+        public decimal  PulledByNext      { get; set; }
+
+        // Kết quả tính -------------------------------------------------------
+        /// <summary>OutputPool — SL đã hoàn thiện NC này, sẵn sàng chuyển đi / cho NC sau lấy</summary>
+        public decimal  Remaining         { get; set; }
+        /// <summary>InputPool — SL còn có thể LÀM MỚI tại NC này (dùng cho WTS cascade validation)</summary>
+        public decimal  AvailableInput    { get; set; }
+    }
+
     // ── Service ───────────────────────────────────────────────────────────
 
     public class HandoverService
@@ -535,7 +589,8 @@ namespace MES.Web.Services
             decimal qtyIssued,
             int issuedByUserId,
             string? fromNC  = null,
-            string? notes   = null)
+            string? notes   = null,
+            string? toNC    = null)     // NEW v0.8 — NC đích ở nhóm nhận (chỉ dùng cho GC/HTSP/KCS/PKG)
         {
             if (qtyIssued <= 0)
                 return (false, "Số lượng giao phải lớn hơn 0.");
@@ -546,34 +601,39 @@ namespace MES.Web.Services
             if (!validGroups.Contains(fromGroupCode) || !validGroups.Contains(toGroupCode))
                 return (false, "Mã nhóm không hợp lệ.");
 
-            decimal maxAllowed;
             if (!string.IsNullOrEmpty(fromNC))
             {
-                // Giao NC cụ thể — tối đa = QtyDone của NC đó chưa giao đi
-                var ncDone = await _db.WtsProductionLogs
-                    .Where(w => w.KhPlanDetailId == khPlanDetailId
-                             && w.NC == fromNC
-                             && !w.IsVoided)
-                    .SumAsync(w => (decimal?)w.QtyDone) ?? 0m;
+                // Giao NC cụ thể — ceiling = WtsDone(NC) + HandoverIn(NC)
+                // KHÔNG trừ tổng tích lũy đã giao vì hàng đi lại nhiều lần (rework, máy loại trừ).
+                // Chỉ check 1 lần giao này không vượt Remaining(NC) = WtsDone + HandoverIn - HandoverOut.
+                var flow   = await GetNcFlowAsync(khPlanDetailId, fromGroupCode);
+                var ncItem = flow.FirstOrDefault(f => !f.IsBackup && f.NC == fromNC);
+                if (ncItem == null)
+                    return (false, $"NC {fromNC} không tìm thấy trong snapshot nhóm {fromGroupCode}.");
 
-                // Trừ đi SL đã giao từ NC này trước đó
-                var alreadyIssuedFromNC = await _db.HandoverTransactions
-                    .Where(t => t.KhPlanDetailId == khPlanDetailId
-                             && t.FromGroupCode == fromGroupCode
-                             && t.FromNC == fromNC
-                             && !t.IsVoided)
-                    .SumAsync(t => (decimal?)t.QtyIssued) ?? 0m;
+                // Remaining có thể âm nếu đã giao nhiều lần — dùng Max(0, Remaining) để không block oan
+                // nhưng vẫn check: lần giao này phải ≤ WtsDone (không giao nhiều hơn đã làm)
+                if (qtyIssued > ncItem.WtsDone && ncItem.WtsDone > 0)
+                    return (false, $"NC {fromNC}: đã làm {ncItem.WtsDone:0.##} — không thể giao {qtyIssued:0.##} lần này.");
 
-                maxAllowed = Math.Max(0, ncDone - alreadyIssuedFromNC);
-                if (qtyIssued > maxAllowed)
-                    return (false, $"NC {fromNC} đã làm {ncDone:0.##}, đã giao {alreadyIssuedFromNC:0.##}, còn có thể giao: {maxAllowed:0.##}.");
+                // Nếu WtsDone = 0 (chưa làm) → check tổng còn tồn nhóm thay thế
+                if (ncItem.WtsDone == 0)
+                {
+                    var groupRemain = await GetRemainingAsync(khPlanDetailId, fromGroupCode);
+                    if (qtyIssued > groupRemain)
+                        return (false, $"NC {fromNC} chưa có WTS — còn tồn nhóm {fromGroupCode} ({groupRemain:0.##}) không đủ để giao {qtyIssued:0.##}.");
+                }
             }
             else
             {
+                // Không chỉ định NC — check tổng còn tồn nhóm (NC cuối)
                 var remaining = await GetRemainingAsync(khPlanDetailId, fromGroupCode);
                 if (qtyIssued > remaining)
                     return (false, $"Số lượng giao ({qtyIssued}) vượt quá còn lại tại {fromGroupCode} ({remaining:0.##}).");
             }
+
+            // KHO không có NC — nếu nhóm nhận là KHO thì bỏ qua ToNC dù caller có truyền
+            var effectiveToNc = toGroupCode == "KHO" ? null : toNC;
 
             _db.HandoverTransactions.Add(new HandoverTransaction
             {
@@ -582,6 +642,7 @@ namespace MES.Web.Services
                 ToGroupCode    = toGroupCode,
                 QtyIssued      = qtyIssued,
                 FromNC         = fromNC,
+                ToNC           = effectiveToNc,   // NEW v0.8
                 Status         = "PENDING",
                 IssuedBy       = issuedByUserId,
                 IssuedAt       = DateTime.Now,
@@ -804,6 +865,274 @@ namespace MES.Web.Services
                 .ToListAsync();
 
             return counts.ToDictionary(x => x.KhPlanDetailId, x => x.Count);
+        }
+
+        // ----------------------------------------------------------------
+        // QUERY (v0.8): Dòng chảy SL per NC cho 1 nhóm handover
+        // Dùng cho: UI Handover expand row, WTS cascade validation.
+        // Xem doc trên class NcFlowItem để hiểu công thức.
+        // ----------------------------------------------------------------
+        public async Task<List<NcFlowItem>> GetNcFlowAsync(int khPlanDetailId, string groupCode)
+        {
+            var items      = new List<NcFlowItem>();
+            var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
+            if (!validGroups.Contains(groupCode) || groupCode == "KHO")
+                return items;   // KHO không có NC — trả empty
+
+            string[] processGroups;
+
+            // ── 1) Build snapshot items theo group ─────────────────────
+            switch (groupCode)
+            {
+                case "GC":
+                {
+                    var machining = await _db.KhPlanRouteSnapshotMachining
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder)
+                        .AsNoTracking()
+                        .ToListAsync();
+
+                    var excludedMachines = await _db.KhPlanRouteSnapshotMachineExclude
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .Select(s => s.SoMay)
+                        .AsNoTracking()
+                        .ToListAsync();
+                    var exclSet = excludedMachines
+                        .Where(m => !string.IsNullOrWhiteSpace(m))
+                        .Select(m => m!.Trim())
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var m in machining)
+                    {
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode         = "GC",
+                            SubGroup          = "GC",
+                            StepOrder         = m.StepOrder,
+                            NC                = m.NC ?? string.Empty,
+                            ParentNC          = m.ParentNC,
+                            IsBackup          = m.IsBackup,
+                            MachineRegistered = m.MachineRegistered,
+                            IsExcluded        = !string.IsNullOrWhiteSpace(m.MachineRegistered)
+                                                && exclSet.Contains(m.MachineRegistered.Trim()),
+                        });
+                    }
+                    processGroups = new[] { "GC" };
+                    break;
+                }
+                case "HTSP":
+                {
+                    var taro = await _db.KhPlanRouteSnapshotTaro
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync();
+                    var bavia = await _db.KhPlanRouteSnapshotBavia
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync();
+                    var washing = await _db.KhPlanRouteSnapshotWashing
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync();
+
+                    foreach (var s in taro)
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode = "HTSP", SubGroup = "TARO",
+                            StepOrder = s.StepOrder, NC = s.NC ?? string.Empty,
+                            ParentNC = s.ParentNC, IsBackup = s.IsBackup,
+                            StepName = s.StepName,
+                        });
+                    foreach (var s in bavia)
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode = "HTSP", SubGroup = "BAVIA",
+                            StepOrder = s.StepOrder, NC = s.NC ?? string.Empty,
+                            ParentNC = s.ParentNC, IsBackup = s.IsBackup,
+                            StepName = s.StepName,
+                        });
+                    foreach (var s in washing)
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode = "HTSP", SubGroup = "WASHING",
+                            StepOrder = s.StepOrder, NC = s.NC ?? string.Empty,
+                            ParentNC = s.ParentNC, IsBackup = s.IsBackup,
+                            StepName = s.StepName,
+                        });
+                    processGroups = new[] { "TARO", "BAVIA", "WASHING" };
+                    break;
+                }
+                case "KCS":
+                {
+                    var kcs = await _db.KhPlanRouteSnapshotInspection
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync();
+                    foreach (var s in kcs)
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode = "KCS", SubGroup = "KCS",
+                            StepOrder = s.StepOrder, NC = s.NC ?? string.Empty,
+                            ParentNC = s.ParentNC, IsBackup = s.IsBackup,
+                            StepName = s.StepName,
+                        });
+                    processGroups = new[] { "KCS" };
+                    break;
+                }
+                case "PKG":
+                {
+                    var pkg = await _db.KhPlanRouteSnapshotPackaging
+                        .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                        .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync();
+                    foreach (var s in pkg)
+                        items.Add(new NcFlowItem
+                        {
+                            GroupCode = "PKG", SubGroup = "PKG",
+                            StepOrder = s.StepOrder, NC = s.NC ?? string.Empty,
+                            ParentNC = s.ParentNC, IsBackup = s.IsBackup,
+                            StepName = s.StepName,
+                        });
+                    processGroups = new[] { "PKG" };
+                    break;
+                }
+                default:
+                    return items;
+            }
+
+            if (!items.Any()) return items;
+
+            // ── 2) Đánh dấu First/Last theo chain GỘP ─────────────────────
+            // Một group = 1 chain. Với HTSP: nối Taro → Bavia → Washing thành
+            // 1 dây chuyền (NC cuối Taro chảy vào NC đầu Bavia, Bavia→Washing tương tự).
+            // Các group khác chỉ có 1 SubGroup nên rank không ảnh hưởng.
+            static int SubGroupRank(string sg) => sg switch
+            {
+                "TARO" => 1, "BAVIA" => 2, "WASHING" => 3, _ => 0
+            };
+            var mainChain = items
+                .Where(i => !i.IsBackup)
+                .OrderBy(i => SubGroupRank(i.SubGroup))
+                .ThenBy(i => i.StepOrder)
+                .ToList();
+            for (int i = 0; i < mainChain.Count; i++)
+            {
+                mainChain[i].IsFirstInChain = (i == 0);
+                mainChain[i].IsLastInChain  = (i == mainChain.Count - 1);
+            }
+
+            // ── 3) Load WTS logs 1 lần cho cả group ────────────────────────
+            var wtsLogs = await _db.WtsProductionLogs
+                .Where(w => w.KhPlanDetailId == khPlanDetailId
+                         && processGroups.Contains(w.ProcessGroup)
+                         && !w.IsVoided)
+                .Select(w => new { w.ProcessGroup, w.NC, w.WtsCode, w.QtyDone })
+                .ToListAsync();
+
+            // Với GC: log.NC khớp với item.NC
+            // Với HTSP/KCS/PKG: log.WtsCode khớp với item.NC (do snapshot NC lưu WtsCode)
+            decimal SumWtsForNc(string subGroup, string ncCode) =>
+                wtsLogs.Where(w => w.ProcessGroup == subGroup
+                                && ((w.NC ?? w.WtsCode ?? string.Empty) == ncCode))
+                       .Sum(w => w.QtyDone);
+
+            // Gộp DP vào NC chính (Q2: chung bucket qua ParentNC)
+            foreach (var item in items.Where(i => !i.IsBackup))
+            {
+                var mainDone = SumWtsForNc(item.SubGroup, item.NC);
+
+                var dpCodes = items
+                    .Where(d => d.IsBackup
+                             && d.SubGroup == item.SubGroup
+                             && d.ParentNC == item.NC)
+                    .Select(d => d.NC)
+                    .ToList();
+
+                var dpDone = dpCodes.Sum(code => SumWtsForNc(item.SubGroup, code));
+                item.WtsDone = mainDone + dpDone;
+            }
+            // DP items: WtsDone riêng để hiển thị info, không dùng trong công thức chain
+            foreach (var item in items.Where(i => i.IsBackup))
+                item.WtsDone = SumWtsForNc(item.SubGroup, item.NC);
+
+            // ── 4) Handover IN (Tx.ToGroupCode == group, Tx.ToNC per NC) ───
+            var receivesIn = await _db.HandoverReceives
+                .Where(r => !r.IsVoided
+                         && !r.Transaction.IsVoided
+                         && r.Transaction.KhPlanDetailId == khPlanDetailId
+                         && r.Transaction.ToGroupCode == groupCode)
+                .Select(r => new { r.QtyOk, r.Transaction.ToNC })
+                .ToListAsync();
+
+            var inByNc = receivesIn
+                .Where(r => !string.IsNullOrEmpty(r.ToNC))
+                .GroupBy(r => r.ToNC!)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyOk));
+
+            // Receive với ToNC=NULL (giao không chỉ định NC) → dồn vào NC đầu tuyệt đối của group
+            var inNullTotal = receivesIn.Where(r => string.IsNullOrEmpty(r.ToNC)).Sum(r => r.QtyOk);
+
+            foreach (var item in items.Where(i => !i.IsBackup))
+                item.HandoverIn = inByNc.TryGetValue(item.NC, out var v) ? v : 0m;
+
+            if (inNullTotal > 0)
+            {
+                // ToNC=NULL (Kho hoặc user không chỉ định) → dồn vào NC đầu tuyệt đối
+                // của group. Với HTSP: NC đầu Taro (do mainChain đã sort Taro→Bavia→Washing).
+                var firstOverall = mainChain.FirstOrDefault();
+                if (firstOverall != null)
+                    firstOverall.HandoverIn += inNullTotal;
+            }
+
+            // ── 5) Handover OUT (Tx.FromGroupCode == group, Tx.FromNC per NC) ─
+            var outConfirmed = await _db.HandoverReceives
+                .Where(r => !r.IsVoided
+                         && !r.Transaction.IsVoided
+                         && r.Transaction.KhPlanDetailId == khPlanDetailId
+                         && r.Transaction.FromGroupCode == groupCode
+                         && !string.IsNullOrEmpty(r.Transaction.FromNC))
+                .Select(r => new { r.QtyOk, r.QtyNg, r.Transaction.FromNC })
+                .ToListAsync();
+
+            var outConfirmedByNc = outConfirmed
+                .GroupBy(r => r.FromNC!)
+                .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyOk + x.QtyNg));
+
+            var pendingTxs = await _db.HandoverTransactions
+                .Where(t => !t.IsVoided
+                         && t.KhPlanDetailId == khPlanDetailId
+                         && t.FromGroupCode == groupCode
+                         && !string.IsNullOrEmpty(t.FromNC)
+                         && t.Status != "COMPLETED")
+                .Include(t => t.Receives)
+                .Select(t => new
+                {
+                    t.FromNC,
+                    t.QtyIssued,
+                    ReceivedSoFar = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg)
+                })
+                .ToListAsync();
+
+            var pendingOutByNc = pendingTxs
+                .GroupBy(t => t.FromNC!)
+                .ToDictionary(g => g.Key, g => g.Sum(x => Math.Max(0m, x.QtyIssued - x.ReceivedSoFar)));
+
+            foreach (var item in items.Where(i => !i.IsBackup))
+            {
+                item.HandoverOutConfirmed = outConfirmedByNc.TryGetValue(item.NC, out var oc) ? oc : 0m;
+                item.HandoverOutPending   = pendingOutByNc.TryGetValue(item.NC, out var op)   ? op : 0m;
+            }
+
+            // ── 6) Remaining per NC — đơn giản hóa v0.8b ──────────────────
+            // Logic mới: không cascade, không lock thứ tự.
+            // Remaining(NC) = WtsDone + HandoverIn - HandoverOut (confirmed + pending)
+            // Âm = warning khi tra cứu, không block.
+            // AvailableInput = Remaining (giữ field, dùng để UI tô màu)
+            // PulledByNext   = 0 (không còn dùng, giữ field tránh break UI cũ)
+            foreach (var item in mainChain)
+            {
+                item.PulledByNext   = 0m;
+                item.Remaining      = item.WtsDone + item.HandoverIn
+                                    - item.HandoverOutConfirmed - item.HandoverOutPending;
+                item.AvailableInput = item.Remaining; // alias để UI dùng chung
+            }
+
+            return items;
         }
 
         public async Task<decimal> GetRemainingAsync(int khPlanDetailId, string groupCode)

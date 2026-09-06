@@ -41,6 +41,9 @@ public class WtsProductionLog
     /// <summary>Số lượng hoàn thành trong lần submit này.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal QtyDone { get; set; }
+	public decimal? QtyOk    { get; set; }
+public decimal? QtyNg    { get; set; }
+public string?  NgReason { get; set; }
 
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
