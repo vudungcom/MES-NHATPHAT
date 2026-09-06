@@ -458,7 +458,7 @@ public class KhPlanService
 
         try
         {
-            // Xóa snapshot quy trình B→E
+            // Xóa snapshot quy trình B→E + Máy loại trừ
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotMachining WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
@@ -471,6 +471,8 @@ public class KhPlanService
                 "DELETE FROM KhPlanRouteSnapshotInspection WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotPackaging WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotMachineExclude WHERE KhPlanDetailId = {0}", khPlanDetailId);
 
             // Xóa WTS production logs
             await _db.Database.ExecuteSqlRawAsync(
@@ -554,6 +556,8 @@ public class KhPlanService
                 "DELETE FROM KhPlanRouteSnapshotInspection WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotPackaging  WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotMachineExclude WHERE KhPlanDetailId = {0}", khPlanDetailId);
 
             // 3. Copy lại từ Part Master hiện tại
             await CopyRouteSnapshotAsync(khPlanDetailId, partId, userId);
@@ -658,24 +662,27 @@ public class KhPlanService
     {
         var result = new RouteSnapshotData
         {
-            Machining  = await _db.KhPlanRouteSnapshotMachining
+            Machining      = await _db.KhPlanRouteSnapshotMachining
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
-            Taro       = await _db.KhPlanRouteSnapshotTaro
+            Taro           = await _db.KhPlanRouteSnapshotTaro
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
-            Bavia      = await _db.KhPlanRouteSnapshotBavia
+            Bavia          = await _db.KhPlanRouteSnapshotBavia
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
-            Washing    = await _db.KhPlanRouteSnapshotWashing
+            Washing        = await _db.KhPlanRouteSnapshotWashing
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
-            Inspection = await _db.KhPlanRouteSnapshotInspection
+            Inspection     = await _db.KhPlanRouteSnapshotInspection
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
-            Packaging  = await _db.KhPlanRouteSnapshotPackaging
+            Packaging      = await _db.KhPlanRouteSnapshotPackaging
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
+            MachineExclude = await _db.KhPlanRouteSnapshotMachineExclude
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.SoMay).AsNoTracking().ToListAsync(),
         };
         return result;
     }
@@ -876,7 +883,25 @@ public class KhPlanService
             });
         }
 
-        // Một lần SaveChanges duy nhất cho toàn bộ 6 bảng
+        // ── Global: Máy loại trừ ────────────────────────────────
+        // Snapshot global setting tại thời điểm tạo phiếu
+        // Không per-part nên không lọc theo partId
+        var machineExcludes = await _db.MachineExcludeSettings
+            .AsNoTracking()
+            .ToListAsync();
+
+        foreach (var m in machineExcludes)
+        {
+            _db.KhPlanRouteSnapshotMachineExclude.Add(new KhPlanRouteSnapshotMachineExclude
+            {
+                KhPlanDetailId = khPlanDetailId,
+                SnapshotAt     = now,
+                SnapshotBy     = snapshotBy,
+                SoMay          = m.SoMay,
+            });
+        }
+
+        // Một lần SaveChanges duy nhất cho toàn bộ 7 bảng
         await _db.SaveChangesAsync();
     }
 }
@@ -933,12 +958,14 @@ public class SplitPORow
 // ==== Route Snapshot DTOs ====
 public class RouteSnapshotData
 {
-    public List<KhPlanRouteSnapshotMachining>  Machining  { get; set; } = new();
-    public List<KhPlanRouteSnapshotTaro>        Taro       { get; set; } = new();
-    public List<KhPlanRouteSnapshotBavia>       Bavia      { get; set; } = new();
-    public List<KhPlanRouteSnapshotWashing>     Washing    { get; set; } = new();
-    public List<KhPlanRouteSnapshotInspection>  Inspection { get; set; } = new();
-    public List<KhPlanRouteSnapshotPackaging>   Packaging  { get; set; } = new();
+    public List<KhPlanRouteSnapshotMachining>      Machining      { get; set; } = new();
+    public List<KhPlanRouteSnapshotTaro>            Taro           { get; set; } = new();
+    public List<KhPlanRouteSnapshotBavia>           Bavia          { get; set; } = new();
+    public List<KhPlanRouteSnapshotWashing>         Washing        { get; set; } = new();
+    public List<KhPlanRouteSnapshotInspection>      Inspection     { get; set; } = new();
+    public List<KhPlanRouteSnapshotPackaging>       Packaging      { get; set; } = new();
+    /// <summary>Danh sách máy loại trừ tại thời điểm tạo phiếu (global setting)</summary>
+    public List<KhPlanRouteSnapshotMachineExclude>  MachineExclude { get; set; } = new();
 
     public bool HasAny => Machining.Count > 0 || Taro.Count > 0 || Bavia.Count > 0
                        || Washing.Count > 0 || Inspection.Count > 0 || Packaging.Count > 0;

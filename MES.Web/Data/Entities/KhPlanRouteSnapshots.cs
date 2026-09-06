@@ -146,6 +146,33 @@ public class KhPlanRouteSnapshotInspection
     [MaxLength(20)]  public string? ParentNC { get; set; }
 }
 
+// ── Global: Máy loại trừ ────────────────────────────────────────
+/// <summary>
+/// Snapshot danh sách máy loại trừ toàn hệ thống tại thời điểm tạo phiếu KH.
+/// Copy từ MachineExcludeSettings — global, không per-part.
+/// Dùng để tính hoặc bỏ bước gia công sau này mà không bị ảnh hưởng khi
+/// admin thay đổi danh sách máy loại trừ.
+/// </summary>
+[Table("KhPlanRouteSnapshotMachineExclude")]
+public class KhPlanRouteSnapshotMachineExclude
+{
+    public long SnapshotId { get; set; }
+
+    public int KhPlanDetailId { get; set; }
+    [ForeignKey(nameof(KhPlanDetailId))]
+    public KhPlanDetail? KhPlanDetail { get; set; }
+
+    public DateTime SnapshotAt { get; set; } = DateTime.Now;
+    public int SnapshotBy { get; set; }
+    [ForeignKey(nameof(SnapshotBy))]
+    public User? SnapshotByUser { get; set; }
+
+    // ── Copy từ MachineExcludeSetting ──
+    /// <summary>SoMay của máy bị loại trừ tại thời điểm tạo phiếu</summary>
+    [Required, MaxLength(50)]
+    public string SoMay { get; set; } = "";
+}
+
 // ── E. Packaging (Đóng gói) ─────────────────────────────────────
 [Table("KhPlanRouteSnapshotPackaging")]
 public class KhPlanRouteSnapshotPackaging

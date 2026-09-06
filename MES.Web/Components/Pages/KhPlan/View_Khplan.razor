@@ -322,6 +322,30 @@ else
                         </div>
                     }
 
+                    @* Máy loại trừ (snapshot global tại thời điểm tạo phiếu) *@
+                    @if (_snapshot.MachineExclude.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center gap-2 mb-1 px-2 py-1 rounded"
+                                 style="background:#fff3cd;border:1px solid #ffc107;">
+                                <i class="bi bi-slash-circle text-warning"></i>
+                                <span class="small fw-semibold text-warning-emphasis">
+                                    Máy loại trừ — không tính TG và đẩy xuống nguyên công dưới
+                                    <span class="text-muted fw-normal">(Cài đặt chung tại thời điểm tạo phiếu)</span>
+                                </span>
+                                <div class="d-flex flex-wrap gap-1 ms-2">
+                                    @foreach (var m in _snapshot.MachineExclude)
+                                    {
+                                        <span class="badge rounded-pill"
+                                              style="background:transparent;border:1px solid #dc3545;color:#dc3545;font-size:0.75rem;">
+                                            <i class="bi bi-slash-circle me-1"></i>@m.SoMay
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
                     @* C. Taro / Bavia / Rửa *@
                     @if (_snapshot.Taro.Count > 0 || _snapshot.Bavia.Count > 0 || _snapshot.Washing.Count > 0)
                     {

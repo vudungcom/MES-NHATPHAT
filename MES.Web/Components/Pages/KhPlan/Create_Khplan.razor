@@ -425,6 +425,17 @@
 
             await KhSvc.CreateAsync(_plan, _currentUserId);
 
+            // Snapshot quy trình B→E ngay tại thời điểm tạo phiếu
+            // CopyRouteSnapshotAsync đã có sẵn trong KhPlanService, gọi sau CreateAsync
+            // vì lúc này _plan.Details đã có KhPlanDetailId từ DB
+            foreach (var detail in _plan.Details)
+            {
+                if (_partLookup.TryGetValue(detail.PartNo, out var pmSnap))
+                {
+                    await KhSvc.CopyRouteSnapshotAsync(detail.KhPlanDetailId, pmSnap.PartId, _currentUserId);
+                }
+            }
+
             // Tự động set IsPlanConfirmed = true cho các Part đã có trong PartMaster
             // Lý do: user nhóm KH không có quyền vào Part Master để confirm thủ công
             var partNoList = _details.Select(d => d.PartNo).Distinct().ToList();

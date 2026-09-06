@@ -56,13 +56,14 @@ public class AppDbContext : DbContext
     // ==== Machine Exclude Settings (global) ====
     public DbSet<MachineExcludeSetting> MachineExcludeSettings => Set<MachineExcludeSetting>();
 
-    // ==== KhPlan Route Snapshot (B→E) ====
-    public DbSet<KhPlanRouteSnapshotMachining>  KhPlanRouteSnapshotMachining  => Set<KhPlanRouteSnapshotMachining>();
-    public DbSet<KhPlanRouteSnapshotTaro>        KhPlanRouteSnapshotTaro        => Set<KhPlanRouteSnapshotTaro>();
-    public DbSet<KhPlanRouteSnapshotBavia>       KhPlanRouteSnapshotBavia       => Set<KhPlanRouteSnapshotBavia>();
-    public DbSet<KhPlanRouteSnapshotWashing>     KhPlanRouteSnapshotWashing     => Set<KhPlanRouteSnapshotWashing>();
-    public DbSet<KhPlanRouteSnapshotInspection>  KhPlanRouteSnapshotInspection  => Set<KhPlanRouteSnapshotInspection>();
-    public DbSet<KhPlanRouteSnapshotPackaging>   KhPlanRouteSnapshotPackaging   => Set<KhPlanRouteSnapshotPackaging>();
+    // ==== KhPlan Route Snapshot (B→E + Máy loại trừ) ====
+    public DbSet<KhPlanRouteSnapshotMachining>      KhPlanRouteSnapshotMachining      => Set<KhPlanRouteSnapshotMachining>();
+    public DbSet<KhPlanRouteSnapshotTaro>            KhPlanRouteSnapshotTaro            => Set<KhPlanRouteSnapshotTaro>();
+    public DbSet<KhPlanRouteSnapshotBavia>           KhPlanRouteSnapshotBavia           => Set<KhPlanRouteSnapshotBavia>();
+    public DbSet<KhPlanRouteSnapshotWashing>         KhPlanRouteSnapshotWashing         => Set<KhPlanRouteSnapshotWashing>();
+    public DbSet<KhPlanRouteSnapshotInspection>      KhPlanRouteSnapshotInspection      => Set<KhPlanRouteSnapshotInspection>();
+    public DbSet<KhPlanRouteSnapshotPackaging>       KhPlanRouteSnapshotPackaging       => Set<KhPlanRouteSnapshotPackaging>();
+    public DbSet<KhPlanRouteSnapshotMachineExclude>  KhPlanRouteSnapshotMachineExclude  => Set<KhPlanRouteSnapshotMachineExclude>();
 
     // ==== WTS Production Log (công nhân submit WTS thực tế) ====
     public DbSet<WtsProductionLog> WtsProductionLogs => Set<WtsProductionLog>();
@@ -444,6 +445,19 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.KhPlanDetailId)
             .OnDelete(DeleteBehavior.NoAction);
         mb.Entity<KhPlanRouteSnapshotPackaging>()
+            .HasOne(x => x.SnapshotByUser).WithMany()
+            .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== KhPlanRouteSnapshotMachineExclude ====
+        mb.Entity<KhPlanRouteSnapshotMachineExclude>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotMachineExclude>()
+            .HasIndex(x => new { x.KhPlanDetailId, x.SoMay });
+        mb.Entity<KhPlanRouteSnapshotMachineExclude>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotMachineExclude>()
             .HasOne(x => x.SnapshotByUser).WithMany()
             .HasForeignKey(x => x.SnapshotBy)
             .OnDelete(DeleteBehavior.NoAction);
