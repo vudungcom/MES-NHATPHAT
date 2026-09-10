@@ -27,6 +27,8 @@ public class AppDbContext : DbContext
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
     public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
+	public DbSet<PartMachiningTiming> PartMachiningTimings { get; set; }
+public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTimings { get; set; }
 
     // ==== Do Ga & Phu Kien module ====
     public DbSet<DoGa> DoGas => Set<DoGa>();
@@ -387,6 +389,32 @@ public class AppDbContext : DbContext
         mb.Entity<KhPlanRouteSnapshotMachining>()
             .HasOne(x => x.SnapshotByUser).WithMany()
             .HasForeignKey(x => x.SnapshotBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== KhPlanRouteSnapshotMachiningTiming (sub-row máy đồng dạng) ====
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>().HasKey(x => x.TimingSnapshotId);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .HasIndex(x => x.MachiningSnapshotId);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .HasIndex(x => x.KhPlanDetailId);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .Property(x => x.SetupTime).HasPrecision(10, 2);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .Property(x => x.MachiningTime).HasPrecision(10, 2);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .Property(x => x.InspectionTime).HasPrecision(10, 2);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .Property(x => x.PreparationTime).HasPrecision(10, 2);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .Property(x => x.TrialRunTime).HasPrecision(10, 2);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .HasOne(x => x.MachiningSnapshot)
+            .WithMany(m => m.TimingRows)
+            .HasForeignKey(x => x.MachiningSnapshotId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<KhPlanRouteSnapshotMachiningTiming>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
             .OnDelete(DeleteBehavior.NoAction);
 
         mb.Entity<KhPlanRouteSnapshotTaro>().HasKey(x => x.SnapshotId);

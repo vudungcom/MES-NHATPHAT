@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
 @using MES.Web.Data
 @using MES.Web.Data.Entities
 @using MES.Web.Services
@@ -133,11 +134,23 @@ else
                             <th style="width:60px;" class="text-center">Phút</th>
                             <th style="width:180px;">PO <span class="text-muted fw-normal">(tùy chọn)</span></th>
                             <th style="width:110px;">Part No</th>
-                            <th style="width:120px;">NC / Mục</th>
-                            <th style="width:100px;">Máy SD <span class="text-danger">*</span></th>
+                            @if (IsHtspGroup)
+                            {
+                                <th style="width:100px;">Nhóm</th>
+                            }
+                            <th style="width:@(IsGcGroup ? "120px" : "160px");">@(IsGcGroup ? "NC / Mục" : "Mã công việc")</th>
+                            @if (IsGcGroup)
+                            {
+                                <th style="width:100px;">Máy SD <span class="text-danger">*</span></th>
+                            }
                             <th style="width:180px;">Mã WTS khác <span class="text-muted fw-normal">(nếu không có PO)</span></th>
                             <th style="width:62px;" class="text-end text-success" title="Số lượng làm đúng">OK</th>
                             <th style="width:62px;" class="text-end text-danger" title="Số lượng làm sai phát hiện tại NC">NG</th>
+                            @if (!IsGcGroup)
+                            {
+                                <th class="text-center text-muted" style="width:60px;font-size:0.75rem;" title="Thời gian chuẩn (phút)">T.Chuẩn<br/><span style="font-size:0.65rem;">(phút)</span></th>
+                                <th class="text-center" style="width:60px;font-size:0.75rem;color:#0d6efd;" title="Thời gian thực tế = T.Kết thúc - T.Bắt đầu (phút)">T.Thực tế<br/><span style="font-size:0.65rem;">(phút)</span></th>
+                            }
                             <th style="width:140px;" class="text-danger" title="Lý do NG (bắt buộc khi có NG)">Lý do NG</th>
                             <th>Ghi chú</th>
                             <th style="width:80px;" class="text-center">Thao tác</th>
@@ -155,12 +168,24 @@ else
                                     <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
                                     <td class="text-center fw-bold">@row.Minutes</td>
                                     <td><code class="small">@(row.PO ?? "—")</code></td>
-                                    <td><code class="small text-danger">@(row.PartNo ?? "—")</code></td>
-                                    <td><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
-                                    <td><code class="small text-primary">@(row.MachineUsed ?? "—")</code></td>
+                                    <td title="@(row.PartNo ?? "")"><code class="small text-danger">@(row.PartNo ?? "—")</code></td>
+                                    @if (IsHtspGroup)
+                                    {
+                                        <td><span class="small text-muted">@(row.HtspSubGroup ?? "—")</span></td>
+                                    }
+                                    <td title="@(row.NC ?? row.WtsCode ?? "")"><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
+                                    @if (IsGcGroup)
+                                    {
+                                        <td><code class="small text-primary">@(row.MachineUsed ?? "—")</code></td>
+                                    }
                                     <td class="small text-muted">@row.WtsName</td>
                                     <td class="text-end text-success fw-semibold">@(row.QtyOk > 0 ? row.QtyOk.ToString("0.##") : "—")</td>
                                     <td class="text-end @(row.QtyNg > 0 ? "text-danger fw-semibold" : "text-muted")">@(row.QtyNg > 0 ? row.QtyNg.ToString("0.##") : "—")</td>
+                                    @if (!IsGcGroup)
+                                    {
+                                        <td class="text-center text-muted small">—</td>
+                                        <td class="text-center small" style="color:#0d6efd;">@(row.Minutes > 0 ? row.Minutes.ToString() : "—")</td>
+                                    }
                                     <td class="small @(row.QtyNg > 0 ? "text-danger" : "text-muted")">
                                         @if (row.QtyNg > 0 && !string.IsNullOrEmpty(row.NgReason))
                                         {
@@ -234,49 +259,100 @@ else
                                         <input class="form-control form-control-sm font-monospace text-danger bg-light"
                                                value="@(row.PartNo ?? "—")" readonly />
                                     </td>
-                                    @* NC / Mục — chỉ hiện khi có PO, lấy từ snapshot *@
+                                    @* Nhóm nhỏ — chỉ hiện cho HTSP *@
+                                    @if (IsHtspGroup)
+                                    {
+                                        <td>
+                                            @if (string.IsNullOrEmpty(row.PO))
+                                            {
+                                                <span class="text-muted small">—</span>
+                                            }
+                                            else
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        value="@row.HtspSubGroup"
+                                                        @onchange="e => OnHtspSubGroupChanged(row, e.Value?.ToString())">
+                                                    <option value="">-- Chọn nhóm --</option>
+                                                    <option value="Taro">Taro</option>
+                                                    <option value="Bavia">Bavia</option>
+                                                    <option value="Rua">Rửa</option>
+                                                </select>
+                                            }
+                                        </td>
+                                    }
+                                    @* NC / Mã công việc *@
                                     <td>
                                         @if (string.IsNullOrEmpty(row.PO))
                                         {
                                             <span class="text-muted small">—</span>
                                         }
-                                        else if (!row.AvailableNCs.Any())
+                                        else if (IsGcGroup)
                                         {
-                                            <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
+                                            @* GC: dropdown NC từ Machining snapshot *@
+                                            @if (!row.AvailableNCs.Any())
+                                            {
+                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
+                                            }
+                                            else
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        @onchange="e => OnNCChanged(row, e.Value?.ToString())">
+                                                    <option value="">-- Chọn NC --</option>
+                                                    @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
+                                                    {
+                                                        var flow        = GetFlowItem(row.KhPlanDetailId, nc.NC);
+                                                        var wtsDoneAtNc = flow?.WtsDone ?? 0m;
+                                                        var det         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
+                                                        var planQty     = det?.Quantity ?? 0m;
+                                                        var isDone      = planQty > 0 && wtsDoneAtNc >= planQty;
+                                                        var isExcluded  = flow?.IsExcluded == true;
+                                                        var regMachine  = nc.MachineRegistered ?? "";
+                                                        var altMachines = GetAltMachinesFromTimingRows(nc.TimingRows);
+                                                        var regBroken    = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
+                                                        var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
+                                                        var machineBlocked = regBroken && (altMachines.Length == 0 || allAltBroken);
+                                                        var isDisabled = isDone || machineBlocked;
+                                                        var lbl = BuildNcLabel(isDone, machineBlocked, isExcluded, regBroken, altMachines, nc.NC, regMachine, planQty, det?.Unit, wtsDoneAtNc);
+                                                        <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
+                                                    }
+                                                    @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
+                                                    {
+                                                        var dpMachine = nc.MachineRegistered ?? "";
+                                                        var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
+                                                        var dpLbl     = dpBroken ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG" : $"↩ DP: NC{nc.NC} — {dpMachine}";
+                                                        <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
+                                                    }
+                                                </select>
+                                            }
                                         }
                                         else
                                         {
-                                            <select class="form-select form-select-sm"
-                                                    @onchange="e => OnNCChanged(row, e.Value?.ToString())">
-                                                <option value="">-- Chọn NC --</option>
-                                                @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
-                                                {
-                                                    var flow        = GetFlowItem(row.KhPlanDetailId, nc.NC);
-                                                    var wtsDoneAtNc = flow?.WtsDone ?? 0m;
-                                                    var det         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
-                                                    var planQty     = det?.Quantity ?? 0m;
-                                                    var isDone      = planQty > 0 && wtsDoneAtNc >= planQty;
-                                                    var isExcluded  = flow?.IsExcluded == true;
-                                                    var regMachine  = nc.MachineRegistered ?? "";
-                                                    var altMachines = (nc.MachineAlternative ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                                                    var regBroken    = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
-                                                    var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
-                                                    var machineBlocked = regBroken && (altMachines.Length == 0 || allAltBroken);
-                                                    var isDisabled = isDone || machineBlocked;
-                                                    var lbl = BuildNcLabel(isDone, machineBlocked, isExcluded, regBroken, altMachines, nc.NC, regMachine, planQty, det?.Unit, wtsDoneAtNc);
-                                                    <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
-                                                }
-                                                @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
-                                                {
-                                                    var dpMachine = nc.MachineRegistered ?? "";
-                                                    var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
-                                                    var dpLbl     = dpBroken ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG" : $"↩ DP: NC{nc.NC} — {dpMachine}";
-                                                    <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
-                                                }
-                                            </select>
+                                            @* HTSP/KCS/PKG: dropdown mã CV từ snapshot tương ứng *@
+                                            @if (IsHtspGroup && string.IsNullOrEmpty(row.HtspSubGroup))
+                                            {
+                                                <span class="text-muted small">← Chọn nhóm trước</span>
+                                            }
+                                            else if (!row.AvailableWtsItems.Any())
+                                            {
+                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có dữ liệu</span>
+                                            }
+                                            else
+                                            {
+                                                <select class="form-select form-select-sm"
+                                                        title="@GetWtsItemTitle(row)"
+                                                        @onchange="e => OnWtsItemChanged(row, e.Value?.ToString())">
+                                                    <option value="">-- Chọn mã CV --</option>
+                                                    @foreach (var item in row.AvailableWtsItems)
+                                                    {
+                                                        <option value="@item.NC" selected="@(row.NC == item.NC)" title="@item.NC — @item.Name">@item.NC — @item.Name</option>
+                                                    }
+                                                </select>
+                                            }
                                         }
                                     </td>
-                                    @* Máy sử dụng — bắt buộc khi có NC *@
+                                    @* Máy sử dụng — chỉ hiện cho nhóm GC *@
+                                    @if (IsGcGroup)
+                                    {
                                     <td>
                                         @if (!string.IsNullOrEmpty(row.NC) && row.AvailableNCs.Any())
                                         {
@@ -301,6 +377,7 @@ else
                                             <span class="text-muted small">—</span>
                                         }
                                     </td>
+                                    }
 
                                     @* Mã WTS khác — datalist pattern giống Part Master máy đăng ký *@
                                     <td>
@@ -340,6 +417,17 @@ else
                                                @oninput="e => OnQtyNgInput(row, e)"
                                                placeholder="0" title="Số lượng NG phát hiện tại NC" />
                                     </td>
+                                    @* T.Chuẩn và T.Thực tế — chỉ non-GC *@
+                                    @if (!IsGcGroup)
+                                    {
+                                        var stdTime = GetStdTimeForWtsCode(row);
+                                        <td class="text-center text-muted small">
+                                            @(stdTime.HasValue ? stdTime.Value.ToString("0.##") : "—")
+                                        </td>
+                                        <td class="text-center fw-semibold small" style="color:#0d6efd;">
+                                            @(row.Minutes > 0 ? row.Minutes.ToString() : "—")
+                                        </td>
+                                    }
                                     @* Lý do NG *@
                                     <td>
                                         <input class="form-control form-control-sm"
@@ -355,14 +443,6 @@ else
                                     </td>
                                     @* Thao tác *@
                                     <td class="text-center text-nowrap">
-                                        @if (!string.IsNullOrEmpty(row.NC))
-                                        {
-                                            <button class="btn btn-sm @(row.ShowTimeDetail ? "btn-info" : "btn-outline-info") py-0 px-1 me-1"
-                                                    @onclick="() => row.ShowTimeDetail = !row.ShowTimeDetail"
-                                                    title="Nhập thời gian thực tế">
-                                                <i class="bi bi-clock"></i>
-                                            </button>
-                                        }
                                         <button class="btn btn-sm btn-success py-0 px-2 me-1"
                                                 @onclick="() => SaveRowAsync(row)"
                                                 title="Lưu dòng này">
@@ -376,51 +456,80 @@ else
                                     </td>
                                 </tr>
 
-                                @* Row expand thời gian thực tế — chỉ nhóm GC, chỉ khi có NC *@
-                                @if (row.ShowTimeDetail && !string.IsNullOrEmpty(row.NC))
+                                @* Bảng thời gian Chuẩn/Thực tế — luôn hiện *@
+                                @if (!string.IsNullOrEmpty(row.NC) && IsGcGroup)
                                 {
+                                    var std = row.KhPlanDetailId.HasValue
+                                        ? GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed)
+                                        : null;
                                     <tr class="bg-info bg-opacity-10">
                                         <td colspan="13" class="py-2 px-3">
-                                            <div class="d-flex align-items-center gap-2 flex-wrap">
-                                                <span class="small fw-semibold text-info me-2">
-                                                    <i class="bi bi-clock me-1"></i>Thời gian thực tế (phút) —
-                                                    Tổng ca: <strong>@row.Minutes</strong> phút |
+                                            <div class="d-flex align-items-center gap-3 mb-2">
+                                                <span class="small fw-semibold text-info">
+                                                    <i class="bi bi-clock me-1"></i>Thời gian (phút) —
+                                                    Tổng ca: <strong>@row.Minutes</strong> |
                                                     Đã phân bổ: <strong class="@(row.TimeActualSum > row.Minutes ? "text-danger" : "text-success")">@row.TimeActualSum</strong> |
                                                     Còn lại: <strong class="@(row.TimeActualRemaining < 0 ? "text-danger" : "")">@row.TimeActualRemaining</strong>
                                                 </span>
+                                                @if (!string.IsNullOrEmpty(row.MachineUsed) && std == null)
+                                                {
+                                                    <span class="small text-muted fst-italic">
+                                                        <i class="bi bi-info-circle me-1"></i>Chưa có TG chuẩn cho máy @row.MachineUsed
+                                                    </span>
+                                                }
                                             </div>
-                                            <div class="row g-2 mt-1" style="max-width:700px">
-                                                <div class="col">
-                                                    <label class="form-label form-label-sm mb-0">Gá lắp</label>
-                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                           @bind="row.SetupTime_Actual" placeholder="0" />
-                                                </div>
-                                                <div class="col">
-                                                    <label class="form-label form-label-sm mb-0">Gia công</label>
-                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                           @bind="row.MachiningTime_Actual" placeholder="0" />
-                                                </div>
-                                                <div class="col">
-                                                    <label class="form-label form-label-sm mb-0">Kiểm tra</label>
-                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                           @bind="row.InspectionTime_Actual" placeholder="0" />
-                                                </div>
-                                                <div class="col">
-                                                    <label class="form-label form-label-sm mb-0">Chuẩn bị</label>
-                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                           @bind="row.PreparationTime_Actual" placeholder="0" />
-                                                </div>
-                                                <div class="col">
-                                                    <label class="form-label form-label-sm mb-0">Chạy thử</label>
-                                                    <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                           @bind="row.TrialRunTime_Actual" placeholder="0" />
-                                                </div>
-                                            </div>
+                                            <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem; max-width:700px;">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th style="width:80px;"></th>
+                                                        <th class="text-center">T.Gá lắp</th>
+                                                        <th class="text-center">T.Gia công</th>
+                                                        <th class="text-center">T.Kiểm tra</th>
+                                                        <th class="text-center">T.Chuẩn bị</th>
+                                                        <th class="text-center">T.Chạy thử</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @* Hàng Chuẩn — read-only, tự điền từ timing row *@
+                                                    <tr class="table-primary bg-opacity-25">
+                                                        <td class="fw-semibold text-primary small">Chuẩn</td>
+                                                        <td class="text-center text-primary">@(std?.SetupTime?.ToString("0.##") ?? "—")</td>
+                                                        <td class="text-center text-primary">@(std?.MachiningTime?.ToString("0.##") ?? "—")</td>
+                                                        <td class="text-center text-primary">@(std?.InspectionTime?.ToString("0.##") ?? "—")</td>
+                                                        <td class="text-center text-primary">@(std?.PreparationTime?.ToString("0.##") ?? "—")</td>
+                                                        <td class="text-center text-primary">@(std?.TrialRunTime?.ToString("0.##") ?? "—")</td>
+                                                    </tr>
+                                                    @* Hàng Thực tế — input *@
+                                                    <tr>
+                                                        <td class="fw-semibold small">Thực tế</td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                                   @bind="row.SetupTime_Actual" placeholder="0" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                                   @bind="row.MachiningTime_Actual" placeholder="0" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                                   @bind="row.InspectionTime_Actual" placeholder="0" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                                   @bind="row.PreparationTime_Actual" placeholder="0" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
+                                                                   @bind="row.TrialRunTime_Actual" placeholder="0" />
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
                                             @if (row.TimeActualSum > row.Minutes)
                                             {
                                                 <div class="text-danger small mt-1">
                                                     <i class="bi bi-exclamation-triangle me-1"></i>
-                                                    Tổng thời gian (@row.TimeActualSum phút) vượt quá thời gian ca (@row.Minutes phút).
+                                                    Tổng TG thực tế (@row.TimeActualSum phút) vượt quá thời gian ca (@row.Minutes phút).
                                                 </div>
                                             }
                                         </td>
@@ -450,6 +559,502 @@ else
             </div>
         </div>
     </div>
+
+    @* ── Bảng quy trình snapshot — hiện khi có PO đang chọn ── *@
+    @if (GetActivePO() != null)
+    {
+        var activePO = GetActivePO()!;
+        var activeFull = _fullSnapshotCache.ContainsKey(activePO)
+            ? _fullSnapshotCache[activePO] : null;
+        var activeMachining = _snapshotCache.ContainsKey(activePO)
+            ? _snapshotCache[activePO]
+            : activeFull?.Machining ?? new List<KhPlanRouteSnapshotMachining>();
+        var activeDetail = _allRows.FirstOrDefault(r => r.PurchaseOrder == activePO);
+        var planQty = activeDetail?.Quantity ?? 0m;
+        if (activeMachining.Any() || activeFull != null)
+        {
+        <div class="card shadow-sm border-0 mb-3">
+            <div class="card-header py-2 d-flex align-items-center gap-2">
+                <i class="bi bi-diagram-3 me-1"></i>
+                <span class="fw-semibold">Quy trình sản xuất — PO: <code>@activePO</code></span>
+                <span class="badge bg-secondary ms-1">Snapshot</span>
+                <span class="text-muted small ms-2">Đọc từ kế hoạch, không tự thay đổi theo Part Master.</span>
+                <button class="btn btn-sm btn-outline-secondary ms-auto py-0"
+                        @onclick="async () => { _wtsLogsCache.Remove(activePO); await ReloadWtsLogsAsync(activePO, activeDetail!.KhPlanDetailId); }">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Làm mới
+                </button>
+            </div>
+            <div class="card-body p-2">
+
+                @* B. Machining *@
+                @if (activeMachining.Any())
+                {
+                    <div class="mb-3">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#1a73e8;color:white;">
+                            B. Quy trình gia công (@activeMachining.Count bước)
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th class="text-center" style="width:35px;" rowspan="2">#</th>
+                                        <th style="width:55px;" rowspan="2">NC</th>
+                                        <th rowspan="2">Máy đăng ký</th>
+                                        <th rowspan="2">Máy đồng dạng</th>
+                                        <th style="width:70px;" class="text-center" rowspan="2">Worker</th>
+                                        <th style="width:45px;" class="text-center" rowspan="2">SL</th>
+                                        <th style="width:85px;" class="text-center" rowspan="2">T.Bắt đầu</th>
+                                        <th style="width:85px;" class="text-center" rowspan="2">T.Hoàn thành</th>
+                                        <th colspan="2" class="text-center" style="font-size:0.7rem;">T.Gá lắp</th>
+                                        <th colspan="2" class="text-center" style="font-size:0.7rem;">T.Gia công</th>
+                                        <th colspan="2" class="text-center" style="font-size:0.7rem;">T.Kiểm tra</th>
+                                        <th colspan="2" class="text-center" style="font-size:0.7rem;">T.Chuẩn bị</th>
+                                        <th colspan="2" class="text-center" style="font-size:0.7rem;">T.Chạy thử</th>
+                                        <th style="width:65px;" class="text-center" rowspan="2">TT</th>
+                                    </tr>
+                                    <tr>
+                                        <th class="text-end text-muted fw-normal" style="width:35px;font-size:0.68rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:35px;font-size:0.68rem;color:#0d6efd;">TT</th>
+                                        <th class="text-end text-muted fw-normal" style="width:35px;font-size:0.68rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:35px;font-size:0.68rem;color:#0d6efd;">TT</th>
+                                        <th class="text-end text-muted fw-normal" style="width:35px;font-size:0.68rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:35px;font-size:0.68rem;color:#0d6efd;">TT</th>
+                                        <th class="text-end text-muted fw-normal" style="width:35px;font-size:0.68rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:35px;font-size:0.68rem;color:#0d6efd;">TT</th>
+                                        <th class="text-end text-muted fw-normal" style="width:35px;font-size:0.68rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:35px;font-size:0.68rem;color:#0d6efd;">TT</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in activeMachining)
+                                    {
+                                        var gcLogs = GetWtsLogsFor(activePO, "GC", s.NC);
+                                        var regLogs = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered || string.IsNullOrEmpty(l.MachineUsed) || !s.TimingRows.Any(t => (t.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? ""))).ToList();
+                                        var qtyDone = gcLogs.Sum(l => l.QtyDone);
+                                        var badgeColor = qtyDone == 0 ? "danger" : (qtyDone >= planQty ? "success" : "warning");
+                                        var timingTotal = s.TimingRows.Sum(t => { var tl = gcLogs.Where(l => (t.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? "")).ToList(); return 1 + (tl.Count == 0 ? 1 : tl.Count); });
+                                        var totalRowspan = 1 + (regLogs.Count == 0 ? 1 : regLogs.Count) + timingTotal;
+                                        <tr class="@(s.IsBackup ? "table-warning" : "")">
+                                            <td class="text-center">@s.StepOrder</td>
+                                            <td><code>@s.NC</code></td>
+                                            <td>@(s.MachineRegistered ?? "—")</td>
+                                            <td class="text-muted small">—</td>
+                                            <td class="text-muted fst-italic small text-center" colspan="4" style="font-size:0.7rem;">← WTS CN</td>
+                                            <td class="text-end text-muted small">@FmtTimeWts(s.SetupTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-end text-muted small">@FmtTimeWts(s.MachiningTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-end text-muted small">@FmtTimeWts(s.InspectionTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-end text-muted small">@FmtTimeWts(s.PreparationTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-end text-muted small">@FmtTimeWts(s.TrialRunTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-center" rowspan="@totalRowspan">
+                                                <span class="badge bg-@badgeColor" style="font-size:0.62rem;">@qtyDone.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                            </td>
+                                        </tr>
+                                        @if (regLogs.Count == 0)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #0d6efd;">
+                                                <td colspan="18" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
+                                            </tr>
+                                        }
+                                        @foreach (var log in regLogs)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #0d6efd;">
+                                                <td></td><td></td><td></td><td></td>
+                                                <td class="fw-semibold text-primary small text-center" style="font-size:0.7rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                <td class="text-center fw-bold small" style="color:#0d6efd;font-size:0.7rem;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center small" style="font-size:0.7rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-center small" style="font-size:0.7rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#0d6efd;">@FmtTimeWts(log.SetupTime_Actual)</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#0d6efd;">@FmtTimeWts(log.MachiningTime_Actual)</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#0d6efd;">@FmtTimeWts(log.InspectionTime_Actual)</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#0d6efd;">@FmtTimeWts(log.PreparationTime_Actual)</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#0d6efd;">@FmtTimeWts(log.TrialRunTime_Actual)</td>
+                                            </tr>
+                                        }
+                                        @foreach (var tr in s.TimingRows)
+                                        {
+                                            var trLogs = gcLogs.Where(l => (tr.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? "")).ToList();
+                                            <tr style="background:#f0f7ff;">
+                                                <td></td><td></td>
+                                                <td class="text-muted small">—</td>
+                                                <td class="small fw-semibold" style="color:#185fa5;">@tr.SoMay</td>
+                                                <td class="text-muted fst-italic small text-center" colspan="4" style="font-size:0.7rem;">← WTS CN</td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(tr.SetupTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(tr.MachiningTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(tr.InspectionTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(tr.PreparationTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(tr.TrialRunTime)</td>
+                                                <td class="text-end"></td>
+                                            </tr>
+                                            @if (trLogs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #185fa5;">
+                                                    <td colspan="18" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in trLogs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #185fa5;">
+                                                    <td></td><td></td><td></td><td></td>
+                                                    <td class="fw-semibold small text-center" style="color:#185fa5;font-size:0.7rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#185fa5;font-size:0.7rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small" style="font-size:0.7rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small" style="font-size:0.7rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#185fa5;">@FmtTimeWts(log.SetupTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#185fa5;">@FmtTimeWts(log.MachiningTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#185fa5;">@FmtTimeWts(log.InspectionTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#185fa5;">@FmtTimeWts(log.PreparationTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#185fa5;">@FmtTimeWts(log.TrialRunTime_Actual)</td>
+                                                </tr>
+                                            }
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+
+                @* C. Taro / Bavia / Rửa *@
+                @if (activeFull != null && (activeFull.Taro.Any() || activeFull.Bavia.Any() || activeFull.Washing.Any()))
+                {
+                    <div class="row g-2 mb-3">
+                        @if (activeFull.Taro.Any())
+                        {
+                            <div class="col-lg-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">C.1 Taro (@activeFull.Taro.Count)</div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th rowspan="2" class="align-middle" style="width:45px;">NC</th>
+                                            <th rowspan="2" class="align-middle" style="width:55px;">Mã CV</th>
+                                            <th rowspan="2" class="align-middle">Công đoạn</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.HT</th>
+                                            <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:55px;">TT</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:38px;font-size:0.68rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:38px;font-size:0.68rem;color:#188038;">TT</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in activeFull.Taro)
+                                        {
+                                            var taroKey = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+                                            var logs = GetWtsLogsFor(activePO, "TARO", taroKey);
+                                            var qty = GetWtsQtyFor(activePO, "TARO", taroKey);
+                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            <tr>
+                                                <td><code>@s.NC</code></td>
+                                                <td><code class="text-success">@(s.WtsTaskCode ?? "—")</code></td>
+                                                <td class="small">@(s.StepName ?? "—")</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
+                                                <td></td>
+                                                <td class="text-center" rowspan="@(logs.Count + 1)">
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                </td>
+                                            </tr>
+                                            @if (logs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in logs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td></td><td></td><td></td>
+                                                    <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted small">—</td>
+                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        @if (activeFull.Bavia.Any())
+                        {
+                            <div class="col-lg-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">C.2 Bavia (@activeFull.Bavia.Count)</div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th rowspan="2" class="align-middle" style="width:60px;">Mã CV</th>
+                                            <th rowspan="2" class="align-middle">Công đoạn</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.HT</th>
+                                            <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:55px;">TT</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:38px;font-size:0.68rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:38px;font-size:0.68rem;color:#188038;">TT</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in activeFull.Bavia)
+                                        {
+                                            var logs = GetWtsLogsFor(activePO, "BAVIA", s.NC);
+                                            var qty = GetWtsQtyFor(activePO, "BAVIA", s.NC);
+                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            <tr>
+                                                <td><code>@s.NC</code></td>
+                                                <td class="small">@(s.StepName ?? "—")</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
+                                                <td></td>
+                                                <td class="text-center" rowspan="@(logs.Count + 1)">
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                </td>
+                                            </tr>
+                                            @if (logs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in logs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td></td><td></td>
+                                                    <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted small">—</td>
+                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        @if (activeFull.Washing.Any())
+                        {
+                            <div class="col-lg-4">
+                                <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">C.3 Rửa (@activeFull.Washing.Count)</div>
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th rowspan="2" class="align-middle" style="width:60px;">Mã CV</th>
+                                            <th rowspan="2" class="align-middle">Công đoạn</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:75px;">T.HT</th>
+                                            <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:55px;">TT</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:38px;font-size:0.68rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:38px;font-size:0.68rem;color:#188038;">TT</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in activeFull.Washing)
+                                        {
+                                            var logs = GetWtsLogsFor(activePO, "WASHING", s.NC);
+                                            var qty = GetWtsQtyFor(activePO, "WASHING", s.NC);
+                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            <tr>
+                                                <td><code>@s.NC</code></td>
+                                                <td class="small">@(s.StepName ?? "—")</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
+                                                <td></td>
+                                                <td class="text-center" rowspan="@(logs.Count + 1)">
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                </td>
+                                            </tr>
+                                            @if (logs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in logs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                    <td></td><td></td>
+                                                    <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted small">—</td>
+                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @* D. KCS *@
+                @if (activeFull?.Inspection.Any() == true)
+                {
+                    <div class="mb-3">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#e37400;color:white;">D. Kiểm tra chất lượng (KCS) (@activeFull.Inspection.Count bước)</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th rowspan="2" style="width:80px;" class="align-middle">Mã CV *</th>
+                                        <th rowspan="2" class="align-middle">Nội dung công việc (WTS Chuẩn)</th>
+                                        <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
+                                        <th rowspan="2" style="width:50px;" class="align-middle text-center">SL chạy</th>
+                                        <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Bắt đầu</th>
+                                        <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Hoàn thành</th>
+                                        <th colspan="2" class="text-center">Thời gian</th>
+                                        <th rowspan="2" style="width:65px;" class="align-middle text-center">Trạng thái</th>
+                                    </tr>
+                                    <tr>
+                                        <th class="text-end text-muted fw-normal" style="width:50px;font-size:0.7rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:50px;font-size:0.7rem;color:#e37400;">Thực tế</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in activeFull.Inspection)
+                                    {
+                                        var logs = GetWtsLogsFor(activePO, "KCS", s.NC);
+                                        var qty = GetWtsQtyFor(activePO, "KCS", s.NC);
+                                        var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                        <tr>
+                                            <td class="fw-bold text-warning"><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                            <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                            <td class="text-end text-muted">@FmtTimeWts(s.StandardTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-center" rowspan="@(logs.Count + 1)">
+                                                <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span>
+                                            </td>
+                                        </tr>
+                                        @if (logs.Count == 0)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #e37400;">
+                                                <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                            </tr>
+                                        }
+                                        @foreach (var log in logs)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #e37400;">
+                                                <td></td><td></td>
+                                                <td class="fw-semibold small text-center" style="color:#e37400;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                <td class="text-center fw-bold small" style="color:#e37400;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#e37400;">—</td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+
+                @* E. Đóng gói *@
+                @if (activeFull?.Packaging.Any() == true)
+                {
+                    <div class="mb-2">
+                        <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#6c757d;color:white;">E. Đóng gói (@activeFull.Packaging.Count bước)</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th rowspan="2" style="width:80px;" class="align-middle">Mã CV *</th>
+                                        <th rowspan="2" class="align-middle">Nội dung đóng gói (WTS Chuẩn)</th>
+                                        <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
+                                        <th rowspan="2" style="width:50px;" class="align-middle text-center">SL chạy</th>
+                                        <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Bắt đầu</th>
+                                        <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Hoàn thành</th>
+                                        <th colspan="2" class="text-center">Thời gian</th>
+                                        <th rowspan="2" style="width:65px;" class="align-middle text-center">Trạng thái</th>
+                                    </tr>
+                                    <tr>
+                                        <th class="text-end text-muted fw-normal" style="width:50px;font-size:0.7rem;">Chuẩn</th>
+                                        <th class="text-end fw-normal" style="width:50px;font-size:0.7rem;color:#6c757d;">Thực tế</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in activeFull.Packaging)
+                                    {
+                                        var logs = GetWtsLogsFor(activePO, "PKG", s.NC);
+                                        var qty = GetWtsQtyFor(activePO, "PKG", s.NC);
+                                        var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                        <tr>
+                                            <td class="fw-bold" style="color:#6c757d;"><code>@s.NC</code></td>
+                                            <td>@(s.StepName ?? "—")</td>
+                                            <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                            <td class="text-end text-muted">@FmtTimeWts(s.StandardTime)</td>
+                                            <td class="text-end"></td>
+                                            <td class="text-center" rowspan="@(logs.Count + 1)">
+                                                <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span>
+                                            </td>
+                                        </tr>
+                                        @if (logs.Count == 0)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #6c757d;">
+                                                <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                            </tr>
+                                        }
+                                        @foreach (var log in logs)
+                                        {
+                                            <tr class="bg-light" style="border-left:3px solid #6c757d;">
+                                                <td></td><td></td>
+                                                <td class="fw-semibold small text-center" style="color:#6c757d;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                <td class="text-center fw-bold small" style="color:#6c757d;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                <td class="text-end text-muted">—</td>
+                                                <td class="text-end" style="color:#6c757d;">—</td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+
+            </div>
+        </div>
+        }
+    }
 }
 
 @if (_activeTab == "report" && _canViewReport)
@@ -697,10 +1302,21 @@ else
 
     private bool IsToday => _workDate.Date == DateTime.Today;
 
+    /// <summary>True nếu công nhân thuộc nhóm GC (hoặc ADMIN) — hiện cột Máy SD và label NC</summary>
+    private bool IsGcGroup => _groupCode == "ADMIN"
+        || (_perms.TryGetValue(SystemPermissions.WtsGc, out var g) && g.CanView);
+
+    /// <summary>True nếu công nhân thuộc nhóm HTSP — hiện cột Nhóm nhỏ (Taro/Bavia/Rửa)</summary>
+    private bool IsHtspGroup
+        => !IsGcGroup && (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView);
+
+    // Cache: PO → RouteSnapshotData đầy đủ (dùng cho non-GC)
+    private Dictionary<string, RouteSnapshotData> _fullSnapshotCache = new();
+
     // Cache: KhPlanDetailId → có snapshot phù hợp với nhóm không
     private HashSet<int> _hasSnapshotForGroup = new();
 
-    // Snapshot cache: PO → list NC
+    // Snapshot cache: PO → list NC (Machining — dùng cho GC)
     private Dictionary<string, List<KhPlanRouteSnapshotMachining>> _snapshotCache = new();
     // Máy đang hỏng/bảo trì — HashSet SoMay để lookup O(1)
     private HashSet<string> _brokenMachines = new();
@@ -727,6 +1343,55 @@ else
         if (!_ncFlowCache.TryGetValue(detailId.Value, out var list)) return null;
         return list.FirstOrDefault(f => !f.IsBackup && f.NC == nc);
     }
+
+    // ── Timing chuẩn — tra cứu từ PartMachiningTimings theo NC + máy ─────
+    private Dictionary<int, List<TimingStd>> _timingStdCache = new();
+
+    private record TimingStd(string NC, string SoMay,
+        decimal? SetupTime, decimal? MachiningTime, decimal? InspectionTime,
+        decimal? PreparationTime, decimal? TrialRunTime);
+
+    private TimingStd? GetStdTiming(int detailId, string? nc, string? soMay)
+    {
+        if (string.IsNullOrEmpty(nc) || string.IsNullOrEmpty(soMay)) return null;
+        if (!_timingStdCache.TryGetValue(detailId, out var list)) return null;
+        // SoMay trong cache có thể là CSV nhóm "C04, C06" → match nếu soMay nằm trong nhóm đó
+        return list.FirstOrDefault(t =>
+            t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase) &&
+            t.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(m => m.Equals(soMay, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private bool HasStdTiming(WtsRow row)
+        => row.KhPlanDetailId.HasValue && GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed) != null;
+
+    private string BuildStdTimingHtml(WtsRow row)
+    {
+        if (!row.KhPlanDetailId.HasValue) return "";
+        var t = GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed);
+        if (t == null) return "";
+        var parts = new List<string>();
+        if (t.SetupTime.HasValue)      parts.Add($"T.Gá lắp <strong>{t.SetupTime}</strong>");
+        if (t.MachiningTime.HasValue)  parts.Add($"T.Gia công <strong>{t.MachiningTime}</strong>");
+        if (t.InspectionTime.HasValue) parts.Add($"T.Kiểm tra <strong>{t.InspectionTime}</strong>");
+        if (t.PreparationTime.HasValue)parts.Add($"T.Chuẩn bị <strong>{t.PreparationTime}</strong>");
+        if (t.TrialRunTime.HasValue)   parts.Add($"T.Chạy thử <strong>{t.TrialRunTime}</strong>");
+        return string.Join(" &nbsp;|&nbsp; ", parts);
+    }
+
+    private async Task EnsureTimingStdAsync(int detailId, int partId)
+    {
+        if (_timingStdCache.ContainsKey(detailId)) return;
+        var rows = await Db.PartMachiningTimings
+            .Where(t => t.Step != null && t.Step.PartId == partId && t.IsActive)
+            .Select(t => new { t.Step!.NC, t.SoMay, t.SetupTime, t.MachiningTime, t.InspectionTime, t.PreparationTime, t.TrialRunTime })
+            .AsNoTracking()
+            .ToListAsync();
+        _timingStdCache[detailId] = rows
+            .Select(r => new TimingStd(r.NC, r.SoMay, r.SetupTime, r.MachiningTime, r.InspectionTime, r.PreparationTime, r.TrialRunTime))
+            .ToList();
+    }
+    // ── End timing chuẩn ─────────────────────────────────────────────────
 
     // Timeline rows
     private List<WtsRow> _rows = new();
@@ -1030,6 +1695,8 @@ else
         row.WtsCode = null;
         row.WtsName = null;
         row.AvailableNCs.Clear();
+        row.AvailableWtsItems.Clear();
+        row.HtspSubGroup = null;
         row.KhPlanDetailId = null;
 
         if (string.IsNullOrEmpty(po)) return;
@@ -1039,13 +1706,36 @@ else
         row.KhPlanDetailId = detail.KhPlanDetailId;
         row.PartNo = detail.PartNo;
 
-        // Load snapshot NC
-        if (!_snapshotCache.ContainsKey(po))
+        // Load snapshot
+        if (IsGcGroup)
         {
-            var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
-            _snapshotCache[po] = snap.Machining;
+            // GC: load Machining snapshot vào cache riêng cho dropdown NC
+            if (!_snapshotCache.ContainsKey(po))
+            {
+                var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
+                _snapshotCache[po] = snap.Machining;
+                _fullSnapshotCache[po] = snap; // cũng lưu full để hiện bảng quy trình
+            }
+            row.AvailableNCs = _snapshotCache[po];
         }
-        row.AvailableNCs = _snapshotCache[po];
+        else
+        {
+            // HTSP/KCS/PKG: load full snapshot
+            if (!_fullSnapshotCache.ContainsKey(po))
+            {
+                var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
+                _fullSnapshotCache[po] = snap;
+            }
+            var fullSnap = _fullSnapshotCache[po];
+            if (!IsHtspGroup)
+            {
+                // KCS hoặc PKG — load thẳng vào AvailableWtsItems
+                row.AvailableWtsItems = HandoverGroupCode == "KCS"
+                    ? fullSnap.Inspection.Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList()
+                    : fullSnap.Packaging.Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList();
+            }
+            // HTSP: chờ user chọn nhóm nhỏ → OnHtspSubGroupChanged sẽ fill AvailableWtsItems
+        }
 
         // Load qty summary
         var key = detail.KhPlanDetailId.ToString();
@@ -1056,7 +1746,7 @@ else
                 _qtySummaryCache[$"{detail.KhPlanDetailId}|{kv.Key}"] = kv.Value;
         }
 
-        // Load SL đã nhận vào nhóm này từ giao nhận — dùng để giới hạn SL tối đa khi nhập WTS
+        // Load SL đã nhận vào nhóm này từ giao nhận
         if (!_receivedOkCache.ContainsKey(detail.KhPlanDetailId))
         {
             var groupCode = HandoverGroupCode;
@@ -1064,11 +1754,20 @@ else
             _receivedOkCache[detail.KhPlanDetailId] = receivedOk > 0 ? receivedOk : detail.Quantity;
         }
 
-        // v0.8: Load NC flow — tính tồn per-NC (cascade + conservation)
+        // v0.8: Load NC flow
         if (!_ncFlowCache.ContainsKey(detail.KhPlanDetailId))
         {
             await ReloadFlowAsync(detail.KhPlanDetailId);
         }
+
+        // Load WTS logs cho bảng quy trình
+        if (!_wtsLogsCache.ContainsKey(po))
+            await ReloadWtsLogsAsync(po, detail.KhPlanDetailId);
+
+        // Load timing chuẩn theo part
+        var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
+        if (pm != null)
+            await EnsureTimingStdAsync(detail.KhPlanDetailId, pm.PartId);
     }
 
     private void OnNCChanged(WtsRow row, string? nc)
@@ -1077,6 +1776,34 @@ else
         row.WtsCode     = null;
         row.WtsName     = null;
         row.MachineUsed = null; // reset máy khi đổi NC
+        CheckQtyWarning(row);
+    }
+
+    // Chọn nhóm nhỏ HTSP → fill danh sách mã công việc
+    private void OnHtspSubGroupChanged(WtsRow row, string? subGroup)
+    {
+        row.HtspSubGroup = subGroup;
+        row.NC = null;
+        row.AvailableWtsItems.Clear();
+        if (string.IsNullOrEmpty(subGroup) || string.IsNullOrEmpty(row.PO)) return;
+        if (!_fullSnapshotCache.TryGetValue(row.PO, out var snap)) return;
+        row.AvailableWtsItems = subGroup switch
+        {
+            // Taro: dùng WtsTaskCode làm mã CV (mới), fallback về NC nếu snapshot cũ chưa có WtsTaskCode
+            "Taro"  => snap.Taro.Where(s => !string.IsNullOrEmpty(s.WtsTaskCode) || !string.IsNullOrEmpty(s.NC))
+                           .Select(s => {
+                               var code = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+                               return new WtsItem(code, s.StepName ?? code);
+                           }).ToList(),
+            "Bavia" => snap.Bavia  .Where(s => !string.IsNullOrEmpty(s.NC)).Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList(),
+            "Rua"   => snap.Washing.Where(s => !string.IsNullOrEmpty(s.NC)).Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList(),
+            _       => new List<WtsItem>()
+        };
+    }
+
+    private void OnWtsItemChanged(WtsRow row, string? nc)
+    {
+        row.NC = nc;
         CheckQtyWarning(row);
     }
 
@@ -1094,6 +1821,12 @@ else
         // Nếu khớp đúng 1 TaskCode → tự fill WtsName
         var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == val);
         row.WtsName = matched?.TaskName;
+    }
+
+    private string GetWtsItemTitle(WtsRow row)
+    {
+        var found = row.AvailableWtsItems.FirstOrDefault(i => i.NC == row.NC);
+        return found != null ? $"{found.NC} — {found.Name}" : "-- Chọn mã CV --";
     }
 
     private static string BuildNcLabel(bool isDone, bool machineBlocked, bool isExcluded,
@@ -1243,15 +1976,51 @@ else
 
             try
             {
+                // Xác định ProcessGroup và NC/WtsCode theo nhóm công nhân
+                string processGroup;
+                string? ncValue;
+                string? wtsCodeValue;
+                if (IsGcGroup)
+                {
+                    processGroup  = "GC";
+                    ncValue       = row.NC;
+                    wtsCodeValue  = null;
+                }
+                else if (IsHtspGroup)
+                {
+                    processGroup = row.HtspSubGroup switch
+                    {
+                        "Taro"  => "TARO",
+                        "Bavia" => "BAVIA",
+                        "Rua"   => "WASHING",
+                        _       => "TARO"
+                    };
+                    ncValue      = null;
+                    wtsCodeValue = row.NC;  // NC chọn từ WtsItem lưu vào WtsCode
+                }
+                else if (HandoverGroupCode == "KCS")
+                {
+                    processGroup  = "KCS";
+                    ncValue       = null;
+                    wtsCodeValue  = row.NC;
+                }
+                else // PKG
+                {
+                    processGroup  = "PKG";
+                    ncValue       = null;
+                    wtsCodeValue  = row.NC;
+                }
+
                 var log = new WtsProductionLog
                 {
                     KhPlanDetailId          = row.KhPlanDetailId.Value,
-                    ProcessGroup            = "GC",
-                    NC                      = row.NC,
-                    WtsCode                 = null,
+                    ProcessGroup            = processGroup,
+                    NC                      = ncValue,
+                    WtsCode                 = wtsCodeValue,
+                    HtspSubGroup            = IsHtspGroup ? row.HtspSubGroup : null,
                     WorkerId                = _currentUserId,
                     MachineUsed             = row.MachineUsed,
-                    QtyDone                 = row.QtyDone,   // = QtyOk + QtyNg
+                    QtyDone                 = row.QtyDone,
                     QtyOk                   = row.QtyOk,
                     QtyNg                   = row.QtyNg,
                     NgReason                = row.QtyNg > 0 ? row.NgReason : null,
@@ -1359,19 +2128,95 @@ else
     }
 
     // ── Classes ───────────────────────────────────────────────
+    // Cache WTS logs theo PO — để hiện bảng quy trình real-time
+    private Dictionary<string, List<WtsProductionLog>> _wtsLogsCache = new();
+
+    private List<WtsProductionLog> GetWtsLogsFor(string po, string group, string? wtsCode = null)
+    {
+        if (!_wtsLogsCache.TryGetValue(po, out var logs)) return new();
+        return logs.Where(l => l.ProcessGroup == group
+            && !l.IsVoided
+            && (wtsCode == null || l.WtsCode == wtsCode || l.NC == wtsCode)).ToList();
+    }
+
+    private decimal GetWtsQtyFor(string po, string group, string? wtsCode = null)
+        => GetWtsLogsFor(po, group, wtsCode).Sum(l => l.QtyDone);
+
+    private static string FmtTimeWts(decimal? v)
+        => v.HasValue && v > 0 ? v.Value.ToString("0.##") : "—";
+
+    private async Task ReloadWtsLogsAsync(string po, int detailId)
+    {
+        var logs = await Db.WtsProductionLogs
+            .Include(l => l.Worker)
+            .Where(l => l.KhPlanDetailId == detailId && !l.IsVoided)
+            .OrderBy(l => l.StartTime)
+            .AsNoTracking()
+            .ToListAsync();
+        _wtsLogsCache[po] = logs;
+    }
+
+    private decimal? GetStdTimeForWtsCode(WtsRow row)
+    {
+        if (string.IsNullOrEmpty(row.PO) || string.IsNullOrEmpty(row.NC)) return null;
+        if (!_fullSnapshotCache.TryGetValue(row.PO, out var snap)) return null;
+        var nc = row.NC;
+        // HTSP: tìm trong Taro/Bavia/Washing theo HtspSubGroup
+        if (IsHtspGroup)
+        {
+            return row.HtspSubGroup switch
+            {
+                "Taro"  => snap.Taro   .FirstOrDefault(s => s.NC == nc)?.StandardTime,
+                "Bavia" => snap.Bavia  .FirstOrDefault(s => s.NC == nc)?.StandardTime,
+                "Rua"   => snap.Washing.FirstOrDefault(s => s.NC == nc)?.StandardTime,
+                _       => null
+            };
+        }
+        // KCS
+        if (HandoverGroupCode == "KCS")
+            return snap.Inspection.FirstOrDefault(s => s.NC == nc)?.StandardTime;
+        // PKG
+        return snap.Packaging.FirstOrDefault(s => s.NC == nc)?.StandardTime;
+    }
+
+    private string? GetActivePO()
+        => _rows.FirstOrDefault(r => !r.Saved && !string.IsNullOrEmpty(r.PO))?.PO
+        ?? _rows.LastOrDefault(r => r.Saved && !string.IsNullOrEmpty(r.PO))?.PO;
+
+    private static string[] GetAltMachinesFromTimingRows(
+        IEnumerable<KhPlanRouteSnapshotMachiningTiming> timingRows)
+        => timingRows
+            .OrderBy(t => t.DisplayOrder)
+            .SelectMany(t => (t.SoMay ?? "").Split(new[] { ',', ';' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Distinct()
+            .ToArray();
+
     private List<string> GetMachineOptions(WtsRow row)
     {
         var snap = row.AvailableNCs.FirstOrDefault(n => n.NC == row.NC);
         var opts = new List<string>();
         if (snap == null) return opts;
+
+        // Máy đăng ký luôn đứng đầu
         if (!string.IsNullOrEmpty(snap.MachineRegistered))
             opts.Add(snap.MachineRegistered);
-        if (!string.IsNullOrEmpty(snap.MachineAlternative))
-            foreach (var m in snap.MachineAlternative.Split(',',
+
+        // Máy đồng dạng: mỗi TimingRow có SoMay = "C04, C06" → parse ra từng máy
+        foreach (var t in snap.TimingRows.OrderBy(t => t.DisplayOrder))
+        {
+            foreach (var m in (t.SoMay ?? "").Split(new[] { ',', ';' },
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
                 if (!opts.Contains(m)) opts.Add(m);
+            }
+        }
+
         return opts;
     }
+
+    /// <summary>Item mã công việc cho nhóm non-GC (HTSP/KCS/PKG)</summary>
+    public record WtsItem(string NC, string Name);
 
     public class WtsRow
     {
@@ -1390,6 +2235,12 @@ else
         public string? WtsName { get; set; }
 
         public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
+
+        /// <summary>Nhóm nhỏ HTSP đang chọn: "Taro" / "Bavia" / "Rua"</summary>
+        public string? HtspSubGroup { get; set; }
+
+        /// <summary>Danh sách mã công việc cho nhóm non-GC (load từ snapshot Taro/Bavia/Washing/Inspection/Packaging)</summary>
+        public List<WtsItem> AvailableWtsItems { get; set; } = new();
 
         /// <summary>Máy thực tế sử dụng — bắt buộc khi có NC (nhóm GC)</summary>
         public string? MachineUsed { get; set; }

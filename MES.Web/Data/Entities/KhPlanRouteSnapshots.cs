@@ -33,7 +33,6 @@ public class KhPlanRouteSnapshotMachining
     [Required, MaxLength(20)] public string NC { get; set; } = "";
     [MaxLength(100)] public string? Drawing { get; set; }
     [MaxLength(50)]  public string? MachineRegistered { get; set; }
-    [MaxLength(200)] public string? MachineAlternative { get; set; }
     [MaxLength(50)]  public string? FixtureType { get; set; }
     [MaxLength(100)] public string? ToolType { get; set; }
     [MaxLength(50)]  public string? TimingMachine { get; set; }
@@ -44,6 +43,10 @@ public class KhPlanRouteSnapshotMachining
     [Column(TypeName = "decimal(10,2)")] public decimal? InspectionTime { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? PreparationTime { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? TrialRunTime { get; set; }
+
+    /// <summary>Sub-rows máy đồng dạng — snapshot từ PartMachiningTimings</summary>
+    public virtual ICollection<KhPlanRouteSnapshotMachiningTiming> TimingRows { get; set; }
+        = new List<KhPlanRouteSnapshotMachiningTiming>();
 }
 
 // ── C.1 Taro ────────────────────────────────────────────────────
@@ -65,6 +68,8 @@ public class KhPlanRouteSnapshotTaro
     // ── Copy từ PartTaroStep ──
     public int StepOrder { get; set; }
     [Required, MaxLength(20)]  public string NC { get; set; } = "";
+    /// <summary>Mã WTS tiêu chuẩn được chọn từ StandardWtsTasks (VD: "1T"). Khác với NC là số thứ tự nhập thủ công.</summary>
+    [MaxLength(50)]  public string? WtsTaskCode { get; set; }
     [MaxLength(500)] public string? StepName { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? StandardTime { get; set; }
     public bool IsBackup { get; set; } = false;

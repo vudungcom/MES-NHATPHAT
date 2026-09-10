@@ -29,6 +29,10 @@ public class WtsProductionLog
     [MaxLength(20)]
     public string? WtsCode { get; set; }
 
+    /// <summary>Nhóm nhỏ HTSP: "Taro" | "Bavia" | "Rua". NULL với các nhóm khác.</summary>
+    [MaxLength(20)]
+    public string? HtspSubGroup { get; set; }
+
     [Required]
     public int WorkerId { get; set; }
     [ForeignKey(nameof(WorkerId))]

@@ -224,7 +224,6 @@ else
                                 <th style="min-width: 160px;">Máy đồng dạng</th>
                                 <th style="min-width: 130px;">Đồ gá</th>
                                 <th style="min-width: 140px;">Loại dao (Cột B)</th>
-                                <th style="min-width: 160px;">Máy bấm giờ</th>
                                 <th style="width: 80px;">T.Gá lắp<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Gia công<br/><span class="text-muted fw-normal">(phút)</span></th>
                                 <th style="width: 80px;">T.Kiểm tra<br/><span class="text-muted fw-normal">(phút)</span></th>
@@ -236,7 +235,7 @@ else
                         <tbody>
                             @if (_machiningEdits.Count == 0)
                             {
-                                <tr><td colspan="13" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình gia công.</em></td></tr>
+                                <tr><td colspan="12" class="text-center text-muted py-3"><em>Chưa thiết lập quy trình gia công.</em></td></tr>
                             }
                             @foreach (var (edit, idx) in _machiningEdits.Select((e, i) => (e, i)))
                             {
@@ -268,14 +267,14 @@ else
                                         </datalist>
                                     </td>
 
-                                    @* Máy đồng dạng — input + nút chọn nhiều *@
+                                    @* Máy đồng dạng — chỉ hiện nút chọn, sub-rows bên dưới hiện từng máy *@
                                     <td>
                                         <div class="input-group input-group-sm">
                                             <input class="form-control form-control-sm"
                                                    style="background-color: #e9ecef;"
                                                    readonly
-                                                   value="@edit.MachineAlternative"
-                                                   placeholder="-- Chọn máy --"
+                                                   value=""
+                                                   placeholder="@(edit.TimingRows.Any(t => t.State != EditState.Deleted) ? $"{edit.TimingRows.Count(t => t.State != EditState.Deleted)} máy ↓" : "-- Chọn máy --")"
                                                    disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
                                             {
@@ -290,19 +289,13 @@ else
 
                                     @* Đồ gá — chọn nhiều *@
                                     <td>
-                                        @{
-                                            var doGaItems = (edit.FixtureType ?? "")
-                                                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                                                .Where(d => !string.IsNullOrEmpty(d)).ToList();
-                                            var doGaRows = Math.Max(1, doGaItems.Count);
-                                        }
                                         <div class="input-group input-group-sm">
                                             <textarea class="form-control form-control-sm"
                                                       style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:100px;"
-                                                      rows="@doGaRows"
+                                                      rows="@GetCsvRowCount(edit.FixtureType)"
                                                       readonly
                                                       placeholder="-- Chọn đồ gá --"
-                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@string.Join("\n", doGaItems)</textarea>
+                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@GetCsvDisplay(edit.FixtureType)</textarea>
                                             @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
                                             {
                                                 <button class="btn btn-outline-secondary" type="button"
@@ -316,44 +309,18 @@ else
 
                                     @* Loại dao — chọn nhiều *@
                                     <td>
-                                        @{
-                                            var daoItems = (edit.ToolType ?? "")
-                                                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                                                .Where(d => !string.IsNullOrEmpty(d)).ToList();
-                                            var daoRows = Math.Max(1, daoItems.Count);
-                                        }
                                         <div class="input-group input-group-sm">
                                             <textarea class="form-control form-control-sm font-monospace"
                                                       style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:120px;"
-                                                      rows="@daoRows"
+                                                      rows="@GetCsvRowCount(edit.ToolType)"
                                                       readonly
                                                       placeholder="-- Chọn dao --"
-                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@string.Join("\n", daoItems)</textarea>
+                                                      disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))">@GetCsvDisplay(edit.ToolType)</textarea>
                                             @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
                                             {
                                                 <button class="btn btn-outline-secondary" type="button"
                                                         title="Chọn nhiều loại dao"
                                                         @onclick="() => OpenAltDaoModal(edit)">
-                                                    <i class="bi bi-list-check"></i>
-                                                </button>
-                                            }
-                                        </div>
-                                    </td>
-
-                                    @* Máy bấm giờ — chọn nhiều (đã update) *@
-                                    <td>
-                                        <div class="input-group input-group-sm">
-                                            <input class="form-control form-control-sm"
-                                                   style="background-color: #e9ecef;"
-                                                   readonly
-                                                   value="@edit.TimingMachine"
-                                                   placeholder="-- Chọn máy --"
-                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
-                                            @if (_canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0))
-                                            {
-                                                <button class="btn btn-outline-secondary" type="button"
-                                                        title="Chọn nhiều máy bấm giờ"
-                                                        @onclick="() => OpenAltTimingModal(edit)">
                                                     <i class="bi bi-list-check"></i>
                                                 </button>
                                             }
@@ -386,13 +353,102 @@ else
                                                 </button>
                                             }
                                             <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo dự phòng"
-                                                    @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, TimingMachine = edit.TimingMachine, MachineAlternative = edit.MachineAlternative, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
+                                                    @onclick="() => AddBackupRow(_machiningEdits, edit, (nc, parent) => new MachiningEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, Drawing = edit.Drawing, FixtureType = edit.FixtureType, ToolType = edit.ToolType, TimingMachine = edit.TimingMachine, SetupTime = edit.SetupTime, MachiningTime = edit.MachiningTime, InspectionTime = edit.InspectionTime, PreparationTime = edit.PreparationTime, TrialRunTime = edit.TrialRunTime })">
                                                 <i class="bi bi-diagram-3"></i>
                                             </button>
                                             @RowActionButton(edit, () => ToggleDelete(edit, _machiningEdits))
                                         }
                                     </td>
                                 </tr>
+
+                                @* ── Timing sub-rows: col order = #, NC, MáyĐK, MáyĐD, Đồgá, Dao, Gálắp, GiaCông, KTra, ChuẩnBị, ChạyThử, TT ── *@
+                                @foreach (var tr in edit.TimingRows.Where(t => t.State != EditState.Deleted))
+                                {
+                                    <tr @key="@($"tr-{edit.StepId}-{tr.TimingId}-{tr.DisplayOrder}")">
+                                        <td></td>
+                                        <td></td>
+                                        <td></td>
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <input class="form-control form-control-sm"
+                                                       style="background-color: #e9ecef;"
+                                                       readonly
+                                                       value="@tr.SoMay"
+                                                       placeholder="-- Chọn máy --"
+                                                       disabled="@(!CanEditTimings(edit))" />
+                                                @if (CanEditTimings(edit))
+                                                {
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                            title="Chọn máy"
+                                                            @onclick="() => OpenTimingMachineModal(edit, tr)">
+                                                        <i class="bi bi-list-check"></i>
+                                                    </button>
+                                                }
+                                            </div>
+                                        </td>
+                                        @* Col 5: Đồ gá — copy y hệt dòng chính *@
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <textarea class="form-control form-control-sm"
+                                                          style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:100px;"
+                                                          rows="@GetCsvRowCount(tr.FixtureType)"
+                                                          readonly
+                                                          placeholder="-- Chọn đồ gá --"
+                                                          disabled="@(!CanEditTimings(edit))">@GetCsvDisplay(tr.FixtureType)</textarea>
+                                                @if (CanEditTimings(edit))
+                                                {
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                            title="Chọn nhiều đồ gá"
+                                                            @onclick="() => OpenTimingDoGaModal(edit, tr)">
+                                                        <i class="bi bi-list-check"></i>
+                                                    </button>
+                                                }
+                                            </div>
+                                        </td>
+                                        @* Col 6: Loại dao — copy y hệt dòng chính *@
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <textarea class="form-control form-control-sm font-monospace"
+                                                          style="background-color: #e9ecef; resize:none; font-size:0.8rem; min-width:120px;"
+                                                          rows="@GetCsvRowCount(tr.ToolType)"
+                                                          readonly
+                                                          placeholder="-- Chọn dao --"
+                                                          disabled="@(!CanEditTimings(edit))">@GetCsvDisplay(tr.ToolType)</textarea>
+                                                @if (CanEditTimings(edit))
+                                                {
+                                                    <button class="btn btn-outline-secondary" type="button"
+                                                            title="Chọn nhiều loại dao"
+                                                            @onclick="() => OpenTimingDaoModal(edit, tr)">
+                                                        <i class="bi bi-list-check"></i>
+                                                    </button>
+                                                }
+                                            </div>
+                                        </td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td class="text-center">
+                                            @if (CanEditTimings(edit))
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa dòng" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-x"></i></button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                                @if (CanEditTimings(edit))
+                                {
+                                    <tr @key="@($"add-t-{edit.StepId}-{edit.NC}")">
+                                        <td colspan="3"></td>
+                                        <td colspan="9" class="py-1">
+                                            <button class="btn btn-sm btn-outline-primary py-0 px-2"
+                                                    @onclick="() => AddTimingRow(edit)">
+                                                <i class="bi bi-plus-lg me-1"></i>Thêm máy đồng dạng
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -931,14 +987,14 @@ else
 }
 
 @* ==================== MODAL CHỌN NHIỀU MÁY ĐỒNG DẠNG ==================== *@
-@if (_showAltMachineModal && _currentEditingAltMachining != null)
+@if (_showAltMachineModal && (_currentEditingAltMachining != null || _currentTimingRow != null))
 {
     <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div class="modal-content shadow-lg border-0">
                 <div class="modal-header bg-primary text-white py-2">
                     <h6 class="modal-title mb-0">
-                        <i class="bi bi-cpu"></i> Chọn máy đồng dạng cho công đoạn <b>@_currentEditingAltMachining.NC</b>
+                        <i class="bi bi-cpu"></i> Chọn máy đồng dạng cho công đoạn <b>@(_currentTimingEdit?.NC ?? _currentEditingAltMachining?.NC)</b>
                     </h6>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseAlternativeModal"></button>
                 </div>
@@ -956,17 +1012,20 @@ else
                         @foreach (var m in FilteredAltMachines)
                         {
                             var isSelected = _selectedAltMachines.Contains(m.SoMay);
-                            <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3" style="cursor: pointer;">
-                                <div class="form-check mb-0">
-                                    <input class="form-check-input me-2" type="checkbox" 
-                                           checked="@isSelected" 
-                                           @onchange="(e) => ToggleAltMachineSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                            <div class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2 px-3"
+                                 style="cursor: pointer;"
+                                 @onclick="() => ToggleAltMachineSelection(m.SoMay, !_selectedAltMachines.Contains(m.SoMay))">
+                                <div class="d-flex align-items-center gap-2">
+                                    <input class="form-check-input" type="checkbox"
+                                           checked="@isSelected"
+                                           @onclick:stopPropagation="true"
+                                           @onclick="() => ToggleAltMachineSelection(m.SoMay, !_selectedAltMachines.Contains(m.SoMay))" />
                                     <strong class="text-primary">@m.SoMay</strong>
-                                    <span class="text-dark ms-2">@m.TenMay</span>
-                                    <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
+                                    <span class="text-dark">@m.TenMay</span>
+                                    <span class="badge bg-light text-secondary border">@m.BoPhan</span>
                                 </div>
                                 <span class="small text-muted">@m.LoaiMay</span>
-                            </label>
+                            </div>
                         }
                     </div>
                     <div class="small text-muted mt-2">
@@ -985,14 +1044,14 @@ else
 }
 
 @* ==================== MODAL CHỌN NHIỀU ĐỒ GÁ ==================== *@
-@if (_showAltDoGaModal && _currentEditingAltDoGa != null)
+@if (_showAltDoGaModal && (_currentEditingAltDoGa != null || _currentTimingRow != null))
 {
     <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div class="modal-content shadow-lg border-0">
                 <div class="modal-header bg-success text-white py-2">
                     <h6 class="modal-title mb-0">
-                        <i class="bi bi-tools"></i> Chọn đồ gá cho NC <b>@_currentEditingAltDoGa.NC</b>
+                        <i class="bi bi-tools"></i> Chọn đồ gá cho NC <b>@(_currentTimingEdit?.NC ?? _currentEditingAltDoGa?.NC)</b>
                     </h6>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseAltDoGaModal"></button>
                 </div>
@@ -1013,7 +1072,7 @@ else
                             <label class="list-group-item list-group-item-action d-flex align-items-center py-2 px-3" style="cursor: pointer;">
                                 <input class="form-check-input me-2 flex-shrink-0" type="checkbox"
                                        checked="@dgSelected"
-                                       @onchange="(e) => ToggleAltDoGaSelection(dg.TenDoGa ?? string.Empty, (bool)(e.Value ?? false))" />
+                                       @onchange="e => OnToggleAltDoGa(dg.TenDoGa ?? string.Empty, e)" />
                                 <span style="font-size: 0.82rem;">@dg.TenDoGa</span>
                             </label>
                         }
@@ -1043,14 +1102,14 @@ else
 }
 
 @* ==================== MODAL CHỌN NHIỀU LOẠI DAO ==================== *@
-@if (_showAltDaoModal && _currentEditingAltDao != null)
+@if (_showAltDaoModal && (_currentEditingAltDao != null || _currentTimingRow != null))
 {
     <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5); z-index: 1055;" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div class="modal-content shadow-lg border-0">
                 <div class="modal-header bg-dark text-white py-2">
                     <h6 class="modal-title mb-0">
-                        <i class="bi bi-tools"></i> Chọn loại dao cho NC <b>@_currentEditingAltDao.NC</b>
+                        <i class="bi bi-tools"></i> Chọn loại dao cho NC <b>@(_currentTimingEdit?.NC ?? _currentEditingAltDao?.NC)</b>
                     </h6>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseAltDaoModal"></button>
                 </div>
@@ -1071,7 +1130,7 @@ else
                             <label class="list-group-item list-group-item-action d-flex align-items-center py-2 px-3" style="cursor: pointer;">
                                 <input class="form-check-input me-2 flex-shrink-0" type="checkbox"
                                        checked="@isSelected"
-                                       @onchange="(e) => ToggleAltDaoSelection(d.TenDao ?? string.Empty, (bool)(e.Value ?? false))" />
+                                       @onchange="e => OnToggleAltDao(d.TenDao ?? string.Empty, e)" />
                                 <div class="flex-grow-1 font-monospace" style="font-size: 0.82rem;">
                                     <strong class="text-dark">@d.TenDao</strong>
                                 </div>
@@ -1132,7 +1191,7 @@ else
                                 <div class="form-check mb-0">
                                     <input class="form-check-input me-2" type="checkbox"
                                            checked="@isSelected"
-                                           @onchange="(e) => ToggleAltTimingSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                                           @onchange="e => OnToggleAltTiming(m.SoMay, e)" />
                                     <strong class="text-secondary">@m.SoMay</strong>
                                     <span class="text-dark ms-2">@m.TenMay</span>
                                     <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
@@ -1191,7 +1250,7 @@ else
                                 <div class="form-check mb-0">
                                     <input class="form-check-input me-2" type="checkbox"
                                            checked="@isSelected"
-                                           @onchange="(e) => ToggleExcludeMachineSelection(m.SoMay, (bool)(e.Value ?? false))" />
+                                           @onchange="e => OnToggleExcludeMachine(m.SoMay, e)" />
                                     <strong class="text-danger">@m.SoMay</strong>
                                     <span class="text-dark ms-2">@m.TenMay</span>
                                     <span class="badge bg-light text-secondary ms-2 border">@m.BoPhan</span>
@@ -1498,10 +1557,10 @@ else
             if (string.IsNullOrWhiteSpace(_altMachineSearch)) return _thietBiList;
             var s = _altMachineSearch.Trim();
             return _thietBiList.Where(m =>
-                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+                (m.SoMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.TenMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.BoPhan ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.LoaiMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -1512,12 +1571,67 @@ else
             if (string.IsNullOrWhiteSpace(_altTimingSearch)) return _thietBiList;
             var s = _altTimingSearch.Trim();
             return _thietBiList.Where(m =>
-                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+                (m.SoMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.TenMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.BoPhan ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.LoaiMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
         }
     }
+
+    // ── Timing row helpers ────────────────────────────────────────────────
+
+    private static int GetCsvRowCount(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return 1;
+        return Math.Max(1, csv.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length);
+    }
+
+    private static string GetCsvDisplay(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return "";
+        return string.Join("\n", csv.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private bool CanEditTimings(MachiningEdit edit)
+        => _canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0);
+
+    private IEnumerable<ThietBi> GetTimingMachineOptions(MachiningEdit edit)
+    {
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(edit.MachineRegistered))
+            allowed.Add(edit.MachineRegistered.Trim());
+        foreach (var tr in edit.TimingRows.Where(t => t.State != EditState.Deleted && !string.IsNullOrEmpty(t.SoMay)))
+            allowed.Add(tr.SoMay!.Trim());
+        return allowed.Count > 0 ? _thietBiList.Where(t => allowed.Contains(t.SoMay)) : _thietBiList;
+    }
+
+    private void AddTimingRow(MachiningEdit edit)
+    {
+        var nextOrder = edit.TimingRows.Count == 0 ? 1 : edit.TimingRows.Max(t => t.DisplayOrder) + 1;
+        edit.TimingRows.Add(new TimingRowEdit { State = EditState.New, DisplayOrder = nextOrder });
+        MarkAsModified(edit);
+    }
+
+    private void RemoveTimingRow(MachiningEdit edit, TimingRowEdit tr)
+    {
+        if (tr.TimingId > 0) tr.State = EditState.Deleted;
+        else edit.TimingRows.Remove(tr);
+        MarkAsModified(edit);
+    }
+
+    private void OnTimingMachineInput(MachiningEdit edit, TimingRowEdit tr, string? val)
+    {
+        tr.SoMay = val ?? "";
+        MarkTimingModified(edit, tr);
+    }
+
+    private void MarkTimingModified(MachiningEdit edit, TimingRowEdit tr)
+    {
+        if (tr.State == EditState.Unchanged) tr.State = EditState.Modified;
+        MarkAsModified(edit);
+    }
+
+    // ── End timing row helpers ────────────────────────────────────────────
 
     private bool _showHistoryModal = false;
     private bool _historyLoading = false;
@@ -1689,7 +1803,22 @@ else
             pSteps = await PackagingSvc.GetActiveByPartAsync(pid);
         }
 
-        _machiningEdits = mSteps.Select(MachiningEdit.FromEntity).ToList();
+        // Load timing rows cho mỗi machining step
+        var stepIds = mSteps.Select(s => s.StepId).ToList();
+        var allTimings = stepIds.Any()
+            ? await Db.PartMachiningTimings
+                .Where(t => stepIds.Contains(t.StepId) && t.IsActive)
+                .OrderBy(t => t.StepId).ThenBy(t => t.DisplayOrder)
+                .AsNoTracking().ToListAsync()
+            : new List<PartMachiningTiming>();
+        var timingsByStep = allTimings.GroupBy(t => t.StepId).ToDictionary(g => g.Key, g => g.ToList());
+
+        _machiningEdits = mSteps.Select(s => {
+            var e = MachiningEdit.FromEntity(s);
+            if (timingsByStep.TryGetValue(s.StepId, out var trows))
+                e.TimingRows = trows.Select(TimingRowEdit.FromEntity).ToList();
+            return e;
+        }).ToList();
         _taroEdits = tSteps.Select(TaroEdit.FromEntity).ToList();
         _baviaEdits = bSteps.Select(BaviaEdit.FromEntity).ToList();
         _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
@@ -1800,11 +1929,20 @@ else
     {
         _showAltDoGaModal = false;
         _currentEditingAltDoGa = null;
+        _currentTimingRow = null;
+        _currentTimingEdit = null;
     }
 
     private void SaveAltDoGaModal()
     {
-        if (_currentEditingAltDoGa != null)
+        if (_currentTimingRow != null && _currentTimingEdit != null)
+        {
+            _currentTimingRow.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            _currentTimingRow = null;
+            _currentTimingEdit = null;
+        }
+        else if (_currentEditingAltDoGa != null)
         {
             _currentEditingAltDoGa.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
             MarkAsModified(_currentEditingAltDoGa);
@@ -1833,11 +1971,20 @@ else
     {
         _showAltDaoModal = false;
         _currentEditingAltDao = null;
+        _currentTimingRow = null;
+        _currentTimingEdit = null;
     }
 
     private void SaveAltDaoModal()
     {
-        if (_currentEditingAltDao != null)
+        if (_currentTimingRow != null && _currentTimingEdit != null)
+        {
+            _currentTimingRow.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            _currentTimingRow = null;
+            _currentTimingEdit = null;
+        }
+        else if (_currentEditingAltDao != null)
         {
             _currentEditingAltDao.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
             MarkAsModified(_currentEditingAltDao);
@@ -1849,11 +1996,47 @@ else
     private void OpenAlternativeModal(MachiningEdit edit)
     {
         _currentEditingAltMachining = edit;
-        _selectedAltMachines = (edit.MachineAlternative ?? "")
-            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        _selectedAltMachines = edit.TimingRows
+            .Where(t => t.State != EditState.Deleted && !string.IsNullOrEmpty(t.SoMay))
+            .Select(t => t.SoMay!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         _altMachineSearch = string.Empty;
         _showAltMachineModal = true;
+    }
+
+    private void OnAltMachineSearchInput(ChangeEventArgs e)
+    {
+        _altMachineSearch = e.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnToggleAltMachine(string soMay, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is bool b && b;
+        ToggleAltMachineSelection(soMay, isChecked);
+    }
+
+    private void OnToggleAltDoGa(string tenDoGa, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is bool b && b;
+        ToggleAltDoGaSelection(tenDoGa, isChecked);
+    }
+
+    private void OnToggleAltDao(string tenDao, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is bool b && b;
+        ToggleAltDaoSelection(tenDao, isChecked);
+    }
+
+    private void OnToggleAltTiming(string soMay, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is bool b && b;
+        ToggleAltTimingSelection(soMay, isChecked);
+    }
+
+    private void OnToggleExcludeMachine(string soMay, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is bool b && b;
+        ToggleExcludeMachineSelection(soMay, isChecked);
     }
 
     private void ToggleAltMachineSelection(string soMay, bool isChecked)
@@ -1866,17 +2049,112 @@ else
     {
         _showAltMachineModal = false;
         _currentEditingAltMachining = null;
+        _currentTimingRow = null;
+        _currentTimingEdit = null;
     }
 
     private void SaveAlternativeModal()
     {
-        if (_currentEditingAltMachining != null)
+        if (_currentTimingRow != null && _currentTimingEdit != null)
         {
-            _currentEditingAltMachining.MachineAlternative = string.Join(", ", _selectedAltMachines.OrderBy(x => x));
-            MarkAsModified(_currentEditingAltMachining); 
+            // Lưu tất cả máy được chọn vào SoMay dạng "C04, C06" (1 dòng = 1 nhóm máy cùng thời gian)
+            _currentTimingRow.SoMay = string.Join(", ", _selectedAltMachines.OrderBy(m => m));
+            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            _currentTimingRow = null;
+            _currentTimingEdit = null;
+        }
+        else if (_currentEditingAltMachining != null)
+        {
+            // Xóa tất cả timing rows cũ — thay bằng 1 row duy nhất với tất cả máy được chọn
+            // (trừ các row có thời gian riêng đã nhập — giữ lại)
+            var toDelete = _currentEditingAltMachining.TimingRows
+                .Where(t => t.State != EditState.Deleted)
+                .ToList();
+            foreach (var tr in toDelete)
+            {
+                if (tr.TimingId > 0) tr.State = EditState.Deleted;
+                else _currentEditingAltMachining.TimingRows.Remove(tr);
+            }
+            // Thêm 1 row mới với tất cả máy được chọn
+            if (_selectedAltMachines.Any())
+            {
+                var maxOrder = _currentEditingAltMachining.TimingRows.Count == 0
+                    ? 1 : _currentEditingAltMachining.TimingRows.Max(t => t.DisplayOrder) + 1;
+                _currentEditingAltMachining.TimingRows.Add(new TimingRowEdit
+                {
+                    State = EditState.New,
+                    DisplayOrder = maxOrder,
+                    SoMay = string.Join(", ", _selectedAltMachines.OrderBy(m => m))
+                });
+            }
+            MarkAsModified(_currentEditingAltMachining);
+            _currentEditingAltMachining = null;
         }
         _showAltMachineModal = false;
-        _currentEditingAltMachining = null;
+    }
+    private TimingRowEdit? _currentTimingRow;
+    private MachiningEdit? _currentTimingEdit;
+
+    private void OpenTimingMachineModal(MachiningEdit edit, TimingRowEdit tr)
+    {
+        _currentTimingEdit = edit;
+        _currentTimingRow = tr;
+        _selectedAltMachines = string.IsNullOrEmpty(tr.SoMay)
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : tr.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altMachineSearch = string.Empty;
+        _showAltMachineModal = true;
+    }
+
+    private void OpenTimingDoGaModal(MachiningEdit edit, TimingRowEdit tr)
+    {
+        _currentTimingEdit = edit;
+        _currentTimingRow = tr;
+        _currentEditingAltDoGa = null; // dùng timing path
+        _selectedAltDoGas = (tr.FixtureType ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altDoGaSearch = string.Empty;
+        _showAltDoGaModal = true;
+    }
+
+    private void SaveTimingDoGaModal()
+    {
+        if (_currentTimingRow != null && _currentTimingEdit != null)
+        {
+            _currentTimingRow.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+        }
+        _showAltDoGaModal = false;
+        _currentEditingAltDoGa = null;
+        _currentTimingRow = null;
+        _currentTimingEdit = null;
+    }
+
+    private void OpenTimingDaoModal(MachiningEdit edit, TimingRowEdit tr)
+    {
+        _currentTimingEdit = edit;
+        _currentTimingRow = tr;
+        _currentEditingAltDao = null; // dùng timing path
+        _selectedAltDaos = (tr.ToolType ?? "")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _altDaoSearch = string.Empty;
+        _showAltDaoModal = true;
+    }
+
+    private void SaveTimingDaoModal()
+    {
+        if (_currentTimingRow != null && _currentTimingEdit != null)
+        {
+            _currentTimingRow.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+        }
+        _showAltDaoModal = false;
+        _currentEditingAltDao = null;
+        _currentTimingRow = null;
+        _currentTimingEdit = null;
     }
 
     private void OpenAltTimingModal(MachiningEdit edit)
@@ -1921,10 +2199,10 @@ else
             if (string.IsNullOrWhiteSpace(_excludeMachineSearch)) return _thietBiList;
             var s = _excludeMachineSearch.Trim();
             return _thietBiList.Where(m =>
-                m.SoMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.TenMay.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.BoPhan.Contains(s, StringComparison.OrdinalIgnoreCase) ||
-                m.LoaiMay.Contains(s, StringComparison.OrdinalIgnoreCase));
+                (m.SoMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.TenMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.BoPhan ?? "").Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                (m.LoaiMay ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -2385,6 +2663,9 @@ else
                     id => Task.CompletedTask, 
                     "Machining", log, errors);
 
+                // Save timing rows per-máy
+                await SaveMachiningTimingsAsync(_machiningEdits, log, errors);
+
                 _part!.IsMachiningConfirmed = confirmOk;
             }
 
@@ -2517,6 +2798,8 @@ else
                 {
                     if (string.IsNullOrWhiteSpace(e.NC)) e.NC = "-";
                     var id = await addFn(e);
+                    e.StepId = id;
+                    e.State = EditState.Unchanged;
                     log.Add($"✓ [{label}] Thêm NC={e.NC}");
                 }
                 else if (e.State == EditState.Deleted && e.StepId > 0 && e.WasActiveInDb)
@@ -2538,6 +2821,39 @@ else
             catch (Exception ex)
             {
                 errors.Add($"✗ [{label}] NC={e.NC}: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task SaveMachiningTimingsAsync(List<MachiningEdit> edits, List<string> log, List<string> errors)
+    {
+        foreach (var edit in edits.Where(e => e.State != EditState.Deleted && e.StepId > 0))
+        {
+            foreach (var tr in edit.TimingRows)
+            {
+                try
+                {
+                    if (tr.State == EditState.New)
+                    {
+                        if (string.IsNullOrWhiteSpace(tr.SoMay)) continue;
+                        var ent = new PartMachiningTiming { StepId = edit.StepId, SoMay = tr.SoMay.Trim(), DisplayOrder = tr.DisplayOrder, FixtureType = tr.FixtureType, ToolType = tr.ToolType, SetupTime = tr.SetupTime, MachiningTime = tr.MachiningTime, InspectionTime = tr.InspectionTime, PreparationTime = tr.PreparationTime, TrialRunTime = tr.TrialRunTime, IsActive = true, CreatedBy = _currentUserId, CreatedAt = DateTime.Now };
+                        Db.PartMachiningTimings.Add(ent);
+                        await Db.SaveChangesAsync();
+                        tr.TimingId = ent.TimingId; tr.State = EditState.Unchanged;
+                        log.Add($"✓ [Timing] NC={edit.NC} thêm {tr.SoMay}");
+                    }
+                    else if (tr.State == EditState.Modified && tr.TimingId > 0)
+                    {
+                        var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
+                        if (ent != null) { ent.SoMay = tr.SoMay.Trim(); ent.DisplayOrder = tr.DisplayOrder; ent.FixtureType = tr.FixtureType; ent.ToolType = tr.ToolType; ent.SetupTime = tr.SetupTime; ent.MachiningTime = tr.MachiningTime; ent.InspectionTime = tr.InspectionTime; ent.PreparationTime = tr.PreparationTime; ent.TrialRunTime = tr.TrialRunTime; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = DateTime.Now; await Db.SaveChangesAsync(); tr.State = EditState.Unchanged; log.Add($"✓ [Timing] NC={edit.NC} sửa {tr.SoMay}"); }
+                    }
+                    else if (tr.State == EditState.Deleted && tr.TimingId > 0)
+                    {
+                        var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
+                        if (ent != null) { ent.IsActive = false; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = DateTime.Now; await Db.SaveChangesAsync(); log.Add($"✓ [Timing] NC={edit.NC} xóa {tr.SoMay}"); }
+                    }
+                }
+                catch (Exception ex) { errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: {ex.Message}"); }
             }
         }
     }
@@ -2577,10 +2893,12 @@ else
         public bool IsEditingWts { get; set; } = false;
         public string? Drawing { get; set; }
         public string? MachineRegistered { get; set; }
-        public string? MachineAlternative { get; set; }
         public string? FixtureType { get; set; }
         public string? ToolType { get; set; }
         public string? TimingMachine { get; set; }
+
+        // Timing rows — máy bấm giờ per-máy (1-N per step)
+        public List<TimingRowEdit> TimingRows { get; set; } = new();
         
         private decimal? _setupTime;
         public decimal? SetupTime 
@@ -2623,7 +2941,6 @@ else
             NC = s.NC,
             Drawing = s.Drawing,
             MachineRegistered = s.MachineRegistered,
-            MachineAlternative = s.MachineAlternative,
             FixtureType = s.FixtureType,
             ToolType = s.ToolType,
             TimingMachine = s.TimingMachine,
@@ -2648,7 +2965,6 @@ else
             NC = NC ?? "",
             Drawing = Drawing,
             MachineRegistered = MachineRegistered,
-            MachineAlternative = MachineAlternative,
             FixtureType = FixtureType,
             ToolType = ToolType,
             TimingMachine = TimingMachine,
@@ -2659,6 +2975,31 @@ else
             InspectionTime = InspectionTime,
             PreparationTime = PreparationTime,
             TrialRunTime = TrialRunTime
+        };
+    }
+
+    public class TimingRowEdit
+    {
+        public long TimingId { get; set; }
+        public EditState State { get; set; } = EditState.Unchanged;
+        public string SoMay { get; set; } = "";
+        public int DisplayOrder { get; set; } = 1;
+        public string? FixtureType { get; set; }
+        public string? ToolType { get; set; }
+
+        private static decimal? R(decimal? v) => v.HasValue ? Math.Round(v.Value, 1) : null;
+        private decimal? _setup; public decimal? SetupTime { get => _setup; set => _setup = R(value); }
+        private decimal? _mach;  public decimal? MachiningTime { get => _mach; set => _mach = R(value); }
+        private decimal? _insp;  public decimal? InspectionTime { get => _insp; set => _insp = R(value); }
+        private decimal? _prep;  public decimal? PreparationTime { get => _prep; set => _prep = R(value); }
+        private decimal? _trial; public decimal? TrialRunTime { get => _trial; set => _trial = R(value); }
+
+        public static TimingRowEdit FromEntity(PartMachiningTiming t) => new()
+        {
+            TimingId = t.TimingId, State = EditState.Unchanged, SoMay = t.SoMay,
+            DisplayOrder = t.DisplayOrder, SetupTime = t.SetupTime, MachiningTime = t.MachiningTime,
+            InspectionTime = t.InspectionTime, PreparationTime = t.PreparationTime, TrialRunTime = t.TrialRunTime,
+            FixtureType = t.FixtureType, ToolType = t.ToolType
         };
     }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -37,10 +38,6 @@ public class PartMachiningStep
     [MaxLength(50)]
     public string? MachineRegistered { get; set; }
 
-    /// <summary>Máy đồng dạng — có thể thay thế (VD: P04, P05, P07).</summary>
-    [MaxLength(200)]
-    public string? MachineAlternative { get; set; }
-
     /// <summary>Loại đồ gá (VD: VJ45).</summary>
     [MaxLength(50)]
     public string? FixtureType { get; set; }
@@ -49,7 +46,8 @@ public class PartMachiningStep
     [MaxLength(100)]
     public string? ToolType { get; set; }
 
-    /// <summary>Máy bấm giờ / Máy dùng để đo Cycle Time thực tế.</summary>
+    /// <summary>Máy bấm giờ / Máy dùng để đo Cycle Time thực tế.
+    /// Giữ lại để backward-compat — dữ liệu thực tế chuyển sang PartMachiningTimings.</summary>
     [MaxLength(50)]
     public string? TimingMachine { get; set; }
 
@@ -60,23 +58,23 @@ public class PartMachiningStep
     [MaxLength(20)]
     public string? ParentNC { get; set; }
 
-    /// <summary>Thời gian gá lắp (phút).</summary>
+    /// <summary>Thời gian gá lắp (phút). Giữ lại để backward-compat.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal? SetupTime { get; set; }
 
-    /// <summary>Thời gian gia công (phút).</summary>
+    /// <summary>Thời gian gia công (phút). Giữ lại để backward-compat.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal? MachiningTime { get; set; }
 
-    /// <summary>Thời gian kiểm tra SP (phút).</summary>
+    /// <summary>Thời gian kiểm tra SP (phút). Giữ lại để backward-compat.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal? InspectionTime { get; set; }
 
-    /// <summary>Thời gian chuẩn bị (phút).</summary>
+    /// <summary>Thời gian chuẩn bị (phút). Giữ lại để backward-compat.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal? PreparationTime { get; set; }
 
-    /// <summary>Thời gian chạy thử (phút).</summary>
+    /// <summary>Thời gian chạy thử (phút). Giữ lại để backward-compat.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal? TrialRunTime { get; set; }
 
@@ -98,4 +96,10 @@ public class PartMachiningStep
 
     /// <summary>Soft delete: false = đã xóa (chỉ Leader được set về false, có thể khôi phục).</summary>
     public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// Danh sách máy bấm giờ + thời gian chuẩn per-máy (1-N per step).
+    /// Navigation collection — EF Core load qua Include() hoặc lazy load.
+    /// </summary>
+    public virtual ICollection<PartMachiningTiming> Timings { get; set; } = new List<PartMachiningTiming>();
 }

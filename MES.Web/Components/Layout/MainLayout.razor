@@ -1,4 +1,7 @@
 @inherits LayoutComponentBase
+@using MES.Web.Services
+@inject NavigationManager Nav
+
 <div class="mes-layout">
     <NavMenu />
     <main class="mes-main">
@@ -20,10 +23,48 @@
             </AuthorizeView>
         </div>
         <div class="mes-content">
-            @Body
+            @* ======= KHỐI LỆNH CHẶN GIAO DIỆN KHI HẾT HẠN ======= *@
+            @if (_isBlocked && !IsAboutPage)
+            {
+                <div class="d-flex align-items-center justify-content-center" style="min-height: 70vh;">
+                    <div class="text-center p-5 bg-white shadow-lg rounded-4 border-top border-danger border-5" style="max-width: 550px;">
+                        <i class="bi bi-shield-lock-fill text-danger mb-3" style="font-size: 5rem;"></i>
+                        <h2 class="fw-bold text-dark">HỆ THỐNG ĐÃ BỊ KHÓA</h2>
+                        <p class="text-muted fs-6 mb-4 mt-2">
+                            Thời gian dùng thử đã kết thúc hoặc bản quyền máy chủ không hợp lệ. 
+                            Vui lòng kích hoạt bản quyền để mở khóa hệ thống.
+                        </p>
+                        <a href="/about" class="btn btn-danger px-4 py-2 fw-bold shadow-sm rounded-pill">
+                            <i class="bi bi-key-fill me-2"></i> Tới trang Kích hoạt Bản quyền
+                        </a>
+                    </div>
+                </div>
+            }
+            else
+            {
+                @* Nếu bản quyền OK hoặc đang đứng ở trang About -> Cho phép hiển thị nội dung *@
+                @Body
+            }
         </div>
     </main>
 </div>
 
 @* JS helper: download file từ Blazor (dùng cho xuất Excel, PDF...) *@
 <script src="/js/downloadHelper.js"></script>
+
+@code {
+    private bool _isBlocked = false;
+    
+    // Kiểm tra xem User có đang ở trang About không
+    private bool IsAboutPage => Nav.Uri.Contains("/about", StringComparison.OrdinalIgnoreCase);
+
+    // Sự kiện này tự động chạy mỗi khi người dùng chuyển trang hoặc tải lại Layout
+    protected override void OnParametersSet()
+    {
+        // Đọc trạng thái từ file Cache Offline (0 độ trễ)
+        var license = ServerLicenseHelper.GetCachedLicenseState();
+        
+        // Cờ khóa bật lên khi Status không phải là Active
+        _isBlocked = license.Status != ServerLicenseHelper.LicenseStatus.Active;
+    }
+}

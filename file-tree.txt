@@ -12,11 +12,13 @@ D:.
 |   note_pade current structure.txt
 |   README.md
 |   SETUP.md
+|   tree.txt
 |   
 +---.github
 |   \---workflows
 \---MES.Web
     |   appsettings.json
+    |   CODEBASE-MAP.md
     |   MES.Web.csproj
     |   Program.cs
     |   
@@ -127,6 +129,10 @@ D:.
     |   |       |       Microsoft.CodeAnalysis.CSharp.Workspaces.resources.dll
     |   |       |       Microsoft.CodeAnalysis.resources.dll
     |   |       |       Microsoft.CodeAnalysis.Workspaces.resources.dll
+    |   |       |       
+    |   |       +---MES_LicenseData
+    |   |       |       mes_cfg.dat
+    |   |       |       mes_init.dat
     |   |       |       
     |   |       +---pl
     |   |       |       Microsoft.CodeAnalysis.CSharp.resources.dll
@@ -516,6 +522,7 @@ D:.
     |   |   
     |   +---Layout
     |   |       LoginLayout.razor
+    |   |       MainLayout.rar
     |   |       MainLayout.razor
     |   |       NavMenu.razor
     |   |       
@@ -525,32 +532,48 @@ D:.
     |   |   |   Login.razor
     |   |   |   Profile.razor
     |   |   |   
+    |   |   +---About
+    |   |   |       Index.razor
+    |   |   |       
+    |   |   +---Customer
+    |   |   |       Index.razor
+    |   |   |       
+    |   |   +---Dao
+    |   |   |       Index.razor
+    |   |   |       
     |   |   +---DoGa
     |   |   |       Index.razor
     |   |   |       
+    |   |   +---Handover
+    |   |   |       Handover_Index.razor
+    |   |   |       
     |   |   +---HieuSuatCongNhan
-    |   |   |       Index.razor
+    |   |   |       HieuSuat_Index.razor
     |   |   |       
     |   |   +---HieuSuatMay
     |   |   |       Index.razor
     |   |   |       
     |   |   +---Kho
-    |   |   |       Index.razor
+    |   |   |       Index.rar
+    |   |   |       Kho_Index.razor
     |   |   |       
     |   |   +---KhPlan
     |   |   |       BulkUpdateStd.razor
-    |   |   |       Create.razor
-    |   |   |       Edit.razor
-    |   |   |       Index.razor
-    |   |   |       View.razor
+    |   |   |       Create_Khplan.razor
+    |   |   |       Edit_Khplan.razor
+    |   |   |       KhPlanIndex.razor
+    |   |   |       View.rar
+    |   |   |       View_Khplan.razor
     |   |   |       
     |   |   +---PartMaster
     |   |   |       Create.razor
-    |   |   |       Detail.razor
-    |   |   |       Index.razor
+    |   |   |       Detail_Partmaster.rar
+    |   |   |       Detail_Partmaster.razor
+    |   |   |       History.razor
+    |   |   |       Index_PartMaster.razor
     |   |   |       
     |   |   +---Setting
-    |   |   |       Index.razor
+    |   |   |       Settings_Index.razor
     |   |   |       
     |   |   +---SoDoToChuc
     |   |   |       Index.razor
@@ -576,19 +599,31 @@ D:.
     |   |   
     |   \---Entities
     |           Customer.cs
+    |           CustomerChangeLog.cs
+    |           Dao.cs
+    |           DaoChangeLog.cs
     |           Department.cs
     |           DepartmentChangeLog.cs
     |           DoGa.cs
     |           DoGaChangeLog.cs
     |           DoGaMuonTraLog.cs
     |           FileStorage.cs
+    |           HandoverReceive.cs
+    |           HandoverTransaction.cs
+    |           KhoVatLieu.cs
+    |           KhoVatLieuChangeLog.cs
     |           KhPlan.cs
     |           KhPlanDetailChangeLog.cs
+    |           KhPlanRouteSnapshotMachiningTiming.cs
+    |           KhPlanRouteSnapshots.cs
+    |           MachineExcludeSetting.cs
     |           PartBaviaStep.cs
     |           PartInspectionStep.cs
     |           PartMachiningStep.cs
+    |           PartMachiningTiming.cs
     |           PartMaster.cs
     |           PartMasterAttribute.cs
+    |           PartPackagingStep.cs
     |           PartProcessStepChangeLog.cs
     |           PartTaroStep.cs
     |           PartWashingStep.cs
@@ -598,6 +633,8 @@ D:.
     |           ThietBi.cs
     |           ThietBichangelog.cs
     |           User.cs
+    |           WorkerActivityLog.cs
+    |           WtsProductionLog.cs
     |           
     +---obj
     |   |   MES.Web.csproj.nuget.dgspec.json
@@ -725,22 +762,31 @@ D:.
     |       
     +---Services
     |       AuthService.cs
+    |       CustomerService.cs
+    |       DaoService.cs
     |       DepartmentService.cs
     |       DoGaService.cs
     |       ExcelHelper.cs
+    |       HandoverService.cs
+    |       KhoVatLieuService.cs
     |       KhPlanService.cs
+    |       LicenseBackgroundWorker.cs
     |       PartBaviaService.cs
     |       PartInspectionService.cs
     |       PartMachiningService.cs
     |       PartMasterListService.cs
     |       PartMasterPermissionHelper.cs
     |       PartMasterService.cs
+    |       PartPackagingService.cs
     |       PartTaroService.cs
     |       PartWashingService.cs
     |       PasswordHasher.cs
+    |       ServerLicenseHelper.cs
+    |       ServerLicenseHelper.rar
     |       StandardWtsTaskService.cs
     |       ThietBiService.cs
     |       UserService.cs
+    |       WtsReportService.cs
     |       
     \---wwwroot
         +---css
@@ -748,6 +794,9 @@ D:.
         |       
         +---images
         |       Logo.jpg
+        |       
+        +---js
+        |       downloadHelper.js
         |       
         \---uploads
             \---avatars

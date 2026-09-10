@@ -459,6 +459,11 @@ public class KhPlanService
         try
         {
             // Xóa snapshot quy trình B→E + Máy loại trừ
+            // Xóa timing sub-rows TRƯỚC Machining (FK constraint)
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE t FROM KhPlanRouteSnapshotMachiningTimings t
+                  INNER JOIN KhPlanRouteSnapshotMachining m ON t.MachiningSnapshotId = m.SnapshotId
+                  WHERE m.KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotMachining WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
@@ -544,6 +549,11 @@ public class KhPlanService
             var oldCountPackaging  = await _db.KhPlanRouteSnapshotPackaging  .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
 
             // 2. Xóa snapshot cũ bằng raw SQL (nhanh, không cần load vào RAM)
+            // Xóa timing sub-rows TRƯỚC khi xóa machining rows (FK constraint)
+            await _db.Database.ExecuteSqlRawAsync(
+                @"DELETE t FROM KhPlanRouteSnapshotMachiningTimings t
+                  INNER JOIN KhPlanRouteSnapshotMachining m ON t.MachiningSnapshotId = m.SnapshotId
+                  WHERE m.KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotMachining  WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
@@ -663,6 +673,7 @@ public class KhPlanService
         var result = new RouteSnapshotData
         {
             Machining      = await _db.KhPlanRouteSnapshotMachining
+                .Include(s => s.TimingRows.OrderBy(t => t.DisplayOrder))
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.StepOrder).AsNoTracking().ToListAsync(),
             Taro           = await _db.KhPlanRouteSnapshotTaro
@@ -731,7 +742,9 @@ public class KhPlanService
         var now = DateTime.Now;
 
         // ── B. Machining ────────────────────────────────────────
+        // Load cả Timings (máy đồng dạng sub-rows) cùng lúc
         var machining = await _db.PartMachiningSteps
+            .Include(s => s.Timings.Where(t => t.IsActive))
             .Where(s => s.PartId == partId && s.IsActive)
             .OrderBy(s => s.StepOrder)
             .AsNoTracking()
@@ -739,7 +752,7 @@ public class KhPlanService
 
         foreach (var s in machining)
         {
-            _db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining
+            var snapRow = new KhPlanRouteSnapshotMachining
             {
                 KhPlanDetailId     = khPlanDetailId,
                 SourcePartId       = partId,
@@ -749,7 +762,6 @@ public class KhPlanService
                 NC                 = s.NC,
                 Drawing            = s.Drawing,
                 MachineRegistered  = s.MachineRegistered,
-                MachineAlternative = s.MachineAlternative,
                 FixtureType        = s.FixtureType,
                 ToolType           = s.ToolType,
                 TimingMachine      = s.TimingMachine,
@@ -760,7 +772,30 @@ public class KhPlanService
                 InspectionTime     = s.InspectionTime,
                 PreparationTime    = s.PreparationTime,
                 TrialRunTime       = s.TrialRunTime,
-            });
+            };
+            _db.KhPlanRouteSnapshotMachining.Add(snapRow);
+
+            // Flush để snapRow có SnapshotId trước khi tạo timing children
+            await _db.SaveChangesAsync();
+
+            // Copy timing sub-rows (máy đồng dạng)
+            foreach (var t in s.Timings.OrderBy(t => t.DisplayOrder))
+            {
+                _db.KhPlanRouteSnapshotMachiningTimings.Add(new KhPlanRouteSnapshotMachiningTiming
+                {
+                    MachiningSnapshotId = snapRow.SnapshotId,
+                    KhPlanDetailId      = khPlanDetailId,
+                    DisplayOrder        = t.DisplayOrder,
+                    SoMay               = t.SoMay,
+                    FixtureType         = t.FixtureType,
+                    ToolType            = t.ToolType,
+                    SetupTime           = t.SetupTime,
+                    MachiningTime       = t.MachiningTime,
+                    InspectionTime      = t.InspectionTime,
+                    PreparationTime     = t.PreparationTime,
+                    TrialRunTime        = t.TrialRunTime,
+                });
+            }
         }
 
         // ── C.1 Taro ────────────────────────────────────────────
@@ -780,6 +815,7 @@ public class KhPlanService
                 SnapshotBy     = snapshotBy,
                 StepOrder      = s.StepOrder,
                 NC             = s.NC,
+                WtsTaskCode    = s.WtsTaskCode,   // ← thêm dòng này
                 StepName       = s.StepName,
                 StandardTime   = s.StandardTime,
                 IsBackup       = s.IsBackup,

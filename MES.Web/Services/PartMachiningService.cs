@@ -27,6 +27,7 @@ public class PartMachiningService
             .Where(s => s.PartId == partId && s.IsActive)
             .OrderBy(s => s.StepOrder)
             .ThenBy(s => s.NC)
+            .Include(s => s.Timings.Where(t => t.IsActive))
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
@@ -40,6 +41,7 @@ public class PartMachiningService
             .OrderByDescending(s => s.IsActive)
             .ThenBy(s => s.StepOrder)
             .ThenBy(s => s.NC)
+            .Include(s => s.Timings.Where(t => t.IsActive))
             .Include(s => s.CreatedByUser)
             .Include(s => s.UpdatedByUser)
             .AsNoTracking()
@@ -90,7 +92,7 @@ public class PartMachiningService
         var snapshot = JsonSerializer.Serialize(new
         {
             newStep.StepOrder, newStep.NC, newStep.Drawing,
-            newStep.MachineRegistered, newStep.MachineAlternative, newStep.FixtureType,
+            newStep.MachineRegistered,            newStep.FixtureType,
             newStep.ToolType, newStep.TimingMachine, newStep.IsBackup, newStep.ParentNC,
             newStep.SetupTime, newStep.MachiningTime, newStep.InspectionTime,
             newStep.PreparationTime, newStep.TrialRunTime
@@ -121,7 +123,6 @@ public class PartMachiningService
         changedCount += LogStringDiff("NC",                 existing.NC,                 updated.NC,                 stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("Drawing",            existing.Drawing,            updated.Drawing,            stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("MachineRegistered",  existing.MachineRegistered,  updated.MachineRegistered,  stepId, pid, userId, reason, now);
-        changedCount += LogStringDiff("MachineAlternative", existing.MachineAlternative, updated.MachineAlternative, stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("FixtureType",        existing.FixtureType,        updated.FixtureType,        stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("ToolType",           existing.ToolType,           updated.ToolType,           stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("TimingMachine",      existing.TimingMachine,      updated.TimingMachine,      stepId, pid, userId, reason, now);
@@ -136,9 +137,7 @@ public class PartMachiningService
 
         existing.NC = updated.NC;
         existing.Drawing = updated.Drawing;
-        existing.MachineRegistered = updated.MachineRegistered;
-        existing.MachineAlternative = updated.MachineAlternative;
-        existing.FixtureType = updated.FixtureType;
+        existing.MachineRegistered = updated.MachineRegistered;        existing.FixtureType = updated.FixtureType;
         existing.ToolType = updated.ToolType;
         existing.TimingMachine = updated.TimingMachine;
         existing.IsBackup = updated.IsBackup;
@@ -170,7 +169,7 @@ public class PartMachiningService
         var snapshot = JsonSerializer.Serialize(new
         {
             existing.StepOrder, existing.NC, existing.Drawing,
-            existing.MachineRegistered, existing.MachineAlternative, existing.FixtureType,
+            existing.MachineRegistered,            existing.FixtureType,
             existing.ToolType, existing.TimingMachine, existing.IsBackup, existing.ParentNC,
             existing.SetupTime, existing.MachiningTime, existing.InspectionTime,
             existing.PreparationTime, existing.TrialRunTime,

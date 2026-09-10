@@ -702,7 +702,7 @@ else
                                             <td>@s.StepOrder</td><td><code>@s.NC</code></td>
                                             <td>@(s.Drawing ?? "—")</td>
                                             <td>@(s.MachineRegistered ?? "—")</td>
-                                            <td>@(s.MachineAlternative ?? "—")</td>
+                                            <td>@(s.Timings.Any(t => t.IsActive) ? string.Join(", ", s.Timings.Where(t => t.IsActive).OrderBy(t => t.DisplayOrder).Select(t => t.SoMay)) : "—")</td>
                                             <td>@(s.FixtureType ?? "—")</td>
                                             <td class="text-end">@FmtTime(s.SetupTime)</td>
                                             <td class="text-end">@FmtTime(s.MachiningTime)</td>

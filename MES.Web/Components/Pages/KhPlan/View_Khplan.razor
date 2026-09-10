@@ -260,15 +260,28 @@ else
                                     <tbody>
                                         @foreach (var s in _snapshot.Machining)
                                         {
-                                            var gcLogs = GetLogsFor("GC", s.NC);
-                                            var qtyDone = GetQtyDone("GC", s.NC);
+                                            var gcLogs    = GetLogsFor("GC", s.NC);
+                                            var qtyDone   = GetQtyDone("GC", s.NC);
                                             var badgeColor = qtyDone == 0 ? "danger" : (qtyDone >= _detail!.Quantity ? "success" : "warning");
-                                            @* Dòng snapshot (chuẩn) *@
+
+                                            @* Tính rowspan: 1 (dòng NC) + logs máy đăng ký + placeholder nếu rỗng
+                                               + mỗi timing row: 1 + logs timing đó + placeholder nếu rỗng *@
+                                            var regLogs   = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered ||
+                                                                               string.IsNullOrEmpty(l.MachineUsed) ||
+                                                                               !s.TimingRows.Any(t => t.SoMay == l.MachineUsed)).ToList();
+                                            var regRowCount  = regLogs.Count == 0 ? 1 : regLogs.Count;
+                                            var timingTotal  = s.TimingRows.Sum(t => {
+                                                var tLogs = gcLogs.Where(l => l.MachineUsed == t.SoMay).ToList();
+                                                return 1 + (tLogs.Count == 0 ? 1 : tLogs.Count);
+                                            });
+                                            var totalRowspan = 1 + regRowCount + timingTotal;
+
+                                            @* Dòng NC chính (chuẩn) *@
                                             <tr class="@(s.IsBackup ? "table-warning" : "")">
                                                 <td class="text-center">@s.StepOrder</td>
                                                 <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
                                                 <td>@(s.MachineRegistered ?? "—")</td>
-                                                <td class="text-muted small">@(s.MachineAlternative ?? "—")</td>
+                                                <td class="text-muted small">—</td>
                                                 <td>@(s.FixtureType ?? "—")</td>
                                                 <td>@(s.ToolType ?? "—")</td>
                                                 <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
@@ -282,23 +295,23 @@ else
                                                 <td class="text-end"></td>
                                                 <td class="text-end text-muted">@FmtTime(s.TrialRunTime)</td>
                                                 <td class="text-end"></td>
-                                                <td class="text-center" rowspan="@(gcLogs.Count + 1)">
+                                                <td class="text-center" rowspan="@totalRowspan">
                                                     <span class="badge bg-@badgeColor">@qtyDone.ToString("0.##") / @_detail!.Quantity.ToString("0.####")</span>
                                                 </td>
                                             </tr>
-                                            @* Dòng worker *@
-                                            @if (gcLogs.Count == 0)
+
+                                            @* WTS logs của máy đăng ký (hoặc log không khớp timing nào) *@
+                                            @if (regLogs.Count == 0)
                                             {
                                                 <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
                                                     <td></td><td></td><td></td><td></td><td></td><td></td>
                                                     <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
                                                 </tr>
                                             }
-                                            @foreach (var log in gcLogs)
+                                            @foreach (var log in regLogs)
                                             {
                                                 <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
-                                                    <td></td><td></td><td></td><td></td><td></td>
-                                                    <td class="small text-muted">@(log.MachineUsed ?? "—")</td>
+                                                    <td></td><td></td><td></td><td></td><td></td><td></td>
                                                     <td class="fw-semibold text-primary small text-center">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
                                                     <td class="text-center fw-bold small" style="color:#0d6efd;">@log.QtyDone.ToString("0.##")</td>
                                                     <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
@@ -314,6 +327,60 @@ else
                                                     <td class="text-end text-muted">—</td>
                                                     <td class="text-end" style="color:#0d6efd;">@FmtTime(log.TrialRunTime_Actual)</td>
                                                 </tr>
+                                            }
+
+                                            @* Timing sub-rows — mỗi máy đồng dạng 1 dòng chuẩn + WTS logs của máy đó *@
+                                            @foreach (var tr in s.TimingRows)
+                                            {
+                                                var trLogs = gcLogs.Where(l => l.MachineUsed == tr.SoMay).ToList();
+                                                @* Dòng chuẩn timing *@
+                                                <tr style="background:#f0f7ff;">
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td class="text-muted small">—</td>
+                                                    <td class="small fw-semibold" style="color:#185fa5;">@tr.SoMay</td>
+                                                    <td class="text-muted small">@(tr.FixtureType ?? "—")</td>
+                                                    <td class="text-muted small">@(tr.ToolType ?? "—")</td>
+                                                    <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.SetupTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.MachiningTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.InspectionTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.PreparationTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.TrialRunTime)</td>
+                                                    <td class="text-end"></td>
+                                                </tr>
+                                                @* WTS logs của timing row này *@
+                                                @if (trLogs.Count == 0)
+                                                {
+                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
+                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                        <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
+                                                    </tr>
+                                                }
+                                                @foreach (var log in trLogs)
+                                                {
+                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
+                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                        <td class="fw-semibold small text-center" style="color:#185fa5;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                        <td class="text-center fw-bold small" style="color:#185fa5;">@log.QtyDone.ToString("0.##")</td>
+                                                        <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                        <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.SetupTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.MachiningTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.InspectionTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.PreparationTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.TrialRunTime_Actual)</td>
+                                                    </tr>
+                                                }
                                             }
                                         }
                                     </tbody>
@@ -378,12 +445,14 @@ else
                                             <tbody>
                                                 @foreach (var s in _snapshot.Taro)
                                                 {
-                                                    var taroLogs = GetLogsForWts("TARO", s.NC);
-                                                    var taroQty = GetQtyDone("TARO", null, s.NC);
+                                                    @* Taro: log lưu WtsCode = WtsTaskCode (snapshot mới) hoặc NC (snapshot cũ trước migration) *@
+                                                    var taroKey = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+                                                    var taroLogs = GetLogsForWts("TARO", taroKey);
+                                                    var taroQty = GetQtyDone("TARO", null, taroKey);
                                                     var taroBadge = taroQty == 0 ? "danger" : (taroQty >= _detail!.Quantity ? "success" : "warning");
                                                     <tr>
                                                         <td><code>@s.NC</code></td>
-                                                        <td class="text-muted small">—</td>
+                                                        <td class="small"><code class="text-success">@(s.WtsTaskCode ?? "—")</code></td>
                                                         <td class="small">@(s.StepName ?? "—")</td>
                                                         <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
                                                         <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>

@@ -302,7 +302,7 @@ else
                                             <td>@s.StepOrder</td>
                                             <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
                                             <td>@(s.MachineRegistered ?? "—")</td>
-                                            <td class="text-muted small">@(s.MachineAlternative ?? "—")</td>
+                                            <td class="text-muted small">@(s.TimingRows.Any() ? string.Join(", ", s.TimingRows.OrderBy(t => t.DisplayOrder).Select(t => t.SoMay)) : "—")</td>
                                             <td>@(s.FixtureType ?? "—")</td>
                                             <td>@(s.ToolType ?? "—")</td>
                                             <td class="text-end">@FmtTime(s.SetupTime)</td>
