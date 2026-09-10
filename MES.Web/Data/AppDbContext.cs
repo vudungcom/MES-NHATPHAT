@@ -153,6 +153,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
 
         // ==== ThietBiChangeLog ====
         mb.Entity<ThietBiChangeLog>().HasIndex(x => new { x.ThietBiId, x.ChangedAt });
+        // Index phục vụ query hiệu suất máy: lọc sự kiện dừng máy theo khoảng thời gian
+        mb.Entity<ThietBiChangeLog>().HasIndex(x => new { x.ThietBiId, x.ThoiGianBatDau, x.ThoiGianKetThuc });
         mb.Entity<ThietBiChangeLog>()
             .HasOne(x => x.ChangedByUser)
             .WithMany()
@@ -497,6 +499,10 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasIndex(x => new { x.KhPlanDetailId, x.ProcessGroup, x.NC });
         mb.Entity<WtsProductionLog>()
             .HasIndex(x => new { x.WorkerId, x.CreatedAt });
+        // Index phục vụ query hiệu suất máy: lọc theo máy + khoảng giờ
+        mb.Entity<WtsProductionLog>()
+            .HasIndex(x => new { x.MachineUsed, x.StartTime, x.EndTime })
+            .HasFilter("[MachineUsed] IS NOT NULL AND [IsVoided] = 0");
         mb.Entity<WtsProductionLog>()
             .HasOne(x => x.KhPlanDetail).WithMany()
             .HasForeignKey(x => x.KhPlanDetailId)

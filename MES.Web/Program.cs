@@ -61,6 +61,7 @@ builder.Services.AddScoped<KhoVatLieuService>();
 // Luot 6C - Part Master listing
 builder.Services.AddScoped<PartMasterListService>();
 builder.Services.AddScoped<DaoService>();
+builder.Services.AddScoped<MachineEfficiencyService>();
 
 var app = builder.Build();
 

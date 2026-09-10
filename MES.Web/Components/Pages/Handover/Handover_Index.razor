@@ -111,8 +111,8 @@ else
                     <th rowspan="2" class="border-end" style="width:80px">@HdvColHeader("PurchaseOrder", "PO KH")</th>
                     <th rowspan="2" class="border-end" style="width:100px">@HdvColHeader("PartNo", "Part No")</th>
                     <th rowspan="2" class="text-center border-end" style="width:42px">KH</th>
-                    @* Kho: 2 cột *@
-                    <th colspan="2" class="text-center border-end" style="background:#e1f5ee55">Kho</th>
+                    @* Kho: 3 cột (OK nhận, NG, Còn lại) *@
+                    <th colspan="3" class="text-center border-end" style="background:#e1f5ee55">Kho</th>
                     @* GC: 4 cột *@
                     <th colspan="4" class="text-center border-end" style="background:#e6f1fb55">Gia công</th>
                     @* HTSP: 4 cột *@
@@ -141,7 +141,7 @@ else
             <tbody>
                 @if (!_rows.Any())
                 {
-                    <tr><td colspan="24" class="text-center text-muted py-4">
+                    <tr><td colspan="25" class="text-center text-muted py-4">
                         <i class="bi bi-inbox me-2"></i>Không có dữ liệu
                     </td></tr>
                 }
@@ -236,7 +236,7 @@ else
                     @if (isExpanded)
                     {
                         <tr class="table-light">
-                            <td colspan="24" class="p-3">
+                            <td colspan="25" class="p-3">
                                 @RenderNcFlowDetail(row)
                             </td>
                         </tr>
