@@ -77,6 +77,10 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
     public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
 
+    // ==== Cài đặt ca làm việc ====
+    public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
+    public DbSet<CaLamViec_NghiGiaiLao> CaLamViec_NghiGiaiLaos => Set<CaLamViec_NghiGiaiLao>();
+
     protected override void OnModelCreating(ModelBuilder mb)
     {
         // ==== Explicit Primary Keys ====
@@ -581,6 +585,13 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasOne(x => x.VoidedByUser).WithMany()
             .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== CaLamViec ====
+        mb.Entity<CaLamViec>().HasKey(x => x.CaId);
+        mb.Entity<CaLamViec_NghiGiaiLao>().HasKey(x => x.NghiId);
+        mb.Entity<CaLamViec_NghiGiaiLao>()
+            .HasOne(x => x.Ca).WithMany(x => x.NghiGiaiLaos)
+            .HasForeignKey(x => x.CaId).OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(mb);
     }

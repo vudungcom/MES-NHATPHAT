@@ -1,0 +1,356 @@
+@page "/cai-dat/ca-lam-viec"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject CaLamViecService CaSvc
+
+<PageTitle>Cài đặt ca làm việc - MES</PageTitle>
+
+<style>
+    .ca-card { border-left: 4px solid #0d6efd; transition: box-shadow .15s; }
+    .ca-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .ca-card.inactive { border-left-color: #adb5bd; opacity:.72; }
+    .nghi-row { font-size:.8rem; background:#f8f9fa; border-radius:4px; padding:4px 8px; margin-bottom:3px; }
+    .time-sep { color:#6c757d; padding:0 4px; font-size:.85rem; }
+    .overnight-badge { font-size:.68rem; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-0">Cài đặt ca làm việc</h1>
+        <p class="text-muted small mb-0">
+            Định nghĩa ca và các khoảng nghỉ giải lao. Ca vắt qua nửa đêm: giờ kết thúc &lt; giờ bắt đầu.
+        </p>
+    </div>
+    <button class="btn btn-primary" @onclick="NewCa">
+        <i class="bi bi-plus-lg me-1"></i>Thêm ca mới
+    </button>
+</div>
+
+@* ── Danh sách ca ── *@
+<div class="row g-3 mb-4">
+    @foreach (var ca in _list)
+    {
+        <div class="col-md-6 col-lg-4" @key="ca.CaId">
+            <div class="card ca-card h-100 @(ca.IsActive ? "" : "inactive")">
+                <div class="card-body pb-1">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div>
+                            <h6 class="mb-0 fw-semibold">@ca.TenCa</h6>
+                            <div class="d-flex align-items-center gap-1 text-primary mt-1" style="font-size:.9rem;">
+                                <i class="bi bi-clock me-1"></i>
+                                <span>@ca.GioBatDau.ToString("HH:mm")</span>
+                                <span class="time-sep">–</span>
+                                <span>@ca.GioKetThuc.ToString("HH:mm")</span>
+                                @if (ca.IsOvernight)
+                                {
+                                    <span class="badge bg-warning text-dark overnight-badge ms-1">+1 ngày</span>
+                                }
+                            </div>
+                        </div>
+                        <span class="badge @(ca.IsActive ? "bg-success" : "bg-secondary")">
+                            @(ca.IsActive ? "Bật" : "Tắt")
+                        </span>
+                    </div>
+                    @if (ca.NghiGiaiLaos.Any())
+                    {
+                        <div class="mt-2">
+                            <div class="text-muted" style="font-size:.7rem;">NGHỈ GIẢI LAO</div>
+                            @foreach (var n in ca.NghiGiaiLaos.OrderBy(x => x.NghiBatDau))
+                            {
+                                <div class="nghi-row">
+                                    <span class="text-muted"><i class="bi bi-cup-hot me-1"></i></span>
+                                    @n.NghiBatDau.ToString("HH:mm")–@n.NghiKetThuc.ToString("HH:mm")
+                                    @if (!string.IsNullOrEmpty(n.GhiChu))
+                                    {
+                                        <span class="text-muted ms-1">(@n.GhiChu)</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="card-footer d-flex justify-content-between align-items-center py-1 px-3 bg-transparent">
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditCa(ca)">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm @(ca.IsActive ? "btn-outline-secondary" : "btn-outline-success")"
+                                @onclick="() => ToggleActive(ca)">
+                            <i class="bi @(ca.IsActive ? "bi-eye-slash" : "bi-eye")"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(ca)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <span class="text-muted small">Thứ tự: @ca.SortOrder</span>
+                </div>
+            </div>
+        </div>
+    }
+    @if (!_list.Any())
+    {
+        <div class="col-12">
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-1"></i>Chưa có ca nào. Nhấn <b>Thêm ca mới</b>.
+            </div>
+        </div>
+    }
+</div>
+
+@* ── Modal thêm/sửa ── *@
+@if (_editing != null)
+{
+    <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);">
+        <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-clock-history me-2"></i>
+                        @(_editing.CaId == 0 ? "Thêm ca mới" : "Sửa ca làm việc")
+                    </h5>
+                    <button class="btn-close" @onclick="CancelEdit"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(_error))
+                    {
+                        <div class="alert alert-danger py-2 small">
+                            <i class="bi bi-exclamation-triangle me-1"></i>@_error
+                        </div>
+                    }
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-7">
+                            <label class="form-label fw-semibold">Tên ca <span class="text-danger">*</span></label>
+                            <input class="form-control" placeholder="VD: Ca Hành chính, Ca 1..."
+                                   @bind="_editing.TenCa" />
+                        </div>
+                        <div class="col-5">
+                            <label class="form-label fw-semibold">Thứ tự hiển thị</label>
+                            <input type="number" class="form-control" @bind="_editing.SortOrder" min="0" />
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Giờ làm việc <span class="text-danger">*</span></label>
+                        <div class="d-flex align-items-center gap-2">
+                            <div>
+                                <div class="form-text mb-1">Bắt đầu</div>
+                                <input type="time" class="form-control form-control-sm" style="width:115px;"
+                                       value="@_editing.GioBatDau.ToString("HH:mm")"
+                                       @onchange="e => SetGioBatDau(e.Value?.ToString())" />
+                            </div>
+                            <span class="time-sep mt-3">–</span>
+                            <div>
+                                <div class="form-text mb-1">Kết thúc</div>
+                                <input type="time" class="form-control form-control-sm" style="width:115px;"
+                                       value="@_editing.GioKetThuc.ToString("HH:mm")"
+                                       @onchange="e => SetGioKetThuc(e.Value?.ToString())" />
+                            </div>
+                            @if (_editing.GioKetThuc < _editing.GioBatDau)
+                            {
+                                <span class="badge bg-warning text-dark mt-3">Vắt qua nửa đêm</span>
+                            }
+                        </div>
+                        <div class="form-text">Nếu ca kết thúc sang ngày hôm sau, nhập giờ kết thúc nhỏ hơn giờ bắt đầu. VD: 22:00 – 06:20</div>
+                    </div>
+
+                    <hr />
+
+                    @* ── Nghỉ giải lao ── *@
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label fw-semibold mb-0">Nghỉ giải lao</label>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="AddNghi">
+                            <i class="bi bi-plus-lg me-1"></i>Thêm khoảng nghỉ
+                        </button>
+                    </div>
+
+                    @if (!_nghiList.Any())
+                    {
+                        <div class="text-muted small fst-italic mb-2">Chưa có khoảng nghỉ nào.</div>
+                    }
+                    @for (int i = 0; i < _nghiList.Count; i++)
+                    {
+                        var idx = i;
+                        var n = _nghiList[idx];
+                        <div class="d-flex align-items-center gap-2 mb-2 p-2 bg-light rounded">
+                            <input type="time" class="form-control form-control-sm" style="width:105px;"
+                                   value="@n.NghiBatDau.ToString("HH:mm")"
+                                   @onchange="e => SetNghiBatDau(idx, e.Value?.ToString())" />
+                            <span class="time-sep">–</span>
+                            <input type="time" class="form-control form-control-sm" style="width:105px;"
+                                   value="@n.NghiKetThuc.ToString("HH:mm")"
+                                   @onchange="e => SetNghiKetThuc(idx, e.Value?.ToString())" />
+                            <input class="form-control form-control-sm" style="flex:1;"
+                                   placeholder="Ghi chú (VD: Nghỉ trưa)"
+                                   @bind="n.GhiChu" />
+                            <button class="btn btn-sm btn-outline-danger px-2"
+                                    @onclick="() => RemoveNghi(idx)">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                    }
+
+                    @* Preview *@
+                    <div class="alert alert-light py-2 small mt-2">
+                        <i class="bi bi-eye me-1"></i>
+                        <b>Preview:</b>
+                        <span class="badge bg-primary ms-1">@_editing.TenCa (@_editing.Label)</span>
+                        @if (_nghiList.Any())
+                        {
+                            <span class="ms-2 text-muted">· @_nghiList.Count khoảng nghỉ</span>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CancelEdit">Hủy</button>
+                    <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                        @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Lưu
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Confirm xóa ── *@
+@if (_deletingId.HasValue)
+{
+    <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);">
+        <div class="modal-dialog modal-dialog-centered" style="max-width:360px;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-danger"><i class="bi bi-trash me-2"></i>Xóa ca?</h5>
+                    <button class="btn-close" @onclick="() => _deletingId = null"></button>
+                </div>
+                <div class="modal-body">
+                    Xóa ca <strong>@_deletingName</strong>? Thao tác này không thể hoàn tác.
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => _deletingId = null">Hủy</button>
+                    <button class="btn btn-danger" @onclick="DoDelete">Xóa</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CaLamViec> _list = new();
+    private CaLamViec? _editing;
+    private List<CaLamViec_NghiGiaiLao> _nghiList = new();
+    private string _error  = "";
+    private bool   _saving = false;
+    private int?   _deletingId;
+    private string _deletingName = "";
+
+    protected override async Task OnInitializedAsync()
+        => _list = await CaSvc.GetAllAsync();
+
+    // ── CRUD ───────────────────────────────────────────────────────────────
+    private void NewCa()
+    {
+        _editing  = new CaLamViec { GioBatDau = new(7, 0), GioKetThuc = new(17, 0) };
+        _nghiList = new();
+        _error    = "";
+    }
+
+    private void EditCa(CaLamViec ca)
+    {
+        _editing = new CaLamViec
+        {
+            CaId       = ca.CaId,
+            TenCa      = ca.TenCa,
+            GioBatDau  = ca.GioBatDau,
+            GioKetThuc = ca.GioKetThuc,
+            IsActive   = ca.IsActive,
+            SortOrder  = ca.SortOrder,
+        };
+        _nghiList = ca.NghiGiaiLaos.Select(n => new CaLamViec_NghiGiaiLao
+        {
+            NghiId      = n.NghiId,
+            CaId        = n.CaId,
+            NghiBatDau  = n.NghiBatDau,
+            NghiKetThuc = n.NghiKetThuc,
+            GhiChu      = n.GhiChu,
+        }).OrderBy(n => n.NghiBatDau).ToList();
+        _error = "";
+    }
+
+    private void CancelEdit() { _editing = null; _error = ""; }
+
+    // ── Nghỉ giải lao helpers ─────────────────────────────────────────────
+    private void AddNghi()
+    {
+        _nghiList.Add(new CaLamViec_NghiGiaiLao
+        {
+            NghiBatDau  = new TimeOnly(12, 0),
+            NghiKetThuc = new TimeOnly(13, 0),
+            GhiChu      = "",
+        });
+    }
+
+    private void RemoveNghi(int idx)
+    {
+        if (idx >= 0 && idx < _nghiList.Count)
+            _nghiList.RemoveAt(idx);
+    }
+
+    private void SetGioBatDau(string? v)
+    {
+        if (_editing != null && TimeOnly.TryParse(v, out var t)) _editing.GioBatDau = t;
+    }
+
+    private void SetGioKetThuc(string? v)
+    {
+        if (_editing != null && TimeOnly.TryParse(v, out var t)) _editing.GioKetThuc = t;
+    }
+
+    private void SetNghiBatDau(int idx, string? v)
+    {
+        if (idx >= 0 && idx < _nghiList.Count && TimeOnly.TryParse(v, out var t))
+            _nghiList[idx].NghiBatDau = t;
+    }
+
+    private void SetNghiKetThuc(int idx, string? v)
+    {
+        if (idx >= 0 && idx < _nghiList.Count && TimeOnly.TryParse(v, out var t))
+            _nghiList[idx].NghiKetThuc = t;
+    }
+
+    // ── Save ──────────────────────────────────────────────────────────────
+    private async Task SaveAsync()
+    {
+        if (_editing == null) return;
+        _saving = true; _error = "";
+        try
+        {
+            var (ok, err) = await CaSvc.SaveAsync(_editing, _nghiList);
+            if (!ok) { _error = err; return; }
+            _editing = null;
+            _list = await CaSvc.GetAllAsync();
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task ToggleActive(CaLamViec ca)
+    {
+        await CaSvc.ToggleActiveAsync(ca.CaId);
+        _list = await CaSvc.GetAllAsync();
+    }
+
+    private void ConfirmDelete(CaLamViec ca)
+    {
+        _deletingId   = ca.CaId;
+        _deletingName = ca.TenCa;
+    }
+
+    private async Task DoDelete()
+    {
+        if (_deletingId.HasValue) await CaSvc.DeleteAsync(_deletingId.Value);
+        _deletingId = null;
+        _list = await CaSvc.GetAllAsync();
+    }
+}

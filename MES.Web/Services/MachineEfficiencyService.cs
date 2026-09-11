@@ -6,80 +6,85 @@ namespace MES.Web.Services;
 
 /// <summary>
 /// Service tổng hợp hiệu suất máy theo timeline ngày.
-/// Nguồn data:
-///   - WtsProductionLogs (MachineUsed + StartTime/EndTime) → đoạn máy đang chạy (xanh)
-///   - ThietBiChangeLogs (ThoiGianBatDau / ThoiGianKetThuc) → đoạn dừng máy (đỏ/vàng)
-///   - Phần còn lại → rảnh (xám)
-/// Không có bảng SQL mới — chỉ đọc, tận dụng index đã thêm.
+/// Segment priority: Downtime > Break > Running > Idle
+/// Break = nghỉ giải lao theo ca — không tính vào idle, không tính vào running.
+/// Ca vắt đêm (GioKetThuc &lt; GioBatDau): hiển thị trên ngày bắt đầu ca,
+///   phần qua nửa đêm vẫn nằm trên timeline 0h-24h cùng ngày (wrap).
 /// </summary>
 public class MachineEfficiencyService
 {
     private readonly AppDbContext _db;
+    public MachineEfficiencyService(AppDbContext db) { _db = db; }
 
-    public MachineEfficiencyService(AppDbContext db)
-    {
-        _db = db;
-    }
-
-    public async Task<MachineEfficiencyResult> GetAsync(DateOnly date, TimeOnly fromTime, TimeOnly toTime)
+    public async Task<MachineEfficiencyResult> GetAsync(
+        DateOnly date, TimeOnly fromTime, TimeOnly toTime,
+        CaLamViec? selectedCa = null)
     {
         var dayStart = date.ToDateTime(fromTime);
         var dayEnd   = date.ToDateTime(toTime);
 
-        // ── 1. Danh sách máy active ─────────────────────────────────────────
+        // ── 1. Danh sách máy active ─────────────────────────────────────
         var machines = await _db.ThietBis
             .Where(t => t.IsActive)
             .OrderBy(t => t.BoPhan).ThenBy(t => t.SoMay)
-            .AsNoTracking()
-            .ToListAsync();
+            .AsNoTracking().ToListAsync();
 
-        if (!machines.Any())
-            return EmptyResult(date, fromTime, toTime);
+        if (!machines.Any()) return EmptyResult(date, fromTime, toTime);
 
-        var allSoMay    = machines.Select(m => m.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allSoMay      = machines.Select(m => m.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var allMachineIds = machines.Select(m => m.ThietBiId).ToList();
 
-        // ── 2. WTS logs: chỉ lấy dòng có MachineUsed, không void, overlap khung giờ ──
-        // Tận dụng index: (MachineUsed, StartTime, EndTime) với filter IsVoided=0, MachineUsed NOT NULL
+        // ── 2. WTS logs (tận dụng filtered index MachineUsed+StartTime+EndTime) ──
+        // Ca vắt đêm: query mở rộng thêm 1 ngày để bắt phần sang ngày hôm sau
+        var queryEnd = toTime < fromTime
+            ? date.AddDays(1).ToDateTime(toTime)
+            : dayEnd;
+
         var wtsLogs = await _db.WtsProductionLogs
             .Include(x => x.Worker)
-            .Include(x => x.KhPlanDetail)
-                .ThenInclude(d => d!.KhPlan)
+            .Include(x => x.KhPlanDetail).ThenInclude(d => d!.KhPlan)
             .Where(x => !x.IsVoided
                      && x.MachineUsed != null
-                     && x.StartTime < dayEnd
+                     && x.StartTime < queryEnd
                      && x.EndTime   > dayStart)
-            .AsNoTracking()
-            .ToListAsync();
+            .AsNoTracking().ToListAsync();
 
-        // Bỏ máy không có trong danh sách ThietBis (dữ liệu nhập tự do)
         var filteredWts = wtsLogs
-            .Where(x => allSoMay.Contains(x.MachineUsed!))
-            .ToList();
+            .Where(x => allSoMay.Contains(x.MachineUsed!)).ToList();
 
-        // ── 3. Downtime: chỉ lấy log có ThoiGianBatDau và overlap khung giờ ─
-        // Tận dụng index: (ThietBiId, ThoiGianBatDau, ThoiGianKetThuc)
+        // ── 3. Downtime logs ─────────────────────────────────────────────
         var downLogs = await _db.ThietBiChangeLogs
             .Where(x => allMachineIds.Contains(x.ThietBiId)
                      && x.ThoiGianBatDau != null
-                     && x.ThoiGianBatDau < dayEnd
+                     && x.ThoiGianBatDau < queryEnd
                      && (x.ThoiGianKetThuc == null || x.ThoiGianKetThuc > dayStart))
-            .AsNoTracking()
-            .ToListAsync();
+            .AsNoTracking().ToListAsync();
 
-        // ── 4. Group in-memory để tránh N+1 ───────────────────────────────
-        var wtsByMachine   = filteredWts.GroupBy(x => x.MachineUsed!, StringComparer.OrdinalIgnoreCase)
-                                         .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var downByMachine  = downLogs.GroupBy(x => x.ThietBiId)
-                                      .ToDictionary(g => g.Key, g => g.ToList());
+        // ── 4. Nghỉ giải lao — convert sang DateTime segments ────────────
+        var breakSegs = selectedCa != null
+            ? CaLamViecService.GetBreakSegments(selectedCa, dayStart, dayEnd)
+            : new List<(DateTime, DateTime)>();
 
-        // ── 5. Build per-machine rows ───────────────────────────────────────
+        var breakSegments = breakSegs.Select(b => new TimelineSegment
+        {
+            Start = b.Item1, End = b.Item2, Type = SegmentType.Break,
+        }).ToList();
+
+        // ── 5. Group in-memory ───────────────────────────────────────────
+        var wtsByMachine  = filteredWts
+            .GroupBy(x => x.MachineUsed!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var downByMachine = downLogs
+            .GroupBy(x => x.ThietBiId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // ── 6. Build per-machine rows ────────────────────────────────────
         var rows = new List<MachineRow>();
 
         foreach (var m in machines)
         {
-            var wtsForMachine  = wtsByMachine.TryGetValue(m.SoMay, out var w) ? w : new List<WtsProductionLog>();
-            var downForMachine = downByMachine.TryGetValue(m.ThietBiId, out var d) ? d : new List<ThietBiChangeLog>();
+            var wtsForMachine  = wtsByMachine.TryGetValue(m.SoMay, out var w) ? w : new();
+            var downForMachine = downByMachine.TryGetValue(m.ThietBiId, out var d) ? d : new();
 
             var wtsSegs = wtsForMachine.Select(x => new TimelineSegment
             {
@@ -96,31 +101,26 @@ public class MachineEfficiencyService
 
             var downSegs = downForMachine.Select(x =>
             {
-                var start = x.ThoiGianBatDau!.Value < dayStart ? dayStart : x.ThoiGianBatDau!.Value;
-                var end   = x.ThoiGianKetThuc.HasValue
-                                ? (x.ThoiGianKetThuc.Value > dayEnd ? dayEnd : x.ThoiGianKetThuc.Value)
-                                : dayEnd; // đang hỏng chưa khắc phục
-
-                var isMaintenance = ContainsIgnoreCase(x.NewValue, "bảo trì")
-                                 || ContainsIgnoreCase(x.OldValue, "bảo trì")
-                                 || ContainsIgnoreCase(x.Reason,   "bảo trì");
-
+                var s = x.ThoiGianBatDau!.Value < dayStart ? dayStart : x.ThoiGianBatDau!.Value;
+                var e = x.ThoiGianKetThuc.HasValue
+                    ? (x.ThoiGianKetThuc.Value > dayEnd ? dayEnd : x.ThoiGianKetThuc.Value)
+                    : dayEnd;
+                var isMaint = ContainsIc(x.NewValue, "bảo trì") || ContainsIc(x.OldValue, "bảo trì") || ContainsIc(x.Reason, "bảo trì");
                 return new TimelineSegment
                 {
-                    Start  = start,
-                    End    = end,
-                    Type   = isMaintenance ? SegmentType.Maintenance : SegmentType.Breakdown,
-                    Reason = x.Reason ?? "",
-                    IsOpen = !x.ThoiGianKetThuc.HasValue,
+                    Start = s, End = e,
+                    Type  = isMaint ? SegmentType.Maintenance : SegmentType.Breakdown,
+                    Reason = x.Reason ?? "", IsOpen = !x.ThoiGianKetThuc.HasValue,
                 };
             }).Where(s => s.End > s.Start).ToList();
 
-            var segments = BuildTimeline(dayStart, dayEnd, wtsSegs, downSegs);
+            var segments = BuildTimeline(dayStart, dayEnd, wtsSegs, downSegs, breakSegments);
 
-            var runMin  = segments.Where(s => s.Type == SegmentType.Running).Sum(s => s.Minutes);
-            var downMin = segments.Where(s => s.Type is SegmentType.Breakdown or SegmentType.Maintenance).Sum(s => s.Minutes);
+            var runMin   = segments.Where(s => s.Type == SegmentType.Running).Sum(s => s.Minutes);
+            var downMin  = segments.Where(s => s.Type is SegmentType.Breakdown or SegmentType.Maintenance).Sum(s => s.Minutes);
+            var breakMin = segments.Where(s => s.Type == SegmentType.Break).Sum(s => s.Minutes);
             var totalMin = (dayEnd - dayStart).TotalMinutes;
-            var idleMin  = Math.Max(0, totalMin - runMin - downMin);
+            var idleMin  = Math.Max(0, totalMin - runMin - downMin - breakMin);
 
             rows.Add(new MachineRow
             {
@@ -130,6 +130,7 @@ public class MachineEfficiencyService
                 TotalMinutes = totalMin,
                 RunMinutes   = runMin,
                 DownMinutes  = downMin,
+                BreakMinutes = breakMin,
                 IdleMinutes  = idleMin,
             });
         }
@@ -143,43 +144,59 @@ public class MachineEfficiencyService
             TotalMinutes = rows.Sum(r => r.TotalMinutes),
             RunMinutes   = rows.Sum(r => r.RunMinutes),
             DownMinutes  = rows.Sum(r => r.DownMinutes),
+            BreakMinutes = rows.Sum(r => r.BreakMinutes),
             IdleMinutes  = rows.Sum(r => r.IdleMinutes),
         };
     }
 
     /// <summary>
-    /// Merge WTS + downtime segments, fill khoảng trống bằng Idle.
-    /// Ưu tiên: Downtime > WTS > Idle (downtime đưa vào trước để override khi overlap)
+    /// Priority: Downtime > Break > Running > Idle
+    /// Break segments áp dụng toàn bộ máy (không phân biệt từng máy).
     /// </summary>
     private static List<TimelineSegment> BuildTimeline(
         DateTime dayStart, DateTime dayEnd,
         List<TimelineSegment> wts,
-        List<TimelineSegment> down)
+        List<TimelineSegment> down,
+        List<TimelineSegment> breaks)
     {
-        // Downtime có độ ưu tiên cao hơn WTS nếu overlap
-        // Strategy: đưa downtime vào trước, sau đó chen WTS vào phần không bị downtime che
-        var blocked = down.OrderBy(s => s.Start).ToList();
+        // 1. Downtime che WTS
+        var blockedByDown = down.OrderBy(s => s.Start).ToList();
+        var effectiveWts  = new List<TimelineSegment>();
 
-        var effective = new List<TimelineSegment>();
-
-        // Trải WTS theo khoảng không bị downtime che
         foreach (var wSeg in wts.OrderBy(s => s.Start))
         {
             var cursor = wSeg.Start;
-            foreach (var dSeg in blocked.Where(d => d.End > wSeg.Start && d.Start < wSeg.End))
+            foreach (var dSeg in blockedByDown.Where(d => d.End > wSeg.Start && d.Start < wSeg.End))
             {
                 if (dSeg.Start > cursor)
-                    effective.Add(wSeg with { Start = cursor, End = dSeg.Start });
-                cursor = dSeg.End > cursor ? dSeg.End : cursor;
+                    effectiveWts.Add(wSeg with { Start = cursor, End = dSeg.Start });
+                if (dSeg.End > cursor) cursor = dSeg.End;
             }
             if (cursor < wSeg.End)
-                effective.Add(wSeg with { Start = cursor, End = wSeg.End });
+                effectiveWts.Add(wSeg with { Start = cursor, End = wSeg.End });
         }
 
-        // Gộp tất cả: effective WTS + downtime, sort
-        var all = effective.Concat(down).OrderBy(s => s.Start).ToList();
+        // 2. Break che WTS (nghỉ giải lao override running)
+        var blockedByBreak = breaks.OrderBy(s => s.Start).ToList();
+        var effectiveWts2  = new List<TimelineSegment>();
 
-        // Fill idle vào khoảng trống
+        foreach (var wSeg in effectiveWts.OrderBy(s => s.Start))
+        {
+            var cursor = wSeg.Start;
+            foreach (var bSeg in blockedByBreak.Where(b => b.End > wSeg.Start && b.Start < wSeg.End))
+            {
+                if (bSeg.Start > cursor)
+                    effectiveWts2.Add(wSeg with { Start = cursor, End = bSeg.Start });
+                if (bSeg.End > cursor) cursor = bSeg.End;
+            }
+            if (cursor < wSeg.End)
+                effectiveWts2.Add(wSeg with { Start = cursor, End = wSeg.End });
+        }
+
+        // 3. Merge tất cả (downtime > break > wts) rồi fill idle
+        var all = effectiveWts2.Concat(down).Concat(breaks)
+                               .OrderBy(s => s.Start).ToList();
+
         var result = new List<TimelineSegment>();
         var pos = dayStart;
 
@@ -190,11 +207,7 @@ public class MachineEfficiencyService
 
             var sStart = seg.Start < pos    ? pos    : seg.Start;
             var sEnd   = seg.End   > dayEnd ? dayEnd : seg.End;
-            if (sEnd > sStart)
-            {
-                result.Add(seg with { Start = sStart, End = sEnd });
-                pos = sEnd;
-            }
+            if (sEnd > sStart) { result.Add(seg with { Start = sStart, End = sEnd }); pos = sEnd; }
         }
 
         if (pos < dayEnd)
@@ -203,49 +216,48 @@ public class MachineEfficiencyService
         return result;
     }
 
-    private static bool ContainsIgnoreCase(string? source, string value)
-        => source != null && source.Contains(value, StringComparison.OrdinalIgnoreCase);
+    private static bool ContainsIc(string? s, string v)
+        => s != null && s.Contains(v, StringComparison.OrdinalIgnoreCase);
 
-    private static MachineEfficiencyResult EmptyResult(DateOnly date, TimeOnly from, TimeOnly to)
-        => new() { Date = date, FromTime = from, ToTime = to };
+    private static MachineEfficiencyResult EmptyResult(DateOnly d, TimeOnly f, TimeOnly t)
+        => new() { Date = d, FromTime = f, ToTime = t };
 }
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
-public enum SegmentType { Running, Breakdown, Maintenance, Idle }
+public enum SegmentType { Running, Breakdown, Maintenance, Break, Idle }
 
 public record TimelineSegment
 {
     public DateTime    Start         { get; init; }
     public DateTime    End           { get; init; }
     public SegmentType Type          { get; init; }
-    // Running
     public string      WorkerName    { get; init; } = "";
     public int         WorkerId      { get; init; }
     public string      NC            { get; init; } = "";
     public string      PurchaseOrder { get; init; } = "";
     public string      PartNo        { get; init; } = "";
     public long        WtsLogId      { get; init; }
-    // Downtime
     public string      Reason        { get; init; } = "";
     public bool        IsOpen        { get; init; }
-
     public double Minutes => (End - Start).TotalMinutes;
 }
 
 public class MachineRow
 {
-    public ThietBi               Machine      { get; set; } = null!;
-    public List<TimelineSegment> Segments     { get; set; } = new();
-    public List<WtsProductionLog> WtsDetails  { get; set; } = new();
-    public double TotalMinutes { get; set; }
-    public double RunMinutes   { get; set; }
-    public double DownMinutes  { get; set; }
-    public double IdleMinutes  { get; set; }
+    public ThietBi                Machine      { get; set; } = null!;
+    public List<TimelineSegment>  Segments     { get; set; } = new();
+    public List<WtsProductionLog> WtsDetails   { get; set; } = new();
+    public double TotalMinutes  { get; set; }
+    public double RunMinutes    { get; set; }
+    public double DownMinutes   { get; set; }
+    public double BreakMinutes  { get; set; }
+    public double IdleMinutes   { get; set; }
 
-    public double RunPct  => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes  / TotalMinutes * 100, 1);
-    public double DownPct => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes / TotalMinutes * 100, 1);
-    public double IdlePct => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes / TotalMinutes * 100, 1);
+    public double RunPct   => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes   / TotalMinutes * 100, 1);
+    public double DownPct  => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes  / TotalMinutes * 100, 1);
+    public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
+    public double IdlePct  => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes  / TotalMinutes * 100, 1);
 }
 
 public class MachineEfficiencyResult
@@ -254,12 +266,14 @@ public class MachineEfficiencyResult
     public TimeOnly         FromTime     { get; set; }
     public TimeOnly         ToTime       { get; set; }
     public List<MachineRow> Rows         { get; set; } = new();
-    public double TotalMinutes { get; set; }
-    public double RunMinutes   { get; set; }
-    public double DownMinutes  { get; set; }
-    public double IdleMinutes  { get; set; }
+    public double TotalMinutes  { get; set; }
+    public double RunMinutes    { get; set; }
+    public double DownMinutes   { get; set; }
+    public double BreakMinutes  { get; set; }
+    public double IdleMinutes   { get; set; }
 
-    public double RunPct  => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes  / TotalMinutes * 100, 1);
-    public double DownPct => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes / TotalMinutes * 100, 1);
-    public double IdlePct => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes / TotalMinutes * 100, 1);
+    public double RunPct   => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes   / TotalMinutes * 100, 1);
+    public double DownPct  => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes  / TotalMinutes * 100, 1);
+    public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
+    public double IdlePct  => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes  / TotalMinutes * 100, 1);
 }

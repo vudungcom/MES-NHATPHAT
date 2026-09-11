@@ -62,6 +62,7 @@ builder.Services.AddScoped<KhoVatLieuService>();
 builder.Services.AddScoped<PartMasterListService>();
 builder.Services.AddScoped<DaoService>();
 builder.Services.AddScoped<MachineEfficiencyService>();
+builder.Services.AddScoped<CaLamViecService>();
 
 var app = builder.Build();
 

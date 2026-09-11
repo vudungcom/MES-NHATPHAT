@@ -1,781 +1,1644 @@
 @page "/hieu-suat-may"
+
 @attribute [Authorize]
+
 @rendermode InteractiveServer
+
 @using MES.Web.Data.Entities
+
 @using MES.Web.Services
+
 @inject MachineEfficiencyService EffSvc
+
+@inject CaLamViecService CaSvc
 
 <PageTitle>Hiệu suất máy - MES</PageTitle>
 
 @* ── CSS chuẩn từ Index_PartMaster ── *@
+
 <style>
+
     .col-filter-wrap { position: relative; display: inline-block; }
+
     .col-filter-btn {
+
         background: none; border: none; padding: 0 2px;
+
         cursor: pointer; color: #555; font-size: 0.7rem;
+
         vertical-align: middle;
+
     }
+
     .col-filter-btn.active { color: #0d6efd; }
+
     .col-filter-dropdown {
+
         position: fixed; z-index: 9999;
+
         background: #fff; border: 1px solid #ccc; border-radius: 4px;
+
         min-width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+
         padding: 8px 0;
+
     }
+
     .col-filter-dropdown .section { padding: 4px 10px; }
+
     .col-filter-dropdown .sort-btn {
+
         display: block; width: 100%; text-align: left;
+
         background: none; border: none; padding: 4px 10px;
+
         font-size: 0.82rem; cursor: pointer;
+
     }
+
     .col-filter-dropdown .sort-btn:hover { background: #f0f0f0; }
+
     .col-filter-dropdown .divider { border-top: 1px solid #eee; margin: 4px 0; }
+
     .col-filter-dropdown .search-box {
+
         width: calc(100% - 20px); margin: 4px 10px;
+
         padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px;
+
         font-size: 0.8rem;
+
     }
+
     .col-filter-dropdown .value-list {
+
         max-height: 200px; overflow-y: auto; padding: 2px 10px;
+
     }
+
     .col-filter-dropdown .value-list label {
+
         display: block; font-size: 0.8rem; cursor: pointer; padding: 1px 0;
+
     }
+
     .col-filter-dropdown .footer {
+
         padding: 6px 10px; display: flex; gap: 6px;
+
         justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px;
+
     }
 
     .timeline-bar { position:relative; height:22px; min-width:500px; border-radius:3px; overflow:hidden; background:#e9ecef; }
+
     .timeline-seg { position:absolute; height:100%; top:0; cursor:pointer; transition:opacity .15s; }
+
     .timeline-seg:hover { opacity:.78; }
+
     .seg-running      { background:#198754; }
+
     .seg-breakdown    { background:#dc3545; }
+
     .seg-maintenance  { background:#ffc107; }
+
     .seg-idle         { background:#ced4da; }
+    .seg-break        { background:#d8b4fe; }
+
     .timeline-ruler   { position:relative; min-width:500px; height:16px; }
+
     .ruler-tick       { position:absolute; transform:translateX(-50%); font-size:.68rem; color:#6c757d; white-space:nowrap; }
+
     .machine-row-detail { background:#f8f9fa; border-left:3px solid #0d6efd; }
+
     .legend-dot       { width:11px; height:11px; border-radius:50%; display:inline-block; }
+
     .shift-btn        { font-size:.78rem; }
+
     .tbl-machine th, .tbl-machine td { vertical-align:middle; padding:4px 8px; font-size:.82rem; }
+
     .row-overlap td:first-child { border-left: 3px solid #dc3545 !important; }
+
     .overlap-panel { border-left: 4px solid #dc3545; }
+
     .overlap-item  { font-size:.8rem; padding:4px 0; border-bottom:1px solid #f5c2c7; }
+
     .overlap-item:last-child { border-bottom:none; }
+
 </style>
 
 @* ── Header + Pie tổng ── *@
+
 <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+
     <div>
+
         <h1 class="mb-1">Hiệu suất máy</h1>
+
         <p class="text-muted small mb-0">
+
             Click <i class="bi bi-funnel"></i> trên header để lọc/sort &nbsp;·&nbsp;
+
             <span class="legend-dot bg-success me-1"></span>Chạy &nbsp;
+
             <span class="legend-dot bg-danger me-1"></span>Hỏng &nbsp;
+
             <span class="legend-dot" style="background:#ffc107;"></span>&nbsp;Bảo trì &nbsp;
+
+            <span class="legend-dot" style="background:#d8b4fe;"></span>&nbsp;Nghỉ &nbsp;
             <span class="legend-dot bg-secondary me-1"></span>Rảnh
+
         </p>
+
     </div>
+
     @if (_result != null)
+
     {
+
         <div class="card shadow-sm" style="min-width:200px;">
+
             <div class="card-body p-2 text-center">
+
                 <div class="small fw-semibold text-muted mb-1">Tổng hiệu suất — @_result.Rows.Count máy</div>
-                @BuildPieSvg(_result.RunPct, _result.DownPct, _result.IdlePct, 90)
+
+                @BuildPieSvg(_result.RunPct, _result.DownPct, _result.BreakPct, _result.IdlePct, 90)
+
                 <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap" style="font-size:.7rem;">
+
                     <span><span class="legend-dot bg-success me-1"></span>Chạy @_result.RunPct%</span>
+
                     <span><span class="legend-dot bg-danger me-1"></span>Dừng @_result.DownPct%</span>
+
+                    @if (_result.BreakPct > 0) { <span><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ @_result.BreakPct%</span> }
+
                     <span><span class="legend-dot bg-secondary me-1"></span>Rảnh @_result.IdlePct%</span>
+
                 </div>
+
             </div>
+
         </div>
+
     }
+
 </div>
 
 @* ── Filter bar: ngày + ca ── *@
+
 <div class="card mb-3">
+
     <div class="card-body py-2">
+
         <div class="row g-2 align-items-end">
+
             <div class="col-auto">
+
                 <label class="form-label small mb-0 fw-semibold">Ngày</label>
+
                 <input type="date" class="form-control form-control-sm" style="width:150px;"
+
                        @bind="_selectedDate" @bind:after="OnDateChanged" />
+
             </div>
+
             <div class="col-auto">
+
                 <label class="form-label small mb-0 fw-semibold">Ca làm việc</label>
-                <div class="d-flex gap-1">
-                    <button class="btn btn-sm shift-btn @_shiftCls0" @onclick="SetShiftHC">Ca HC (7–17h)</button>
-                    <button class="btn btn-sm shift-btn @_shiftCls1" @onclick="SetShift1">Ca 1 (6–18h)</button>
-                    <button class="btn btn-sm shift-btn @_shiftCls2" @onclick="SetShiftEvening">Ca chiều (12–20h)</button>
-                    <button class="btn btn-sm shift-btn @_shiftCls3" @onclick="SetShiftFull">Toàn ngày</button>
-                </div>
-            </div>
-            <div class="col-auto ms-2 border-start ps-3">
-                <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
-                    <input class="form-check-input mt-0" type="checkbox" id="chkOverlap"
-                           @bind="_showOverlapWarnings" />
-                    <label class="form-check-label small fw-semibold" for="chkOverlap">
-                        Cảnh báo trùng máy
-                        <i class="bi bi-info-circle text-muted ms-1"
-                           title="Phát hiện khoảng thời gian 2 công nhân cùng đăng ký dùng 1 máy trong WTS. Về lý thuyết 1 máy không thể chạy 2 việc cùng lúc — nếu xảy ra là có lỗi nhập liệu cần kiểm tra."></i>
-                    </label>
-                    @if (_showOverlapWarnings && _overlapWarnings.Count > 0)
+
+                <div class="d-flex gap-1 flex-wrap">
+
+                    @* Nút ca từ DB *@
+
+                    @foreach (var ca in _caList)
+
                     {
-                        <span class="badge bg-danger">@_overlapWarnings.Count lỗi</span>
+
+                        var caLocal = ca;
+
+                        var caBtn   = CaBtnCls(caLocal.CaId);
+                        <button class="btn btn-sm shift-btn @caBtn"
+                                @onclick="() => SelectCa(caLocal)">
+
+                            @caLocal.TenCa
+
+                            <span class="ms-1 opacity-75" style="font-size:.7rem;">(@caLocal.Label)</span>
+
+                        </button>
+
                     }
-                </div>
-            </div>
-            @if (HasActiveColFilters)
-            {
-                <div class="col-auto">
-                    <button class="btn btn-sm btn-outline-danger" @onclick="ClearAllColFilters" title="Xóa tất cả filter">
-                        <i class="bi bi-x-circle me-1"></i>Xóa filter
+
+                    @* Nút Toàn ngày luôn hiện *@
+
+                    <button class="btn btn-sm shift-btn @_fullDayCls"
+
+                            @onclick="SetShiftFull">
+
+                        Toàn ngày
+
                     </button>
+
+                    @* Nút tùy chỉnh *@
+
+                    <button class="btn btn-sm shift-btn @_customRangeCls"
+
+                            @onclick="ToggleCustomRange"
+
+                            title="Tự chọn khoảng giờ hiển thị">
+
+                        <i class="bi bi-sliders me-1"></i>Tùy chỉnh
+
+                    </button>
+
                 </div>
-            }
-            @if (_loading)
+
+            </div>
+
+            @* Custom time range picker *@
+
+            @if (_customRange)
+
             {
-                <div class="col-auto">
-                    <span class="text-muted small">
-                        <span class="spinner-border spinner-border-sm me-1"></span>Đang tải...
-                    </span>
+
+                <div class="col-auto border-start ps-3">
+
+                    <label class="form-label small mb-0 fw-semibold">Khoảng giờ hiển thị</label>
+
+                    <div class="d-flex align-items-center gap-2">
+
+                        <input type="time" class="form-control form-control-sm" style="width:108px;"
+
+                               value="@_fromTime.ToString("HH:mm")"
+
+                               @onchange="e => SetCustomFrom(e.Value?.ToString())" />
+
+                        <span class="text-muted small">–</span>
+
+                        <input type="time" class="form-control form-control-sm" style="width:108px;"
+
+                               value="@_toTime.ToString("HH:mm")"
+
+                               @onchange="e => SetCustomTo(e.Value?.ToString())" />
+
+                        <button class="btn btn-sm btn-primary" @onclick="ApplyCustomRange">Áp dụng</button>
+
+                    </div>
+
                 </div>
+
             }
+
+            <div class="col-auto ms-2 border-start ps-3">
+
+                <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
+
+                    <input class="form-check-input mt-0" type="checkbox" id="chkOverlap"
+
+                           @bind="_showOverlapWarnings" />
+
+                    <label class="form-check-label small fw-semibold" for="chkOverlap">
+
+                        Cảnh báo trùng máy
+
+                        <i class="bi bi-info-circle text-muted ms-1"
+
+                           title="Phát hiện khoảng thời gian 2 công nhân cùng đăng ký dùng 1 máy trong WTS. Về lý thuyết 1 máy không thể chạy 2 việc cùng lúc — nếu xảy ra là có lỗi nhập liệu cần kiểm tra."></i>
+
+                    </label>
+
+                    @if (_showOverlapWarnings && _overlapWarnings.Count > 0)
+
+                    {
+
+                        <span class="badge bg-danger">@_overlapWarnings.Count lỗi</span>
+
+                    }
+
+                </div>
+
+            </div>
+
+            @if (HasActiveColFilters)
+
+            {
+
+                <div class="col-auto">
+
+                    <button class="btn btn-sm btn-outline-danger" @onclick="ClearAllColFilters" title="Xóa tất cả filter">
+
+                        <i class="bi bi-x-circle me-1"></i>Xóa filter
+
+                    </button>
+
+                </div>
+
+            }
+
+            @if (_loading)
+
+            {
+
+                <div class="col-auto">
+
+                    <span class="text-muted small">
+
+                        <span class="spinner-border spinner-border-sm me-1"></span>Đang tải...
+
+                    </span>
+
+                </div>
+
+            }
+
         </div>
+
     </div>
+
 </div>
 
 @* ── Panel cảnh báo trùng máy ── *@
+
 @if (_showOverlapWarnings && _overlapWarnings.Count > 0)
+
 {
+
     <div class="card mb-3 border-danger overlap-panel">
+
         <div class="card-header py-2 bg-danger text-white d-flex justify-content-between align-items-center">
+
             <span class="fw-semibold">
+
                 <i class="bi bi-exclamation-triangle-fill me-2"></i>
+
                 Phát hiện @_overlapWarnings.Count trường hợp trùng thời gian sử dụng máy
+
             </span>
+
             <span class="small opacity-75">1 máy không thể chạy 2 việc cùng lúc — kiểm tra lại WTS</span>
+
         </div>
+
         <div class="card-body py-2 px-3">
+
             @foreach (var w in _overlapWarnings)
+
             {
+
                 <div class="overlap-item">
+
                     <span class="badge bg-danger me-2">@w.SoMay</span>
+
                     <span class="fw-semibold">@w.Start.ToString("HH:mm")–@w.End.ToString("HH:mm")</span>
+
                     <span class="text-muted ms-2">(@((int)w.OverlapMinutes) phút)</span>
+
                     <span class="ms-3">
+
                         <i class="bi bi-person-fill text-primary me-1"></i>@w.Worker1
+
                         <span class="text-muted mx-1">&amp;</span>
+
                         <i class="bi bi-person-fill text-warning me-1"></i>@w.Worker2
+
                     </span>
+
                     @if (!string.IsNullOrEmpty(w.NC1) || !string.IsNullOrEmpty(w.NC2))
+
                     {
+
                         <span class="text-muted ms-2 small">(NC: @w.NC1 / @w.NC2)</span>
+
                     }
+
                 </div>
+
             }
+
         </div>
+
     </div>
+
 }
 
 @* ── Bảng Gantt ── *@
+
 @if (_result != null)
+
 {
+
     var rows = Filtered.ToList();
+
     var totalMinutes = (int)(_toTime - _fromTime).TotalMinutes;
+
     if (totalMinutes <= 0) { totalMinutes = 1; }
 
     <div class="card" @onclick="CloseAllDropdowns">
+
         <div class="card-body p-0">
+
             <div class="table-responsive">
+
                 <table class="table table-sm table-bordered align-middle mb-0 tbl-machine">
+
                     <thead class="table-light">
+
                         <tr>
+
                             <th style="width:80px;">@ColHeader("SoMay", "Số máy")</th>
+
                             <th style="width:80px;">@ColHeader("BoPhan", "Nhóm")</th>
+
                             <th style="width:72px; text-align:right;" class="text-success">Chạy(ph)</th>
+
                             <th style="width:72px; text-align:right;" class="text-danger">Dừng(ph)</th>
+
+                            <th style="width:68px; text-align:right; color:#9333ea;">Nghỉ(ph)</th>
+
                             <th style="width:72px; text-align:right;" class="text-secondary">Rảnh(ph)</th>
+
                             <th>
+
                                 <div class="timeline-ruler">
+
                                     @for (int h = _fromTime.Hour; h <= _toTime.Hour; h++)
+
                                     {
+
                                         var spanH = Math.Max(1, _toTime.Hour - _fromTime.Hour);
+
                                         var pct   = (double)(h - _fromTime.Hour) / spanH * 100.0;
+
                                         <span class="ruler-tick" style="left:@pct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)%;">@h<sup>h</sup></span>
+
                                     }
+
                                 </div>
+
                                 <span class="small text-muted fw-normal">
+
                                     Timeline @_fromTime.ToString("HH:mm")–@_toTime.ToString("HH:mm")
+
                                     <span class="ms-2 text-muted">(@rows.Count máy)</span>
+
                                 </span>
+
                             </th>
+
                             <th style="width:36px;"></th>
+
                         </tr>
+
                     </thead>
+
                     <tbody>
+
                         @foreach (var row in rows)
+
                         {
+
                             var isExpanded   = _expandedMachines.Contains(row.Machine.ThietBiId);
+
                             var hasOverlap   = _showOverlapWarnings && _overlapWarnings.Any(w => w.SoMay == row.Machine.SoMay);
+
                             var overlapClass = hasOverlap ? "row-overlap" : "";
+
                             <tr @key="row.Machine.ThietBiId" class="@overlapClass">
+
                                 <td class="fw-semibold"><code>@row.Machine.SoMay</code></td>
+
                                 <td><span class="badge bg-secondary">@row.Machine.BoPhan</span></td>
+
                                 <td style="text-align:right;" class="text-success fw-semibold">@((int)row.RunMinutes)</td>
+
                                 <td style="text-align:right;" class="text-danger fw-semibold">@((int)row.DownMinutes)</td>
+
+                                <td style="text-align:right; color:#9333ea;">@((int)row.BreakMinutes)</td>
+
                                 <td style="text-align:right;" class="text-secondary">@((int)row.IdleMinutes)</td>
+
                                 <td>
+
                                     <div class="timeline-bar">
+
                                         @foreach (var seg in row.Segments)
+
                                         {
+
                                             var fromDt   = _selectedDate.ToDateTime(_fromTime);
+
                                             var leftPct  = Math.Max(0, (seg.Start - fromDt).TotalMinutes / totalMinutes * 100.0);
+
                                             var widthPct = seg.Minutes / totalMinutes * 100.0;
+
                                             if (widthPct < 0.1) { continue; }
+
                                             var segCss = seg.Type switch
+
                                             {
+
                                                 SegmentType.Running     => "seg-running",
+
                                                 SegmentType.Breakdown   => "seg-breakdown",
+
                                                 SegmentType.Maintenance => "seg-maintenance",
+
+                                                SegmentType.Break       => "seg-break",
+
                                                 _                       => "seg-idle",
+
                                             };
+
                                             var tip = seg.Type switch
+
                                             {
+
                                                 SegmentType.Running     => $"{seg.Start:HH:mm}–{seg.End:HH:mm} | {seg.WorkerName} | NC:{seg.NC} | PO:{seg.PurchaseOrder}",
+
                                                 SegmentType.Breakdown   => $"Hỏng {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen ? " (đang hỏng)" : "")} | {seg.Reason}",
+
                                                 SegmentType.Maintenance => $"Bảo trì {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen ? " (đang bảo trì)" : "")} | {seg.Reason}",
+
+                                                SegmentType.Break       => $"Nghỉ giải lao {seg.Start:HH:mm}–{seg.End:HH:mm}",
+
                                                 _                       => $"Rảnh {seg.Start:HH:mm}–{seg.End:HH:mm}",
+
                                             };
+
                                             <div class="timeline-seg @segCss"
+
                                                  style="left:@leftPct.ToString("F2",System.Globalization.CultureInfo.InvariantCulture)%;width:@widthPct.ToString("F2",System.Globalization.CultureInfo.InvariantCulture)%;"
+
                                                  title="@tip">
+
                                             </div>
+
                                         }
+
                                     </div>
+
                                 </td>
+
                                 <td class="text-center" @onclick:stopPropagation="true">
+
                                     <button class="btn btn-sm btn-link p-0"
+
                                             @onclick="() => ToggleExpand(row.Machine.ThietBiId)"
+
                                             title="Chi tiết">
+
                                         <i class="bi @(isExpanded ? "bi-chevron-up text-primary" : "bi-chevron-down")"></i>
+
                                     </button>
+
                                 </td>
+
                             </tr>
+
                             @if (isExpanded)
+
                             {
+
                                 <tr @key="@($"det_{row.Machine.ThietBiId}")" class="machine-row-detail">
+
                                     <td colspan="8" class="p-3">
+
                                         <div class="row g-3">
+
                                             <div class="col-md-7">
+
                                                 <div class="small fw-semibold text-muted mb-1">
+
                                                     <i class="bi bi-clock-history me-1"></i>WTS — @row.Machine.SoMay @row.Machine.TenMay
+
                                                 </div>
+
                                                 @if (!row.WtsDetails.Any())
+
                                                 {
+
                                                     <div class="text-muted small fst-italic">Không có WTS log trong khung giờ này.</div>
+
                                                 }
+
                                                 else
+
                                                 {
+
                                                     <table class="table table-sm table-bordered mb-0" style="font-size:.78rem;">
+
                                                         <thead class="table-light">
+
                                                             <tr>
+
                                                                 <th>Công nhân</th><th>Bắt đầu</th><th>Kết thúc</th>
+
                                                                 <th class="text-end">Phút</th><th>NC</th><th>PO / PartNo</th>
+
                                                             </tr>
+
                                                         </thead>
+
                                                         <tbody>
+
                                                             @foreach (var log in row.WtsDetails.OrderBy(x => x.StartTime))
+
                                                             {
+
                                                                 <tr @key="log.WtsLogId">
+
                                                                     <td>@(log.Worker?.FullName ?? "?")</td>
+
                                                                     <td>@log.StartTime.ToString("HH:mm")</td>
+
                                                                     <td>@log.EndTime.ToString("HH:mm")</td>
+
                                                                     <td class="text-end">@((int)(log.EndTime - log.StartTime).TotalMinutes)</td>
+
                                                                     <td>@(log.NC ?? "—")</td>
+
                                                                     <td class="text-muted">
+
                                                                         @(log.KhPlanDetail?.PurchaseOrder ?? "")
+
                                                                         @if (!string.IsNullOrEmpty(log.KhPlanDetail?.PartNo))
+
                                                                         {
+
                                                                             <span class="ms-1 badge bg-light text-dark border">@log.KhPlanDetail.PartNo</span>
+
                                                                         }
+
                                                                     </td>
+
                                                                 </tr>
+
                                                             }
+
                                                         </tbody>
+
                                                     </table>
+
                                                 }
+
                                             </div>
+
                                             <div class="col-md-2 text-center">
+
                                                 <div class="small fw-semibold text-muted mb-1">
+
                                                     <i class="bi bi-pie-chart me-1"></i>Hiệu suất
+
                                                 </div>
-                                                @BuildPieSvg(row.RunPct, row.DownPct, row.IdlePct, 70)
+
+                                                @BuildPieSvg(row.RunPct, row.DownPct, row.BreakPct, row.IdlePct, 70)
+
                                                 <div class="mt-1" style="font-size:.72rem;">
+
                                                     <div><span class="legend-dot bg-success me-1"></span>Chạy <b>@row.RunPct%</b></div>
+
                                                     <div><span class="legend-dot bg-danger me-1"></span>Dừng <b>@row.DownPct%</b></div>
+
+                                                    @if (row.BreakPct > 0) { <div><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ <b>@row.BreakPct%</b></div> }
+
                                                     <div><span class="legend-dot bg-secondary me-1"></span>Rảnh <b>@row.IdlePct%</b></div>
+
                                                 </div>
+
                                             </div>
+
                                             <div class="col-md-3">
+
                                                 <div class="small fw-semibold text-muted mb-1">
+
                                                     <i class="bi bi-cpu me-1"></i>Thông tin máy
+
                                                 </div>
+
                                                 <div style="font-size:.78rem;">
+
                                                     <div><span class="text-muted">Số máy:</span> <b>@row.Machine.SoMay</b></div>
+
                                                     @if (!string.IsNullOrEmpty(row.Machine.TenMay))  { <div><span class="text-muted">Tên:</span> @row.Machine.TenMay</div> }
+
                                                     @if (!string.IsNullOrEmpty(row.Machine.LoaiMay)) { <div><span class="text-muted">Loại:</span> @row.Machine.LoaiMay</div> }
+
                                                     <div class="mt-1">
+
                                                         @if (row.Machine.TrangThai == "Hoạt động")
+
                                                         {
+
                                                             <span class="badge bg-success">Hoạt động</span>
+
                                                         }
+
                                                         else
+
                                                         {
+
                                                             <span class="badge bg-danger">@row.Machine.TrangThai</span>
+
                                                             @if (row.Machine.ThoiGianDungTu.HasValue)
+
                                                             {
+
                                                                 <div class="text-muted" style="font-size:.7rem;">
+
                                                                     Từ @row.Machine.ThoiGianDungTu.Value.ToString("HH:mm dd/MM")
+
                                                                 </div>
+
                                                             }
+
                                                         }
+
                                                     </div>
+
                                                 </div>
+
                                             </div>
+
                                         </div>
+
                                     </td>
+
                                 </tr>
+
                             }
+
                         }
+
                         @if (!rows.Any())
+
                         {
+
                             <tr>
+
                                 <td colspan="8" class="text-center text-muted py-3 fst-italic">
+
                                     Không có máy nào khớp filter.
+
                                 </td>
+
                             </tr>
+
                         }
+
                     </tbody>
+
                 </table>
+
             </div>
+
         </div>
+
     </div>
+
 }
+
 else if (!_loading)
+
 {
+
     <div class="alert alert-info"><i class="bi bi-info-circle me-1"></i>Chọn ngày để xem hiệu suất máy.</div>
+
 }
 
 @* ── Dropdown filter nổi — render ngoài table, position:fixed ── *@
+
 @if (_openDropdown != null && _colDefs.TryGetValue(_openDropdown, out var colDef))
+
 {
+
     <div class="col-filter-dropdown"
+
          style="top:@(_ddTop)px; left:@(_ddLeft)px;"
+
          @onclick:stopPropagation="true">
+
         <div class="section">
+
             <button class="sort-btn" @onclick="() => SetSort(_openDropdown!, true)">
+
                 <i class="bi bi-sort-alpha-down"></i> Sort A → Z
+
                 @if (_sortCol == _openDropdown && _sortAsc) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+
             </button>
+
             <button class="sort-btn" @onclick="() => SetSort(_openDropdown!, false)">
+
                 <i class="bi bi-sort-alpha-up"></i> Sort Z → A
+
                 @if (_sortCol == _openDropdown && !_sortAsc) { <i class="bi bi-check2 ms-1 text-primary"></i> }
+
             </button>
+
         </div>
+
         <div class="divider"></div>
+
         @if (colDef.IsActive)
+
         {
+
             <button class="sort-btn text-danger" @onclick="() => ClearColFilter(_openDropdown!)">
+
                 <i class="bi bi-x-circle"></i> Xóa filter cột này
+
             </button>
+
             <div class="divider"></div>
+
         }
+
         <input class="search-box" placeholder="Tìm trong danh sách..."
+
                @bind="colDef.SearchText" @bind:event="oninput" />
+
         <div class="value-list">
+
             @{
+
                 var visibleVals = colDef.AllValues
+
                     .Where(v => string.IsNullOrEmpty(colDef.SearchText)
+
                              || v.Contains(colDef.SearchText, StringComparison.OrdinalIgnoreCase))
+
                     .ToList();
+
                 bool allSel = visibleVals.All(v => colDef.IsChecked(v));
+
             }
+
             <label>
+
                 <input type="checkbox" checked="@allSel"
+
                        @onchange="e => ToggleSelectAll(colDef, visibleVals, (bool)(e.Value ?? false))" />
+
                 <strong>(Chọn tất cả)</strong>
+
             </label>
+
             @foreach (var val in visibleVals)
+
             {
+
                 var v = val;
+
                 <label>
+
                     <input type="checkbox" checked="@colDef.IsChecked(v)"
+
                            @onchange="e => ToggleColValue(colDef, v, (bool)(e.Value ?? false))" />
+
                     @v
+
                 </label>
+
             }
+
         </div>
+
         <div class="footer">
+
             <button class="btn btn-sm btn-outline-secondary" @onclick="CloseAllDropdowns">Hủy</button>
+
             <button class="btn btn-sm btn-primary" @onclick="() => ApplyColFilter(_openDropdown!)">OK</button>
+
         </div>
+
     </div>
+
 }
 
 @code {
+
     // ── State ──────────────────────────────────────────────────────────────
+
     private DateOnly _selectedDate = DateOnly.FromDateTime(DateTime.Today);
+
     private TimeOnly _fromTime     = new(7, 0);
+
     private TimeOnly _toTime       = new(17, 0);
-    private int      _activeShift  = 0;
+
     private bool     _loading      = false;
 
+    // Ca làm việc từ DB
+
+    private List<CaLamViec> _caList       = new();
+
+    private int              _selectedCaId = -2; // -1=Toàn ngày, -2=chưa chọn, >0=CaId
+
+    // Custom range
+
+    private bool     _customRange  = false;
+
+    private TimeOnly _customFrom   = new(7, 0);
+
+    private TimeOnly _customTo     = new(17, 0);
+
     private MachineEfficiencyResult? _result;
+
     private HashSet<int> _expandedMachines = new();
 
     // Overlap detection
+
     private bool _showOverlapWarnings = false;
+
     private List<OverlapWarning> _overlapWarnings = new();
 
     // Col filter state
+
     private Dictionary<string, ColFilterDef> _colDefs = new();
+
     private string?  _openDropdown;
+
     private double   _ddTop, _ddLeft;
+
     private string?  _sortCol;
+
     private bool     _sortAsc = true;
 
-    // ── Shift class helpers (tránh nested quotes trong markup) ─────────────
-    private string _shiftCls0 => _activeShift == 0 ? "btn-primary" : "btn-outline-secondary";
-    private string _shiftCls1 => _activeShift == 1 ? "btn-primary" : "btn-outline-secondary";
-    private string _shiftCls2 => _activeShift == 2 ? "btn-primary" : "btn-outline-secondary";
-    private string _shiftCls3 => _activeShift == 3 ? "btn-primary" : "btn-outline-secondary";
+    // ── Button CSS helpers ─────────────────────────────────────────────────
+    private string _fullDayCls    => (_selectedCaId == -1 && !_customRange) ? "btn-primary" : "btn-outline-secondary";
+    private string _customRangeCls => _customRange ? "btn-warning" : "btn-outline-warning";
+    private string CaBtnCls(int caId) => (_selectedCaId == caId && !_customRange) ? "btn-primary" : "btn-outline-secondary";
 
     // ── Init ───────────────────────────────────────────────────────────────
+
     protected override async Task OnInitializedAsync()
+
     {
+
+        _caList = await CaSvc.GetActiveAsync();
+
+        // Chọn ca đầu tiên mặc định nếu có
+
+        if (_caList.Any())
+
+        {
+
+            var first = _caList.First();
+
+            _selectedCaId = first.CaId;
+
+            ApplyCaToTime(first);
+
+        }
+
+        else
+
+        {
+
+            _selectedCaId = -1;
+
+            _fromTime = new(0, 0); _toTime = new(23, 59);
+
+        }
+
         await LoadDataAsync();
+
     }
 
-    // ── Ca làm việc ────────────────────────────────────────────────────────
-    private async Task SetShiftHC()      { _activeShift=0; _fromTime=new(7,0);  _toTime=new(17,0);  await LoadDataAsync(); }
-    private async Task SetShift1()       { _activeShift=1; _fromTime=new(6,0);  _toTime=new(18,0);  await LoadDataAsync(); }
-    private async Task SetShiftEvening() { _activeShift=2; _fromTime=new(12,0); _toTime=new(20,0);  await LoadDataAsync(); }
-    private async Task SetShiftFull()    { _activeShift=3; _fromTime=new(0,0);  _toTime=new(23,59); await LoadDataAsync(); }
-    private async Task OnDateChanged()   { await LoadDataAsync(); }
+    // ── Ca từ DB ───────────────────────────────────────────────────────────
+
+    private void ApplyCaToTime(CaLamViec ca)
+
+    {
+
+        _fromTime = ca.GioBatDau;
+
+        _toTime   = ca.GioKetThuc;
+
+    }
+
+    private async Task SelectCa(CaLamViec ca)
+
+    {
+
+        _selectedCaId = ca.CaId;
+
+        _customRange  = false;
+
+        ApplyCaToTime(ca);
+
+        await LoadDataAsync();
+
+    }
+
+    private async Task SetShiftFull()
+
+    {
+
+        _selectedCaId = -1;
+
+        _customRange  = false;
+
+        _fromTime = new(0, 0); _toTime = new(23, 59);
+
+        await LoadDataAsync();
+
+    }
+
+    private void ToggleCustomRange()
+
+    {
+
+        _customRange = !_customRange;
+
+        if (_customRange)
+
+        {
+
+            _customFrom   = _fromTime;
+
+            _customTo     = _toTime;
+
+            _selectedCaId = -2;
+
+        }
+
+    }
+
+    private void SetCustomFrom(string? v) { if (TimeOnly.TryParse(v, out var t)) _customFrom = t; }
+
+    private void SetCustomTo(string? v)   { if (TimeOnly.TryParse(v, out var t)) _customTo   = t; }
+
+    private async Task ApplyCustomRange()
+
+    {
+
+        if (_customTo <= _customFrom) return; // bỏ qua nếu giờ không hợp lệ
+
+        _fromTime = _customFrom;
+
+        _toTime   = _customTo;
+
+        await LoadDataAsync();
+
+    }
+
+    private async Task OnDateChanged() { await LoadDataAsync(); }
 
     // ── Load ───────────────────────────────────────────────────────────────
+
     private async Task LoadDataAsync()
+
     {
+
         _loading = true;
+
         _expandedMachines.Clear();
+
         StateHasChanged();
+
         try
+
         {
-            _result = await EffSvc.GetAsync(_selectedDate, _fromTime, _toTime);
+
+            var selCa = _caList.FirstOrDefault(ca => ca.CaId == _selectedCaId);
+            _result = await EffSvc.GetAsync(_selectedDate, _fromTime, _toTime, selCa);
+
             BuildColDefs();
+
             BuildOverlapWarnings();
+
         }
+
         finally
+
         {
+
             _loading = false;
+
         }
+
     }
 
     // ── ColFilterDef: build từ data đã load ────────────────────────────────
+
     private void BuildColDefs()
+
     {
+
         if (_result == null) return;
 
         // Giữ lại ExcludedValues cũ nếu cột đã tồn tại (không reset filter khi reload)
+
         var oldDefs = _colDefs;
 
         _colDefs = new Dictionary<string, ColFilterDef>
+
         {
+
             ["SoMay"]  = ColFilterDef.Build(_result.Rows, r => r.Machine.SoMay,  oldDefs.GetValueOrDefault("SoMay")),
+
             ["BoPhan"] = ColFilterDef.Build(_result.Rows, r => r.Machine.BoPhan, oldDefs.GetValueOrDefault("BoPhan")),
+
         };
+
     }
 
     // ── Filtered + Sorted ──────────────────────────────────────────────────
+
     private IEnumerable<MachineRow> Filtered
+
     {
+
         get
+
         {
+
             if (_result == null) return Enumerable.Empty<MachineRow>();
+
             IEnumerable<MachineRow> q = _result.Rows;
 
             // Excel-style column filters
+
             foreach (var (key, def) in _colDefs)
+
             {
+
                 if (!def.IsActive) continue;
+
                 q = key switch
+
                 {
+
                     "SoMay"  => q.Where(r => def.Passes(r.Machine.SoMay)),
+
                     "BoPhan" => q.Where(r => def.Passes(r.Machine.BoPhan)),
+
                     _        => q,
+
                 };
+
             }
 
             // Sort
+
             if (_sortCol != null)
+
             {
+
                 Func<MachineRow, string> key = _sortCol switch
+
                 {
+
                     "SoMay"  => r => r.Machine.SoMay,
+
                     "BoPhan" => r => r.Machine.BoPhan,
+
                     _        => r => r.Machine.SoMay,
+
                 };
+
                 q = _sortAsc ? q.OrderBy(key) : q.OrderByDescending(key);
+
             }
 
             return q;
+
         }
+
     }
 
     // ── ColHeader RenderFragment ───────────────────────────────────────────
+
     private RenderFragment ColHeader(string colKey, string label) => __builder =>
+
     {
+
         var hasFilter = _colDefs.TryGetValue(colKey, out var def) && def.IsActive;
+
         var isSorted  = _sortCol == colKey;
 
         <span class="col-filter-wrap">
+
             <span style="cursor:pointer; user-select:none;"
+
                   @onclick="() => SetSort(colKey, _sortCol == colKey ? !_sortAsc : true)">
+
                 @label
+
                 @if (isSorted)
+
                 {
+
                     <i class="bi @(_sortAsc ? "bi-arrow-up" : "bi-arrow-down") ms-1" style="font-size:.65rem;"></i>
+
                 }
+
             </span>
+
             <button class="col-filter-btn @(hasFilter ? "active" : "")"
+
                     title="Lọc cột này"
+
                     @onclick:stopPropagation="true"
+
                     @onclick="async e => await OpenDropdownAsync(colKey, e)">
+
                 <i class="bi @(hasFilter ? "bi-funnel-fill" : "bi-funnel")"></i>
+
             </button>
+
         </span>
+
     };
 
     // ── Dropdown logic ─────────────────────────────────────────────────────
+
     private async Task OpenDropdownAsync(string colKey, MouseEventArgs e)
+
     {
+
         if (_openDropdown == colKey) { _openDropdown = null; return; }
+
         _openDropdown = colKey;
+
         _ddTop  = e.ClientY + 10;
+
         _ddLeft = e.ClientX - 10;
+
         if (_ddLeft > 1100) _ddLeft = 1100;
+
         await Task.CompletedTask;
+
     }
 
     private void CloseAllDropdowns() => _openDropdown = null;
 
     private void ToggleSelectAll(ColFilterDef def, List<string> visible, bool select)
+
     {
+
         if (select)
+
             foreach (var v in visible) def.ExcludedValues.Remove(v);
+
         else
+
             foreach (var v in visible) def.ExcludedValues.Add(v);
+
     }
 
     private void ToggleColValue(ColFilterDef def, string val, bool selected)
+
     {
+
         if (selected) def.ExcludedValues.Remove(val);
+
         else          def.ExcludedValues.Add(val);
+
     }
 
     private void ApplyColFilter(string colKey)
+
     {
+
         _openDropdown = null;
+
         StateHasChanged();
+
     }
 
     private void ClearColFilter(string colKey)
+
     {
+
         if (_colDefs.TryGetValue(colKey, out var def))
+
         {
+
             def.ExcludedValues.Clear();
+
             def.SearchText = string.Empty;
+
         }
+
         _openDropdown = null;
+
     }
 
     private void ClearAllColFilters()
+
     {
+
         foreach (var def in _colDefs.Values)
+
         {
+
             def.ExcludedValues.Clear();
+
             def.SearchText = string.Empty;
+
         }
+
         _sortCol = null;
+
     }
 
     private bool HasActiveColFilters =>
+
         _colDefs.Any(kv => kv.Value.IsActive) || _sortCol != null;
 
     private void SetSort(string col, bool asc)
+
     {
+
         _sortCol = col; _sortAsc = asc;
+
         _openDropdown = null;
+
     }
 
     // ── Expand ─────────────────────────────────────────────────────────────
+
     private void ToggleExpand(int id)
+
     {
+
         if (!_expandedMachines.Remove(id)) _expandedMachines.Add(id);
+
     }
 
     // ── Pie chart SVG ──────────────────────────────────────────────────────
-    private RenderFragment BuildPieSvg(double runPct, double downPct, double idlePct, int size) => builder =>
+
+    private RenderFragment BuildPieSvg(double runPct, double downPct, double breakPct, double idlePct, int size) => builder =>
+
     {
+
         int seq = 0;
+
         double cx = size / 2.0, cy = size / 2.0, r = size / 2.0 - 4;
 
         var slices = new[] {
-            (pct: runPct,  color: "#198754"),
-            (pct: downPct, color: "#dc3545"),
-            (pct: idlePct, color: "#ced4da"),
+
+            (pct: runPct,   color: "#198754"),
+
+            (pct: downPct,  color: "#dc3545"),
+
+            (pct: breakPct, color: "#d8b4fe"),
+
+            (pct: idlePct,  color: "#ced4da"),
+
         };
 
         builder.OpenElement(seq++, "svg");
+
         builder.AddAttribute(seq++, "width",   size);
+
         builder.AddAttribute(seq++, "height",  size);
+
         builder.AddAttribute(seq++, "viewBox", $"0 0 {size} {size}");
 
         bool allZero = slices.All(s => s.pct <= 0);
+
         if (allZero)
+
         {
+
             builder.OpenElement(seq++, "circle");
+
             builder.AddAttribute(seq++, "cx",   cx.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
             builder.AddAttribute(seq++, "cy",   cy.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
             builder.AddAttribute(seq++, "r",    r.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
             builder.AddAttribute(seq++, "fill", "#ced4da");
+
             builder.CloseElement();
+
         }
+
         else
+
         {
+
             double startAngle = -90.0;
+
             foreach (var slice in slices)
+
             {
+
                 if (slice.pct <= 0) continue;
+
                 double angle    = slice.pct / 100.0 * 360.0;
+
                 double endAngle = startAngle + angle;
+
                 double x1 = cx + r * Math.Cos(startAngle * Math.PI / 180.0);
+
                 double y1 = cy + r * Math.Sin(startAngle * Math.PI / 180.0);
+
                 double x2 = cx + r * Math.Cos(endAngle   * Math.PI / 180.0);
+
                 double y2 = cy + r * Math.Sin(endAngle   * Math.PI / 180.0);
+
                 int largeArc = angle > 180 ? 1 : 0;
+
                 var ic = System.Globalization.CultureInfo.InvariantCulture;
+
                 string d = $"M {cx.ToString("F2",ic)} {cy.ToString("F2",ic)} " +
+
                            $"L {x1.ToString("F2",ic)} {y1.ToString("F2",ic)} " +
+
                            $"A {r.ToString("F2",ic)} {r.ToString("F2",ic)} 0 {largeArc} 1 " +
+
                            $"{x2.ToString("F2",ic)} {y2.ToString("F2",ic)} Z";
+
                 builder.OpenElement(seq++, "path");
+
                 builder.AddAttribute(seq++, "d",    d);
+
                 builder.AddAttribute(seq++, "fill", slice.color);
+
                 builder.CloseElement();
+
                 startAngle = endAngle;
+
             }
+
         }
 
         // Viền trắng
+
         builder.OpenElement(seq++, "circle");
+
         builder.AddAttribute(seq++, "cx",           cx.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
         builder.AddAttribute(seq++, "cy",           cy.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
         builder.AddAttribute(seq++, "r",            r.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+
         builder.AddAttribute(seq++, "fill",         "none");
+
         builder.AddAttribute(seq++, "stroke",       "#fff");
+
         builder.AddAttribute(seq++, "stroke-width", "1.5");
+
         builder.CloseElement();
 
         builder.CloseElement(); // </svg>
+
     };
 
     // ── Overlap detection ──────────────────────────────────────────────────
+
     private void BuildOverlapWarnings()
+
     {
+
         _overlapWarnings.Clear();
+
         if (_result == null) return;
 
         foreach (var row in _result.Rows)
+
         {
+
             // Chỉ xét WTS logs (công nhân đăng ký dùng máy), sắp xếp theo StartTime
+
             var logs = row.WtsDetails.OrderBy(x => x.StartTime).ToList();
 
             for (int i = 0; i < logs.Count; i++)
+
             {
+
                 for (int j = i + 1; j < logs.Count; j++)
+
                 {
+
                     var a = logs[i];
+
                     var b = logs[j];
 
                     // Nếu b bắt đầu sau khi a kết thúc thì không còn overlap nữa
+
                     if (b.StartTime >= a.EndTime) break;
 
                     // Tính khoảng overlap
+
                     var overlapStart = b.StartTime > a.StartTime ? b.StartTime : a.StartTime;
+
                     var overlapEnd   = b.EndTime   < a.EndTime   ? b.EndTime   : a.EndTime;
 
                     if (overlapEnd > overlapStart)
+
                     {
+
                         _overlapWarnings.Add(new OverlapWarning
+
                         {
+
                             SoMay          = row.Machine.SoMay,
+
                             Start          = overlapStart,
+
                             End            = overlapEnd,
+
                             OverlapMinutes = (overlapEnd - overlapStart).TotalMinutes,
+
                             Worker1        = a.Worker?.FullName ?? "?",
+
                             Worker2        = b.Worker?.FullName ?? "?",
+
                             NC1            = a.NC ?? "",
+
                             NC2            = b.NC ?? "",
+
                         });
+
                     }
+
                 }
+
             }
+
         }
 
         // Sắp theo mức độ nghiêm trọng (overlap nhiều phút nhất lên đầu)
+
         _overlapWarnings = _overlapWarnings.OrderByDescending(w => w.OverlapMinutes).ToList();
+
     }
 
     // ── ColFilterDef class ────────────────────────────────────────────────
+
     private class ColFilterDef
+
     {
+
         public List<string>    AllValues      { get; set; } = new();
+
         public HashSet<string> ExcludedValues { get; set; } = new();
+
         public string          SearchText     { get; set; } = string.Empty;
 
         public bool IsActive  => !string.IsNullOrEmpty(SearchText) || ExcludedValues.Count > 0;
+
         public bool IsChecked(string v) => !ExcludedValues.Contains(v);
+
         public bool Passes(string v)    =>
+
             (string.IsNullOrEmpty(SearchText) || v.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+
             && !ExcludedValues.Contains(v);
 
         public static ColFilterDef Build(List<MachineRow> rows, Func<MachineRow, string> selector, ColFilterDef? old = null)
+
         {
+
             var all = rows.Select(selector).Where(v => !string.IsNullOrEmpty(v)).Distinct().OrderBy(v => v).ToList();
+
             var def = new ColFilterDef { AllValues = all };
+
             // Giữ lại filter cũ nếu có (user reload lại ngày vẫn giữ filter)
+
             if (old != null)
+
             {
+
                 def.ExcludedValues = new HashSet<string>(old.ExcludedValues.Intersect(all));
+
                 def.SearchText     = old.SearchText;
+
             }
+
             return def;
+
         }
+
     }
 
     // ── OverlapWarning DTO ────────────────────────────────────────────────
+
     private class OverlapWarning
+
     {
+
         public string   SoMay          { get; set; } = "";
+
         public DateTime Start          { get; set; }
+
         public DateTime End            { get; set; }
+
         public double   OverlapMinutes { get; set; }
+
         public string   Worker1        { get; set; } = "";
+
         public string   Worker2        { get; set; } = "";
+
         public string   NC1            { get; set; } = "";
+
         public string   NC2            { get; set; } = "";
+
     }
+
 }
+
