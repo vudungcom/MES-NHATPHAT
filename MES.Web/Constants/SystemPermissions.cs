@@ -17,6 +17,7 @@ public static class SystemPermissions
     public const string Dao         = "DAO";
     public const string WtsMaster   = "WTS_MASTER";
     public const string SettingAdmin = "SETTING_ADMIN";
+    public const string CaLamViec   = "CA_LAM_VIEC";
 
     // Nhập WTS theo nhóm công việc
     public const string WtsGc      = "WTS_GC";
@@ -65,6 +66,8 @@ public static class SystemPermissions
         new PermissionSection(HandoverHtsp, "Giao nhận: HTSP",      "Giao/nhận hàng tại nhóm Hoàn thiện SP"),
         new PermissionSection(HandoverKcs,  "Giao nhận: KCS",       "Giao/nhận hàng tại nhóm Kiểm tra KCS"),
         new PermissionSection(HandoverPkg,  "Giao nhận: Đóng gói",  "Giao/nhận hàng tại nhóm Đóng gói"),
+
+        new PermissionSection(CaLamViec,   "Cài đặt ca làm việc",  "Thêm, sửa, xóa định nghĩa ca làm việc và giờ nghỉ giải lao"),
 
         new PermissionSection(SettingAdmin, "Cài đặt & Phân quyền", "Toàn quyền quản trị hệ thống (Chỉ Admin)")
     };

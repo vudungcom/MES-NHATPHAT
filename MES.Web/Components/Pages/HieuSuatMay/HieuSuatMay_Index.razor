@@ -90,101 +90,68 @@
 
     }
 
-    .timeline-bar { position:relative; height:22px; min-width:500px; border-radius:3px; overflow:hidden; background:#e9ecef; }
-
-    .timeline-seg { position:absolute; height:100%; top:0; cursor:pointer; transition:opacity .15s; }
-
-    .timeline-seg:hover { opacity:.78; }
-
-    .seg-running      { background:#198754; }
-
-    .seg-breakdown    { background:#dc3545; }
-
-    .seg-maintenance  { background:#ffc107; }
-
-    .seg-idle         { background:#ced4da; }
-    .seg-break        { background:#d8b4fe; }
-
-    .timeline-ruler   { position:relative; min-width:500px; height:16px; }
-
-    .ruler-tick       { position:absolute; transform:translateX(-50%); font-size:.68rem; color:#6c757d; white-space:nowrap; }
-
+    /* ── Gantt sticky layout ── */
+    .gantt-wrap     { display:grid; grid-template-columns:260px 1fr; border:1px solid #dee2e6; border-radius:6px; overflow:hidden; background:#fff; }
+    .gantt-left     { border-right:1px solid #dee2e6; overflow:hidden; }
+    .gantt-right    { overflow-x:auto; overflow-y:visible; }
+    .gantt-header-l { height:52px; background:#f8f9fa; border-bottom:1px solid #dee2e6; display:flex; align-items:center; padding:0 8px; font-size:.78rem; font-weight:600; color:#495057; }
+    .gantt-ruler    { position:sticky; top:0; z-index:3; background:#f8f9fa; border-bottom:1px solid #dee2e6; height:52px; }
+    .gantt-ruler-inner { position:relative; height:100%; }
+    .ruler-tick     { position:absolute; transform:translateX(-50%); font-size:.65rem; color:#6c757d; white-space:nowrap; bottom:6px; }
+    .gantt-cell-l   { display:flex; align-items:center; min-height:30px; padding:0 8px; border-bottom:1px solid #f0f0f0; font-size:.8rem; gap:5px; }
+    .gantt-cell-l.grp-hdr { background:#e9ecef; font-weight:600; cursor:pointer; user-select:none; border-bottom:1px solid #dee2e6; padding:4px 8px; }
+    .gantt-cell-l.grp-hdr:hover { background:#dee2e6; }
+    .gantt-cell-r   { min-height:30px; border-bottom:1px solid #f0f0f0; position:relative; }
+    .gantt-cell-r.grp-hdr { background:#e9ecef; border-bottom:1px solid #dee2e6; min-height:26px; }
+    .gantt-min      { min-width:600px; }
+    .timeline-bar   { position:absolute; inset:5px 0; border-radius:3px; overflow:hidden; background:#e9ecef; }
+    .timeline-seg   { position:absolute; height:100%; top:0; cursor:pointer; transition:opacity .15s; }
+    .timeline-seg:hover { opacity:.75; }
+    .seg-running    { background:#198754; }
+    .seg-breakdown  { background:#dc3545; }
+    .seg-maintenance{ background:#ffc107; }
+    .seg-idle       { background:#ced4da; }
+    .seg-break      { background:#d8b4fe; }
+    .oee-bar-wrap   { width:42px; height:8px; background:#e9ecef; border-radius:2px; overflow:hidden; display:inline-block; }
+    .oee-bar-fill   { height:100%; border-radius:2px; }
     .machine-row-detail { background:#f8f9fa; border-left:3px solid #0d6efd; }
-
-    .legend-dot       { width:11px; height:11px; border-radius:50%; display:inline-block; }
-
-    .shift-btn        { font-size:.78rem; }
-
-    .tbl-machine th, .tbl-machine td { vertical-align:middle; padding:4px 8px; font-size:.82rem; }
-
-    .row-overlap td:first-child { border-left: 3px solid #dc3545 !important; }
-
-    .overlap-panel { border-left: 4px solid #dc3545; }
-
-    .overlap-item  { font-size:.8rem; padding:4px 0; border-bottom:1px solid #f5c2c7; }
-
+    .legend-dot     { width:11px; height:11px; border-radius:50%; display:inline-block; }
+    .shift-btn      { font-size:.78rem; }
+    .row-ol .gantt-cell-l { border-left:3px solid #dc3545 !important; }
+    .overlap-panel  { border-left:4px solid #dc3545; }
+    .overlap-item   { font-size:.8rem; padding:4px 0; border-bottom:1px solid #f5c2c7; }
     .overlap-item:last-child { border-bottom:none; }
+
 
 </style>
 
 @* ── Header + Pie tổng ── *@
 
 <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
-
     <div>
-
         <h1 class="mb-1">Hiệu suất máy</h1>
-
         <p class="text-muted small mb-0">
-
             Click <i class="bi bi-funnel"></i> trên header để lọc/sort &nbsp;·&nbsp;
-
             <span class="legend-dot bg-success me-1"></span>Chạy &nbsp;
-
             <span class="legend-dot bg-danger me-1"></span>Hỏng &nbsp;
-
             <span class="legend-dot" style="background:#ffc107;"></span>&nbsp;Bảo trì &nbsp;
-
             <span class="legend-dot" style="background:#d8b4fe;"></span>&nbsp;Nghỉ &nbsp;
             <span class="legend-dot bg-secondary me-1"></span>Rảnh
-
         </p>
-
     </div>
-
-    @if (_result != null)
-
-    {
-
-        <div class="card shadow-sm" style="min-width:200px;">
-
-            <div class="card-body p-2 text-center">
-
-                <div class="small fw-semibold text-muted mb-1">Tổng hiệu suất — @_result.Rows.Count máy</div>
-
-                @BuildPieSvg(_result.RunPct, _result.DownPct, _result.BreakPct, _result.IdlePct, 90)
-
-                <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap" style="font-size:.7rem;">
-
-                    <span><span class="legend-dot bg-success me-1"></span>Chạy @_result.RunPct%</span>
-
-                    <span><span class="legend-dot bg-danger me-1"></span>Dừng @_result.DownPct%</span>
-
-                    @if (_result.BreakPct > 0) { <span><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ @_result.BreakPct%</span> }
-
-                    <span><span class="legend-dot bg-secondary me-1"></span>Rảnh @_result.IdlePct%</span>
-
-                </div>
-
+    <div class="card shadow-sm @_pieCls" style="min-width:200px;">
+        <div class="card-body p-2 text-center">
+            <div class="small fw-semibold text-muted mb-1">Tổng hiệu suất — @(_result?.Rows.Count ?? 0) máy</div>
+            @if (_result != null) { @BuildPieSvg(_result.RunPct, _result.DownPct, _result.BreakPct, _result.IdlePct, 90) }
+            <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap" style="font-size:.7rem;">
+                <span><span class="legend-dot bg-success me-1"></span>Chạy @(_result?.RunPct ?? 0)%</span>
+                <span><span class="legend-dot bg-danger me-1"></span>Dừng @(_result?.DownPct ?? 0)%</span>
+                <span><span class="legend-dot bg-secondary me-1"></span>Rảnh @(_result?.IdlePct ?? 0)%</span>
             </div>
-
         </div>
-
-    }
-
+    </div>
 </div>
 
-@* ── Filter bar: ngày + ca ── *@
 
 <div class="card mb-3">
 
@@ -423,379 +390,44 @@
 @* ── Bảng Gantt ── *@
 
 @if (_result != null)
-
 {
-
-    var rows = Filtered.ToList();
-
+    var rows        = Filtered.ToList();
+    var groupedRows = GroupedRows;
     var totalMinutes = (int)(_toTime - _fromTime).TotalMinutes;
-
     if (totalMinutes <= 0) { totalMinutes = 1; }
 
-    <div class="card" @onclick="CloseAllDropdowns">
-
-        <div class="card-body p-0">
-
-            <div class="table-responsive">
-
-                <table class="table table-sm table-bordered align-middle mb-0 tbl-machine">
-
-                    <thead class="table-light">
-
-                        <tr>
-
-                            <th style="width:80px;">@ColHeader("SoMay", "Số máy")</th>
-
-                            <th style="width:80px;">@ColHeader("BoPhan", "Nhóm")</th>
-
-                            <th style="width:72px; text-align:right;" class="text-success">Chạy(ph)</th>
-
-                            <th style="width:72px; text-align:right;" class="text-danger">Dừng(ph)</th>
-
-                            <th style="width:68px; text-align:right; color:#9333ea;">Nghỉ(ph)</th>
-
-                            <th style="width:72px; text-align:right;" class="text-secondary">Rảnh(ph)</th>
-
-                            <th>
-
-                                <div class="timeline-ruler">
-
-                                    @for (int h = _fromTime.Hour; h <= _toTime.Hour; h++)
-
-                                    {
-
-                                        var spanH = Math.Max(1, _toTime.Hour - _fromTime.Hour);
-
-                                        var pct   = (double)(h - _fromTime.Hour) / spanH * 100.0;
-
-                                        <span class="ruler-tick" style="left:@pct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)%;">@h<sup>h</sup></span>
-
-                                    }
-
-                                </div>
-
-                                <span class="small text-muted fw-normal">
-
-                                    Timeline @_fromTime.ToString("HH:mm")–@_toTime.ToString("HH:mm")
-
-                                    <span class="ms-2 text-muted">(@rows.Count máy)</span>
-
-                                </span>
-
-                            </th>
-
-                            <th style="width:36px;"></th>
-
-                        </tr>
-
-                    </thead>
-
-                    <tbody>
-
-                        @foreach (var row in rows)
-
-                        {
-
-                            var isExpanded   = _expandedMachines.Contains(row.Machine.ThietBiId);
-
-                            var hasOverlap   = _showOverlapWarnings && _overlapWarnings.Any(w => w.SoMay == row.Machine.SoMay);
-
-                            var overlapClass = hasOverlap ? "row-overlap" : "";
-
-                            <tr @key="row.Machine.ThietBiId" class="@overlapClass">
-
-                                <td class="fw-semibold"><code>@row.Machine.SoMay</code></td>
-
-                                <td><span class="badge bg-secondary">@row.Machine.BoPhan</span></td>
-
-                                <td style="text-align:right;" class="text-success fw-semibold">@((int)row.RunMinutes)</td>
-
-                                <td style="text-align:right;" class="text-danger fw-semibold">@((int)row.DownMinutes)</td>
-
-                                <td style="text-align:right; color:#9333ea;">@((int)row.BreakMinutes)</td>
-
-                                <td style="text-align:right;" class="text-secondary">@((int)row.IdleMinutes)</td>
-
-                                <td>
-
-                                    <div class="timeline-bar">
-
-                                        @foreach (var seg in row.Segments)
-
-                                        {
-
-                                            var fromDt   = _selectedDate.ToDateTime(_fromTime);
-
-                                            var leftPct  = Math.Max(0, (seg.Start - fromDt).TotalMinutes / totalMinutes * 100.0);
-
-                                            var widthPct = seg.Minutes / totalMinutes * 100.0;
-
-                                            if (widthPct < 0.1) { continue; }
-
-                                            var segCss = seg.Type switch
-
-                                            {
-
-                                                SegmentType.Running     => "seg-running",
-
-                                                SegmentType.Breakdown   => "seg-breakdown",
-
-                                                SegmentType.Maintenance => "seg-maintenance",
-
-                                                SegmentType.Break       => "seg-break",
-
-                                                _                       => "seg-idle",
-
-                                            };
-
-                                            var tip = seg.Type switch
-
-                                            {
-
-                                                SegmentType.Running     => $"{seg.Start:HH:mm}–{seg.End:HH:mm} | {seg.WorkerName} | NC:{seg.NC} | PO:{seg.PurchaseOrder}",
-
-                                                SegmentType.Breakdown   => $"Hỏng {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen ? " (đang hỏng)" : "")} | {seg.Reason}",
-
-                                                SegmentType.Maintenance => $"Bảo trì {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen ? " (đang bảo trì)" : "")} | {seg.Reason}",
-
-                                                SegmentType.Break       => $"Nghỉ giải lao {seg.Start:HH:mm}–{seg.End:HH:mm}",
-
-                                                _                       => $"Rảnh {seg.Start:HH:mm}–{seg.End:HH:mm}",
-
-                                            };
-
-                                            <div class="timeline-seg @segCss"
-
-                                                 style="left:@leftPct.ToString("F2",System.Globalization.CultureInfo.InvariantCulture)%;width:@widthPct.ToString("F2",System.Globalization.CultureInfo.InvariantCulture)%;"
-
-                                                 title="@tip">
-
-                                            </div>
-
-                                        }
-
-                                    </div>
-
-                                </td>
-
-                                <td class="text-center" @onclick:stopPropagation="true">
-
-                                    <button class="btn btn-sm btn-link p-0"
-
-                                            @onclick="() => ToggleExpand(row.Machine.ThietBiId)"
-
-                                            title="Chi tiết">
-
-                                        <i class="bi @(isExpanded ? "bi-chevron-up text-primary" : "bi-chevron-down")"></i>
-
-                                    </button>
-
-                                </td>
-
-                            </tr>
-
-                            @if (isExpanded)
-
-                            {
-
-                                <tr @key="@($"det_{row.Machine.ThietBiId}")" class="machine-row-detail">
-
-                                    <td colspan="8" class="p-3">
-
-                                        <div class="row g-3">
-
-                                            <div class="col-md-7">
-
-                                                <div class="small fw-semibold text-muted mb-1">
-
-                                                    <i class="bi bi-clock-history me-1"></i>WTS — @row.Machine.SoMay @row.Machine.TenMay
-
-                                                </div>
-
-                                                @if (!row.WtsDetails.Any())
-
-                                                {
-
-                                                    <div class="text-muted small fst-italic">Không có WTS log trong khung giờ này.</div>
-
-                                                }
-
-                                                else
-
-                                                {
-
-                                                    <table class="table table-sm table-bordered mb-0" style="font-size:.78rem;">
-
-                                                        <thead class="table-light">
-
-                                                            <tr>
-
-                                                                <th>Công nhân</th><th>Bắt đầu</th><th>Kết thúc</th>
-
-                                                                <th class="text-end">Phút</th><th>NC</th><th>PO / PartNo</th>
-
-                                                            </tr>
-
-                                                        </thead>
-
-                                                        <tbody>
-
-                                                            @foreach (var log in row.WtsDetails.OrderBy(x => x.StartTime))
-
-                                                            {
-
-                                                                <tr @key="log.WtsLogId">
-
-                                                                    <td>@(log.Worker?.FullName ?? "?")</td>
-
-                                                                    <td>@log.StartTime.ToString("HH:mm")</td>
-
-                                                                    <td>@log.EndTime.ToString("HH:mm")</td>
-
-                                                                    <td class="text-end">@((int)(log.EndTime - log.StartTime).TotalMinutes)</td>
-
-                                                                    <td>@(log.NC ?? "—")</td>
-
-                                                                    <td class="text-muted">
-
-                                                                        @(log.KhPlanDetail?.PurchaseOrder ?? "")
-
-                                                                        @if (!string.IsNullOrEmpty(log.KhPlanDetail?.PartNo))
-
-                                                                        {
-
-                                                                            <span class="ms-1 badge bg-light text-dark border">@log.KhPlanDetail.PartNo</span>
-
-                                                                        }
-
-                                                                    </td>
-
-                                                                </tr>
-
-                                                            }
-
-                                                        </tbody>
-
-                                                    </table>
-
-                                                }
-
-                                            </div>
-
-                                            <div class="col-md-2 text-center">
-
-                                                <div class="small fw-semibold text-muted mb-1">
-
-                                                    <i class="bi bi-pie-chart me-1"></i>Hiệu suất
-
-                                                </div>
-
-                                                @BuildPieSvg(row.RunPct, row.DownPct, row.BreakPct, row.IdlePct, 70)
-
-                                                <div class="mt-1" style="font-size:.72rem;">
-
-                                                    <div><span class="legend-dot bg-success me-1"></span>Chạy <b>@row.RunPct%</b></div>
-
-                                                    <div><span class="legend-dot bg-danger me-1"></span>Dừng <b>@row.DownPct%</b></div>
-
-                                                    @if (row.BreakPct > 0) { <div><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ <b>@row.BreakPct%</b></div> }
-
-                                                    <div><span class="legend-dot bg-secondary me-1"></span>Rảnh <b>@row.IdlePct%</b></div>
-
-                                                </div>
-
-                                            </div>
-
-                                            <div class="col-md-3">
-
-                                                <div class="small fw-semibold text-muted mb-1">
-
-                                                    <i class="bi bi-cpu me-1"></i>Thông tin máy
-
-                                                </div>
-
-                                                <div style="font-size:.78rem;">
-
-                                                    <div><span class="text-muted">Số máy:</span> <b>@row.Machine.SoMay</b></div>
-
-                                                    @if (!string.IsNullOrEmpty(row.Machine.TenMay))  { <div><span class="text-muted">Tên:</span> @row.Machine.TenMay</div> }
-
-                                                    @if (!string.IsNullOrEmpty(row.Machine.LoaiMay)) { <div><span class="text-muted">Loại:</span> @row.Machine.LoaiMay</div> }
-
-                                                    <div class="mt-1">
-
-                                                        @if (row.Machine.TrangThai == "Hoạt động")
-
-                                                        {
-
-                                                            <span class="badge bg-success">Hoạt động</span>
-
-                                                        }
-
-                                                        else
-
-                                                        {
-
-                                                            <span class="badge bg-danger">@row.Machine.TrangThai</span>
-
-                                                            @if (row.Machine.ThoiGianDungTu.HasValue)
-
-                                                            {
-
-                                                                <div class="text-muted" style="font-size:.7rem;">
-
-                                                                    Từ @row.Machine.ThoiGianDungTu.Value.ToString("HH:mm dd/MM")
-
-                                                                </div>
-
-                                                            }
-
-                                                        }
-
-                                                    </div>
-
-                                                </div>
-
-                                            </div>
-
-                                        </div>
-
-                                    </td>
-
-                                </tr>
-
-                            }
-
-                        }
-
-                        @if (!rows.Any())
-
-                        {
-
-                            <tr>
-
-                                <td colspan="8" class="text-center text-muted py-3 fst-italic">
-
-                                    Không có máy nào khớp filter.
-
-                                </td>
-
-                            </tr>
-
-                        }
-
-                    </tbody>
-
-                </table>
-
+    <div class="gantt-wrap" @onclick="CloseAllDropdowns">
+
+        @* ── LEFT: fixed machine list ── *@
+        <div class="gantt-left">
+            <div class="gantt-header-l">
+                <div style="flex:1;">@ColHeader("SoMay", "Số máy")</div>
+                <div style="width:64px; text-align:center;">@ColHeader("BoPhan", "Nhóm")</div>
+                <span style="font-size:.65rem; color:#6c757d; margin-left:auto; padding-right:4px;">OEE</span>
             </div>
+            @RenderLeftRows(groupedRows)
+        </div>
 
+        @* ── RIGHT: scrollable timeline ── *@
+        <div class="gantt-right">
+            <div class="gantt-ruler gantt-min">
+                <div style="position:relative; height:100%; padding-top:28px;">
+                    @for (int h = _fromTime.Hour; h <= _toTime.Hour; h++)
+                    {
+                        var spanH2 = Math.Max(1, _toTime.Hour - _fromTime.Hour);
+                        var pct2   = (double)(h - _fromTime.Hour) / spanH2 * 100.0;
+                        <span class="ruler-tick" style="left:@_Pct2(pct2)%;">@h<sup>h</sup></span>
+                    }
+                    <div style="position:absolute;bottom:6px;right:8px;font-size:.68rem;color:#868e96;">
+                        @_fromTime.ToString("HH:mm")–@_toTime.ToString("HH:mm") &nbsp;(@rows.Count máy)
+                    </div>
+                </div>
+            </div>
+            @RenderRightRows(groupedRows, totalMinutes)
         </div>
 
     </div>
-
 }
-
 else if (!_loading)
 
 {
@@ -944,6 +576,9 @@ else if (!_loading)
 
     private HashSet<int> _expandedMachines = new();
 
+    // Collapsed groups
+    private HashSet<string> _collapsedGroups = new();
+
     // Overlap detection
 
     private bool _showOverlapWarnings = false;
@@ -963,6 +598,7 @@ else if (!_loading)
     private bool     _sortAsc = true;
 
     // ── Button CSS helpers ─────────────────────────────────────────────────
+    private string _pieCls       => _result == null ? "invisible" : "";
     private string _fullDayCls    => (_selectedCaId == -1 && !_customRange) ? "btn-primary" : "btn-outline-secondary";
     private string _customRangeCls => _customRange ? "btn-warning" : "btn-outline-warning";
     private string CaBtnCls(int caId) => (_selectedCaId == caId && !_customRange) ? "btn-primary" : "btn-outline-secondary";
@@ -1206,6 +842,12 @@ else if (!_loading)
 
     }
 
+    // ── Grouped rows (collapsible) ─────────────────────────────────────────
+    private Dictionary<string, List<MachineRow>> GroupedRows =>
+        Filtered.GroupBy(r => r.Machine.BoPhan ?? "Khác")
+                .OrderBy(g => g.Key)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
     // ── ColHeader RenderFragment ───────────────────────────────────────────
 
     private RenderFragment ColHeader(string colKey, string label) => __builder =>
@@ -1356,6 +998,12 @@ else if (!_loading)
 
     }
 
+    // ── Group collapse ────────────────────────────────────────────────────
+    private void ToggleGroup(string grpKey)
+    {
+        if (!_collapsedGroups.Remove(grpKey)) _collapsedGroups.Add(grpKey);
+    }
+
     // ── Expand ─────────────────────────────────────────────────────────────
 
     private void ToggleExpand(int id)
@@ -1365,6 +1013,21 @@ else if (!_loading)
         if (!_expandedMachines.Remove(id)) _expandedMachines.Add(id);
 
     }
+
+    // ── Icon class helpers (avoid nested quotes in markup) ───────────────
+    private static string _Pct2(double v) => v.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+    private static string _Pct(double v) => v.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+    private static string _OeePct(double pct) => pct.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+    private static string _ChevronCls(bool collapsed) => collapsed ? "bi-chevron-right" : "bi-chevron-down";
+    private static string _ExpandCls(bool expanded)   => expanded  ? "bi-chevron-up text-primary" : "bi-chevron-down";
+
+    // ── OEE color helper ───────────────────────────────────────────────────
+    private static string OeeColor(double pct) => pct switch
+    {
+        >= 80 => "#198754",  // xanh lá
+        >= 50 => "#ffc107",  // vàng
+        _     => "#dc3545",  // đỏ
+    };
 
     // ── Pie chart SVG ──────────────────────────────────────────────────────
 
@@ -1486,6 +1149,164 @@ else if (!_loading)
 
         builder.CloseElement(); // </svg>
 
+    };
+
+    // ── Left panel rows (groups + machines) ──────────────────────────────
+    private RenderFragment RenderLeftRows(Dictionary<string, List<MachineRow>> grouped) => __builder =>
+    {
+        foreach (var kv in grouped)
+        {
+            var collapsed = _collapsedGroups.Contains(kv.Key);
+            <div class="gantt-cell-l grp-hdr" @onclick="() => ToggleGroup(kv.Key)">
+                <i class="bi @_ChevronCls(collapsed) me-1" style="font-size:.7rem;"></i>
+                <span>@kv.Key</span>
+                <span class="ms-1 text-muted" style="font-size:.7rem; font-weight:400;">(@kv.Value.Count)</span>
+            </div>
+            @if (!collapsed)
+            {
+                foreach (var row in kv.Value)
+                {
+                    var isExp = _expandedMachines.Contains(row.Machine.ThietBiId);
+                    var hasOl = _showOverlapWarnings && _overlapWarnings.Any(w => w.SoMay == row.Machine.SoMay);
+                    var olCls = hasOl ? "row-ol" : "";
+                    <div class="gantt-cell-l @olCls" @key="row.Machine.ThietBiId">
+                        <code style="font-size:.78rem;min-width:36px;">@row.Machine.SoMay</code>
+                        <div class="oee-bar-wrap" title="OEE @row.RunPct%">
+                            <div class="oee-bar-fill" style="width:@_OeePct(row.RunPct)%;background:@OeeColor(row.RunPct);"></div>
+                        </div>
+                        <span style="font-size:.68rem;color:#868e96;min-width:28px;">@row.RunPct%</span>
+                        <button class="btn btn-sm btn-link p-0 ms-auto" style="font-size:.7rem;"
+                                @onclick:stopPropagation="true"
+                                @onclick="() => ToggleExpand(row.Machine.ThietBiId)">
+                            <i class="bi @_ExpandCls(isExp)"></i>
+                        </button>
+                    </div>
+                    @if (isExp)
+                    {
+                        <div class="machine-row-detail p-2" @key='@("det-" + row.Machine.ThietBiId)'>
+                            @RenderMachineDetail(row)
+                        </div>
+                    }
+                }
+            }
+        }
+    };
+
+    // ── Right panel rows (timeline bars) ──────────────────────────────────
+    private RenderFragment RenderRightRows(Dictionary<string, List<MachineRow>> grouped, int totalMin) => __builder =>
+    {
+        var fromDt = _selectedDate.ToDateTime(_fromTime);
+        foreach (var kv in grouped)
+        {
+            var coll2 = _collapsedGroups.Contains(kv.Key);
+            <div class="gantt-cell-r grp-hdr gantt-min" style="display:flex;align-items:center;padding:0 8px;font-size:.72rem;color:#868e96;">
+                @kv.Key &nbsp;·&nbsp; avg OEE @(kv.Value.Count > 0 ? kv.Value.Average(r => r.RunPct).ToString("F1") : "0")%
+            </div>
+            @if (!coll2)
+            {
+                foreach (var row in kv.Value)
+                {
+                    var isExp2 = _expandedMachines.Contains(row.Machine.ThietBiId);
+                    <div class="gantt-cell-r gantt-min" @key='@("tr-" + row.Machine.ThietBiId)'>
+                        <div class="timeline-bar">
+                            @foreach (var seg in row.Segments)
+                            {
+                                var lp = Math.Max(0, (seg.Start - fromDt).TotalMinutes / totalMin * 100.0);
+                                var wp = seg.Minutes / totalMin * 100.0;
+                                if (wp < 0.1) { continue; }
+                                var sc = seg.Type switch
+                                {
+                                    SegmentType.Running     => "seg-running",
+                                    SegmentType.Breakdown   => "seg-breakdown",
+                                    SegmentType.Maintenance => "seg-maintenance",
+                                    SegmentType.Break       => "seg-break",
+                                    _                       => "seg-idle",
+                                };
+                                var tp = seg.Type switch
+                                {
+                                    SegmentType.Running     => $"{seg.Start:HH:mm}–{seg.End:HH:mm} | {seg.WorkerName} | NC:{seg.NC}",
+                                    SegmentType.Breakdown   => $"Hỏng {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen?" (đang hỏng)":"")} | {seg.Reason}",
+                                    SegmentType.Maintenance => $"Bảo trì {seg.Start:HH:mm}–{seg.End:HH:mm}{(seg.IsOpen?" (đang bảo trì)":"")} | {seg.Reason}",
+                                    SegmentType.Break       => $"Nghỉ giải lao {seg.Start:HH:mm}–{seg.End:HH:mm}",
+                                    _                       => $"Rảnh {seg.Start:HH:mm}–{seg.End:HH:mm}",
+                                };
+                                <div class="timeline-seg @sc"
+                                     style="left:@_Pct(lp)%;width:@_Pct(wp)%;"
+                                     title="@tp">
+                                </div>
+                            }
+                        </div>
+                    </div>
+                    @if (isExp2)
+                    {
+                        <div class="machine-row-detail p-3 gantt-min" @key='@("det2-" + row.Machine.ThietBiId)'>
+                            @RenderMachineDetail(row)
+                        </div>
+                    }
+                }
+            }
+        }
+    };
+
+    // ── Machine detail panel ──────────────────────────────────────────────
+    private RenderFragment RenderMachineDetail(MachineRow row) => __builder =>
+    {
+        <div class="row g-3">
+            <div class="col-md-7">
+                <div class="small fw-semibold text-muted mb-1">
+                    <i class="bi bi-clock-history me-1"></i>WTS — @row.Machine.SoMay @row.Machine.TenMay
+                </div>
+                @if (!row.WtsDetails.Any())
+                {
+                    <div class="text-muted small fst-italic">Không có log WTS trong khung giờ này.</div>
+                }
+                else
+                {
+                    <table class="table table-sm table-bordered mb-0" style="font-size:.78rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Công nhân</th><th>Bắt đầu</th><th>Kết thúc</th>
+                                <th class="text-end">Phút</th><th>NC</th><th>PO</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var log in row.WtsDetails.OrderBy(x => x.StartTime))
+                            {
+                                <tr @key="log.WtsLogId">
+                                    <td>@(log.Worker?.FullName ?? "?")</td>
+                                    <td>@log.StartTime.ToString("HH:mm")</td>
+                                    <td>@log.EndTime.ToString("HH:mm")</td>
+                                    <td class="text-end">@((int)(log.EndTime - log.StartTime).TotalMinutes)</td>
+                                    <td>@(log.NC ?? "—")</td>
+                                    <td class="text-muted">@(log.KhPlanDetail?.PurchaseOrder ?? "")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+            <div class="col-md-2 text-center">
+                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-pie-chart me-1"></i>OEE</div>
+                @BuildPieSvg(row.RunPct, row.DownPct, row.BreakPct, row.IdlePct, 70)
+                <div class="mt-1" style="font-size:.72rem;">
+                    <div><span class="legend-dot bg-success me-1"></span>Chạy <b>@row.RunPct%</b></div>
+                    <div><span class="legend-dot bg-danger me-1"></span>Dừng <b>@row.DownPct%</b></div>
+                    @if (row.BreakPct > 0) { <div><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ <b>@row.BreakPct%</b></div> }
+                    <div><span class="legend-dot bg-secondary me-1"></span>Rảnh <b>@row.IdlePct%</b></div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-cpu me-1"></i>Thông tin</div>
+                <div style="font-size:.78rem;">
+                    <div><span class="text-muted">Số máy:</span> <b>@row.Machine.SoMay</b></div>
+                    @if (!string.IsNullOrEmpty(row.Machine.TenMay)) { <div><span class="text-muted">Tên:</span> @row.Machine.TenMay</div> }
+                    <div class="mt-1">
+                        @if (row.Machine.TrangThai == "Hoạt động") { <span class="badge bg-success">Hoạt động</span> }
+                        else { <span class="badge bg-danger">@row.Machine.TrangThai</span> }
+                    </div>
+                </div>
+            </div>
+        </div>
     };
 
     // ── Overlap detection ──────────────────────────────────────────────────

@@ -132,7 +132,10 @@
                             <i class="bi bi-gear-fill"></i> Cài đặt Phân quyền
                         </NavLink>
                     </li>
-                    <li class="nav-item">
+                }
+                @if (isAdmin || CanView("CA_LAM_VIEC"))
+                {
+                    <li class="nav-item @(CanView("SETTING_ADMIN") ? "" : "mt-3 border-top pt-2")">
                         <NavLink class="nav-link text-warning" href="/cai-dat/ca-lam-viec">
                             <i class="bi bi-clock-history"></i> Cài đặt ca làm việc
                         </NavLink>
