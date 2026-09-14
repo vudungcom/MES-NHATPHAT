@@ -15,7 +15,14 @@
 @inject ThietBiService ThietBiSvc
 @inject WtsReportService ReportSvc
 @inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
 
+<style>
+    /* Ẩn spinner mũi tên trên input number toàn trang này */
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+</style>
 <PageTitle>Nhập WTS - MES</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -232,11 +239,12 @@ else
                                                value="@row.StartTime.ToString("HH:mm")"
                                                @onchange="e => OnTimeChanged(row, true, e.Value?.ToString())" />
                                     </td>
-                                    @* T.Kết thúc *@
+                                    @* T.Kết thúc — tự tính từ công thức, không cho sửa *@
                                     <td>
-                                        <input type="time" class="form-control form-control-sm"
+                                        <input type="time" class="form-control form-control-sm bg-light"
                                                value="@row.EndTime.ToString("HH:mm")"
-                                               @onchange="e => OnTimeChanged(row, false, e.Value?.ToString())" />
+                                               readonly
+                                               title="Tự động tính từ T.Bắt đầu + công thức thời gian" />
                                     </td>
                                     @* Phút tự tính *@
                                     <td class="text-center fw-bold @(row.Minutes < 0 ? "text-danger" : "")">
@@ -357,12 +365,12 @@ else
                                         @if (!string.IsNullOrEmpty(row.NC) && row.AvailableNCs.Any())
                                         {
                                             <select class="form-select form-select-sm @(string.IsNullOrEmpty(row.MachineUsed) ? "border-danger" : "")"
-                                                    @bind="row.MachineUsed">
+                                                    @onchange="e => OnMachineChanged(row, e.Value?.ToString())">
                                                 <option value="">-- Chọn máy --</option>
                                                 @foreach (var m in GetMachineOptions(row))
                                                 {
                                                     var isBroken = _brokenMachines.Contains(m);
-                                                    <option value="@m" disabled="@isBroken">
+                                                    <option value="@m" selected="@(row.MachineUsed == m)" disabled="@isBroken">
                                                         @(isBroken ? $"⛔ {m} (hỏng)" : m)
                                                     </option>
                                                 }
@@ -405,7 +413,7 @@ else
                                     <td>
                                         <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
                                                style="border-color:#198754"
-                                               value="@row.QtyOk"
+                                               value="@(row.QtyOk > 0 ? row.QtyOk.ToString() : "")"
                                                @oninput="e => OnQtyOkInput(row, e)"
                                                placeholder="0" title="Số lượng OK" />
                                     </td>
@@ -413,7 +421,7 @@ else
                                     <td>
                                         <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
                                                style="@(row.QtyNg > 0 ? "border-color:#dc3545" : "")"
-                                               value="@row.QtyNg"
+                                               value="@(row.QtyNg > 0 ? row.QtyNg.ToString() : "")"
                                                @oninput="e => OnQtyNgInput(row, e)"
                                                placeholder="0" title="Số lượng NG phát hiện tại NC" />
                                     </td>
@@ -456,21 +464,55 @@ else
                                     </td>
                                 </tr>
 
-                                @* Bảng thời gian Chuẩn/Thực tế — luôn hiện *@
+                                @* Bảng thời gian Chuẩn/Thực tế — luôn hiện khi đã chọn NC *@
                                 @if (!string.IsNullOrEmpty(row.NC) && IsGcGroup)
                                 {
                                     var std = row.KhPlanDetailId.HasValue
                                         ? GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed)
                                         : null;
+                                    var isSerial = row.ProductionMode == "serial";
                                     <tr class="bg-info bg-opacity-10">
                                         <td colspan="13" class="py-2 px-3">
-                                            <div class="d-flex align-items-center gap-3 mb-2">
+
+                                            @* ── Header: thống kê + toggle mode + toggle tham khảo chuẩn ── *@
+                                            <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
                                                 <span class="small fw-semibold text-info">
                                                     <i class="bi bi-clock me-1"></i>Thời gian (phút) —
                                                     Tổng ca: <strong>@row.Minutes</strong> |
                                                     Đã phân bổ: <strong class="@(row.TimeActualSum > row.Minutes ? "text-danger" : "text-success")">@row.TimeActualSum</strong> |
                                                     Còn lại: <strong class="@(row.TimeActualRemaining < 0 ? "text-danger" : "")">@row.TimeActualRemaining</strong>
                                                 </span>
+
+                                                @* Toggle Hàng loạt / Chạy thử *@
+                                                <div class="d-flex align-items-center gap-1 border rounded px-2 py-1" style="background:#fff;">
+                                                    <span class="small text-muted me-1">Loại:</span>
+                                                    <button type="button"
+                                                            class="@BtnSerialCls(isSerial)"
+                                                            style="font-size:0.75rem;"
+                                                            @onclick="() => SetModeSerial(row)">
+                                                        <i class="bi bi-list-ul me-1"></i>Hàng loạt
+                                                    </button>
+                                                    <button type="button"
+                                                            class="@BtnTrialCls(isSerial)"
+                                                            style="font-size:0.75rem;"
+                                                            @onclick="() => SetModeTrial(row)">
+                                                        <i class="bi bi-play-circle me-1"></i>Chạy thử
+                                                    </button>
+                                                </div>
+
+                                                @* Toggle tham khảo giá trị chuẩn *@
+                                                @if (std != null)
+                                                {
+                                                    <div class="form-check form-switch mb-0 ms-1">
+                                                        <input class="form-check-input" type="checkbox" id="@($"stdToggle_{_rows.IndexOf(row)}")"
+                                                               checked="@row.UseStdAsDefault"
+                                                               @onchange="e => OnUseStdToggledHandler(row, e)" />
+                                                        <label class="form-check-label small" for="@($"stdToggle_{_rows.IndexOf(row)}")">
+                                                            Tham khảo giá trị chuẩn
+                                                        </label>
+                                                    </div>
+                                                }
+
                                                 @if (!string.IsNullOrEmpty(row.MachineUsed) && std == null)
                                                 {
                                                     <span class="small text-muted fst-italic">
@@ -478,53 +520,102 @@ else
                                                     </span>
                                                 }
                                             </div>
-                                            <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem; max-width:700px;">
+
+                                            @* ── Bảng thời gian ── *@
+                                            <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem; max-width:760px;">
                                                 <thead class="table-light">
                                                     <tr>
                                                         <th style="width:80px;"></th>
-                                                        <th class="text-center">T.Gá lắp</th>
-                                                        <th class="text-center">T.Gia công</th>
-                                                        <th class="text-center">T.Kiểm tra</th>
-                                                        <th class="text-center">T.Chuẩn bị</th>
-                                                        <th class="text-center">T.Chạy thử</th>
+                                                        @* Hàng loạt: cột 1-2-3 active; Chạy thử: xám *@
+                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Gá lắp</th>
+                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Gia công</th>
+                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Kiểm tra</th>
+                                                        @* Chạy thử: cột 4-5 active; Hàng loạt: xám *@
+                                                        <th class="text-center" style="@(isSerial ? "opacity:0.4;color:#999;" : "")">T.Chuẩn bị</th>
+                                                        <th class="text-center" style="@(isSerial ? "opacity:0.4;color:#999;" : "")">T.Chạy thử</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    @* Hàng Chuẩn — read-only, tự điền từ timing row *@
+                                                    @* Hàng Chuẩn — read-only *@
                                                     <tr class="table-primary bg-opacity-25">
                                                         <td class="fw-semibold text-primary small">Chuẩn</td>
-                                                        <td class="text-center text-primary">@(std?.SetupTime?.ToString("0.##") ?? "—")</td>
-                                                        <td class="text-center text-primary">@(std?.MachiningTime?.ToString("0.##") ?? "—")</td>
-                                                        <td class="text-center text-primary">@(std?.InspectionTime?.ToString("0.##") ?? "—")</td>
-                                                        <td class="text-center text-primary">@(std?.PreparationTime?.ToString("0.##") ?? "—")</td>
-                                                        <td class="text-center text-primary">@(std?.TrialRunTime?.ToString("0.##") ?? "—")</td>
+                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
+                                                            @(std?.SetupTime?.ToString("0.##") ?? "—")
+                                                        </td>
+                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
+                                                            @(std?.MachiningTime?.ToString("0.##") ?? "—")
+                                                        </td>
+                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
+                                                            @(std?.InspectionTime?.ToString("0.##") ?? "—")
+                                                        </td>
+                                                        <td class="text-center text-primary" style="@(isSerial ? "opacity:0.4;" : "")">
+                                                            @(std?.PreparationTime?.ToString("0.##") ?? "—")
+                                                        </td>
+                                                        <td class="text-center text-primary" style="@(isSerial ? "opacity:0.4;" : "")">
+                                                            @(std?.TrialRunTime?.ToString("0.##") ?? "—")
+                                                        </td>
                                                     </tr>
-                                                    @* Hàng Thực tế — input *@
+                                                    @* Hàng Thực tế — input, disabled theo mode *@
                                                     <tr>
                                                         <td class="fw-semibold small">Thực tế</td>
-                                                        <td>
+                                                        @* Cột 1: T.Gá lắp — chỉ Hàng loạt *@
+                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
                                                             <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   @bind="row.SetupTime_Actual" placeholder="0" />
+                                                                   disabled="@(!isSerial)"
+                                                                   value="@(row.SetupTime_Actual > 0 ? row.SetupTime_Actual.ToString() : "")"
+                                                                   placeholder="@(!isSerial ? "" : "0")"
+                                                                   @oninput="e => OnSetupTimeInput(row, e)" />
                                                         </td>
-                                                        <td>
+                                                        @* Cột 2: T.Gia công — chỉ Hàng loạt *@
+                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
                                                             <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   @bind="row.MachiningTime_Actual" placeholder="0" />
+                                                                   disabled="@(!isSerial)"
+                                                                   value="@(row.MachiningTime_Actual > 0 ? row.MachiningTime_Actual.ToString() : "")"
+                                                                   placeholder="@(!isSerial ? "" : "0")"
+                                                                   @oninput="e => OnMachiningTimeInput(row, e)" />
                                                         </td>
-                                                        <td>
+                                                        @* Cột 3: T.Kiểm tra — chỉ Hàng loạt *@
+                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
                                                             <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   @bind="row.InspectionTime_Actual" placeholder="0" />
+                                                                   disabled="@(!isSerial)"
+                                                                   value="@(row.InspectionTime_Actual > 0 ? row.InspectionTime_Actual.ToString() : "")"
+                                                                   placeholder="@(!isSerial ? "" : "0")"
+                                                                   @oninput="e => OnInspectionTimeInput(row, e)" />
                                                         </td>
-                                                        <td>
+                                                        @* Cột 4: T.Chuẩn bị — chỉ Chạy thử *@
+                                                        <td style="@(isSerial ? "background:#f0f0f0;" : "")">
                                                             <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   @bind="row.PreparationTime_Actual" placeholder="0" />
+                                                                   disabled="@(isSerial)"
+                                                                   value="@(row.PreparationTime_Actual > 0 ? row.PreparationTime_Actual.ToString() : "")"
+                                                                   placeholder="@(isSerial ? "" : "0")"
+                                                                   @oninput="e => OnPreparationTimeInput(row, e)" />
                                                         </td>
-                                                        <td>
+                                                        @* Cột 5: T.Chạy thử — chỉ Chạy thử *@
+                                                        <td style="@(isSerial ? "background:#f0f0f0;" : "")">
                                                             <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   @bind="row.TrialRunTime_Actual" placeholder="0" />
+                                                                   disabled="@(isSerial)"
+                                                                   value="@(row.TrialRunTime_Actual > 0 ? row.TrialRunTime_Actual.ToString() : "")"
+                                                                   placeholder="@(isSerial ? "" : "0")"
+                                                                   @oninput="e => OnTrialRunTimeInput(row, e)" />
                                                         </td>
                                                     </tr>
                                                 </tbody>
                                             </table>
+
+                                            @* Gợi ý công thức tính EndTime đang dùng *@
+                                            <div class="text-muted small mt-1 fst-italic">
+                                                @if (isSerial)
+                                                {
+                                                    <i class="bi bi-calculator me-1"></i>
+                                                    <text>T.Kết thúc = T.Bắt đầu + (T.Gá + max(T.Gia công, T.Kiểm tra)) × SL</text>
+                                                }
+                                                else
+                                                {
+                                                    <i class="bi bi-calculator me-1"></i>
+                                                    <text>T.Kết thúc = T.Bắt đầu + T.Chuẩn bị + T.Chạy thử (1 lần setup)</text>
+                                                }
+                                            </div>
+
                                             @if (row.TimeActualSum > row.Minutes)
                                             {
                                                 <div class="text-danger small mt-1">
@@ -1210,6 +1301,9 @@ else
     private bool _canSubmit;
     private User? _currentWorker;
     private int _currentUserId;
+
+    // Preference per-user — lưu vào localStorage, default true
+    private bool _useStdAsDefault = true;
     private Dictionary<string, (bool CanView, bool CanEdit)> _perms = new();
 
     // ── Tab ──────────────────────────────────────────────────────────────
@@ -1351,11 +1445,53 @@ else
         decimal? SetupTime, decimal? MachiningTime, decimal? InspectionTime,
         decimal? PreparationTime, decimal? TrialRunTime);
 
+    /// <summary>
+    /// Lấy timing chuẩn từ snapshot đã load trong row.AvailableNCs.
+    /// Ưu tiên: 1) TimingRows (máy đồng dạng, match SoMay CSV)
+    ///           2) Timing gốc trên KhPlanRouteSnapshotMachining (máy đăng ký chính)
+    /// Không cần detailId nữa — snapshot đã có sẵn trong row.
+    /// </summary>
     private TimingStd? GetStdTiming(int detailId, string? nc, string? soMay)
     {
         if (string.IsNullOrEmpty(nc) || string.IsNullOrEmpty(soMay)) return null;
+
+        // Tìm NC trong snapshot đang giữ trong memory
+        // _snapshotCache key = PO string, value = List<KhPlanRouteSnapshotMachining>
+        var snapList = _snapshotCache.Values
+            .SelectMany(list => list)
+            .Where(s => s.NC.Equals(nc, StringComparison.OrdinalIgnoreCase)
+                     && s.KhPlanDetailId == detailId)
+            .FirstOrDefault();
+
+        if (snapList == null) return null;
+
+        // 1. Thử match TimingRow (máy đồng dạng)
+        foreach (var tr in snapList.TimingRows)
+        {
+            var machines = (tr.SoMay ?? "").Split(new[] { ',', ';' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (machines.Any(m => m.Equals(soMay, StringComparison.OrdinalIgnoreCase)))
+                return new TimingStd(nc, tr.SoMay ?? soMay,
+                    tr.SetupTime, tr.MachiningTime, tr.InspectionTime,
+                    tr.PreparationTime, tr.TrialRunTime);
+        }
+
+        // 2. Fallback: máy đăng ký chính — timing lưu trực tiếp trên snap
+        if (soMay.Equals(snapList.MachineRegistered ?? "", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrEmpty(snapList.MachineRegistered))
+        {
+            if (snapList.SetupTime.HasValue || snapList.MachiningTime.HasValue ||
+                snapList.InspectionTime.HasValue || snapList.PreparationTime.HasValue ||
+                snapList.TrialRunTime.HasValue)
+            {
+                return new TimingStd(nc, soMay,
+                    snapList.SetupTime, snapList.MachiningTime, snapList.InspectionTime,
+                    snapList.PreparationTime, snapList.TrialRunTime);
+            }
+        }
+
+        // 3. Cuối cùng fallback về _timingStdCache (Part Master live — cũ)
         if (!_timingStdCache.TryGetValue(detailId, out var list)) return null;
-        // SoMay trong cache có thể là CSV nhóm "C04, C06" → match nếu soMay nằm trong nhóm đó
         return list.FirstOrDefault(t =>
             t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase) &&
             t.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -1405,6 +1541,16 @@ else
         _currentWorker = await Db.Users
             .Include(u => u.Group)
             .FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+
+        // Load preference tham khảo chuẩn từ localStorage
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem",
+                $"wts_useStdAsDefault_{_currentUserId}");
+            if (stored != null)
+                _useStdAsDefault = stored == "true";
+        }
+        catch { /* localStorage không khả dụng (SSR pre-render) — giữ default */ }
 
         var gc = _currentWorker?.Group?.GroupCode ?? "";
         _groupCode = gc;
@@ -1611,12 +1757,15 @@ else
     private void AddRow()
     {
         if (!IsToday) return; // Không cho thêm dòng ngày cũ
-        var lastEnd = _rows.LastOrDefault()?.EndTime
-                      ?? _workDate.Date.AddHours(8);
+        // StartTime = EndTime của dòng đã lưu cuối cùng (continuous timeline)
+        // EndTime placeholder = +1 phút, công thức tính lại khi nhập timing
+        var lastSaved = _rows.LastOrDefault(r => r.Saved);
+        var lastEnd = lastSaved?.EndTime ?? _workDate.Date.AddHours(8);
         _rows.Add(new WtsRow
         {
-            StartTime = lastEnd,
-            EndTime   = lastEnd.AddHours(2),
+            StartTime      = lastEnd,
+            EndTime        = lastEnd.AddMinutes(1),
+            UseStdAsDefault = _useStdAsDefault,
         });
     }
 
@@ -1770,12 +1919,36 @@ else
             await EnsureTimingStdAsync(detail.KhPlanDetailId, pm.PartId);
     }
 
+    // Helper: class button toggle mode — tránh nested quote trong Razor markup
+    private static string BtnSerialCls(bool isSerial)
+        => isSerial ? "btn btn-sm py-0 px-2 btn-primary" : "btn btn-sm py-0 px-2 btn-outline-secondary";
+
+    private static string BtnTrialCls(bool isSerial)
+        => isSerial ? "btn btn-sm py-0 px-2 btn-outline-secondary" : "btn btn-sm py-0 px-2 btn-warning";
+
+    // Wrapper không dùng string literal trong @onclick — tránh CS1056 backslash escape
+    private void SetModeSerial(WtsRow row) => OnProductionModeChanged(row, "serial");
+    private void SetModeTrial(WtsRow row)  => OnProductionModeChanged(row, "trial");
+
+    private void OnMachineChanged(WtsRow row, string? machine)
+    {
+        row.MachineUsed = machine;
+        // Khi đổi máy → nếu toggle bật thì fill lại timing chuẩn theo máy mới
+        TryFillStdValues(row);
+    }
+
     private void OnNCChanged(WtsRow row, string? nc)
     {
         row.NC          = nc;
         row.WtsCode     = null;
         row.WtsName     = null;
-        row.MachineUsed = null; // reset máy khi đổi NC
+        row.MachineUsed = null; // reset máy khi đổi NC — cần chọn máy lại để GetStdTiming có soMay
+        // Xóa actual cũ khi đổi NC (máy đổi → timing chuẩn đổi)
+        row.SetupTime_Actual      = null;
+        row.MachiningTime_Actual  = null;
+        row.InspectionTime_Actual = null;
+        row.PreparationTime_Actual= null;
+        row.TrialRunTime_Actual   = null;
         CheckQtyWarning(row);
     }
 
@@ -1805,6 +1978,7 @@ else
     {
         row.NC = nc;
         CheckQtyWarning(row);
+        RecalcEndTime(row); // non-GC: tính lại EndTime = SL * T.chuẩn
     }
 
     private void OnWtsOtherChanged(WtsRow row, string? code)
@@ -1845,11 +2019,13 @@ else
         return $"{icon} NC{ncCode} — {regMachine} (đã làm: {wtsDone.ToString("0.##")})";
     }
 
-    // Gọi khi user đổi QtyOk hoặc QtyNg — sync QtyDone + trigger warn
+    // Gọi khi user đổi QtyOk hoặc QtyNg — sync QtyDone + trigger warn + tính lại EndTime
     private void OnQtyChanged(WtsRow row)
     {
         row.QtyDone = row.QtyOk + row.QtyNg;
         CheckQtyWarning(row);
+        RecalcEndTime(row);
+        StateHasChanged();
     }
 
     // Xử lý input riêng từng cột — tránh lambda phức tạp trong Razor markup
@@ -2269,12 +2445,164 @@ else
 
         public bool    ShowTimeDetail { get; set; } // toggle expand thời gian thực tế
 
+        // ── Mode sản xuất: "serial" = Hàng loạt (cột 1-2-3), "trial" = Chạy thử (cột 4-5)
+        public string  ProductionMode { get; set; } = "serial";
+
+        // ── Toggle tham khảo giá trị chuẩn: mặc định BẬT — copy std vào actual khi chọn máy
+        public bool    UseStdAsDefault { get; set; } = true;
+
         public bool    Saved      { get; set; }
         public bool    IsEditing  { get; set; }
         public string? ErrorMsg   { get; set; }
         public bool    HasWarning { get; set; }
         public string? WarningMsg { get; set; }
     }
+    // ── Tính lại T.Kết thúc theo công thức ──────────────────────────────
+    // GC Hàng loạt: (T.Gá + max(T.GC, T.Ktra)) * SL_total
+    // GC Chạy thử : (T.Chuẩn bị + T.Chạy thử) * SL_total  [không nhân SL vì chạy thử thường 1 lần]
+    // Non-GC      : SL_total * T.chuẩn (từ snapshot)
+    private void RecalcEndTime(WtsRow row)
+    {
+        if (!IsGcGroup)
+        {
+            // Non-GC: SL * T.chuẩn
+            var std = GetStdTimeForWtsCode(row);
+            if (std.HasValue && std.Value > 0 && row.QtyDone > 0)
+            {
+                var totalMin = (int)Math.Ceiling((double)(std.Value * row.QtyDone));
+                row.EndTime = row.StartTime.AddMinutes(totalMin);
+            }
+            return;
+        }
+
+        // GC — tính theo mode
+        var slTotal = row.QtyDone; // QtyOk + QtyNg
+        if (slTotal <= 0) return;
+
+        if (row.ProductionMode == "serial")
+        {
+            // Hàng loạt: dùng T.Gá + max(T.GC, T.Ktra)
+            var setup    = row.SetupTime_Actual      ?? 0m;
+            var machine  = row.MachiningTime_Actual  ?? 0m;
+            var inspect  = row.InspectionTime_Actual ?? 0m;
+            if (setup == 0 && machine == 0 && inspect == 0) return; // chưa nhập gì
+            var cycle    = setup + Math.Max(machine, inspect);
+            var totalMin = (int)Math.Ceiling((double)(cycle * slTotal));
+            row.EndTime  = row.StartTime.AddMinutes(totalMin);
+        }
+        else // trial
+        {
+            // Chạy thử: T.Chuẩn bị + T.Chạy thử (không nhân SL — đây là setup 1 lần)
+            var prep  = row.PreparationTime_Actual ?? 0m;
+            var trial = row.TrialRunTime_Actual    ?? 0m;
+            if (prep == 0 && trial == 0) return;
+            var totalMin = (int)Math.Ceiling((double)(prep + trial));
+            row.EndTime  = row.StartTime.AddMinutes(totalMin);
+        }
+    }
+
+    // ── Copy giá trị chuẩn vào ô thực tế (chỉ khi UseStdAsDefault=true) ──
+    private void TryFillStdValues(WtsRow row)
+    {
+        if (!row.UseStdAsDefault) return;
+        if (!row.KhPlanDetailId.HasValue) return;
+        var std = GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed);
+        if (std == null) return;
+
+        if (row.ProductionMode == "serial")
+        {
+            row.SetupTime_Actual      = std.SetupTime;
+            row.MachiningTime_Actual  = std.MachiningTime;
+            row.InspectionTime_Actual = std.InspectionTime;
+            // Chạy thử xám → xóa đi
+            row.PreparationTime_Actual = null;
+            row.TrialRunTime_Actual    = null;
+        }
+        else
+        {
+            row.PreparationTime_Actual = std.PreparationTime;
+            row.TrialRunTime_Actual    = std.TrialRunTime;
+            // Hàng loạt xám → xóa đi
+            row.SetupTime_Actual      = null;
+            row.MachiningTime_Actual  = null;
+            row.InspectionTime_Actual = null;
+        }
+
+        RecalcEndTime(row);
+    }
+
+    // Gọi khi user thay đổi ProductionMode (toggle Chạy thử / Hàng loạt)
+    private void OnProductionModeChanged(WtsRow row, string mode)
+    {
+        row.ProductionMode = mode;
+        // Xóa giá trị actual của mode cũ để tránh nhầm lẫn
+        if (mode == "serial")
+        {
+            row.PreparationTime_Actual = null;
+            row.TrialRunTime_Actual    = null;
+        }
+        else
+        {
+            row.SetupTime_Actual      = null;
+            row.MachiningTime_Actual  = null;
+            row.InspectionTime_Actual = null;
+        }
+        TryFillStdValues(row);
+    }
+
+    // Wrapper EventCallback-safe cho toggle — tránh async lambda trong markup
+    private async Task OnUseStdToggledHandler(WtsRow row, ChangeEventArgs e)
+    {
+        var value = e.Value is bool b ? b : false;
+        await OnUseStdToggled(row, value);
+    }
+
+    // Gọi khi user toggle UseStdAsDefault — lưu preference vào localStorage
+    private async Task OnUseStdToggled(WtsRow row, bool value)
+    {
+        row.UseStdAsDefault = value;
+        _useStdAsDefault = value; // cập nhật default cho các dòng tiếp theo
+        if (value) TryFillStdValues(row);
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem",
+                $"wts_useStdAsDefault_{_currentUserId}", value ? "true" : "false");
+        }
+        catch { /* ignore */ }
+    }
+
+    // Wrapper các input actual GC — sau khi nhập thì tính lại EndTime
+    private void OnSetupTimeInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.SetupTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        RecalcEndTime(row);
+        StateHasChanged();
+    }
+    private void OnMachiningTimeInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.MachiningTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        RecalcEndTime(row);
+        StateHasChanged();
+    }
+    private void OnInspectionTimeInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.InspectionTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        RecalcEndTime(row);
+        StateHasChanged();
+    }
+    private void OnPreparationTimeInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.PreparationTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        RecalcEndTime(row);
+        StateHasChanged();
+    }
+    private void OnTrialRunTimeInput(WtsRow row, ChangeEventArgs e)
+    {
+        row.TrialRunTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        RecalcEndTime(row);
+        StateHasChanged();
+    }
+
     // ── Report methods ────────────────────────────────────────────────────
 
     private async Task SwitchToReport()
