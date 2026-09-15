@@ -126,528 +126,472 @@ else
                         <i class="bi bi-lock me-1"></i>Ngày cũ — chỉ xem
                     </span>
                 }
-                <button class="btn btn-sm btn-outline-primary" @onclick="AddRow" disabled="@(!IsToday)">
-                    <i class="bi bi-plus-lg me-1"></i>Thêm dòng
+                <button class="btn btn-sm btn-outline-primary" @onclick="AddGroup" disabled="@(!IsToday)">
+                    <i class="bi bi-plus-lg me-1"></i>Thêm nhóm
                 </button>
             </div>
         </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.82rem;">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width:100px;">T.Bắt đầu</th>
-                            <th style="width:100px;">T.Kết thúc</th>
-                            <th style="width:60px;" class="text-center">Phút</th>
-                            <th style="width:180px;">PO <span class="text-muted fw-normal">(tùy chọn)</span></th>
-                            <th style="width:110px;">Part No</th>
-                            @if (IsHtspGroup)
-                            {
-                                <th style="width:100px;">Nhóm</th>
-                            }
-                            <th style="width:@(IsGcGroup ? "120px" : "160px");">@(IsGcGroup ? "NC / Mục" : "Mã công việc")</th>
-                            @if (IsGcGroup)
-                            {
-                                <th style="width:100px;">Máy SD <span class="text-danger">*</span></th>
-                            }
-                            <th style="width:180px;">Mã WTS khác <span class="text-muted fw-normal">(nếu không có PO)</span></th>
-                            <th style="width:62px;" class="text-end text-success" title="Số lượng làm đúng">OK</th>
-                            <th style="width:62px;" class="text-end text-danger" title="Số lượng làm sai phát hiện tại NC">NG</th>
-                            @if (!IsGcGroup)
-                            {
-                                <th class="text-center text-muted" style="width:60px;font-size:0.75rem;" title="Thời gian chuẩn (phút)">T.Chuẩn<br/><span style="font-size:0.65rem;">(phút)</span></th>
-                                <th class="text-center" style="width:60px;font-size:0.75rem;color:#0d6efd;" title="Thời gian thực tế = T.Kết thúc - T.Bắt đầu (phút)">T.Thực tế<br/><span style="font-size:0.65rem;">(phút)</span></th>
-                            }
-                            <th style="width:140px;" class="text-danger" title="Lý do NG (bắt buộc khi có NG)">Lý do NG</th>
-                            <th>Ghi chú</th>
-                            <th style="width:80px;" class="text-center">Thao tác</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in _rows)
-                        {
-                            var idx = _rows.IndexOf(row);
-                            @if (row.Saved)
-                            {
-                                @* Dòng đã lưu — hiện read-only *@
-                                <tr class="@(row.HasWarning ? "table-warning" : "table-success bg-opacity-10")">
-                                    <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
-                                    <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
-                                    <td class="text-center fw-bold">@row.Minutes</td>
-                                    <td><code class="small">@(row.PO ?? "—")</code></td>
-                                    <td title="@(row.PartNo ?? "")"><code class="small text-danger">@(row.PartNo ?? "—")</code></td>
-                                    @if (IsHtspGroup)
-                                    {
-                                        <td><span class="small text-muted">@(row.HtspSubGroup ?? "—")</span></td>
-                                    }
-                                    <td title="@(row.NC ?? row.WtsCode ?? "")"><code class="small">@(row.NC ?? row.WtsCode ?? "—")</code></td>
-                                    @if (IsGcGroup)
-                                    {
-                                        <td><code class="small text-primary">@(row.MachineUsed ?? "—")</code></td>
-                                    }
-                                    <td class="small text-muted">@row.WtsName</td>
-                                    <td class="text-end text-success fw-semibold">@(row.QtyOk > 0 ? row.QtyOk.ToString("0.##") : "—")</td>
-                                    <td class="text-end @(row.QtyNg > 0 ? "text-danger fw-semibold" : "text-muted")">@(row.QtyNg > 0 ? row.QtyNg.ToString("0.##") : "—")</td>
-                                    @if (!IsGcGroup)
-                                    {
-                                        <td class="text-center text-muted small">—</td>
-                                        <td class="text-center small" style="color:#0d6efd;">@(row.Minutes > 0 ? row.Minutes.ToString() : "—")</td>
-                                    }
-                                    <td class="small @(row.QtyNg > 0 ? "text-danger" : "text-muted")">
-                                        @if (row.QtyNg > 0 && !string.IsNullOrEmpty(row.NgReason))
-                                        {
-                                            <span title="@row.NgReason"><i class="bi bi-exclamation-circle me-1"></i>@row.NgReason</span>
-                                        }
-                                        else { <span>—</span> }
-                                    </td>
-                                    <td class="small text-muted">@(string.IsNullOrEmpty(row.Notes) ? "—" : row.Notes)</td>
-                                    <td class="text-center text-nowrap">
-                                        @if (row.HasWarning)
-                                        {
-                                            <span class="badge bg-warning text-dark me-1" title="@row.WarningMsg">
-                                                <i class="bi bi-exclamation-triangle"></i>
-                                            </span>
-                                        }
-                                        else
-                                        {
-                                            <i class="bi bi-check-circle-fill text-success me-1"></i>
-                                        }
-                                        @if (IsToday)
-                                        {
-                                            <button class="btn btn-sm btn-outline-secondary py-0 px-1"
-                                                    title="Sửa dòng này (chỉ cho phép trong ngày)"
-                                                    @onclick="() => EditRow(row)">
-                                                <i class="bi bi-pencil"></i>
-                                            </button>
-                                        }
-                                        else
-                                        {
-                                            <span class="text-muted" title="Ngày cũ — cần quyền cao hơn để sửa">
-                                                <i class="bi bi-lock"></i>
-                                            </span>
-                                        }
-                                    </td>
-                                </tr>
-                            }
-                            else
-                            {
-                                @* Dòng đang nhập *@
-                                <tr class="@(!string.IsNullOrEmpty(row.ErrorMsg) ? "table-danger bg-opacity-10" : "")">
-                                    @* T.Bắt đầu *@
-                                    <td>
-                                        <input type="time" class="form-control form-control-sm"
-                                               value="@row.StartTime.ToString("HH:mm")"
-                                               @onchange="e => OnTimeChanged(row, true, e.Value?.ToString())" />
-                                    </td>
-                                    @* T.Kết thúc — tự tính từ công thức, không cho sửa *@
-                                    <td>
-                                        <input type="time" class="form-control form-control-sm bg-light"
-                                               value="@row.EndTime.ToString("HH:mm")"
-                                               readonly
-                                               title="Tự động tính từ T.Bắt đầu + công thức thời gian" />
-                                    </td>
-                                    @* Phút tự tính *@
-                                    <td class="text-center fw-bold @(row.Minutes < 0 ? "text-danger" : "")">
-                                        @(row.Minutes >= 0 ? row.Minutes.ToString() : "!")
-                                    </td>
-                                    @* PO *@
-                                    <td>
-                                        <select class="form-select form-select-sm"
-                                                @onchange="e => OnPOChanged(row, e.Value?.ToString())">
-                                            <option value="">-- Không chọn PO --</option>
-                                            @foreach (var r in PriorityRows)
-                                            {
-                                                var label = $"{(r.Priority == "Gấp" ? "🔴 " : "")}{r.PurchaseOrder} — {r.PartNo} ({r.Quantity.ToString("0.##")} {r.Unit}, STD: {r.STD.ToString("dd/MM")})";
-                                                <option value="@r.PurchaseOrder">@label</option>
-                                            }
-                                        </select>
-                                    </td>
-                                    @* Part No — tự lấy từ PO đã chọn *@
-                                    <td>
-                                        <input class="form-control form-control-sm font-monospace text-danger bg-light"
-                                               value="@(row.PartNo ?? "—")" readonly />
-                                    </td>
-                                    @* Nhóm nhỏ — chỉ hiện cho HTSP *@
-                                    @if (IsHtspGroup)
-                                    {
-                                        <td>
-                                            @if (string.IsNullOrEmpty(row.PO))
-                                            {
-                                                <span class="text-muted small">—</span>
-                                            }
-                                            else
-                                            {
-                                                <select class="form-select form-select-sm"
-                                                        value="@row.HtspSubGroup"
-                                                        @onchange="e => OnHtspSubGroupChanged(row, e.Value?.ToString())">
-                                                    <option value="">-- Chọn nhóm --</option>
-                                                    <option value="Taro">Taro</option>
-                                                    <option value="Bavia">Bavia</option>
-                                                    <option value="Rua">Rửa</option>
-                                                </select>
-                                            }
-                                        </td>
-                                    }
-                                    @* NC / Mã công việc *@
-                                    <td>
-                                        @if (string.IsNullOrEmpty(row.PO))
-                                        {
-                                            <span class="text-muted small">—</span>
-                                        }
-                                        else if (IsGcGroup)
-                                        {
-                                            @* GC: dropdown NC từ Machining snapshot *@
-                                            @if (!row.AvailableNCs.Any())
-                                            {
-                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có snapshot</span>
-                                            }
-                                            else
-                                            {
-                                                <select class="form-select form-select-sm"
-                                                        @onchange="e => OnNCChanged(row, e.Value?.ToString())">
-                                                    <option value="">-- Chọn NC --</option>
-                                                    @foreach (var nc in row.AvailableNCs.Where(n => !n.IsBackup))
-                                                    {
-                                                        var flow        = GetFlowItem(row.KhPlanDetailId, nc.NC);
-                                                        var wtsDoneAtNc = flow?.WtsDone ?? 0m;
-                                                        var det         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
-                                                        var planQty     = det?.Quantity ?? 0m;
-                                                        var isDone      = planQty > 0 && wtsDoneAtNc >= planQty;
-                                                        var isExcluded  = flow?.IsExcluded == true;
-                                                        var regMachine  = nc.MachineRegistered ?? "";
-                                                        var altMachines = GetAltMachinesFromTimingRows(nc.TimingRows);
-                                                        var regBroken    = !string.IsNullOrEmpty(regMachine) && _brokenMachines.Contains(regMachine);
-                                                        var allAltBroken = altMachines.Length > 0 && altMachines.All(m => _brokenMachines.Contains(m));
-                                                        var machineBlocked = regBroken && (altMachines.Length == 0 || allAltBroken);
-                                                        var isDisabled = isDone || machineBlocked;
-                                                        var lbl = BuildNcLabel(isDone, machineBlocked, isExcluded, regBroken, altMachines, nc.NC, regMachine, planQty, det?.Unit, wtsDoneAtNc);
-                                                        <option value="@nc.NC" disabled="@isDisabled">@lbl</option>
-                                                    }
-                                                    @foreach (var nc in row.AvailableNCs.Where(n => n.IsBackup))
-                                                    {
-                                                        var dpMachine = nc.MachineRegistered ?? "";
-                                                        var dpBroken  = !string.IsNullOrEmpty(dpMachine) && _brokenMachines.Contains(dpMachine);
-                                                        var dpLbl     = dpBroken ? $"⛔ DP: NC{nc.NC} — {dpMachine} ĐANG HỎNG" : $"↩ DP: NC{nc.NC} — {dpMachine}";
-                                                        <option value="@nc.NC" disabled="@dpBroken">@dpLbl</option>
-                                                    }
-                                                </select>
-                                            }
-                                        }
-                                        else
-                                        {
-                                            @* HTSP/KCS/PKG: dropdown mã CV từ snapshot tương ứng *@
-                                            @if (IsHtspGroup && string.IsNullOrEmpty(row.HtspSubGroup))
-                                            {
-                                                <span class="text-muted small">← Chọn nhóm trước</span>
-                                            }
-                                            else if (!row.AvailableWtsItems.Any())
-                                            {
-                                                <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Chưa có dữ liệu</span>
-                                            }
-                                            else
-                                            {
-                                                <select class="form-select form-select-sm"
-                                                        title="@GetWtsItemTitle(row)"
-                                                        @onchange="e => OnWtsItemChanged(row, e.Value?.ToString())">
-                                                    <option value="">-- Chọn mã CV --</option>
-                                                    @foreach (var item in row.AvailableWtsItems)
-                                                    {
-                                                        <option value="@item.NC" selected="@(row.NC == item.NC)" title="@item.NC — @item.Name">@item.NC — @item.Name</option>
-                                                    }
-                                                </select>
-                                            }
-                                        }
-                                    </td>
-                                    @* Máy sử dụng — chỉ hiện cho nhóm GC *@
-                                    @if (IsGcGroup)
-                                    {
-                                    <td>
-                                        @if (!string.IsNullOrEmpty(row.NC) && row.AvailableNCs.Any())
-                                        {
-                                            <select class="form-select form-select-sm @(string.IsNullOrEmpty(row.MachineUsed) ? "border-danger" : "")"
-                                                    @onchange="e => OnMachineChanged(row, e.Value?.ToString())">
-                                                <option value="">-- Chọn máy --</option>
-                                                @foreach (var m in GetMachineOptions(row))
-                                                {
-                                                    var isBroken = _brokenMachines.Contains(m);
-                                                    <option value="@m" selected="@(row.MachineUsed == m)" disabled="@isBroken">
-                                                        @(isBroken ? $"⛔ {m} (hỏng)" : m)
-                                                    </option>
-                                                }
-                                            </select>
-                                            @if (string.IsNullOrEmpty(row.MachineUsed))
-                                            {
-                                                <div style="font-size:10px" class="text-danger">Bắt buộc chọn máy</div>
-                                            }
-                                        }
-                                        else
-                                        {
-                                            <span class="text-muted small">—</span>
-                                        }
-                                    </td>
-                                    }
+        <div class="card-body p-2">
 
-                                    @* Mã WTS khác — datalist pattern giống Part Master máy đăng ký *@
-                                    <td>
-                                        @if (string.IsNullOrEmpty(row.PO))
-                                        {
-                                            var dlId = $"dl-wts-{_rows.IndexOf(row)}";
-                                            <input class="form-control form-control-sm"
-                                                   list="@dlId"
-                                                   value="@row.WtsCode"
-                                                   placeholder="Gõ mã hoặc tên..."
-                                                   @oninput="e => OnWtsCodeInput(row, e)" />
-                                            <datalist id="@dlId">
-                                                @foreach (var t in WtsTasksForGroup)
-                                                {
-                                                    <option value="@t.TaskCode">[@t.TaskCode] @t.TaskName</option>
-                                                }
-                                            </datalist>
-                                        }
-                                        else
-                                        {
-                                            <span class="text-muted small fst-italic ps-1">— (đã chọn PO)</span>
-                                        }
-                                    </td>
-                                    @* OK *@
-                                    <td>
-                                        <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
-                                               style="border-color:#198754"
-                                               value="@(row.QtyOk > 0 ? row.QtyOk.ToString() : "")"
-                                               @oninput="e => OnQtyOkInput(row, e)"
-                                               placeholder="0" title="Số lượng OK" />
-                                    </td>
-                                    @* NG *@
-                                    <td>
-                                        <input type="number" step="1" min="0" class="form-control form-control-sm text-end"
-                                               style="@(row.QtyNg > 0 ? "border-color:#dc3545" : "")"
-                                               value="@(row.QtyNg > 0 ? row.QtyNg.ToString() : "")"
-                                               @oninput="e => OnQtyNgInput(row, e)"
-                                               placeholder="0" title="Số lượng NG phát hiện tại NC" />
-                                    </td>
-                                    @* T.Chuẩn và T.Thực tế — chỉ non-GC *@
-                                    @if (!IsGcGroup)
+            @* ── Dòng đã lưu (saved rows từ DB) ── *@
+            @if (_rows.Any(r => r.Saved))
+            {
+                <div class="table-responsive mb-2">
+                    <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.8rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:90px">Bắt đầu</th>
+                                <th style="width:90px">Kết thúc</th>
+                                <th style="width:50px" class="text-center">Phút</th>
+                                <th>Số KH / PO</th>
+                                <th>Part No</th>
+                                <th>NC</th>
+                                <th>Máy</th>
+                                <th class="text-success text-center">OK</th>
+                                <th class="text-danger text-center">NG</th>
+                                <th>Lý do NG</th>
+                                <th>Ghi chú</th>
+                                <th style="width:60px" class="text-center">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var row in _rows.Where(r => r.Saved).OrderBy(r => r.StartTime))
+                        {
+                            <tr class="@SavedRowCls(row)">
+                                <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
+                                <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
+                                <td class="text-center">@row.Minutes</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(row.PO))
                                     {
-                                        var stdTime = GetStdTimeForWtsCode(row);
-                                        <td class="text-center text-muted small">
-                                            @(stdTime.HasValue ? stdTime.Value.ToString("0.##") : "—")
-                                        </td>
-                                        <td class="text-center fw-semibold small" style="color:#0d6efd;">
-                                            @(row.Minutes > 0 ? row.Minutes.ToString() : "—")
-                                        </td>
+                                        <small class="text-muted">@row.PO</small>
                                     }
-                                    @* Lý do NG *@
-                                    <td>
-                                        <input class="form-control form-control-sm"
-                                               style="@(row.QtyNg > 0 ? "border-color:#dc3545" : "")"
-                                               @bind="row.NgReason"
-                                               placeholder="@(row.QtyNg > 0 ? "Lý do NG *" : "Lý do NG")"
-                                               title="Bắt buộc khi có NG" />
-                                    </td>
-                                    @* Ghi chú *@
-                                    <td>
-                                        <input class="form-control form-control-sm"
-                                               @bind="row.Notes" placeholder="Ghi chú..." />
-                                    </td>
-                                    @* Thao tác *@
-                                    <td class="text-center text-nowrap">
-                                        <button class="btn btn-sm btn-success py-0 px-2 me-1"
-                                                @onclick="() => SaveRowAsync(row)"
-                                                title="Lưu dòng này">
-                                            <i class="bi bi-check-lg"></i>
+                                    else
+                                    {
+                                        <span class="text-muted fst-italic small">—</span>
+                                    }
+                                </td>
+                                <td><small>@(row.PartNo ?? "—")</small></td>
+                                <td><small>@(row.NC ?? row.WtsCode ?? "—")</small></td>
+                                <td><small>@(row.MachineUsed ?? "—")</small></td>
+                                <td class="text-center text-success fw-semibold">@row.QtyOk</td>
+                                <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
+                                <td><small class="text-muted">@(row.NgReason ?? "")</small></td>
+                                <td><small class="text-muted">@(row.Notes ?? "")</small></td>
+                                <td class="text-center">
+                                    @if (IsToday)
+                                    {
+                                        <button class="btn btn-sm btn-outline-warning py-0 px-1"
+                                                @onclick="() => EditSavedRow(row)"
+                                                title="Sửa lại">
+                                            <i class="bi bi-pencil"></i>
                                         </button>
-                                        <button class="btn btn-sm btn-outline-danger py-0 px-2"
-                                                @onclick="() => RemoveRow(row)"
-                                                title="Xóa dòng">
+                                        <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-1"
+                                                @onclick="async () => await VoidSavedRow(row)"
+                                                title="Xóa">
                                             <i class="bi bi-trash"></i>
                                         </button>
-                                    </td>
-                                </tr>
-
-                                @* Bảng thời gian Chuẩn/Thực tế — luôn hiện khi đã chọn NC *@
-                                @if (!string.IsNullOrEmpty(row.NC) && IsGcGroup)
-                                {
-                                    var std = row.KhPlanDetailId.HasValue
-                                        ? GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed)
-                                        : null;
-                                    var isSerial = row.ProductionMode == "serial";
-                                    <tr class="bg-info bg-opacity-10">
-                                        <td colspan="13" class="py-2 px-3">
-
-                                            @* ── Header: thống kê + toggle mode + toggle tham khảo chuẩn ── *@
-                                            <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
-                                                <span class="small fw-semibold text-info">
-                                                    <i class="bi bi-clock me-1"></i>Thời gian (phút) —
-                                                    Tổng ca: <strong>@row.Minutes</strong> |
-                                                    Đã phân bổ: <strong class="@(row.TimeActualSum > row.Minutes ? "text-danger" : "text-success")">@row.TimeActualSum</strong> |
-                                                    Còn lại: <strong class="@(row.TimeActualRemaining < 0 ? "text-danger" : "")">@row.TimeActualRemaining</strong>
-                                                </span>
-
-                                                @* Toggle Hàng loạt / Chạy thử *@
-                                                <div class="d-flex align-items-center gap-1 border rounded px-2 py-1" style="background:#fff;">
-                                                    <span class="small text-muted me-1">Loại:</span>
-                                                    <button type="button"
-                                                            class="@BtnSerialCls(isSerial)"
-                                                            style="font-size:0.75rem;"
-                                                            @onclick="() => SetModeSerial(row)">
-                                                        <i class="bi bi-list-ul me-1"></i>Hàng loạt
-                                                    </button>
-                                                    <button type="button"
-                                                            class="@BtnTrialCls(isSerial)"
-                                                            style="font-size:0.75rem;"
-                                                            @onclick="() => SetModeTrial(row)">
-                                                        <i class="bi bi-play-circle me-1"></i>Chạy thử
-                                                    </button>
-                                                </div>
-
-                                                @* Toggle tham khảo giá trị chuẩn *@
-                                                @if (std != null)
-                                                {
-                                                    <div class="form-check form-switch mb-0 ms-1">
-                                                        <input class="form-check-input" type="checkbox" id="@($"stdToggle_{_rows.IndexOf(row)}")"
-                                                               checked="@row.UseStdAsDefault"
-                                                               @onchange="e => OnUseStdToggledHandler(row, e)" />
-                                                        <label class="form-check-label small" for="@($"stdToggle_{_rows.IndexOf(row)}")">
-                                                            Tham khảo giá trị chuẩn
-                                                        </label>
-                                                    </div>
-                                                }
-
-                                                @if (!string.IsNullOrEmpty(row.MachineUsed) && std == null)
-                                                {
-                                                    <span class="small text-muted fst-italic">
-                                                        <i class="bi bi-info-circle me-1"></i>Chưa có TG chuẩn cho máy @row.MachineUsed
-                                                    </span>
-                                                }
-                                            </div>
-
-                                            @* ── Bảng thời gian ── *@
-                                            <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem; max-width:760px;">
-                                                <thead class="table-light">
-                                                    <tr>
-                                                        <th style="width:80px;"></th>
-                                                        @* Hàng loạt: cột 1-2-3 active; Chạy thử: xám *@
-                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Gá lắp</th>
-                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Gia công</th>
-                                                        <th class="text-center" style="@(!isSerial ? "opacity:0.4;color:#999;" : "")">T.Kiểm tra</th>
-                                                        @* Chạy thử: cột 4-5 active; Hàng loạt: xám *@
-                                                        <th class="text-center" style="@(isSerial ? "opacity:0.4;color:#999;" : "")">T.Chuẩn bị</th>
-                                                        <th class="text-center" style="@(isSerial ? "opacity:0.4;color:#999;" : "")">T.Chạy thử</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    @* Hàng Chuẩn — read-only *@
-                                                    <tr class="table-primary bg-opacity-25">
-                                                        <td class="fw-semibold text-primary small">Chuẩn</td>
-                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
-                                                            @(std?.SetupTime?.ToString("0.##") ?? "—")
-                                                        </td>
-                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
-                                                            @(std?.MachiningTime?.ToString("0.##") ?? "—")
-                                                        </td>
-                                                        <td class="text-center text-primary" style="@(!isSerial ? "opacity:0.4;" : "")">
-                                                            @(std?.InspectionTime?.ToString("0.##") ?? "—")
-                                                        </td>
-                                                        <td class="text-center text-primary" style="@(isSerial ? "opacity:0.4;" : "")">
-                                                            @(std?.PreparationTime?.ToString("0.##") ?? "—")
-                                                        </td>
-                                                        <td class="text-center text-primary" style="@(isSerial ? "opacity:0.4;" : "")">
-                                                            @(std?.TrialRunTime?.ToString("0.##") ?? "—")
-                                                        </td>
-                                                    </tr>
-                                                    @* Hàng Thực tế — input, disabled theo mode *@
-                                                    <tr>
-                                                        <td class="fw-semibold small">Thực tế</td>
-                                                        @* Cột 1: T.Gá lắp — chỉ Hàng loạt *@
-                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
-                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   disabled="@(!isSerial)"
-                                                                   value="@(row.SetupTime_Actual > 0 ? row.SetupTime_Actual.ToString() : "")"
-                                                                   placeholder="@(!isSerial ? "" : "0")"
-                                                                   @oninput="e => OnSetupTimeInput(row, e)" />
-                                                        </td>
-                                                        @* Cột 2: T.Gia công — chỉ Hàng loạt *@
-                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
-                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   disabled="@(!isSerial)"
-                                                                   value="@(row.MachiningTime_Actual > 0 ? row.MachiningTime_Actual.ToString() : "")"
-                                                                   placeholder="@(!isSerial ? "" : "0")"
-                                                                   @oninput="e => OnMachiningTimeInput(row, e)" />
-                                                        </td>
-                                                        @* Cột 3: T.Kiểm tra — chỉ Hàng loạt *@
-                                                        <td style="@(!isSerial ? "background:#f0f0f0;" : "")">
-                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   disabled="@(!isSerial)"
-                                                                   value="@(row.InspectionTime_Actual > 0 ? row.InspectionTime_Actual.ToString() : "")"
-                                                                   placeholder="@(!isSerial ? "" : "0")"
-                                                                   @oninput="e => OnInspectionTimeInput(row, e)" />
-                                                        </td>
-                                                        @* Cột 4: T.Chuẩn bị — chỉ Chạy thử *@
-                                                        <td style="@(isSerial ? "background:#f0f0f0;" : "")">
-                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   disabled="@(isSerial)"
-                                                                   value="@(row.PreparationTime_Actual > 0 ? row.PreparationTime_Actual.ToString() : "")"
-                                                                   placeholder="@(isSerial ? "" : "0")"
-                                                                   @oninput="e => OnPreparationTimeInput(row, e)" />
-                                                        </td>
-                                                        @* Cột 5: T.Chạy thử — chỉ Chạy thử *@
-                                                        <td style="@(isSerial ? "background:#f0f0f0;" : "")">
-                                                            <input type="number" class="form-control form-control-sm text-end" min="0"
-                                                                   disabled="@(isSerial)"
-                                                                   value="@(row.TrialRunTime_Actual > 0 ? row.TrialRunTime_Actual.ToString() : "")"
-                                                                   placeholder="@(isSerial ? "" : "0")"
-                                                                   @oninput="e => OnTrialRunTimeInput(row, e)" />
-                                                        </td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
-
-                                            @* Gợi ý công thức tính EndTime đang dùng *@
-                                            <div class="text-muted small mt-1 fst-italic">
-                                                @if (isSerial)
-                                                {
-                                                    <i class="bi bi-calculator me-1"></i>
-                                                    <text>T.Kết thúc = T.Bắt đầu + (T.Gá + max(T.Gia công, T.Kiểm tra)) × SL</text>
-                                                }
-                                                else
-                                                {
-                                                    <i class="bi bi-calculator me-1"></i>
-                                                    <text>T.Kết thúc = T.Bắt đầu + T.Chuẩn bị + T.Chạy thử (1 lần setup)</text>
-                                                }
-                                            </div>
-
-                                            @if (row.TimeActualSum > row.Minutes)
-                                            {
-                                                <div class="text-danger small mt-1">
-                                                    <i class="bi bi-exclamation-triangle me-1"></i>
-                                                    Tổng TG thực tế (@row.TimeActualSum phút) vượt quá thời gian ca (@row.Minutes phút).
-                                                </div>
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-
-                                @if (!string.IsNullOrEmpty(row.ErrorMsg))
-                                {
-                                    <tr class="table-danger">
-                                        <td colspan="13" class="small text-danger py-1 ps-3">
-                                            <i class="bi bi-exclamation-triangle me-1"></i>@row.ErrorMsg
-                                        </td>
-                                    </tr>
-                                }
-                            }
-                        }
-                        @if (!_rows.Any())
-                        {
-                            <tr>
-                                <td colspan="13" class="text-center text-muted py-3 fst-italic">
-                                    Chưa có dòng nào. Bấm "Thêm dòng" để bắt đầu ghi WTS.
+                                    }
                                 </td>
                             </tr>
                         }
-                    </tbody>
-                </table>
-            </div>
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @* ── Nhóm đang nhập mới ── *@
+            @foreach (var grp in _groups)
+            {
+                var grpIdx = _groups.IndexOf(grp);
+                var isSerial = grp.ProductionMode == "serial";
+
+                @* ── Header nhóm ── *@
+                <div class="border rounded mb-1" style="border-color:var(--bs-border-color)!important">
+                    <div class="d-flex align-items-center gap-2 px-3 py-2 flex-wrap"
+                         style="background:var(--bs-light,#f8f9fa);border-radius:0.375rem 0.375rem 0 0;border-bottom:0.5px solid #dee2e6">
+
+                        @* Loại sản xuất *@
+                        <div>
+                            <div style="font-size:10px;color:#6c757d;margin-bottom:2px">Loại</div>
+                            <div class="d-flex gap-1">
+                                <button type="button" class="@GrpBtnSerialCls(isSerial)"
+                                        style="font-size:11px;padding:2px 8px"
+                                        @onclick="() => SetGroupModeSerial(grp)">
+                                    <i class="bi bi-list-ul me-1"></i>Hàng loạt
+                                </button>
+                                <button type="button" class="@GrpBtnTrialCls(isSerial)"
+                                        style="font-size:11px;padding:2px 8px"
+                                        @onclick="() => SetGroupModeTrial(grp)">
+                                    <i class="bi bi-play-circle me-1"></i>Chạy thử
+                                </button>
+                            </div>
+                        </div>
+
+                        @* Toggle tham khảo chuẩn *@
+                        <div class="form-check form-switch mb-0 ms-1 align-self-end" style="padding-bottom:4px">
+                            <input class="form-check-input" type="checkbox" id="@($"grpStd_{grpIdx}")"
+                                   checked="@grp.UseStdAsDefault"
+                                   @onchange="e => OnGroupUseStdToggled(grp, e.Value is bool b2 ? b2 : false)" />
+                            <label class="form-check-label small text-muted" for="@($"grpStd_{grpIdx}")">
+                                Tham khảo chuẩn
+                            </label>
+                        </div>
+
+                        @* Nút xóa nhóm *@
+                        <button class="btn btn-sm btn-outline-danger py-0 px-2 ms-auto"
+                                style="font-size:11px" @onclick="() => RemoveGroup(grp)">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
+                    @* ── Bảng sub-rows ── *@
+                    <div class="table-responsive" style="padding:8px">
+                        <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.78rem;min-width:900px">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2" style="width:130px">Số PO</th>
+                                    <th rowspan="2" style="width:90px">Part No</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        <th rowspan="2" style="width:60px">NC</th>
+                                        <th rowspan="2" style="width:70px">Máy SD</th>
+                                    }
+                                    <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
+                                    <th colspan="2" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        @if (isSerial)
+                                        {
+                                            <th colspan="3" class="text-center" style="background:#e6f1fb;font-size:10px;color:#185fa5">Hàng loạt — phút/sp</th>
+                                            <th colspan="2" class="text-center" style="background:#f8f9fa;font-size:10px;color:#adb5bd">Chạy thử</th>
+                                        }
+                                        else
+                                        {
+                                            <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px;color:#adb5bd">Hàng loạt</th>
+                                            <th colspan="2" class="text-center" style="background:#faeeda;font-size:10px;color:#854f0b">Chạy thử — phút</th>
+                                        }
+                                    }
+                                    <th rowspan="2" style="width:28px"></th>
+                                </tr>
+                                <tr>
+                                    <th class="text-success text-center" style="width:52px">OK</th>
+                                    <th class="text-danger text-center" style="width:52px">NG</th>
+                                    <th style="width:110px" class="text-start">Lý do NG</th>
+                                    <th style="width:72px" class="text-center">Bắt đầu</th>
+                                    <th style="width:72px" class="text-center">Kết thúc</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.Gá</th>
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.GC</th>
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.Ktra</th>
+                                        <th class="text-center" style="width:54px;color:@(!isSerial ? "#854f0b" : "#adb5bd")">T.CB</th>
+                                        <th class="text-center" style="width:54px;color:@(!isSerial ? "#854f0b" : "#adb5bd")">T.Chạy</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var sub in grp.SubRows)
+                            {
+                                var subIdx = grp.SubRows.IndexOf(sub);
+                                var isFirst    = subIdx == 0;
+                                var isLast     = subIdx == grp.SubRows.Count - 1;
+                                var subStd     = sub.KhPlanDetailId.HasValue
+                                    ? GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed)
+                                    : null;
+                                var firstSub   = grp.SubRows.FirstOrDefault();
+                                var dlId       = $"dl-po-{grpIdx}-{subIdx}";
+                                <tr class="@SubRowCls(sub)">
+                                    @* Số PO — input+datalist lọc như Part Master *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               list="@dlId"
+                                               value="@sub.PO"
+                                               placeholder="Gõ PO..."
+                                               autocomplete="off"
+                                               @oninput="async e => await OnSubPoInput(grp, sub, e.Value?.ToString())" />
+                                        <datalist id="@dlId">
+                                            @foreach (var det in _allRows.Where(r =>
+                                                (string.IsNullOrEmpty(grp.PartNo) || r.PartNo == grp.PartNo) &&
+                                                (string.IsNullOrEmpty(sub.PoFilter)  ||
+                                                 r.PurchaseOrder.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase) ||
+                                                 r.PartNo.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase))))
+                                            {
+                                                <option value="@det.PurchaseOrder">@det.PartNo — @det.PlanNo</option>
+                                            }
+                                        </datalist>
+                                        @if (!string.IsNullOrEmpty(sub.PO) && sub.KhPlanDetailId.HasValue)
+                                        {
+                                            <div style="font-size:10px;color:#6c757d;margin-top:1px">@(sub.PartNo) — @(_allRows.FirstOrDefault(r=>r.KhPlanDetailId==sub.KhPlanDetailId)?.PlanNo)</div>
+                                        }
+                                    </td>
+
+                                    @* Part No *@
+                                    <td>
+                                        @if (isFirst)
+                                        {
+                                            <input class="form-control form-control-sm" style="font-size:11px"
+                                                   value="@sub.PartNo" readonly />
+                                        }
+                                        else
+                                        {
+                                            <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                   value="@(firstSub?.PartNo ?? sub.PartNo)" readonly />
+                                        }
+                                    </td>
+
+                                    @* NC và Máy — chỉ GC *@
+                                    @if (IsGcGroup)
+                                    {
+                                        @* NC *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        @onchange="e => OnGroupNCChanged(grp, e.Value?.ToString())">
+                                                    <option value="">--</option>
+                                                    @foreach (var nc in grp.AvailableNCs)
+                                                    {
+                                                        <option value="@nc.NC" selected="@(grp.NC == nc.NC)">@nc.NC</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@grp.NC" readonly />
+                                            }
+                                        </td>
+                                        @* Máy *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        @onchange="e => OnGroupMachineChanged(grp, e.Value?.ToString())">
+                                                    <option value="">--</option>
+                                                    @foreach (var m in GetGroupMachineOptions(grp))
+                                                    {
+                                                        <option value="@m" selected="@(grp.MachineUsed == m)">@m</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@grp.MachineUsed" readonly />
+                                            }
+                                        </td>
+                                    }
+
+                                    @* OK *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.QtyOk > 0 ? sub.QtyOk.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubQtyOkInput(grp, sub, e)" />
+                                    </td>
+
+                                    @* NG *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.QtyNg > 0 ? sub.QtyNg.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubQtyNgInput(grp, sub, e)" />
+                                    </td>
+
+                                    @* Lý do NG *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               value="@sub.NgReason" placeholder="Lý do NG..."
+                                               disabled="@(sub.QtyNg <= 0)"
+                                               @oninput="e => sub.NgReason = e.Value?.ToString()" />
+                                    </td>
+
+                                    @* Bắt đầu — chỉ hàng đầu nhập tay, còn lại tự tính *@
+                                    <td>
+                                        @if (isFirst)
+                                        {
+                                            <input type="time" class="form-control form-control-sm"
+                                                   value="@sub.StartTime.ToString("HH:mm")"
+                                                   @onchange="e => OnSubStartTimeChanged(grp, sub, e.Value?.ToString())" />
+                                        }
+                                        else
+                                        {
+                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
+                                                   value="@sub.StartTime.ToString("HH:mm")" readonly
+                                                   title="Tự tính = Kết thúc hàng trước" />
+                                        }
+                                    </td>
+
+                                    @* Kết thúc — chỉ hàng cuối nhập tay (nếu >1 hàng), còn lại tự tính *@
+                                    <td>
+                                        @if (isLast && grp.SubRows.Count == 1)
+                                        {
+                                            @* Chỉ 1 hàng: tự tính từ công thức *@
+                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
+                                                   value="@sub.EndTime.ToString("HH:mm")" readonly
+                                                   title="Tự tính từ SL × cycle time" />
+                                        }
+                                        else if (isLast)
+                                        {
+                                            @* Nhiều hàng: hàng cuối nhập tay *@
+                                            <input type="time" class="form-control form-control-sm"
+                                                   style="border-color:#0d6efd"
+                                                   value="@sub.EndTime.ToString("HH:mm")"
+                                                   @onchange="e => OnSubEndTimeChanged(grp, sub, e.Value?.ToString())" />
+                                        }
+                                        else
+                                        {
+                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
+                                                   value="@sub.EndTime.ToString("HH:mm")" readonly
+                                                   title="Tự tính theo tỉ lệ SL" />
+                                        }
+                                    </td>
+
+                                    @* Timing columns — chỉ GC *@
+                                    @if (IsGcGroup)
+                                    {
+                                        @* T.Gá *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div>
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.SetupTime_Actual > 0 ? sub.SetupTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubSetupInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.GC *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div>
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.MachiningTime_Actual > 0 ? sub.MachiningTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubMachiningInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.Ktra *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div>
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.InspectionTime_Actual > 0 ? sub.InspectionTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubInspectionInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.CB *@
+                                        <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
+                                            <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div>
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(isSerial)"
+                                                   value="@(sub.PreparationTime_Actual > 0 ? sub.PreparationTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubPrepInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.Chạy *@
+                                        <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
+                                            <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div>
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(isSerial)"
+                                                   value="@(sub.TrialRunTime_Actual > 0 ? sub.TrialRunTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubTrialInput(grp, sub, e)" />
+                                        </td>
+                                    }
+
+                                    @* Xóa sub-row *@
+                                    <td class="text-center">
+                                        @if (grp.SubRows.Count > 1)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                                    @onclick="() => RemoveSubRow(grp, sub)">
+                                                <i class="bi bi-x"></i>
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+
+                                @* Error sub-row *@
+                                @if (!string.IsNullOrEmpty(sub.ErrorMsg))
+                                {
+                                    <tr class="table-danger">
+                                        <td colspan="12" class="small text-danger py-1 ps-2">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>@sub.ErrorMsg
+                                        </td>
+                                    </tr>
+                                }
+                            }
+
+                            @* Hàng tổng *@
+                            @{
+                                var totalOk    = grp.SubRows.Sum(s => s.QtyOk);
+                                var totalNg    = grp.SubRows.Sum(s => s.QtyNg);
+                                var totalSl    = totalOk + totalNg;
+                                var tStart     = grp.SubRows.FirstOrDefault()?.StartTime;
+                                var tEnd       = grp.SubRows.LastOrDefault()?.EndTime;
+                                var grpTotalMin = (tStart.HasValue && tEnd.HasValue && tEnd > tStart)
+                                    ? (int)(tEnd.Value - tStart.Value).TotalMinutes : 0;
+                            }
+                            <tr class="table-light" style="font-size:11px;font-weight:500">
+                                <td class="text-muted ps-2" colspan="@(IsGcGroup ? 4 : 2)">Tổng</td>
+                                <td class="text-center text-success">@totalOk</td>
+                                <td class="text-center text-danger">@(totalNg > 0 ? totalNg.ToString() : "—")</td>
+                                <td></td>
+                                <td class="text-center text-muted">@(tStart.HasValue ? tStart.Value.ToString("HH:mm") : "—")</td>
+                                <td class="text-center text-muted">@(tEnd.HasValue ? tEnd.Value.ToString("HH:mm") : "—")</td>
+                                @if (IsGcGroup)
+                                {
+                                    <td colspan="5" class="text-muted">
+                                        @if (grpTotalMin > 0 && totalSl > 0)
+                                        {
+                                            <text>@grpTotalMin ph · @totalSl sp · ~@((grpTotalMin / (double)totalSl).ToString("0.0")) ph/sp</text>
+                                        }
+                                    </td>
+                                }
+                                <td></td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @* Footer nhóm: thêm KH + lưu nhóm *@
+                    <div class="d-flex align-items-center gap-2 px-3 pb-2 flex-wrap">
+                        <button class="btn btn-sm btn-outline-secondary py-0"
+                                style="font-size:11px" @onclick="() => AddSubRow(grp)">
+                            <i class="bi bi-plus me-1"></i>Thêm số KH
+                        </button>
+                        <div class="ms-auto d-flex align-items-center gap-1">
+                            @if (!string.IsNullOrEmpty(grp.ErrorMsg))
+                            {
+                                <span class="text-danger small me-2">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
+                                </span>
+                            }
+                            <button class="btn btn-sm btn-success py-0 px-3"
+                                    style="font-size:12px"
+                                    @onclick="async () => await SaveGroupAsync(grp)"
+                                    disabled="@(grp.IsSaving)">
+                                @if (grp.IsSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                <i class="bi bi-check-lg me-1"></i>Lưu nhóm
+                            </button>
+                        </div>
+                    </div>
+
+                    @* Error nhóm *@
+                    @if (!string.IsNullOrEmpty(grp.ErrorMsg))
+                    {
+                        <div class="px-3 pb-2">
+                            <div class="alert alert-danger py-1 small mb-0">
+                                <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (!_groups.Any() && !_rows.Any(r => r.Saved))
+            {
+                <div class="text-center text-muted py-3 fst-italic small">
+                    Chưa có dữ liệu. Bấm "Thêm nhóm" để bắt đầu ghi WTS.
+                </div>
+            }
         </div>
     </div>
 
@@ -1304,6 +1248,9 @@ else
 
     // Preference per-user — lưu vào localStorage, default true
     private bool _useStdAsDefault = true;
+
+    // ── Danh sách nhóm đang nhập (chưa lưu) ──
+    private List<WtsGroup> _groups = new();
     private Dictionary<string, (bool CanView, bool CanEdit)> _perms = new();
 
     // ── Tab ──────────────────────────────────────────────────────────────
@@ -1515,6 +1462,15 @@ else
         return string.Join(" &nbsp;|&nbsp; ", parts);
     }
 
+    // Wrapper load snapshot cho 1 PO (dùng bởi OnSubRowKhChanged)
+    private async Task EnsureSnapshotAsync(string purchaseOrder, int detailId)
+    {
+        if (_snapshotCache.ContainsKey(purchaseOrder)) return;
+        var snap = await KhSvc.GetRouteSnapshotAsync(detailId);
+        if (snap != null)
+            _snapshotCache[purchaseOrder] = snap.Machining;
+    }
+
     private async Task EnsureTimingStdAsync(int detailId, int partId)
     {
         if (_timingStdCache.ContainsKey(detailId)) return;
@@ -1581,7 +1537,7 @@ else
             await BuildHandoverFilterAsync();
 
             await LoadSavedRowsAsync();
-            AddRow();
+            AddGroup();
         }
     }
 
@@ -1749,8 +1705,9 @@ else
     private async Task OnWorkDateChanged()
     {
         _rows.Clear();
+        _groups.Clear();
         await LoadSavedRowsAsync();
-        AddRow();
+        AddGroup();
     }
 
     // ── Thêm dòng mới ────────────────────────────────────────
@@ -1917,6 +1874,371 @@ else
         var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
         if (pm != null)
             await EnsureTimingStdAsync(detail.KhPlanDetailId, pm.PartId);
+    }
+
+
+    // ── Edit / Void saved row (dùng bởi bảng saved rows) ──
+    private void EditSavedRow(WtsRow row)
+    {
+        // Tạo nhóm mới từ row đã lưu để sửa lại
+        var grp = new WtsGroup
+        {
+            PartNo        = row.PartNo,
+            NC            = row.NC,
+            MachineUsed   = row.MachineUsed,
+            ProductionMode= row.ProductionMode,
+            UseStdAsDefault = _useStdAsDefault,
+        };
+        row.IsEditing = true;
+        grp.SubRows.Add(row);
+        _groups.Add(grp);
+    }
+    private async Task VoidSavedRow(WtsRow row)
+    {
+        if (row.WtsLogId.HasValue)
+            await Db.Database.ExecuteSqlRawAsync(
+                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
+                _currentUserId, DateTime.Now, row.WtsLogId.Value);
+        if (row.ActivityLogId.HasValue)
+            await Db.Database.ExecuteSqlRawAsync(
+                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
+                _currentUserId, DateTime.Now, row.ActivityLogId.Value);
+        await LoadSavedRowsAsync();
+    }
+
+    private static string SavedRowCls(WtsRow row)
+        => row.HasWarning ? "table-warning" : "table-success bg-opacity-10";
+    private static string SubRowCls(WtsRow sub)
+        => sub.ErrorMsg != null ? "table-danger" : "";
+    // ── Helpers button class cho nhóm ──
+    private static string GrpBtnSerialCls(bool isSerial)
+        => isSerial ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline-secondary";
+    private static string GrpBtnTrialCls(bool isSerial)
+        => isSerial ? "btn btn-sm btn-outline-secondary" : "btn btn-sm btn-warning";
+    private void SetGroupModeSerial(WtsGroup grp) { grp.ProductionMode = "serial"; OnGroupModeChanged(grp); }
+    private void SetGroupModeTrial(WtsGroup grp)  { grp.ProductionMode = "trial";  OnGroupModeChanged(grp); }
+    private void OnGroupModeChanged(WtsGroup grp)
+    {
+        foreach (var sub in grp.SubRows)
+        {
+            sub.ProductionMode = grp.ProductionMode;
+            if (grp.ProductionMode == "serial") { sub.PreparationTime_Actual = null; sub.TrialRunTime_Actual = null; }
+            else { sub.SetupTime_Actual = null; sub.MachiningTime_Actual = null; sub.InspectionTime_Actual = null; }
+            if (grp.UseStdAsDefault) TryFillStdValues(sub);
+        }
+    }
+
+    // ── AddGroup / RemoveGroup ──
+    private void AddGroup()
+    {
+        if (!IsToday) return;
+        var lastSaved = _rows.LastOrDefault(r => r.Saved);
+        var startTime = lastSaved?.EndTime ?? _workDate.Date.AddHours(8);
+        var grp = new WtsGroup { UseStdAsDefault = _useStdAsDefault };
+        var sub = new WtsRow
+        {
+            StartTime       = startTime,
+            EndTime         = startTime.AddMinutes(1),
+            UseStdAsDefault = _useStdAsDefault,
+            ProductionMode  = "serial",
+        };
+        grp.SubRows.Add(sub);
+        _groups.Add(grp);
+    }
+    private void RemoveGroup(WtsGroup grp) => _groups.Remove(grp);
+
+    // ── AddSubRow / RemoveSubRow ──
+    private void AddSubRow(WtsGroup grp)
+    {
+        // StartTime = EndTime của sub-row cuối
+        var lastSub = grp.SubRows.LastOrDefault();
+        var sub = new WtsRow
+        {
+            StartTime       = lastSub?.EndTime ?? _workDate.Date.AddHours(8),
+            EndTime         = lastSub?.EndTime.AddMinutes(1) ?? _workDate.Date.AddHours(8).AddMinutes(1),
+            UseStdAsDefault = grp.UseStdAsDefault,
+            ProductionMode  = grp.ProductionMode,
+            NC              = grp.NC,
+            MachineUsed     = grp.MachineUsed,
+        };
+        // Copy timing từ sub đầu nếu UseStdAsDefault
+        if (grp.UseStdAsDefault && grp.SubRows.Any())
+        {
+            var first = grp.SubRows.First();
+            sub.SetupTime_Actual       = first.SetupTime_Actual;
+            sub.MachiningTime_Actual   = first.MachiningTime_Actual;
+            sub.InspectionTime_Actual  = first.InspectionTime_Actual;
+            sub.PreparationTime_Actual = first.PreparationTime_Actual;
+            sub.TrialRunTime_Actual    = first.TrialRunTime_Actual;
+        }
+        grp.SubRows.Add(sub);
+    }
+    private void RemoveSubRow(WtsGroup grp, WtsRow sub)
+    {
+        grp.SubRows.Remove(sub);
+        RecalcGroupTimeline(grp);
+    }
+
+    // ── Group NC / Machine changed ──
+    private void OnGroupNCChanged(WtsGroup grp, string? nc)
+    {
+        grp.NC = nc;
+        // Cập nhật NC cho tất cả sub-rows
+        foreach (var sub in grp.SubRows) { sub.NC = nc; sub.AvailableNCs = grp.AvailableNCs; }
+        // Reset máy khi đổi NC
+        grp.MachineUsed = null;
+        foreach (var sub in grp.SubRows) sub.MachineUsed = null;
+    }
+    private void OnGroupMachineChanged(WtsGroup grp, string? machine)
+    {
+        grp.MachineUsed = machine;
+        foreach (var sub in grp.SubRows) { sub.MachineUsed = machine; }
+        // Fill std values cho tất cả sub-rows
+        if (grp.UseStdAsDefault)
+            foreach (var sub in grp.SubRows) TryFillStdValues(sub);
+    }
+    private List<string> GetGroupMachineOptions(WtsGroup grp)
+    {
+        if (string.IsNullOrEmpty(grp.NC)) return new();
+        var snap = grp.AvailableNCs.FirstOrDefault(s => s.NC == grp.NC);
+        if (snap == null) return new();
+        var machines = new List<string>();
+        if (!string.IsNullOrEmpty(snap.MachineRegistered)) machines.Add(snap.MachineRegistered);
+        foreach (var tr in snap.TimingRows)
+        {
+            foreach (var m in (tr.SoMay ?? "").Split(',', ';').Select(x => x.Trim()).Where(x => x.Length > 0))
+                if (!machines.Contains(m)) machines.Add(m);
+        }
+        return machines;
+    }
+
+    // ── Toggle UseStdAsDefault cho nhóm ──
+    private async Task OnGroupUseStdToggled(WtsGroup grp, bool value)
+    {
+        grp.UseStdAsDefault = value;
+        _useStdAsDefault = value;
+        if (value)
+            foreach (var sub in grp.SubRows) { sub.UseStdAsDefault = true; TryFillStdValues(sub); }
+        try { await JS.InvokeVoidAsync("localStorage.setItem", $"wts_useStdAsDefault_{_currentUserId}", value ? "true" : "false"); }
+        catch { }
+    }
+
+    // ── Nhập PO cho sub-row — lọc datalist + auto-match ──
+    private async Task OnSubPoInput(WtsGroup grp, WtsRow sub, string? text)
+    {
+        sub.PoFilter = text ?? "";
+        sub.PO       = text ?? "";
+        // Tìm exact match
+        var det = _allRows.FirstOrDefault(r =>
+            r.PurchaseOrder.Equals(text ?? "", StringComparison.OrdinalIgnoreCase));
+        if (det != null)
+        {
+            await OnSubRowKhChanged(grp, sub, det.KhPlanDetailId.ToString());
+        }
+        else
+        {
+            sub.KhPlanDetailId = null;
+            sub.PartNo         = null;
+        }
+        StateHasChanged();
+    }
+
+    // ── Chọn KH cho sub-row ──
+    private async Task OnSubRowKhChanged(WtsGroup grp, WtsRow sub, string? detailIdStr)
+    {
+        sub.ErrorMsg = null;
+        if (!int.TryParse(detailIdStr, out var detId)) { sub.KhPlanDetailId = null; sub.PO = null; sub.PartNo = null; return; }
+        var det = _allRows.FirstOrDefault(r => r.KhPlanDetailId == detId);
+        if (det == null) return;
+
+        sub.KhPlanDetailId = detId;
+        sub.PO             = det.PurchaseOrder;
+        sub.PartNo         = det.PartNo;
+        sub.NC             = grp.NC;
+        sub.MachineUsed    = grp.MachineUsed;
+        sub.ProductionMode = grp.ProductionMode;
+
+        // Nếu PartNo chưa set ở nhóm → lấy từ hàng đầu
+        if (string.IsNullOrEmpty(grp.PartNo)) grp.PartNo = det.PartNo;
+
+        // Load snapshot nếu chưa có
+        if (!_snapshotCache.ContainsKey(det.PurchaseOrder))
+            await EnsureSnapshotAsync(det.PurchaseOrder, det.KhPlanDetailId);
+
+        // Cập nhật AvailableNCs cho nhóm từ snapshot
+        if (_snapshotCache.TryGetValue(det.PurchaseOrder, out var snaps))
+        {
+            grp.AvailableNCs = snaps;
+            sub.AvailableNCs = snaps;
+        }
+
+        if (grp.UseStdAsDefault) TryFillStdValues(sub);
+    }
+
+    // ── Input qty sub-row ──
+    private void OnSubQtyOkInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    {
+        sub.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        sub.QtyDone = sub.QtyOk + sub.QtyNg;
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+    private void OnSubQtyNgInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    {
+        sub.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        sub.QtyDone = sub.QtyOk + sub.QtyNg;
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+
+    // Wrapper: tránh string literal trong @oninput — CS1056
+    private void OnSubSetupInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+        => OnSubTimingInput(grp, sub, "setup", e);
+    private void OnSubMachiningInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+        => OnSubTimingInput(grp, sub, "machining", e);
+    private void OnSubInspectionInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+        => OnSubTimingInput(grp, sub, "inspection", e);
+    private void OnSubPrepInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+        => OnSubTimingInput(grp, sub, "prep", e);
+    private void OnSubTrialInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+        => OnSubTimingInput(grp, sub, "trial", e);
+
+    // ── Input timing sub-row ──
+    private void OnSubTimingInput(WtsGroup grp, WtsRow sub, string field, ChangeEventArgs e)
+    {
+        var val = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        switch (field)
+        {
+            case "setup":      sub.SetupTime_Actual      = val; break;
+            case "machining":  sub.MachiningTime_Actual  = val; break;
+            case "inspection": sub.InspectionTime_Actual = val; break;
+            case "prep":       sub.PreparationTime_Actual= val; break;
+            case "trial":      sub.TrialRunTime_Actual   = val; break;
+        }
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+
+    // ── Start/End time input ──
+    private void OnSubStartTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)
+    {
+        if (string.IsNullOrEmpty(timeStr)) return;
+        var parts = timeStr.Split(':');
+        if (parts.Length < 2) return;
+        sub.StartTime = _workDate.Date.AddHours(int.Parse(parts[0])).AddMinutes(int.Parse(parts[1]));
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+    private void OnSubEndTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)
+    {
+        if (string.IsNullOrEmpty(timeStr)) return;
+        var parts = timeStr.Split(':');
+        if (parts.Length < 2) return;
+        // Chỉ hàng cuối nhập tay khi có nhiều sub-rows
+        sub.EndTime = _workDate.Date.AddHours(int.Parse(parts[0])).AddMinutes(int.Parse(parts[1]));
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+
+    // ── Tính lại timeline toàn nhóm ──────────────────────────────────────
+    // Hàng đầu: StartTime do user nhập
+    // Hàng cuối (nếu chỉ 1 hàng): EndTime tự tính từ cycle × SL
+    // Hàng cuối (nếu >1 hàng): EndTime do user nhập
+    // Các hàng trung gian: Start = End hàng trước, End = Start + (SL_i / SL_tổng) × tổng_thời_gian
+    private void RecalcGroupTimeline(WtsGroup grp)
+    {
+        if (!grp.SubRows.Any()) return;
+        var totalSl = grp.SubRows.Sum(s => s.QtyDone);
+
+        if (grp.SubRows.Count == 1)
+        {
+            // 1 hàng: tính EndTime từ công thức giống RecalcEndTime cũ
+            var sub = grp.SubRows[0];
+            sub.NC          = grp.NC;
+            sub.MachineUsed = grp.MachineUsed;
+            RecalcEndTime(sub);
+            return;
+        }
+
+        // Nhiều hàng: tổng thời gian = EndTime cuối - StartTime đầu
+        var first = grp.SubRows.First();
+        var last  = grp.SubRows.Last();
+        var totalMin = (last.EndTime > first.StartTime)
+            ? (double)(last.EndTime - first.StartTime).TotalMinutes
+            : 0;
+
+        if (totalMin <= 0 || totalSl <= 0) return;
+
+        var cursor = first.StartTime;
+        for (int i = 0; i < grp.SubRows.Count; i++)
+        {
+            var sub = grp.SubRows[i];
+            sub.StartTime = cursor;
+            var fraction = totalSl > 0 ? (double)sub.QtyDone / (double)totalSl : 0;
+            var subMin   = totalMin * fraction;
+            sub.EndTime  = cursor.AddMinutes(subMin);
+            cursor       = sub.EndTime;
+        }
+        // Đảm bảo hàng cuối khớp với EndTime user nhập
+        grp.SubRows.Last().EndTime = last.EndTime;
+    }
+
+    // ── Lưu toàn bộ nhóm ─────────────────────────────────────────────────
+    private async Task SaveGroupAsync(WtsGroup grp)
+    {
+        grp.ErrorMsg = null;
+        grp.IsSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            // Validate nhóm
+            if (IsGcGroup && string.IsNullOrEmpty(grp.NC))
+            { grp.ErrorMsg = "Chưa chọn NC cho nhóm."; return; }
+            if (IsGcGroup && string.IsNullOrEmpty(grp.MachineUsed))
+            { grp.ErrorMsg = "Chưa chọn máy sử dụng."; return; }
+            if (!grp.SubRows.Any())
+            { grp.ErrorMsg = "Nhóm trống."; return; }
+
+            // Validate từng sub-row
+            foreach (var sub in grp.SubRows)
+            {
+                sub.ErrorMsg = null;
+                sub.NC          = grp.NC;
+                sub.MachineUsed = grp.MachineUsed;
+                sub.ProductionMode = grp.ProductionMode;
+
+                if (!sub.KhPlanDetailId.HasValue)
+                { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return; }
+                if (sub.QtyDone <= 0)
+                { sub.ErrorMsg = "SL (OK+NG) phải > 0."; grp.ErrorMsg = "Có hàng SL = 0."; return; }
+                if (sub.QtyNg > 0 && string.IsNullOrWhiteSpace(sub.NgReason))
+                { sub.ErrorMsg = "Phải nhập lý do NG."; grp.ErrorMsg = "Có hàng thiếu lý do NG."; return; }
+                if (sub.EndTime <= sub.StartTime)
+                { sub.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu."; grp.ErrorMsg = "Lỗi thời gian."; return; }
+            }
+
+            // Lưu từng sub-row
+            foreach (var sub in grp.SubRows)
+            {
+                await SaveRowAsync(sub);
+                if (sub.ErrorMsg != null)
+                { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg}"; return; }
+            }
+
+            // Xóa nhóm sau khi lưu xong
+            _groups.Remove(grp);
+
+            // Reload saved rows + thêm nhóm mới trống nếu muốn
+            var unsavedGroups = _groups.ToList();
+            await LoadSavedRowsAsync();
+            _groups.AddRange(unsavedGroups);
+        }
+        finally
+        {
+            grp.IsSaving = false;
+            StateHasChanged();
+        }
     }
 
     // Helper: class button toggle mode — tránh nested quote trong Razor markup
@@ -2300,7 +2622,7 @@ else
             }
         }
 
-        AddRow(); // mở sẵn dòng trống tiếp theo
+        AddGroup(); // mở sẵn nhóm mới sau khi lưu
     }
 
     // ── Classes ───────────────────────────────────────────────
@@ -2426,6 +2748,7 @@ else
         public decimal QtyNg   { get; set; }  // SL làm sai phát hiện tại NC
         public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0)
         public string? Notes   { get; set; }
+        public string? PoFilter { get; set; } // text user đang gõ để lọc datalist PO
 
         // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime
         public decimal? SetupTime_Actual      { get; set; }
@@ -2456,6 +2779,24 @@ else
         public string? ErrorMsg   { get; set; }
         public bool    HasWarning { get; set; }
         public string? WarningMsg { get; set; }
+    }
+
+    // ── WtsGroup: nhóm nhiều KH cùng Part/NC/Máy ──────────────────────────
+    public class WtsGroup
+    {
+        public string? PartNo        { get; set; }
+        public string? NC            { get; set; }
+        public string? MachineUsed   { get; set; }
+        public string  ProductionMode{ get; set; } = "serial";
+        public bool    UseStdAsDefault { get; set; } = true;
+        public bool    IsCollapsed   { get; set; } = false;
+        public bool    IsSaving      { get; set; } = false;
+        public string? ErrorMsg      { get; set; }
+
+        // NCs có sẵn từ snapshot — load khi chọn PartNo
+        public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
+
+        public List<WtsRow> SubRows { get; set; } = new();
     }
     // ── Tính lại T.Kết thúc theo công thức ──────────────────────────────
     // GC Hàng loạt: (T.Gá + max(T.GC, T.Ktra)) * SL_total
