@@ -257,8 +257,8 @@ else
                                         <th rowspan="2" style="width:60px">NC</th>
                                         <th rowspan="2" style="width:70px">Máy SD</th>
                                     }
-                                    <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
-                                    <th colspan="2" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
+                                    <th colspan="4" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
+                                    <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
                                     @if (IsGcGroup)
                                     {
                                         @if (isSerial)
@@ -272,14 +272,18 @@ else
                                             <th colspan="2" class="text-center" style="background:#faeeda;font-size:10px;color:#854f0b">Chạy thử — phút</th>
                                         }
                                     }
+                                    <th rowspan="2" style="width:52px" class="text-center">T.Phát sinh<br/><small style="font-size:9px">(phút)</small></th>
+                                    <th rowspan="2" style="width:120px">Nội dung</th>
                                     <th rowspan="2" style="width:28px"></th>
                                 </tr>
                                 <tr>
-                                    <th class="text-success text-center" style="width:52px">OK</th>
-                                    <th class="text-danger text-center" style="width:52px">NG</th>
-                                    <th style="width:110px" class="text-start">Lý do NG</th>
-                                    <th style="width:72px" class="text-center">Bắt đầu</th>
-                                    <th style="width:72px" class="text-center">Kết thúc</th>
+                                    <th class="text-success text-center" style="width:48px">OK</th>
+                                    <th class="text-danger text-center" style="width:48px">NG</th>
+                                    <th class="text-muted text-center" style="width:52px">SL PO</th>
+                                    <th style="width:100px" class="text-start">Lý do NG</th>
+                                    <th style="width:68px" class="text-center">Bắt đầu</th>
+                                    <th style="width:68px" class="text-center">Kết thúc</th>
+                                    <th style="width:68px" class="text-center" title="T.Kết thúc theo công thức — xanh: đúng giờ, đỏ: trễ">Dự kiến</th>
                                     @if (IsGcGroup)
                                     {
                                         <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.Gá</th>
@@ -301,6 +305,9 @@ else
                                     : null;
                                 var firstSub   = grp.SubRows.FirstOrDefault();
                                 var dlId       = $"dl-po-{grpIdx}-{subIdx}";
+                                var estEnd     = CalcEstimatedEndTime(grp, sub);
+                                var actualEnd  = sub.EndTime;
+                                var hasEst     = estEnd.HasValue && sub.StartTime != default;
                                 <tr class="@SubRowCls(sub)">
                                     @* Số PO — input+datalist lọc như Part Master *@
                                     <td>
@@ -399,6 +406,16 @@ else
                                                @oninput="e => OnSubQtyNgInput(grp, sub, e)" />
                                     </td>
 
+                                    @* SL PO *@
+                                    <td class="text-center text-muted" style="font-size:11px">
+                                        @if (sub.KhPlanDetailId.HasValue)
+                                        {
+                                            var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity;
+                                            <span title="SL kế hoạch PO này">@(poQty.HasValue ? poQty.Value.ToString("0") : "—")</span>
+                                        }
+                                        else { <span>—</span> }
+                                    </td>
+
                                     @* Lý do NG *@
                                     <td>
                                         <input class="form-control form-control-sm" style="font-size:11px"
@@ -448,6 +465,26 @@ else
                                         }
                                     </td>
 
+                                    @* T.Kết thúc dự kiến theo công thức — màu xanh/đỏ *@
+                                    <td class="text-center">
+                                        @if (hasEst)
+                                        {
+                                            var isLate    = actualEnd > estEnd!.Value;
+                                            var estColor  = SubEstColor(isLate);
+                                            <span style="font-size:11px;font-weight:600;color:@estColor"
+                                                  title="@(isLate ? "Trễ" : "Đúng/sớm giờ")">
+                                                @estEnd!.Value.ToString("HH:mm")
+                                            </span>
+                                            <div style="font-size:9px;color:@estColor">
+                                                @(isLate ? "▲" : "✓") @((int)Math.Abs((actualEnd - estEnd!.Value).TotalMinutes)) ph
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted" style="font-size:11px">—</span>
+                                        }
+                                    </td>
+
                                     @* Timing columns — chỉ GC *@
                                     @if (IsGcGroup)
                                     {
@@ -493,6 +530,21 @@ else
                                         </td>
                                     }
 
+                                    @* T.Phát sinh (phút) *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.ExtraMinutes > 0 ? sub.ExtraMinutes.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => sub.ExtraMinutes = int.TryParse(e.Value?.ToString(), out var vm) ? vm : 0" />
+                                    </td>
+
+                                    @* Nội dung *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               value="@sub.Notes" placeholder="Ghi chú..."
+                                               @oninput="e => sub.Notes = e.Value?.ToString()" />
+                                    </td>
+
                                     @* Xóa sub-row *@
                                     <td class="text-center">
                                         @if (grp.SubRows.Count > 1)
@@ -533,6 +585,7 @@ else
                                 <td></td>
                                 <td class="text-center text-muted">@(tStart.HasValue ? tStart.Value.ToString("HH:mm") : "—")</td>
                                 <td class="text-center text-muted">@(tEnd.HasValue ? tEnd.Value.ToString("HH:mm") : "—")</td>
+                                <td></td>
                                 @if (IsGcGroup)
                                 {
                                     <td colspan="5" class="text-muted">
@@ -542,6 +595,13 @@ else
                                         }
                                     </td>
                                 }
+                                <td class="text-center text-muted" style="font-size:11px">
+                                    @{
+                                        var totalExtra = grp.SubRows.Sum(s => s.ExtraMinutes);
+                                    }
+                                    @(totalExtra > 0 ? totalExtra.ToString() + " ph" : "—")
+                                </td>
+                                <td></td>
                                 <td></td>
                             </tr>
                             </tbody>
@@ -2525,6 +2585,7 @@ else
                     StartTime               = row.StartTime,
                     EndTime                 = row.EndTime,
                     Notes                   = row.Notes,
+                    ExtraMinutes            = row.ExtraMinutes > 0 ? row.ExtraMinutes : (int?)null,
                     SetupTime_Actual        = row.SetupTime_Actual,
                     MachiningTime_Actual    = row.MachiningTime_Actual,
                     InspectionTime_Actual   = row.InspectionTime_Actual,
@@ -2748,7 +2809,8 @@ else
         public decimal QtyNg   { get; set; }  // SL làm sai phát hiện tại NC
         public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0)
         public string? Notes   { get; set; }
-        public string? PoFilter { get; set; } // text user đang gõ để lọc datalist PO
+        public string? PoFilter     { get; set; } // text user đang gõ để lọc datalist PO
+        public int     ExtraMinutes { get; set; } = 0; // T.Phát sinh (phút) — lưu DB
 
         // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime
         public decimal? SetupTime_Actual      { get; set; }
@@ -2798,6 +2860,38 @@ else
 
         public List<WtsRow> SubRows { get; set; } = new();
     }
+    // ── T.Kết thúc dự kiến theo công thức (dùng để màu xanh/đỏ) ──────────
+    // Với 1 sub-row: StartTime + cycle × SL
+    // Với nhiều sub-row: StartTime hàng đầu + (SL hàng này / SL tổng) × tổng cycle × SL tổng
+    private DateTime? CalcEstimatedEndTime(WtsGroup grp, WtsRow sub)
+    {
+        if (sub.StartTime == default) return null;
+        var sl = sub.QtyDone;
+        if (sl <= 0) return null;
+
+        decimal cycleMin = 0;
+        if (grp.ProductionMode == "serial")
+        {
+            var setup   = sub.SetupTime_Actual      ?? 0m;
+            var machine = sub.MachiningTime_Actual  ?? 0m;
+            var inspect = sub.InspectionTime_Actual ?? 0m;
+            cycleMin = setup + Math.Max(machine, inspect);
+        }
+        else
+        {
+            var prep  = sub.PreparationTime_Actual ?? 0m;
+            var trial = sub.TrialRunTime_Actual    ?? 0m;
+            cycleMin = prep + trial;
+        }
+        if (cycleMin <= 0) return null;
+
+        var totalMin = (double)(cycleMin * sl);
+        return sub.StartTime.AddMinutes(totalMin);
+    }
+
+    private static string SubEstColor(bool isLate)
+        => isLate ? "#dc3545" : "#198754"; // red / green Bootstrap
+
     // ── Tính lại T.Kết thúc theo công thức ──────────────────────────────
     // GC Hàng loạt: (T.Gá + max(T.GC, T.Ktra)) * SL_total
     // GC Chạy thử : (T.Chuẩn bị + T.Chạy thử) * SL_total  [không nhân SL vì chạy thử thường 1 lần]

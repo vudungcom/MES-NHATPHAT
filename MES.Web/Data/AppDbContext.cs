@@ -157,7 +157,6 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
 
         // ==== ThietBiChangeLog ====
         mb.Entity<ThietBiChangeLog>().HasIndex(x => new { x.ThietBiId, x.ChangedAt });
-        // Index phục vụ query hiệu suất máy: lọc sự kiện dừng máy theo khoảng thời gian
         mb.Entity<ThietBiChangeLog>().HasIndex(x => new { x.ThietBiId, x.ThoiGianBatDau, x.ThoiGianKetThuc });
         mb.Entity<ThietBiChangeLog>()
             .HasOne(x => x.ChangedByUser)
@@ -503,7 +502,6 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasIndex(x => new { x.KhPlanDetailId, x.ProcessGroup, x.NC });
         mb.Entity<WtsProductionLog>()
             .HasIndex(x => new { x.WorkerId, x.CreatedAt });
-        // Index phục vụ query hiệu suất máy: lọc theo máy + khoảng giờ
         mb.Entity<WtsProductionLog>()
             .HasIndex(x => new { x.MachineUsed, x.StartTime, x.EndTime })
             .HasFilter("[MachineUsed] IS NOT NULL AND [IsVoided] = 0");
@@ -525,7 +523,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<WorkerActivityLog>()
             .HasIndex(x => new { x.WorkerId, x.WorkDate });
         mb.Entity<WorkerActivityLog>()
-            .HasIndex(x => x.WorkDate);
+            .HasIndex(x => new { x.WorkDate });
         mb.Entity<WorkerActivityLog>()
             .HasOne(x => x.Worker).WithMany()
             .HasForeignKey(x => x.WorkerId)
@@ -544,6 +542,9 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<HandoverTransaction>().Property(x => x.Status).HasMaxLength(20).IsRequired().HasDefaultValue("PENDING");
         mb.Entity<HandoverTransaction>().Property(x => x.Notes).HasMaxLength(500);
         mb.Entity<HandoverTransaction>().Property(x => x.VoidReason).HasMaxLength(200);
+        // v0.9 — NgQty / NgReason (bên giao khai báo NG ngay khi tạo phiếu)
+        mb.Entity<HandoverTransaction>().Property(x => x.NgQty).HasPrecision(10, 2).HasDefaultValue(0m);
+        mb.Entity<HandoverTransaction>().Property(x => x.NgReason).HasMaxLength(500);
         mb.Entity<HandoverTransaction>()
             .HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
         mb.Entity<HandoverTransaction>()

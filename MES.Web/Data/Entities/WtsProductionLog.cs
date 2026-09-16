@@ -45,9 +45,9 @@ public class WtsProductionLog
     /// <summary>Số lượng hoàn thành trong lần submit này.</summary>
     [Column(TypeName = "decimal(10,2)")]
     public decimal QtyDone { get; set; }
-	public decimal? QtyOk    { get; set; }
-public decimal? QtyNg    { get; set; }
-public string?  NgReason { get; set; }
+    public decimal? QtyOk    { get; set; }
+    public decimal? QtyNg    { get; set; }
+    public string?  NgReason { get; set; }
 
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
@@ -58,6 +58,9 @@ public string?  NgReason { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? InspectionTime_Actual { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? PreparationTime_Actual { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? TrialRunTime_Actual { get; set; }
+
+    /// <summary>Thời gian phát sinh ngoài kế hoạch (phút). NULL = không có.</summary>
+    public int? ExtraMinutes { get; set; }
 
     [MaxLength(500)]
     public string? Notes { get; set; }

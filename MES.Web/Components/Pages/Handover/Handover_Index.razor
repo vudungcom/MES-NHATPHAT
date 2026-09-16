@@ -111,24 +111,17 @@ else
                     <th rowspan="2" class="border-end" style="width:80px">@HdvColHeader("PurchaseOrder", "PO KH")</th>
                     <th rowspan="2" class="border-end" style="width:100px">@HdvColHeader("PartNo", "Part No")</th>
                     <th rowspan="2" class="text-center border-end" style="width:42px">KH</th>
-                    @* Kho: 3 cột (OK nhận, NG, Còn lại) *@
                     <th colspan="3" class="text-center border-end" style="background:#e1f5ee55">Kho</th>
-                    @* GC: 4 cột *@
                     <th colspan="4" class="text-center border-end" style="background:#e6f1fb55">Gia công</th>
-                    @* HTSP: 4 cột *@
                     <th colspan="4" class="text-center border-end" style="background:#faeeda55">HTSP</th>
-                    @* KCS: 4 cột *@
                     <th colspan="4" class="text-center border-end" style="background:#eaf3de55">KCS</th>
-                    @* PKG: 4 cột *@
                     <th colspan="4" class="text-center border-end" style="background:#fbeaf055">Đóng gói</th>
                     <th rowspan="2" class="text-center" style="width:100px">Thao tác</th>
                 </tr>
                 <tr style="font-size:10px;color:#666">
-                    @* Kho *@
                     <th class="text-end">OK nhận</th>
                     <th class="text-end text-danger">NG</th>
                     <th class="text-end fw-semibold text-warning border-end">Còn lại</th>
-                    @* GC / HTSP / KCS / PKG — 4 cột mỗi nhóm *@
                     @for (int i = 0; i < 4; i++)
                     {
                         <th class="text-end">Đã nhận</th>
@@ -163,7 +156,6 @@ else
                         <td class="border-end fw-semibold">@row.PartNo</td>
                         <td class="text-center border-end">@row.PlanQty.ToString("0.##")</td>
 
-                        @* Kho — 3 cột *@
                         <td class="text-end @(row.KhoOk > 0 ? "text-success" : "text-muted")">
                             @(row.KhoOk > 0 ? row.KhoOk.ToString("0.##") : "—")
                         </td>
@@ -171,9 +163,6 @@ else
                             @(row.KhoNg > 0 ? row.KhoNg.ToString("0.##") : "—")
                         </td>
                         @{
-                            // Còn lại Kho = KhoOk (nhận vào) - KhoNg - SL đã giao sang GC
-                            // SL đã giao sang GC = row.Gc.ReceivedOk (SL GC nhận OK từ KHO)
-                            // + SL GC nhận nhưng báo NG (Gc.NgReturned từ KHO)
                             var _khoGiaoRa = row.Gc.ReceivedOk + row.Gc.NgReturned;
                             var _khoConLai = Math.Max(0, row.KhoOk - row.KhoNg - _khoGiaoRa);
                         }
@@ -181,16 +170,9 @@ else
                             @(row.KhoOk > 0 ? _khoConLai.ToString("0.##") : "—")
                         </td>
 
-                        @* GC — 4 cột *@
                         @RenderGroup4Cells(row.Gc)
-
-                        @* HTSP — 4 cột *@
                         @RenderGroup4Cells(row.Htsp)
-
-                        @* KCS — 4 cột *@
                         @RenderGroup4Cells(row.Kcs)
-
-                        @* PKG — 4 cột *@
                         @RenderGroup4Cells(row.Pkg)
 
                         <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
@@ -232,7 +214,6 @@ else
                         </td>
                     </tr>
 
-                    @* v0.8: Row expand — chi tiết per NC cho từng nhóm *@
                     @if (isExpanded)
                     {
                         <tr class="table-light">
@@ -311,7 +292,6 @@ else
                         <div class="alert alert-warning py-1 small">
                             <i class="bi bi-exclamation-triangle me-1"></i>
                             Tài khoản chưa được phân quyền nhóm Giao nhận. Liên hệ Admin cấp quyền HANDOVER_*.
-
                         </div>
                     }
                 </div>
@@ -362,14 +342,14 @@ else
                     </select>
                 </div>
 
-                @* v0.8: ToNC — chọn NC đích ở nhóm nhận (không dùng với KHO) *@
+                @* v0.8: ToNC — chọn NC đích ở nhóm nhận *@
                 @if (!string.IsNullOrEmpty(_issueToGroup) && _issueToGroup != "KHO")
                 {
                     <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
                         <label class="form-label form-label-sm fw-semibold mb-1">
                             Nhận vào NC (tuỳ chọn)
                             <i class="bi bi-info-circle text-muted ms-1"
-                               title="Chọn NC đích ở nhóm nhận. Trống = vào NC đầu tuyệt đối. Dùng khi trả về NC dùng máy loại trừ hoặc NC giữa chuỗi."></i>
+                               title="Chọn NC đích ở nhóm nhận. Trống = vào NC đầu tuyệt đối."></i>
                         </label>
                         @if (_toNcOptions.Count > 0)
                         {
@@ -415,6 +395,26 @@ else
                     </label>
                     <input type="number" class="form-control form-control-sm"
                            @bind="_issueQty" min="0.01" max="@(_useNcMode ? _ncMaxQty : IssueMaxQty)" step="0.01" />
+                </div>
+
+                @* ── v0.9: NgQty + NgReason — bên giao khai báo NG ngay khi tạo phiếu ── *@
+                <div class="mb-3 p-2 border rounded" style="background:#fff5f5">
+                    <label class="form-label form-label-sm fw-semibold text-danger mb-1">
+                        Trong đó NG
+                        <i class="bi bi-info-circle text-muted fw-normal ms-1"
+                           title="Khai báo nếu lô này có hàng NG (VD: trả lại sau khi phát hiện lỗi). Bên nhận vẫn tự nhập OK/NG khi xác nhận."></i>
+                    </label>
+                    <input type="number" class="form-control form-control-sm border-danger"
+                           @bind="_issueNgQty" min="0" max="@_issueQty" step="0.01"
+                           placeholder="0 (mặc định — không có NG)" />
+                    <div class="mt-2">
+                        <label class="form-label form-label-sm fw-semibold text-danger">
+                            Lý do NG <small class="fw-normal text-muted">(để trống nếu không có NG)</small>
+                        </label>
+                        <input type="text" class="form-control form-control-sm @(_issueNgQty > 0 ? "border-danger" : "")"
+                               @bind="_issueNgReason"
+                               placeholder="VD: phát hiện vết nứt sau kiểm lại..." />
+                    </div>
                 </div>
 
                 <div class="mb-2">
@@ -474,7 +474,6 @@ else
             </div>
             <div class="mes-modal-body" style="overflow-y:auto;flex:1;padding:0">
 
-                @* Nhóm nhận *@
                 <div class="p-3 border-bottom">
                     <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào nhóm</label>
                     @if (_myEditGroups.Count == 1)
@@ -496,7 +495,6 @@ else
                     }
                 </div>
 
-                @* Danh sách phiếu đang chờ *@
                 @if (!string.IsNullOrEmpty(_receiveToGroup))
                 {
                     @if (_pendingTxs.Any())
@@ -510,7 +508,6 @@ else
                         {
                             var isExpanded = _expandedTxId == p.HandoverTxId;
                             <div class="border-bottom">
-                                @* Header phiếu — click để expand *@
                                 <div class="d-flex align-items-center gap-2 px-3 py-2"
                                      style="cursor:pointer;background:@(isExpanded ? "#f0f7ff" : "white")"
                                      @onclick="() => ToggleExpandTx(p.HandoverTxId)">
@@ -518,6 +515,14 @@ else
                                     <div style="flex:1">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @p.FromGroupCode</span>
+                                            @* v0.9: badge NG nếu bên giao khai báo có NG *@
+                                            @if (p.NgQty > 0)
+                                            {
+                                                <span class="badge bg-danger" style="font-size:10px"
+                                                      title="Bên giao báo có @(p.NgQty.ToString("0.##")) NG — @p.NgReason">
+                                                    <i class="bi bi-exclamation-triangle me-1"></i>NG: @p.NgQty.ToString("0.##")
+                                                </span>
+                                            }
                                             <span style="font-size:12px;font-weight:500">
                                                 Còn: <strong class="text-primary">@p.QtyRemaining.ToString("0.##")</strong> chiếc
                                             </span>
@@ -541,10 +546,18 @@ else
                                     }
                                 </div>
 
-                                @* Form nhập OK/NG — expand khi click *@
                                 @if (isExpanded)
                                 {
                                     <div class="px-3 pb-3 pt-2" style="background:#f0f7ff">
+                                        @* v0.9: cảnh báo nếu bên giao khai báo có NG *@
+                                        @if (p.NgQty > 0)
+                                        {
+                                            <div class="alert alert-danger py-2 small mb-2">
+                                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                                <strong>Bên giao báo có @p.NgQty.ToString("0.##") NG:</strong> @p.NgReason
+                                                <div class="mt-1 text-muted">Nhập số lượng OK/NG thực tế sau khi kiểm hàng.</div>
+                                            </div>
+                                        }
                                         <div class="row g-2 mb-2">
                                             <div class="col-6">
                                                 <label class="form-label form-label-sm fw-semibold">Số lượng OK</label>
@@ -639,7 +652,6 @@ else
                             <span class="small text-muted">@tx.IssuedAt.ToString("dd/MM/yyyy HH:mm")</span>
                             <span class="small text-muted">by @tx.IssuedByName</span>
                             @if (tx.IsVoided) { <span class="badge bg-secondary">ĐÃ HUỶ</span> }
-                            @* Nút huỷ phiếu — chỉ hiện khi PENDING và chưa có receive nào *@
                             @if (!tx.IsVoided && tx.Status == "PENDING" && !tx.Receives.Any()
                                  && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
                             {
@@ -650,7 +662,7 @@ else
                                 </button>
                             }
                         </div>
-                        <div class="small mb-2 text-muted">
+                        <div class="small mb-1 text-muted">
                             Giao: <strong class="text-dark">@tx.QtyIssued.ToString("0.##") chiếc</strong>
                             @if (!string.IsNullOrEmpty(tx.FromNC))
                             {
@@ -660,6 +672,14 @@ else
                             }
                             @if (!string.IsNullOrEmpty(tx.Notes)) { <span class="ms-1"> — @tx.Notes</span> }
                         </div>
+                        @* v0.9: hiển thị NgQty/NgReason bên giao khai báo *@
+                        @if (tx.NgQty > 0)
+                        {
+                            <div class="small mb-2">
+                                <span class="badge bg-danger me-1">NG bên giao khai báo: @tx.NgQty.ToString("0.##")</span>
+                                <span class="text-danger">@tx.NgReason</span>
+                            </div>
+                        }
 
                         @if (tx.Receives.Any())
                         {
@@ -829,6 +849,9 @@ else
     string  _issueToGroup   = "";
     decimal _issueQty       = 1;
     string  _issueNotes     = "";
+    // v0.9 — NgQty/NgReason bên giao khai báo
+    decimal _issueNgQty     = 0;
+    string  _issueNgReason  = "";
 
     // NC selector — giao inter-group theo NC cụ thể
     bool              _useNcMode    = false;
@@ -857,29 +880,22 @@ else
 
     record ToNcOption(string NC, string Label, bool IsExcluded, bool IsFirst);
 
-    // v0.8: Expand chi tiết per NC — chỉ 1 PO expand tại 1 thời điểm
+    // v0.8: Expand chi tiết per NC
     int? _expandedDetailId = null;
-    // Cache flow per (detailId, groupCode)
     Dictionary<(int detailId, string group), List<NcFlowItem>> _flowCache = new();
 
     List<HandoverLogItem> _logItems  = new();
     string                _logPartNo = "";
 
-    // Badge đỏ nhận: phiếu chờ nhóm mình nhận
     Dictionary<int, int> _pendingCountPerDetail = new();
-    // Badge đỏ giao: phiếu mình đã giao chưa được xác nhận
     Dictionary<int, int> _pendingIssuedCountPerDetail = new();
-    // Auto-refresh timer
     private System.Threading.Timer? _refreshTimer;
     private bool _isRefreshing = false;
 
-    // Expand state trong modal Nhận — phiếu nào đang mở form nhập OK/NG
     long _expandedTxId = 0;
 
-    // ── Quick search ──
     private string _search = string.Empty;
 
-    // ── Excel-style column filter cho PO và PartNo ──
     private Dictionary<string, HandoverColFilterDef> _colFilters = new();
     private string? _openColFilter;
     private double  _cfTop, _cfLeft;
@@ -983,7 +999,6 @@ else
         {
             var q = _rows.AsEnumerable();
 
-            // Quick search
             if (!string.IsNullOrWhiteSpace(_search))
             {
                 var s = _search.Trim();
@@ -994,7 +1009,6 @@ else
                     (r.CustomerName ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
             }
 
-            // Excel column filters
             foreach (var (key, def) in _colFilters)
             {
                 if (!def.IsActive) continue;
@@ -1007,7 +1021,6 @@ else
                 };
             }
 
-            // Sort
             if (_sortColHdv != null)
             {
                 Func<HandoverSummaryRow, string> key = _sortColHdv switch
@@ -1028,7 +1041,6 @@ else
         _colFilters.Any(kv => kv.Value.IsActive)
         || _sortColHdv != null;
 
-    // ColHeader với funnel button — đúng pattern Part Master
     RenderFragment HdvColHeader(string colKey, string label) => __builder =>
     {
         var hasFilter = _colFilters.TryGetValue(colKey, out var def) && def.IsActive;
@@ -1058,7 +1070,6 @@ else
             month:      _filterMonth > 0      ? _filterMonth      : null,
             year:       _filterYear);
 
-        // Load pending counts cho badge đỏ — chỉ khi user có nhóm Edit
         if (_myEditGroups.Any())
         {
             var detailIds = _rows.Select(r => r.KhPlanDetailId).ToList();
@@ -1096,28 +1107,23 @@ else
         await LoadDataAsync();
     }
 
-    // Render 4 cột cho 1 nhóm sản xuất
     RenderFragment RenderGroup4Cells(HandoverGroupQty g) => __builder =>
     {
-        // Đã nhận
         __builder.OpenElement(0, "td");
         __builder.AddAttribute(1, "class", g.ReceivedOk > 0 ? "text-end text-success" : "text-end text-muted");
         __builder.AddContent(2, g.ReceivedOk > 0 ? g.ReceivedOk.ToString("0.##") : "—");
         __builder.CloseElement();
 
-        // NG
         __builder.OpenElement(3, "td");
         __builder.AddAttribute(4, "class", g.NgReturned > 0 ? "text-end text-danger fw-semibold" : "text-end text-muted");
         __builder.AddContent(5, g.NgReturned > 0 ? g.NgReturned.ToString("0.##") : "—");
         __builder.CloseElement();
 
-        // WTS Done
         __builder.OpenElement(6, "td");
         __builder.AddAttribute(7, "class", g.WtsDone > 0 ? "text-end text-primary" : "text-end text-muted");
         __builder.AddContent(8, g.WtsDone > 0 ? g.WtsDone.ToString("0.##") : "—");
         __builder.CloseElement();
 
-        // Còn tồn
         var remClass = g.Remaining > 0  ? "text-end fw-semibold text-warning border-end"
                      : g.ReceivedOk > 0 ? "text-end text-muted border-end"
                      : "text-end text-muted border-end";
@@ -1127,11 +1133,9 @@ else
         __builder.CloseElement();
     };
 
-    // v0.8b: Chi tiết per NC — xếp dọc 1 cột, thứ tự B(GC) → C(HTSP) → D(KCS) → E(PKG)
     RenderFragment RenderNcFlowDetail(HandoverSummaryRow row) => __builder =>
     {
         <div class="d-flex flex-column gap-3">
-            @* Kho — đầu trang (không có NC) *@
             <div class="border rounded p-2" style="background:#e1f5ee22">
                 <div class="fw-semibold small mb-1" style="color:#0d6b52">
                     <i class="bi bi-box-seam me-1"></i>Kho — nhận từ khách hàng
@@ -1145,7 +1149,6 @@ else
                 </div>
             </div>
 
-            @* B → C → D → E *@
             @foreach (var grp in new[] { "GC", "HTSP", "KCS", "PKG" })
             {
                 var flow = _flowCache.TryGetValue((row.KhPlanDetailId, grp), out var f) ? f : new List<NcFlowItem>();
@@ -1203,7 +1206,6 @@ else
                                 x.SubGroup switch { "TARO" => 1, "BAVIA" => 2, "WASHING" => 3, _ => 0 })
                                 .ThenBy(x => x.StepOrder))
                             {
-                                // Divider giữa các sub-group của HTSP
                                 @if (grp == "HTSP" && f.SubGroup != lastSubGroup)
                                 {
                                     <tr class="table-secondary" style="font-size:9.5px">
@@ -1266,6 +1268,8 @@ else
         _issueToGroup   = "";
         _issueQty       = 1;
         _issueNotes     = "";
+        _issueNgQty     = 0;       // v0.9
+        _issueNgReason  = "";      // v0.9
         _modalError     = "";
         _useNcMode      = false;
         _issueFromNC    = "";
@@ -1274,9 +1278,8 @@ else
         _issueToNC      = "";
         _toNcOptions    = new();
         _toNcOptionsLoading = false;
-        _issueFromGroupOptions = new(); // sẽ load async
+        _issueFromGroupOptions = new();
         _showIssueModal = true;
-        // Load remaining realtime từ service (tính cả PENDING)
         _ = LoadIssueGroupOptionsAsync(row);
     }
 
@@ -1285,7 +1288,6 @@ else
         var opts = new List<IssueGroupOption>();
         foreach (var grp in _myEditGroups)
         {
-            // Gọi GetRemainingAsync — tính cả pending trong cùng nhóm
             var remaining = await HandoverSvc.GetRemainingAsync(row.KhPlanDetailId, grp);
             opts.Add(new IssueGroupOption(grp, GetGroupLabel(grp), remaining));
         }
@@ -1339,25 +1341,41 @@ else
             _modalError = "Bắt buộc nhập ghi chú khi giao inter-group NC.";
             return;
         }
+        // v0.9: validate NgQty client-side (service cũng validate lại)
+        if (_issueNgQty < 0)
+        {
+            _modalError = "Số lượng NG không được âm.";
+            return;
+        }
+        if (_issueNgQty > _issueQty)
+        {
+            _modalError = "Số lượng NG không thể lớn hơn số lượng giao.";
+            return;
+        }
+        if (_issueNgQty > 0 && string.IsNullOrWhiteSpace(_issueNgReason))
+        {
+            _modalError = "Bắt buộc nhập lý do khi có hàng NG.";
+            return;
+        }
 
         _saving = true;
         (bool ok, string err) = await HandoverSvc.IssueAsync(
             _selectedRow.KhPlanDetailId, fromGroup, _issueToGroup,
             _issueQty, _currentUserId,
-            fromNC: _useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,
-            notes:  _issueNotes,
-            toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC);   // v0.8
+            fromNC:   _useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,
+            notes:    _issueNotes,
+            toNC:     string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
+            ngQty:    _issueNgQty,       // v0.9
+            ngReason: _issueNgReason);   // v0.9
         _saving = false;
         if (!ok) { _modalError = err; return; }
 
-        // v0.8: Clear cache flow cho detail này (sau khi Issue đổi số liệu)
         InvalidateFlowCache(_selectedRow.KhPlanDetailId);
 
         CloseModals();
         await LoadDataAsync();
     }
 
-    // v0.8: Khi user chọn nhóm nhận → load list NC của nhóm đó để dropdown ToNC
     async Task OnIssueToGroupChangedAsync()
     {
         _issueToNC   = "";
@@ -1392,7 +1410,6 @@ else
         }
     }
 
-    // v0.8: Toggle expand chi tiết per NC — chỉ 1 PO tại 1 thời điểm
     async Task ToggleExpandDetailAsync(int detailId)
     {
         if (_expandedDetailId == detailId)
@@ -1401,7 +1418,6 @@ else
             return;
         }
         _expandedDetailId = detailId;
-        // Preload flow cho 4 group (KHO bỏ qua vì không có NC)
         foreach (var grp in new[] { "GC", "HTSP", "KCS", "PKG" })
         {
             var key = (detailId, grp);
@@ -1437,7 +1453,6 @@ else
     {
         if (_expandedTxId == txId)
         {
-            // Thu gọn
             _expandedTxId    = 0;
             _receiveQtyOk    = 0;
             _receiveQtyNg    = 0;
@@ -1447,7 +1462,6 @@ else
         }
         else
         {
-            // Mở phiếu mới — reset form
             _expandedTxId    = txId;
             _selectedTxId    = txId;
             _receiveQtyOk    = 0;
@@ -1487,23 +1501,19 @@ else
         _saving = false;
         if (!ok) { _modalError = err; return; }
 
-        // v0.8: Invalidate flow cache — Receive đổi số liệu
         if (_selectedRow != null)
             InvalidateFlowCache(_selectedRow.KhPlanDetailId);
 
-        // Reload pending list — không đóng modal, để user xử lý tiếp phiếu khác
         _expandedTxId    = 0;
         _receiveQtyOk    = 0;
         _receiveQtyNg    = 0;
         _receiveNgReason = "";
         _receiveNotes    = "";
 
-        // Reload pending cho nhóm này
         if (_selectedRow != null)
             _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(
                 _selectedRow.KhPlanDetailId, _receiveToGroup);
 
-        // Reload bảng + badge
         await LoadDataAsync();
         StateHasChanged();
     }
@@ -1515,7 +1525,6 @@ else
         _showLogModal = true;
     }
 
-    // ── Void phiếu Giao ──
     long   _voidingTxId  = 0;
     string _voidReason   = "";
     bool   _showVoidConfirm = false;
@@ -1545,11 +1554,9 @@ else
         _voidingTxId     = 0;
         _modalError      = "";
 
-        // v0.8: Invalidate flow cache
         if (_selectedRow != null)
             InvalidateFlowCache(_selectedRow.KhPlanDetailId);
 
-        // Reload log của PO hiện tại
         if (_selectedRow != null)
             _logItems = await HandoverSvc.GetLogsAsync(_selectedRow.KhPlanDetailId);
 
@@ -1568,6 +1575,7 @@ else
         _voidingTxId      = 0;     _voidReason       = "";
         _useNcMode        = false; _issueFromNC      = "";
         _ncOptions        = new(); _ncMaxQty         = 0;
+        _issueNgQty       = 0;     _issueNgReason    = "";  // v0.9
     }
 
     string GetStatusBadge(string status) => status switch
@@ -1578,7 +1586,6 @@ else
         _           => "bg-secondary"
     };
 
-    // ── ColFilterDef — ExcludedValues + SearchText apply realtime ──
     private class HandoverColFilterDef
     {
         public List<string>    AllValues      { get; set; } = new();

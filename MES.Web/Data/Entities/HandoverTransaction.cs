@@ -22,7 +22,17 @@ namespace MES.Web.Data.Entities
         /// Null = giao thông thường (không gắn với NC cụ thể).
         /// </summary>
         public string? FromNC { get; set; }
-		public string? ToNC { get; set; }   // v0.8 — NC đích ở nhóm nhận
+        public string? ToNC { get; set; }   // v0.8 — NC đích ở nhóm nhận
+
+        /// <summary>
+        /// SL NG bên giao khai báo ngay khi tạo phiếu (0 = lô OK hoàn toàn).
+        /// VD: giao 5 chiếc, trong đó 2 NG → QtyIssued=5, NgQty=2.
+        /// Bên nhận vẫn tự nhập QtyOk/QtyNg khi xác nhận — field này chỉ để thông báo trước.
+        /// </summary>
+        public decimal NgQty { get; set; }
+
+        /// <summary>Bắt buộc nếu NgQty > 0 — lý do NG bên giao khai báo</summary>
+        public string? NgReason { get; set; }
 
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
