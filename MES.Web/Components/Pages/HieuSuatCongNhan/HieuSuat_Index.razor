@@ -327,10 +327,6 @@ else
                                                 <option value="@det.PurchaseOrder">@det.PartNo — @det.PlanNo</option>
                                             }
                                         </datalist>
-                                        @if (!string.IsNullOrEmpty(sub.PO) && sub.KhPlanDetailId.HasValue)
-                                        {
-                                            <div style="font-size:10px;color:#6c757d;margin-top:1px">@(sub.PartNo) — @(_allRows.FirstOrDefault(r=>r.KhPlanDetailId==sub.KhPlanDetailId)?.PlanNo)</div>
-                                        }
                                     </td>
 
                                     @* Part No *@
@@ -440,18 +436,11 @@ else
                                         }
                                     </td>
 
-                                    @* Kết thúc — chỉ hàng cuối nhập tay (nếu >1 hàng), còn lại tự tính *@
+                                    @* Kết thúc — hàng cuối luôn nhập tay, hàng giữa tự tính *@
                                     <td>
-                                        @if (isLast && grp.SubRows.Count == 1)
+                                        @if (isLast)
                                         {
-                                            @* Chỉ 1 hàng: tự tính từ công thức *@
-                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
-                                                   value="@sub.EndTime.ToString("HH:mm")" readonly
-                                                   title="Tự tính từ SL × cycle time" />
-                                        }
-                                        else if (isLast)
-                                        {
-                                            @* Nhiều hàng: hàng cuối nhập tay *@
+                                            @* Hàng cuối (kể cả 1 hàng duy nhất): nhập tay, cột Dự kiến để tham khảo *@
                                             <input type="time" class="form-control form-control-sm"
                                                    style="border-color:#0d6efd"
                                                    value="@sub.EndTime.ToString("HH:mm")"
@@ -469,15 +458,21 @@ else
                                     <td class="text-center">
                                         @if (hasEst)
                                         {
-                                            var isLate    = actualEnd > estEnd!.Value;
-                                            var estColor  = SubEstColor(isLate);
-                                            <span style="font-size:11px;font-weight:600;color:@estColor"
-                                                  title="@(isLate ? "Trễ" : "Đúng/sớm giờ")">
+                                            var isLate     = actualEnd > estEnd!.Value;
+                                            var estColor   = SubEstColor(isLate);
+                                            var diffMin    = (int)Math.Abs((actualEnd - estEnd!.Value).TotalMinutes);
+                                            <span style="font-size:11px;font-weight:600;color:@estColor">
                                                 @estEnd!.Value.ToString("HH:mm")
                                             </span>
                                             <div style="font-size:9px;color:@estColor">
-                                                @(isLate ? "▲" : "✓") @((int)Math.Abs((actualEnd - estEnd!.Value).TotalMinutes)) ph
+                                                @(isLate ? "▲" : "✓") @diffMin ph
                                             </div>
+                                            @if (isLate)
+                                            {
+                                                <div style="font-size:9px;color:#dc3545;margin-top:1px">
+                                                    Trễ @diffMin ph so dự kiến
+                                                </div>
+                                            }
                                         }
                                         else
                                         {
@@ -490,7 +485,7 @@ else
                                     {
                                         @* T.Gá *@
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
-                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div>
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div> }
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    disabled="@(!isSerial)"
                                                    value="@(sub.SetupTime_Actual > 0 ? sub.SetupTime_Actual.ToString() : "")"
@@ -498,7 +493,7 @@ else
                                         </td>
                                         @* T.GC *@
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
-                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div>
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div> }
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    disabled="@(!isSerial)"
                                                    value="@(sub.MachiningTime_Actual > 0 ? sub.MachiningTime_Actual.ToString() : "")"
@@ -506,7 +501,7 @@ else
                                         </td>
                                         @* T.Ktra *@
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
-                                            <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div>
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div> }
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    disabled="@(!isSerial)"
                                                    value="@(sub.InspectionTime_Actual > 0 ? sub.InspectionTime_Actual.ToString() : "")"
@@ -514,7 +509,7 @@ else
                                         </td>
                                         @* T.CB *@
                                         <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
-                                            <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div>
+                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div> }
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    disabled="@(isSerial)"
                                                    value="@(sub.PreparationTime_Actual > 0 ? sub.PreparationTime_Actual.ToString() : "")"
@@ -522,7 +517,7 @@ else
                                         </td>
                                         @* T.Chạy *@
                                         <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
-                                            <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div>
+                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div> }
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    disabled="@(isSerial)"
                                                    value="@(sub.TrialRunTime_Actual > 0 ? sub.TrialRunTime_Actual.ToString() : "")"
@@ -535,7 +530,7 @@ else
                                         <input type="number" class="form-control form-control-sm text-center" min="0"
                                                value="@(sub.ExtraMinutes > 0 ? sub.ExtraMinutes.ToString() : "")"
                                                placeholder="0"
-                                               @oninput="e => sub.ExtraMinutes = int.TryParse(e.Value?.ToString(), out var vm) ? vm : 0" />
+                                               @oninput="e => OnSubExtraMinInput(grp, sub, e)" />
                                     </td>
 
                                     @* Nội dung *@
@@ -2151,6 +2146,13 @@ else
         StateHasChanged();
     }
 
+    private void OnSubExtraMinInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    {
+        sub.ExtraMinutes = int.TryParse(e.Value?.ToString(), out var vm) ? vm : 0;
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+
     // Wrapper: tránh string literal trong @oninput — CS1056
     private void OnSubSetupInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
         => OnSubTimingInput(grp, sub, "setup", e);
@@ -2210,36 +2212,49 @@ else
         if (!grp.SubRows.Any()) return;
         var totalSl = grp.SubRows.Sum(s => s.QtyDone);
 
+        // Tổng T.Phát sinh của nhóm (phút) — không nhân theo SL
+        var totalExtraMin = (double)grp.SubRows.Sum(s => s.ExtraMinutes);
+
         if (grp.SubRows.Count == 1)
         {
-            // 1 hàng: tính EndTime từ công thức giống RecalcEndTime cũ
+            // 1 hàng: tính EndTime từ công thức, cộng thêm T.Phát sinh
             var sub = grp.SubRows[0];
             sub.NC          = grp.NC;
             sub.MachineUsed = grp.MachineUsed;
             RecalcEndTime(sub);
+            // Cộng T.Phát sinh vào EndTime
+            if (sub.ExtraMinutes > 0)
+                sub.EndTime = sub.EndTime.AddMinutes(sub.ExtraMinutes);
             return;
         }
 
-        // Nhiều hàng: tổng thời gian = EndTime cuối - StartTime đầu
+        // Nhiều hàng:
+        // Tổng thời gian thực = EndTime cuối - StartTime đầu
+        // Thời gian sản xuất  = Tổng thực - T.Phát sinh (tổng nhóm)
+        // Phân bổ theo tỉ lệ SL từng hàng
         var first = grp.SubRows.First();
         var last  = grp.SubRows.Last();
-        var totalMin = (last.EndTime > first.StartTime)
+        var totalRealMin = (last.EndTime > first.StartTime)
             ? (double)(last.EndTime - first.StartTime).TotalMinutes
             : 0;
 
-        if (totalMin <= 0 || totalSl <= 0) return;
+        if (totalRealMin <= 0 || totalSl <= 0) return;
+
+        // Thời gian sản xuất thực sự (bỏ phần phát sinh)
+        var prodMin = Math.Max(0, totalRealMin - totalExtraMin);
 
         var cursor = first.StartTime;
         for (int i = 0; i < grp.SubRows.Count; i++)
         {
-            var sub = grp.SubRows[i];
+            var sub      = grp.SubRows[i];
             sub.StartTime = cursor;
-            var fraction = totalSl > 0 ? (double)sub.QtyDone / (double)totalSl : 0;
-            var subMin   = totalMin * fraction;
-            sub.EndTime  = cursor.AddMinutes(subMin);
-            cursor       = sub.EndTime;
+            var fraction  = (double)sub.QtyDone / (double)totalSl;
+            var subProdMin = prodMin * fraction;
+            // T.Phát sinh của hàng này cộng thêm vào (không chia theo SL)
+            sub.EndTime   = cursor.AddMinutes(subProdMin + sub.ExtraMinutes);
+            cursor        = sub.EndTime;
         }
-        // Đảm bảo hàng cuối khớp với EndTime user nhập
+        // Ghim hàng cuối đúng với EndTime user nhập (tránh lệch do làm tròn)
         grp.SubRows.Last().EndTime = last.EndTime;
     }
 
@@ -2885,7 +2900,8 @@ else
         }
         if (cycleMin <= 0) return null;
 
-        var totalMin = (double)(cycleMin * sl);
+        // Dự kiến = cycle × SL + T.Phát sinh (phút phát sinh vẫn tính vào tổng thời gian)
+        var totalMin = (double)(cycleMin * sl) + sub.ExtraMinutes;
         return sub.StartTime.AddMinutes(totalMin);
     }
 
