@@ -18,6 +18,8 @@ namespace MES.Web.Services
         // Kho: chỉ 2 cột (OK nhận từ KH + NG)
         public decimal KhoOk { get; set; }
         public decimal KhoNg { get; set; }
+        /// <summary>Số phiếu KHO đã giao đi chưa được xác nhận (PENDING/PARTIAL)</summary>
+        public int KhoPendingToIssue { get; set; }
 
         // Các nhóm sản xuất: 4 cột mỗi nhóm
         public HandoverGroupQty Gc   { get; set; } = new();
@@ -263,14 +265,16 @@ namespace MES.Web.Services
 
                 var row = new HandoverSummaryRow
                 {
-                    KhPlanDetailId = d.KhPlanDetailId,
-                    PlanNo         = d.KhPlan?.PlanNo ?? "",
-                    PurchaseOrder  = d.PurchaseOrder,
-                    PartNo         = d.PartNo,
-                    CustomerName   = d.KhPlan?.Customer?.CustomerName ?? "",
-                    PlanQty        = d.Quantity,
-                    KhoOk          = khoOk,
-                    KhoNg          = khoNg,
+                    KhPlanDetailId    = d.KhPlanDetailId,
+                    PlanNo            = d.KhPlan?.PlanNo ?? "",
+                    PurchaseOrder     = d.PurchaseOrder,
+                    PartNo            = d.PartNo,
+                    CustomerName      = d.KhPlan?.Customer?.CustomerName ?? "",
+                    PlanQty           = d.Quantity,
+                    KhoOk             = khoOk,
+                    KhoNg             = khoNg,
+                    KhoPendingToIssue = detailTxs.Count(t => t.FromGroupCode == "KHO"
+                                                          && t.Status != "COMPLETED"),
                     Gc   = CalcGroupQty("GC",   "KHO", detailTxs, receivesByTx, wts, GcGroups),
                     Htsp = CalcGroupQty("HTSP", "GC",  detailTxs, receivesByTx, wts, HtspGroups),
                     Kcs  = CalcGroupQty("KCS",  "HTSP",detailTxs, receivesByTx, wts, KcsGroups),

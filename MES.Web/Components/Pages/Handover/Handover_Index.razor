@@ -166,8 +166,19 @@ else
                             var _khoGiaoRa = row.Gc.ReceivedOk + row.Gc.NgReturned;
                             var _khoConLai = Math.Max(0, row.KhoOk - row.KhoNg - _khoGiaoRa);
                         }
-                        <td class="text-end border-end fw-semibold @(_khoConLai > 0 ? "text-warning" : row.KhoOk > 0 ? "text-success" : "text-muted")">
-                            @(row.KhoOk > 0 ? _khoConLai.ToString("0.##") : "—")
+                        <td class="text-end border-end fw-semibold @(_khoConLai > 0 ? "text-warning" : row.KhoOk > 0 ? "text-success" : "text-muted")"
+                            style="white-space:nowrap;vertical-align:middle">
+                            <div>@(row.KhoOk > 0 ? _khoConLai.ToString("0.##") : "—")</div>
+                            @if (row.KhoPendingToIssue > 0)
+                            {
+                                <div class="d-flex gap-1 justify-content-end mt-1">
+                                    <span class="badge bg-primary"
+                                          style="font-size:9px;padding:1px 4px"
+                                          title="@($"{row.KhoPendingToIssue} phiếu KHO đã giao chưa được xác nhận")">
+                                        ⬆@row.KhoPendingToIssue
+                                    </span>
+                                </div>
+                            }
                         </td>
 
                         @RenderGroup4Cells(row.Gc)
@@ -1111,54 +1122,56 @@ else
 
     RenderFragment RenderGroup4Cells(HandoverGroupQty g) => __builder =>
     {
-        __builder.OpenElement(0, "td");
-        __builder.AddAttribute(1, "class", g.ReceivedOk > 0 ? "text-end text-success" : "text-end text-muted");
-        __builder.AddContent(2, g.ReceivedOk > 0 ? g.ReceivedOk.ToString("0.##") : "—");
-        __builder.CloseElement();
+        // Đã nhận
+        <td class="@(g.ReceivedOk > 0 ? "text-end text-success" : "text-end text-muted")">
+            @(g.ReceivedOk > 0 ? g.ReceivedOk.ToString("0.##") : "—")
+        </td>
 
-        __builder.OpenElement(3, "td");
-        __builder.AddAttribute(4, "class", g.NgReturned > 0 ? "text-end text-danger fw-semibold" : "text-end text-muted");
-        __builder.AddContent(5, g.NgReturned > 0 ? g.NgReturned.ToString("0.##") : "—");
-        __builder.CloseElement();
+        // NG
+        <td class="@(g.NgReturned > 0 ? "text-end text-danger fw-semibold" : "text-end text-muted")">
+            @(g.NgReturned > 0 ? g.NgReturned.ToString("0.##") : "—")
+        </td>
 
-        __builder.OpenElement(6, "td");
-        __builder.AddAttribute(7, "class", g.WtsDone > 0 ? "text-end text-primary" : "text-end text-muted");
-        __builder.AddContent(8, g.WtsDone > 0 ? g.WtsDone.ToString("0.##") : "—");
-        __builder.CloseElement();
+        // WTS Done
+        <td class="@(g.WtsDone > 0 ? "text-end text-primary" : "text-end text-muted")">
+            @(g.WtsDone > 0 ? g.WtsDone.ToString("0.##") : "—")
+        </td>
 
-        var remClass = g.Remaining > 0  ? "text-end fw-semibold text-warning border-end"
-                     : g.ReceivedOk > 0 ? "text-end text-muted border-end"
-                     : "text-end text-muted border-end";
-        __builder.OpenElement(9, "td");
-        __builder.AddAttribute(10, "class", remClass);
-        __builder.AddAttribute(10, "style", "white-space:nowrap;vertical-align:middle");
-        // Số tồn
-        __builder.OpenElement(11, "div");
-        __builder.AddContent(12, g.ReceivedOk > 0 ? g.Remaining.ToString("0.##") : "—");
-        __builder.CloseElement();
-        // Badge pending — render độc lập, không phụ thuộc ReceivedOk
-        __builder.OpenElement(13, "div");
-        __builder.AddAttribute(14, "class", "d-flex gap-1 justify-content-end mt-1");
-        if (g.PendingToIssue > 0)
-        {
-            __builder.OpenElement(15, "span");
-            __builder.AddAttribute(16, "class", "badge bg-primary");
-            __builder.AddAttribute(17, "style", "font-size:9px;padding:1px 4px");
-            __builder.AddAttribute(18, "title", $"{g.PendingToIssue} phiếu đã giao chưa được xác nhận");
-            __builder.AddContent(19, $"⬆{g.PendingToIssue}");
-            __builder.CloseElement();
-        }
-        if (g.PendingToReceive > 0)
-        {
-            __builder.OpenElement(20, "span");
-            __builder.AddAttribute(21, "class", "badge bg-success");
-            __builder.AddAttribute(22, "style", "font-size:9px;padding:1px 4px");
-            __builder.AddAttribute(23, "title", $"{g.PendingToReceive} phiếu đang chờ nhóm này nhận");
-            __builder.AddContent(24, $"⬇{g.PendingToReceive}");
-            __builder.CloseElement();
-        }
-        __builder.CloseElement();
-        __builder.CloseElement();
+        // Còn tồn + badge pending
+        @RenderGroupRemaining(g)
+    };
+
+    private string GroupRemCls(HandoverGroupQty g) =>
+        g.Remaining > 0  ? "text-end fw-semibold text-warning border-end"
+      : g.ReceivedOk > 0 ? "text-end text-muted border-end"
+      : "text-end text-muted border-end";
+
+    RenderFragment RenderGroupRemaining(HandoverGroupQty g) => __builder =>
+    {
+        <td class="@GroupRemCls(g)" style="white-space:nowrap;vertical-align:middle">
+            <div>@(g.ReceivedOk > 0 ? g.Remaining.ToString("0.##") : "—")</div>
+            @if (g.PendingToIssue > 0 || g.PendingToReceive > 0)
+            {
+                <div class="d-flex gap-1 justify-content-end mt-1">
+                    @if (g.PendingToIssue > 0)
+                    {
+                        <span class="badge bg-primary"
+                              style="font-size:9px;padding:1px 4px"
+                              title="@($"{g.PendingToIssue} phiếu đã giao chưa được xác nhận")">
+                            ⬆@g.PendingToIssue
+                        </span>
+                    }
+                    @if (g.PendingToReceive > 0)
+                    {
+                        <span class="badge bg-success"
+                              style="font-size:9px;padding:1px 4px"
+                              title="@($"{g.PendingToReceive} phiếu đang chờ nhóm này nhận")">
+                            ⬇@g.PendingToReceive
+                        </span>
+                    }
+                </div>
+            }
+        </td>
     };
 
     RenderFragment RenderNcFlowDetail(HandoverSummaryRow row) => __builder =>
