@@ -233,6 +233,8 @@ else
         <span><strong class="text-primary">WTS OK</strong> = công nhân làm xong</span>
         <span><strong>Còn tồn</strong> = Đã nhận − NG − Đã giao đi</span>
         <span><span class="badge bg-warning text-dark">■</span> Có NG</span>
+        <span><span class="badge bg-primary" style="font-size:9px">⬆N</span> N phiếu nhóm đó giao đi chờ bên nhận xác nhận</span>
+        <span><span class="badge bg-success" style="font-size:9px">⬇N</span> N phiếu đang chờ nhóm đó nhận vào</span>
     </div>
 }
 
@@ -1129,7 +1131,33 @@ else
                      : "text-end text-muted border-end";
         __builder.OpenElement(9, "td");
         __builder.AddAttribute(10, "class", remClass);
-        __builder.AddContent(11, g.ReceivedOk > 0 ? g.Remaining.ToString("0.##") : "—");
+        __builder.AddAttribute(10, "style", "white-space:nowrap;vertical-align:middle");
+        // Số tồn
+        __builder.OpenElement(11, "div");
+        __builder.AddContent(12, g.ReceivedOk > 0 ? g.Remaining.ToString("0.##") : "—");
+        __builder.CloseElement();
+        // Badge pending — render độc lập, không phụ thuộc ReceivedOk
+        __builder.OpenElement(13, "div");
+        __builder.AddAttribute(14, "class", "d-flex gap-1 justify-content-end mt-1");
+        if (g.PendingToIssue > 0)
+        {
+            __builder.OpenElement(15, "span");
+            __builder.AddAttribute(16, "class", "badge bg-primary");
+            __builder.AddAttribute(17, "style", "font-size:9px;padding:1px 4px");
+            __builder.AddAttribute(18, "title", $"{g.PendingToIssue} phiếu đã giao chưa được xác nhận");
+            __builder.AddContent(19, $"⬆{g.PendingToIssue}");
+            __builder.CloseElement();
+        }
+        if (g.PendingToReceive > 0)
+        {
+            __builder.OpenElement(20, "span");
+            __builder.AddAttribute(21, "class", "badge bg-success");
+            __builder.AddAttribute(22, "style", "font-size:9px;padding:1px 4px");
+            __builder.AddAttribute(23, "title", $"{g.PendingToReceive} phiếu đang chờ nhóm này nhận");
+            __builder.AddContent(24, $"⬇{g.PendingToReceive}");
+            __builder.CloseElement();
+        }
+        __builder.CloseElement();
         __builder.CloseElement();
     };
 

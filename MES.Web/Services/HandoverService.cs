@@ -54,6 +54,11 @@ namespace MES.Web.Services
         public decimal Remaining => IsGc
             ? Math.Max(0, WtsDone - IssuedOut)
             : Math.Max(0, ReceivedOk - NgReturned - IssuedOut);
+
+        /// <summary>Số phiếu nhóm này đã giao đi nhưng bên nhận chưa xác nhận</summary>
+        public int PendingToIssue   { get; set; }
+        /// <summary>Số phiếu đang chờ nhóm này nhận vào</summary>
+        public int PendingToReceive { get; set; }
     }
 
     public class HandoverTxPending
@@ -251,7 +256,10 @@ namespace MES.Web.Services
                 var khoOk = khoByDetail.TryGetValue(d.KhPlanDetailId, out var khoItems)
                     ? (decimal)khoItems.Where(k => k.IsActive).Sum(k => k.SoLuongThucNhan ?? 0)
                     : 0m;
-                var khoNg = CalcNgReturned("KHO", detailTxs, receivesByTx);
+                // KhoNg = NG GC báo lại từ tx KHO→GC (GC nhận rồi báo hỏng)
+                //       + NG KHO nhận lại từ tx GC→KHO (GC trả ngược hàng NG về)
+                var khoNg = CalcNgReturned("KHO", detailTxs, receivesByTx)
+                          + CalcNgReceived("KHO", detailTxs, receivesByTx);
 
                 var row = new HandoverSummaryRow
                 {
@@ -298,10 +306,23 @@ namespace MES.Web.Services
 
             qty.NgReturned = CalcNgReturned(groupCode, txs, receivesByTx);
 
-            qty.IssuedOut = txs
+            // IssuedOut = SL bên nhận đã confirmed (QtyOk + QtyNg)
+            //           + SL đang PENDING/PARTIAL chưa được nhận (tránh double-giao và phản ánh đúng tồn kho)
+            var confirmedOut = txs
                 .Where(t => t.FromGroupCode == groupCode)
                 .SelectMany(t => receivesByTx.TryGetValue(t.HandoverTxId, out var rxs) ? rxs : new List<HandoverReceive>())
                 .Sum(r => r.QtyOk + r.QtyNg);
+
+            var pendingOut = txs
+                .Where(t => t.FromGroupCode == groupCode && t.Status != "COMPLETED")
+                .Sum(t =>
+                {
+                    var received = receivesByTx.TryGetValue(t.HandoverTxId, out var rxs)
+                        ? rxs.Sum(r => r.QtyOk + r.QtyNg) : 0m;
+                    return Math.Max(0m, t.QtyIssued - received);
+                });
+
+            qty.IssuedOut = confirmedOut + pendingOut;
 
             if (wts != null)
             {
@@ -322,6 +343,14 @@ namespace MES.Web.Services
                 }
             }
 
+            // Số phiếu nhóm này đã giao đi chưa COMPLETED
+            qty.PendingToIssue = txs
+                .Count(t => t.FromGroupCode == groupCode && t.Status != "COMPLETED");
+
+            // Số phiếu đang chờ nhóm này nhận (PENDING/PARTIAL)
+            qty.PendingToReceive = txs
+                .Count(t => t.ToGroupCode == groupCode && t.Status != "COMPLETED");
+
             if (groupCode == "GC") qty.IsGc = true;
             return qty;
         }
@@ -333,6 +362,25 @@ namespace MES.Web.Services
         {
             decimal ng = 0;
             foreach (var tx in txs.Where(t => t.FromGroupCode == groupCode))
+            {
+                if (receivesByTx.TryGetValue(tx.HandoverTxId, out var rxs))
+                    ng += rxs.Sum(r => r.QtyNg);
+            }
+            return ng;
+        }
+
+        /// <summary>
+        /// NG nhận VÀO nhóm này — nhóm khác giao hàng NG ngược về nhóm này,
+        /// nhóm này nhận và nhập QtyNg.
+        /// VD: GC→KHO trả 5 NG, KHO nhận QtyNg=5 → CalcNgReceived("KHO") = 5
+        /// </summary>
+        private static decimal CalcNgReceived(
+            string groupCode,
+            List<HandoverTransaction> txs,
+            Dictionary<long, List<HandoverReceive>> receivesByTx)
+        {
+            decimal ng = 0;
+            foreach (var tx in txs.Where(t => t.ToGroupCode == groupCode))
             {
                 if (receivesByTx.TryGetValue(tx.HandoverTxId, out var rxs))
                     ng += rxs.Sum(r => r.QtyNg);
