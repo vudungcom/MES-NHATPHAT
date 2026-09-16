@@ -1520,10 +1520,13 @@ else
     // Wrapper load snapshot cho 1 PO (dùng bởi OnSubRowKhChanged)
     private async Task EnsureSnapshotAsync(string purchaseOrder, int detailId)
     {
-        if (_snapshotCache.ContainsKey(purchaseOrder)) return;
+        if (_snapshotCache.ContainsKey(purchaseOrder) && _fullSnapshotCache.ContainsKey(purchaseOrder)) return;
         var snap = await KhSvc.GetRouteSnapshotAsync(detailId);
         if (snap != null)
-            _snapshotCache[purchaseOrder] = snap.Machining;
+        {
+            _snapshotCache[purchaseOrder]     = snap.Machining;  // B. GC
+            _fullSnapshotCache[purchaseOrder] = snap;             // B+C+D+E
+        }
     }
 
     private async Task EnsureTimingStdAsync(int detailId, int partId)
@@ -2135,6 +2138,7 @@ else
     {
         sub.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
+        ValidateSubQty(sub);
         RecalcGroupTimeline(grp);
         StateHasChanged();
     }
@@ -2142,8 +2146,17 @@ else
     {
         sub.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
+        ValidateSubQty(sub);
         RecalcGroupTimeline(grp);
         StateHasChanged();
+    }
+    private void ValidateSubQty(WtsRow sub)
+    {
+        sub.ErrorMsg = null;
+        if (!sub.KhPlanDetailId.HasValue) return;
+        var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
+        if (poQty > 0 && sub.QtyDone > poQty)
+            sub.ErrorMsg = $"SL nhập ({sub.QtyDone}) vượt SL PO ({poQty}). Kiểm tra lại.";
     }
 
     private void OnSubExtraMinInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
@@ -2754,8 +2767,16 @@ else
     }
 
     private string? GetActivePO()
-        => _rows.FirstOrDefault(r => !r.Saved && !string.IsNullOrEmpty(r.PO))?.PO
-        ?? _rows.LastOrDefault(r => r.Saved && !string.IsNullOrEmpty(r.PO))?.PO;
+    {
+        // Ưu tiên: PO đang nhập trong _groups (form mới)
+        var fromGroups = _groups
+            .SelectMany(g => g.SubRows)
+            .FirstOrDefault(s => !string.IsNullOrEmpty(s.PO))?.PO;
+        if (fromGroups != null) return fromGroups;
+        // Fallback: _rows cũ (saved rows)
+        return _rows.FirstOrDefault(r => !r.Saved && !string.IsNullOrEmpty(r.PO))?.PO
+            ?? _rows.LastOrDefault(r => r.Saved && !string.IsNullOrEmpty(r.PO))?.PO;
+    }
 
     private static string[] GetAltMachinesFromTimingRows(
         IEnumerable<KhPlanRouteSnapshotMachiningTiming> timingRows)
