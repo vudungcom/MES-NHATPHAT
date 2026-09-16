@@ -187,8 +187,8 @@ else
                                             <i class="bi bi-pencil"></i>
                                         </button>
                                         <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-1"
-                                                @onclick="async () => await VoidSavedRow(row)"
-                                                title="Xóa">
+                                                @onclick="async () => await ConfirmVoidSavedRow(row)"
+                                                title="Xóa WTS này">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     }
@@ -424,13 +424,13 @@ else
                                     <td>
                                         @if (isFirst)
                                         {
-                                            <input type="time" class="form-control form-control-sm"
+                                            <input type="time" class="form-control form-control-sm" lang="vi"
                                                    value="@sub.StartTime.ToString("HH:mm")"
                                                    @onchange="e => OnSubStartTimeChanged(grp, sub, e.Value?.ToString())" />
                                         }
                                         else
                                         {
-                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
+                                            <input type="time" class="form-control form-control-sm bg-light text-muted" lang="vi"
                                                    value="@sub.StartTime.ToString("HH:mm")" readonly
                                                    title="Tự tính = Kết thúc hàng trước" />
                                         }
@@ -441,14 +441,14 @@ else
                                         @if (isLast)
                                         {
                                             @* Hàng cuối (kể cả 1 hàng duy nhất): nhập tay, cột Dự kiến để tham khảo *@
-                                            <input type="time" class="form-control form-control-sm"
+                                            <input type="time" class="form-control form-control-sm" lang="vi"
                                                    style="border-color:#0d6efd"
                                                    value="@sub.EndTime.ToString("HH:mm")"
                                                    @onchange="e => OnSubEndTimeChanged(grp, sub, e.Value?.ToString())" />
                                         }
                                         else
                                         {
-                                            <input type="time" class="form-control form-control-sm bg-light text-muted"
+                                            <input type="time" class="form-control form-control-sm bg-light text-muted" lang="vi"
                                                    value="@sub.EndTime.ToString("HH:mm")" readonly
                                                    title="Tự tính theo tỉ lệ SL" />
                                         }
@@ -1517,10 +1517,9 @@ else
         return string.Join(" &nbsp;|&nbsp; ", parts);
     }
 
-    // Wrapper load snapshot cho 1 PO (dùng bởi OnSubRowKhChanged)
+    // Wrapper load snapshot cho 1 PO — luôn load mới từ DB để bắt thay đổi từ Kế hoạch
     private async Task EnsureSnapshotAsync(string purchaseOrder, int detailId)
     {
-        if (_snapshotCache.ContainsKey(purchaseOrder) && _fullSnapshotCache.ContainsKey(purchaseOrder)) return;
         var snap = await KhSvc.GetRouteSnapshotAsync(detailId);
         if (snap != null)
         {
@@ -1951,6 +1950,14 @@ else
         grp.SubRows.Add(row);
         _groups.Add(grp);
     }
+    private async Task ConfirmVoidSavedRow(WtsRow row)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm",
+            $"Xóa WTS {row.StartTime:HH:mm}–{row.EndTime:HH:mm} | {row.PO} | OK={row.QtyOk}?\nThao tác này không thể hoàn tác.");
+        if (!confirmed) return;
+        await VoidSavedRow(row);
+    }
+
     private async Task VoidSavedRow(WtsRow row)
     {
         if (row.WtsLogId.HasValue)
@@ -2119,9 +2126,11 @@ else
         // Nếu PartNo chưa set ở nhóm → lấy từ hàng đầu
         if (string.IsNullOrEmpty(grp.PartNo)) grp.PartNo = det.PartNo;
 
-        // Load snapshot nếu chưa có
-        if (!_snapshotCache.ContainsKey(det.PurchaseOrder))
-            await EnsureSnapshotAsync(det.PurchaseOrder, det.KhPlanDetailId);
+        // Load snapshot mới nhất từ DB (luôn reload để bắt thay đổi từ Kế hoạch)
+        await EnsureSnapshotAsync(det.PurchaseOrder, det.KhPlanDetailId);
+
+        // Load WTS logs mới nhất cho bảng snapshot
+        await ReloadWtsLogsAsync(det.PurchaseOrder, det.KhPlanDetailId);
 
         // Cập nhật AvailableNCs cho nhóm từ snapshot
         if (_snapshotCache.TryGetValue(det.PurchaseOrder, out var snaps))
