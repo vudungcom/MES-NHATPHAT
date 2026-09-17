@@ -292,6 +292,14 @@ else
                                         <th rowspan="2" style="width:60px">NC</th>
                                         <th rowspan="2" style="width:70px">Máy SD</th>
                                     }
+                                    else
+                                    {
+                                        @if (IsHtspGroup)
+                                        {
+                                            <th rowspan="2" style="width:80px">Nhóm nhỏ</th>
+                                        }
+                                        <th rowspan="2" style="width:130px">Mã CV / Công đoạn</th>
+                                    }
                                     <th colspan="4" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
                                     <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
                                     @if (IsGcGroup)
@@ -377,6 +385,56 @@ else
                                                    value="@(firstSub?.PartNo ?? sub.PartNo)" readonly />
                                         }
                                     </td>
+
+                                    @* Nhóm nhỏ (chỉ HTSP) + Mã CV — non-GC *@
+                                    @if (!IsGcGroup)
+                                    {
+                                        @* Cột Nhóm nhỏ — chỉ HTSP *@
+                                        @if (IsHtspGroup)
+                                        {
+                                            <td>
+                                                @if (isFirst)
+                                                {
+                                                    <select class="form-select form-select-sm" style="font-size:11px"
+                                                            @onchange="e => OnGroupHtspSubChanged(grp, e.Value?.ToString())">
+                                                        <option value="">-- Chọn --</option>
+                                                        <option value="Taro"  selected="@(grp.HtspSubGroup == "Taro")">Taro</option>
+                                                        <option value="Bavia" selected="@(grp.HtspSubGroup == "Bavia")">Bavia</option>
+                                                        <option value="Rua"   selected="@(grp.HtspSubGroup == "Rua")">Rửa</option>
+                                                    </select>
+                                                }
+                                                else
+                                                {
+                                                    <input class="form-control form-control-sm bg-light text-center" style="font-size:11px;color:#6c757d"
+                                                           value="@HtspSubLabel(grp.HtspSubGroup)" readonly />
+                                                }
+                                            </td>
+                                        }
+                                        @* Cột Mã CV *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        disabled="@(IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))"
+                                                        @onchange="e => OnSubWtsCodeChanged(grp, sub, e.Value?.ToString())">
+                                                    <option value="">-- Chọn CV --</option>
+                                                    @foreach (var item in grp.WtsItems)
+                                                    {
+                                                        <option value="@item.NC" selected="@(sub.WtsCode == item.NC)">@item.NC — @item.Name</option>
+                                                    }
+                                                </select>
+                                                @if (!string.IsNullOrEmpty(sub.WtsCode))
+                                                {
+                                                    <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.WtsName</div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@(firstSub?.WtsCode ?? sub.WtsCode)" readonly />
+                                            }
+                                        </td>
+                                    }
 
                                     @* NC và Máy — chỉ GC *@
                                     @if (IsGcGroup)
@@ -807,7 +865,7 @@ else
                                     ? (int)(tEnd.Value - tStart.Value).TotalMinutes : 0;
                             }
                             <tr class="table-light" style="font-size:11px;font-weight:500">
-                                <td class="text-muted ps-2" colspan="@(IsGcGroup ? 4 : 2)">Tổng</td>
+                                <td class="text-muted ps-2" colspan="@(IsGcGroup ? 4 : (IsHtspGroup ? 4 : 3))">Tổng</td>
                                 <td class="text-center text-success">@totalOk</td>
                                 <td class="text-center text-danger">@(totalNg > 0 ? totalNg.ToString() : "—")</td>
                                 <td></td>
@@ -857,7 +915,7 @@ else
                                 {
                                     <span class="spinner-border spinner-border-sm me-1"></span>
                                 }
-                                <i class="bi bi-check-lg me-1"></i>Lưu nhóm
+                                <i class="bi bi-check-lg me-1"></i>Lưu
                             </button>
                         </div>
                     </div>
@@ -2372,6 +2430,18 @@ else
             sub.AvailableNCs = snaps;
         }
 
+        // Load WtsItems cho non-GC từ snapshot
+        if (!IsGcGroup && _fullSnapshotCache.TryGetValue(det.PurchaseOrder, out var fullSnap))
+        {
+            if (HandoverGroupCode == "KCS")
+                grp.WtsItems = fullSnap.Inspection
+                    .Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList();
+            else if (HandoverGroupCode == "PKG")
+                grp.WtsItems = fullSnap.Packaging
+                    .Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList();
+            // HTSP: load theo subgroup sau khi user chọn (OnGroupHtspSubChanged)
+        }
+
         if (grp.UseStdAsDefault) TryFillStdValues(sub);
     }
 
@@ -2392,6 +2462,43 @@ else
         RecalcGroupTimeline(grp);
         StateHasChanged();
     }
+    private void OnSubWtsCodeChanged(WtsGroup grp, WtsRow sub, string? code)
+    {
+        sub.WtsCode = code;
+        foreach (var s in grp.SubRows.Where(s => s != sub))
+            s.WtsCode = code;
+        var item = grp.WtsItems.FirstOrDefault(i => i.NC == code);
+        sub.WtsName = item?.Name;
+        foreach (var s in grp.SubRows.Where(s => s != sub))
+            s.WtsName = item?.Name;
+        StateHasChanged();
+    }
+
+    // HTSP: chọn nhóm nhỏ → load WtsItems tương ứng
+    private static string HtspSubLabel(string sub) => sub == "Rua" ? "Rửa" : sub;
+
+    private void OnGroupHtspSubChanged(WtsGroup grp, string? subGroup)
+    {
+        grp.HtspSubGroup = subGroup ?? "";
+        grp.WtsItems     = new();
+        // Reset WtsCode cũ
+        foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; }
+
+        // Lấy PO từ sub-row đầu tiên có PO
+        var po = grp.SubRows.FirstOrDefault(s => !string.IsNullOrEmpty(s.PO))?.PO;
+        if (string.IsNullOrEmpty(po)) { StateHasChanged(); return; }
+        if (!_fullSnapshotCache.TryGetValue(po, out var snap)) { StateHasChanged(); return; }
+
+        grp.WtsItems = subGroup switch
+        {
+            "Taro"  => snap.Taro   .Select(s => new WtsItem(s.WtsTaskCode ?? s.NC, s.StepName ?? s.NC)).ToList(),
+            "Bavia" => snap.Bavia  .Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
+            "Rua"   => snap.Washing.Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
+            _       => new List<WtsItem>()
+        };
+        StateHasChanged();
+    }
+
     private void ValidateSubQty(WtsRow sub)
     {
         sub.ErrorMsg = null;
@@ -2452,12 +2559,28 @@ else
         StateHasChanged();
     }
 
-    // Parse "HH:mm" hoặc "H:mm" — trả false nếu không hợp lệ
+    // Parse "HH:mm", "H:mm" hoặc "HHmm" (4 chữ số liền) — trả false nếu không hợp lệ
     private static bool TryParseHHmm(string? s, out int h, out int m)
     {
         h = m = 0;
         if (string.IsNullOrWhiteSpace(s)) return false;
-        var parts = s.Trim().Split(':');
+        var trimmed = s.Trim();
+
+        // Hỗ trợ gõ 4 số liền: "0910" → "09:10", "800" → "08:00"
+        if (!trimmed.Contains(':'))
+        {
+            if (trimmed.Length == 4 &&
+                int.TryParse(trimmed[..2], out h) &&
+                int.TryParse(trimmed[2..], out m))
+                return h is >= 0 and <= 23 && m is >= 0 and <= 59;
+            if (trimmed.Length == 3 &&
+                int.TryParse(trimmed[..1], out h) &&
+                int.TryParse(trimmed[1..], out m))
+                return h is >= 0 and <= 23 && m is >= 0 and <= 59;
+            return false;
+        }
+
+        var parts = trimmed.Split(':');
         if (parts.Length < 2) return false;
         if (!int.TryParse(parts[0], out h) || !int.TryParse(parts[1], out m)) return false;
         return h is >= 0 and <= 23 && m is >= 0 and <= 59;
@@ -2470,51 +2593,38 @@ else
     // Các hàng trung gian: Start = End hàng trước, End = Start + (SL_i / SL_tổng) × tổng_thời_gian
     private void RecalcGroupTimeline(WtsGroup grp)
     {
+        // Chỉ phân bổ hàng TRUNG GIAN — KHÔNG tự thay StartTime hàng đầu
+        // và EndTime hàng cuối (user nhập tay, không được override)
         if (!grp.SubRows.Any()) return;
+        if (grp.SubRows.Count <= 1) return; // 1 hàng: user tự nhập Start+End, không làm gì
+
         var totalSl = grp.SubRows.Sum(s => s.QtyDone);
+        if (totalSl <= 0) return;
 
-        // Tổng T.Phát sinh của nhóm (phút) — không nhân theo SL
-        var totalExtraMin = (double)grp.SubRows.Sum(s => s.ExtraMinutes);
-
-        if (grp.SubRows.Count == 1)
-        {
-            // 1 hàng: tính EndTime từ công thức, cộng thêm T.Phát sinh
-            var sub = grp.SubRows[0];
-            sub.NC          = grp.NC;
-            sub.MachineUsed = grp.MachineUsed;
-            RecalcEndTime(sub);
-            // Cộng T.Phát sinh vào EndTime
-            if (sub.ExtraMinutes > 0)
-                sub.EndTime = sub.EndTime.AddMinutes(sub.ExtraMinutes);
-            return;
-        }
-
-        // Nhiều hàng:
-        // Tổng thời gian thực = EndTime cuối - StartTime đầu
-        // Thời gian sản xuất  = Tổng thực - T.Phát sinh (tổng nhóm)
-        // Phân bổ theo tỉ lệ SL từng hàng
         var first = grp.SubRows.First();
         var last  = grp.SubRows.Last();
         var totalRealMin = (last.EndTime > first.StartTime)
             ? (double)(last.EndTime - first.StartTime).TotalMinutes
             : 0;
+        if (totalRealMin <= 0) return;
 
-        if (totalRealMin <= 0 || totalSl <= 0) return;
-
-        // Thời gian sản xuất thực sự (bỏ phần phát sinh)
+        // Trừ tổng T.Phát sinh để ra thời gian sản xuất thực
+        var totalExtraMin = (double)grp.SubRows.Sum(s => s.ExtraMinutes);
         var prodMin = Math.Max(0, totalRealMin - totalExtraMin);
 
+        // Phân bổ từ hàng 1 trở đi (giữ nguyên StartTime hàng 0)
         var cursor = first.StartTime;
-        for (int i = 0; i < grp.SubRows.Count; i++)
+        for (int i = 0; i < grp.SubRows.Count - 1; i++) // bỏ qua hàng cuối
         {
-            var sub      = grp.SubRows[i];
-            sub.StartTime = cursor;
-            var fraction  = (double)sub.QtyDone / (double)totalSl;
+            var sub        = grp.SubRows[i];
+            sub.StartTime  = cursor;
+            var fraction   = (double)sub.QtyDone / (double)totalSl;
             var subProdMin = prodMin * fraction;
-            // T.Phát sinh của hàng này cộng thêm vào (không chia theo SL)
-            sub.EndTime   = cursor.AddMinutes(subProdMin + sub.ExtraMinutes);
-            cursor        = sub.EndTime;
+            sub.EndTime    = cursor.AddMinutes(subProdMin + sub.ExtraMinutes);
+            cursor         = sub.EndTime;
         }
+        // Hàng cuối: StartTime = end hàng trước, EndTime giữ nguyên do user nhập
+        grp.SubRows.Last().StartTime = cursor;
         // Ghim hàng cuối đúng với EndTime user nhập (tránh lệch do làm tròn)
         grp.SubRows.Last().EndTime = last.EndTime;
     }
@@ -3142,6 +3252,12 @@ else
         // NCs có sẵn từ snapshot — load khi chọn PartNo
         public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
 
+        // WTS items cho non-GC (Mã CV + tên công đoạn)
+        public List<WtsItem> WtsItems { get; set; } = new();
+
+        // Nhóm nhỏ HTSP: "Taro" | "Bavia" | "Rua" — chỉ dùng khi IsHtspGroup
+        public string HtspSubGroup { get; set; } = "";
+
         public List<WtsRow> SubRows { get; set; } = new();
     }
     // ── T.Kết thúc dự kiến theo công thức (dùng để màu xanh/đỏ) ──────────
@@ -3149,27 +3265,32 @@ else
     // Với nhiều sub-row: StartTime hàng đầu + (SL hàng này / SL tổng) × tổng cycle × SL tổng
     private DateTime? CalcEstimatedEndTime(WtsGroup grp, WtsRow sub)
     {
+        // Dự kiến = dùng timing CHUẨN từ snapshot để so sánh với thực tế user nhập
         if (sub.StartTime == default) return null;
         var sl = sub.QtyDone;
         if (sl <= 0) return null;
+        if (!sub.KhPlanDetailId.HasValue) return null;
+
+        var std = GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed);
+        if (std == null) return null;
 
         decimal cycleMin = 0;
         if (grp.ProductionMode == "serial")
         {
-            var setup   = sub.SetupTime_Actual      ?? 0m;
-            var machine = sub.MachiningTime_Actual  ?? 0m;
-            var inspect = sub.InspectionTime_Actual ?? 0m;
+            var setup   = std.SetupTime      ?? 0m;
+            var machine = std.MachiningTime  ?? 0m;
+            var inspect = std.InspectionTime ?? 0m;
             cycleMin = setup + Math.Max(machine, inspect);
         }
         else
         {
-            var prep  = sub.PreparationTime_Actual ?? 0m;
-            var trial = sub.TrialRunTime_Actual    ?? 0m;
+            var prep  = std.PreparationTime ?? 0m;
+            var trial = std.TrialRunTime    ?? 0m;
             cycleMin = prep + trial;
         }
         if (cycleMin <= 0) return null;
 
-        // Dự kiến = cycle × SL + T.Phát sinh (phút phát sinh vẫn tính vào tổng thời gian)
+        // Dự kiến = cycle chuẩn × SL + T.Phát sinh
         var totalMin = (double)(cycleMin * sl) + sub.ExtraMinutes;
         return sub.StartTime.AddMinutes(totalMin);
     }
