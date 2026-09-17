@@ -62,6 +62,14 @@ public class WtsProductionLog
     /// <summary>Thời gian phát sinh ngoài kế hoạch (phút). NULL = không có.</summary>
     public int? ExtraMinutes { get; set; }
 
+    // / <summary>Tăng ca — ghi ngoài khung giờ ca thông thường.</summary>
+    public bool IsOvertime { get; set; } = false;
+
+    /// <summary>Ca làm việc — dùng cho báo cáo ngày/ca/công nhân. NULL = không chọn ca.</summary>
+    public int? CaId { get; set; }
+    [ForeignKey(nameof(CaId))]
+    public CaLamViec? Ca { get; set; }
+
     [MaxLength(500)]
     public string? Notes { get; set; }
 

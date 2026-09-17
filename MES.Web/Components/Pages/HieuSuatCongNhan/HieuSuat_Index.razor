@@ -181,7 +181,7 @@ else
                         <i class="bi bi-lock me-1"></i>Ngày cũ — chỉ xem
                     </span>
                 }
-                <button class="btn btn-sm btn-outline-primary" @onclick="AddGroup" disabled="@(!IsToday)">
+                <button class="btn btn-sm btn-outline-primary" @onclick='() => AddGroup(false)' disabled="@(!IsToday)">
                     <i class="bi bi-plus-lg me-1"></i>Thêm nhóm
                 </button>
             </div>
@@ -210,7 +210,7 @@ else
                             </tr>
                         </thead>
                         <tbody>
-                        @foreach (var row in _rows.Where(r => r.Saved).OrderBy(r => r.StartTime))
+                        @foreach (var row in _rows.Where(r => r.Saved && !r.IsOvertime).OrderBy(r => r.StartTime))
                         {
                             <tr class="@SavedRowCls(row)">
                                 <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
@@ -973,6 +973,796 @@ else
         </div>
     </div>
 
+    @* ── Vùng Tăng ca (OT) ── *@
+    <div class="card mb-3 border-warning">
+        <div class="card-header py-2 d-flex align-items-center justify-content-between"
+             style="background:#fff8e6;cursor:pointer" @onclick="() => _showOtSection = !_showOtSection">
+            <span class="fw-semibold text-warning">
+                <i class="bi bi-clock-history me-1"></i>Tăng ca (OT)
+                @if (_rows.Any(r => r.Saved && r.IsOvertime))
+                {
+                    <span class="badge bg-warning text-dark ms-2">@_rows.Count(r => r.Saved && r.IsOvertime) dòng đã lưu</span>
+                }
+            </span>
+            <div class="d-flex align-items-center gap-2">
+                @if (IsToday && _showOtSection)
+                {
+                    <button class="btn btn-sm btn-outline-warning py-0" @onclick:stopPropagation
+                            @onclick="() => AddGroup(true)">
+                        <i class="bi bi-plus-lg me-1"></i>Thêm nhóm OT
+                    </button>
+                }
+                <i class="bi @(_showOtSection ? "bi-chevron-up" : "bi-chevron-down") text-warning"></i>
+            </div>
+        </div>
+        @if (_showOtSection)
+        {
+            <div class="card-body p-2">
+                <div class="alert alert-warning py-1 small mb-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Vùng tăng ca — không giới hạn khung giờ ca. Dữ liệu được đánh dấu <strong>OT</strong> riêng biệt.
+                </div>
+
+                @* Saved OT rows *@
+                @if (_rows.Any(r => r.Saved && r.IsOvertime))
+                {
+                    <div class="table-responsive mb-2">
+                        <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.8rem;">
+                            <thead class="table-warning">
+                                <tr>
+                                    <th>Bắt đầu</th><th>Kết thúc</th><th>Phút</th>
+                                    <th>PO</th><th>NC</th><th>Máy</th>
+                                    <th class="text-success">OK</th><th class="text-danger">NG</th>
+                                    <th>Ghi chú</th><th style="width:60px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var row in _rows.Where(r => r.Saved && r.IsOvertime).OrderBy(r => r.StartTime))
+                            {
+                                <tr>
+                                    <td>@row.StartTime.ToString("HH:mm")</td>
+                                    <td>@row.EndTime.ToString("HH:mm")</td>
+                                    <td>@row.Minutes</td>
+                                    <td><small>@(row.PO ?? "—")</small></td>
+                                    <td><small>@(row.NC ?? "—")</small></td>
+                                    <td><small>@(row.MachineUsed ?? "—")</small></td>
+                                    <td class="text-success fw-semibold">@row.QtyOk</td>
+                                    <td class="text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
+                                    <td><small>@(row.Notes ?? "")</small></td>
+                                    <td>
+                                        @if (IsToday)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                                    @onclick="() => ConfirmVoidSavedRow(row)">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @* OT groups đang nhập *@
+            @foreach (var grp in _groupsOT)
+            {
+                var grpIdx = _groups.IndexOf(grp);
+                var isSerial = grp.ProductionMode == "serial";
+
+                @* ── Header nhóm ── *@
+                <div class="border rounded mb-1" style="border-color:var(--bs-border-color)!important">
+                    <div class="d-flex align-items-center gap-2 px-3 py-2 flex-wrap"
+                         style="background:var(--bs-light,#f8f9fa);border-radius:0.375rem 0.375rem 0 0;border-bottom:0.5px solid #dee2e6">
+
+                        @* Loại sản xuất *@
+                        <div>
+                            <div style="font-size:10px;color:#6c757d;margin-bottom:2px">Loại</div>
+                            <div class="d-flex gap-1">
+                                <button type="button" class="@GrpBtnSerialCls(isSerial)"
+                                        style="font-size:11px;padding:2px 8px"
+                                        @onclick="() => SetGroupModeSerial(grp)">
+                                    <i class="bi bi-list-ul me-1"></i>Hàng loạt
+                                </button>
+                                <button type="button" class="@GrpBtnTrialCls(isSerial)"
+                                        style="font-size:11px;padding:2px 8px"
+                                        @onclick="() => SetGroupModeTrial(grp)">
+                                    <i class="bi bi-play-circle me-1"></i>Chạy thử
+                                </button>
+                            </div>
+                        </div>
+
+                        @* Toggle tham khảo chuẩn *@
+                        <div class="form-check form-switch mb-0 ms-1 align-self-end" style="padding-bottom:4px">
+                            <input class="form-check-input" type="checkbox" id="@($"grpStd_{grpIdx}")"
+                                   checked="@grp.UseStdAsDefault"
+                                   @onchange="e => OnGroupUseStdToggled(grp, e.Value is bool b2 ? b2 : false)" />
+                            <label class="form-check-label small text-muted" for="@($"grpStd_{grpIdx}")">
+                                Tham khảo chuẩn
+                            </label>
+                        </div>
+
+                        @* Nút xóa nhóm *@
+                        <button class="btn btn-sm btn-outline-danger py-0 px-2 ms-auto"
+                                style="font-size:11px" @onclick="() => RemoveGroup(grp)">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
+                    @* ── Bảng sub-rows ── *@
+                    <div class="table-responsive" style="padding:8px">
+                        <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.78rem;min-width:900px">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2" style="width:130px">Số PO</th>
+                                    <th rowspan="2" style="width:90px">Part No</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        <th rowspan="2" style="width:60px">NC</th>
+                                        <th rowspan="2" style="width:70px">Máy SD</th>
+                                    }
+                                    else
+                                    {
+                                        @if (IsHtspGroup)
+                                        {
+                                            <th rowspan="2" style="width:80px">Nhóm nhỏ</th>
+                                        }
+                                        <th rowspan="2" style="width:130px">Mã CV / Công đoạn</th>
+                                    }
+                                    <th colspan="4" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
+                                    <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        @if (isSerial)
+                                        {
+                                            <th colspan="3" class="text-center" style="background:#e6f1fb;font-size:10px;color:#185fa5">Hàng loạt — phút/sp</th>
+                                            <th colspan="2" class="text-center" style="background:#f8f9fa;font-size:10px;color:#adb5bd">Chạy thử</th>
+                                        }
+                                        else
+                                        {
+                                            <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px;color:#adb5bd">Hàng loạt</th>
+                                            <th colspan="2" class="text-center" style="background:#faeeda;font-size:10px;color:#854f0b">Chạy thử — phút</th>
+                                        }
+                                    }
+                                    <th rowspan="2" style="width:52px" class="text-center">T.Phát sinh<br/><small style="font-size:9px">(phút)</small></th>
+                                    <th rowspan="2" style="width:120px">Nội dung</th>
+                                    <th rowspan="2" style="width:28px"></th>
+                                </tr>
+                                <tr>
+                                    <th class="text-success text-center" style="width:48px">OK</th>
+                                    <th class="text-danger text-center" style="width:48px">NG</th>
+                                    <th class="text-muted text-center" style="width:52px">SL PO</th>
+                                    <th style="width:100px" class="text-start">Lý do NG</th>
+                                    <th style="width:68px" class="text-center">Bắt đầu</th>
+                                    <th style="width:68px" class="text-center">Kết thúc</th>
+                                    <th style="width:68px" class="text-center" title="T.Kết thúc theo công thức — xanh: đúng giờ, đỏ: trễ">Dự kiến</th>
+                                    @if (IsGcGroup)
+                                    {
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.Gá</th>
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.GC</th>
+                                        <th class="text-center" style="width:54px;color:@(isSerial ? "#495057" : "#adb5bd")">T.Ktra</th>
+                                        <th class="text-center" style="width:54px;color:@(!isSerial ? "#854f0b" : "#adb5bd")">T.CB</th>
+                                        <th class="text-center" style="width:54px;color:@(!isSerial ? "#854f0b" : "#adb5bd")">T.Chạy</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var sub in grp.SubRows)
+                            {
+                                var subIdx = grp.SubRows.IndexOf(sub);
+                                var isFirst    = subIdx == 0;
+                                var isLast     = subIdx == grp.SubRows.Count - 1;
+                                var subStd     = sub.KhPlanDetailId.HasValue
+                                    ? GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed)
+                                    : null;
+                                var firstSub   = grp.SubRows.FirstOrDefault();
+                                var dlId       = $"dl-po-{grpIdx}-{subIdx}";
+                                var estEnd     = CalcEstimatedEndTime(grp, sub);
+                                var actualEnd  = sub.EndTime;
+                                var hasEst     = estEnd.HasValue && sub.StartTime != default;
+                                <tr class="@SubRowCls(sub)">
+                                    @* Số PO — input+datalist lọc như Part Master *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               list="@dlId"
+                                               value="@sub.PO"
+                                               placeholder="Gõ PO..."
+                                               autocomplete="off"
+                                               @oninput="async e => await OnSubPoInput(grp, sub, e.Value?.ToString())" />
+                                        <datalist id="@dlId">
+                                            @foreach (var det in _allRows.Where(r =>
+                                                (string.IsNullOrEmpty(grp.PartNo) || r.PartNo == grp.PartNo) &&
+                                                (string.IsNullOrEmpty(sub.PoFilter)  ||
+                                                 r.PurchaseOrder.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase) ||
+                                                 r.PartNo.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase))))
+                                            {
+                                                <option value="@det.PurchaseOrder">@det.PartNo — @det.PlanNo</option>
+                                            }
+                                        </datalist>
+                                    </td>
+
+                                    @* Part No *@
+                                    <td>
+                                        @if (isFirst)
+                                        {
+                                            <input class="form-control form-control-sm" style="font-size:11px"
+                                                   value="@sub.PartNo" readonly />
+                                        }
+                                        else
+                                        {
+                                            <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                   value="@(firstSub?.PartNo ?? sub.PartNo)" readonly />
+                                        }
+                                    </td>
+
+                                    @* Nhóm nhỏ (chỉ HTSP) + Mã CV — non-GC *@
+                                    @if (!IsGcGroup)
+                                    {
+                                        @* Cột Nhóm nhỏ — chỉ HTSP *@
+                                        @if (IsHtspGroup)
+                                        {
+                                            <td>
+                                                @if (isFirst)
+                                                {
+                                                    <select class="form-select form-select-sm" style="font-size:11px"
+                                                            @onchange="e => OnGroupHtspSubChanged(grp, e.Value?.ToString())">
+                                                        <option value="">-- Chọn --</option>
+                                                        <option value="Taro"  selected="@(grp.HtspSubGroup == "Taro")">Taro</option>
+                                                        <option value="Bavia" selected="@(grp.HtspSubGroup == "Bavia")">Bavia</option>
+                                                        <option value="Rua"   selected="@(grp.HtspSubGroup == "Rua")">Rửa</option>
+                                                    </select>
+                                                }
+                                                else
+                                                {
+                                                    <input class="form-control form-control-sm bg-light text-center" style="font-size:11px;color:#6c757d"
+                                                           value="@HtspSubLabel(grp.HtspSubGroup)" readonly />
+                                                }
+                                            </td>
+                                        }
+                                        @* Cột Mã CV *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        disabled="@(IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))"
+                                                        @onchange="e => OnSubWtsCodeChanged(grp, sub, e.Value?.ToString())">
+                                                    <option value="">-- Chọn CV --</option>
+                                                    @foreach (var item in grp.WtsItems)
+                                                    {
+                                                        <option value="@item.NC" selected="@(sub.WtsCode == item.NC)">@item.NC — @item.Name</option>
+                                                    }
+                                                </select>
+                                                @if (!string.IsNullOrEmpty(sub.WtsCode))
+                                                {
+                                                    <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.WtsName</div>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@(firstSub?.WtsCode ?? sub.WtsCode)" readonly />
+                                            }
+                                        </td>
+                                    }
+
+                                    @* NC và Máy — chỉ GC *@
+                                    @if (IsGcGroup)
+                                    {
+                                        @* NC *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        @onchange="e => OnGroupNCChanged(grp, e.Value?.ToString())">
+                                                    <option value="">--</option>
+                                                    @foreach (var nc in grp.AvailableNCs)
+                                                    {
+                                                        <option value="@nc.NC" selected="@(grp.NC == nc.NC)">@nc.NC</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@grp.NC" readonly />
+                                            }
+                                        </td>
+                                        @* Máy *@
+                                        <td>
+                                            @if (isFirst)
+                                            {
+                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                        @onchange="e => OnGroupMachineChanged(grp, e.Value?.ToString())">
+                                                    <option value="">--</option>
+                                                    @foreach (var m in GetGroupMachineOptions(grp))
+                                                    {
+                                                        <option value="@m" selected="@(grp.MachineUsed == m)">@m</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control form-control-sm bg-light" style="font-size:11px;color:#6c757d"
+                                                       value="@grp.MachineUsed" readonly />
+                                            }
+                                        </td>
+                                    }
+
+                                    @* OK *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.QtyOk > 0 ? sub.QtyOk.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubQtyOkInput(grp, sub, e)" />
+                                    </td>
+
+                                    @* NG *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.QtyNg > 0 ? sub.QtyNg.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubQtyNgInput(grp, sub, e)" />
+                                    </td>
+
+                                    @* SL PO *@
+                                    <td class="text-center text-muted" style="font-size:11px">
+                                        @if (sub.KhPlanDetailId.HasValue)
+                                        {
+                                            var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity;
+                                            <span title="SL kế hoạch PO này">@(poQty.HasValue ? poQty.Value.ToString("0") : "—")</span>
+                                        }
+                                        else { <span>—</span> }
+                                    </td>
+
+                                    @* Lý do NG *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               value="@sub.NgReason" placeholder="Lý do NG..."
+                                               disabled="@(sub.QtyNg <= 0)"
+                                               @oninput="e => sub.NgReason = e.Value?.ToString()" />
+                                    </td>
+
+                                    @* Bắt đầu — chỉ hàng đầu nhập tay, còn lại tự tính *@
+                                    <td>
+                                        @if (isFirst)
+                                        {
+                                            <datalist id="@($"ts-{grpIdx}-{subIdx}")">
+                                                <option value="00:00"></option>
+                                                <option value="00:15"></option>
+                                                <option value="00:30"></option>
+                                                <option value="00:45"></option>
+                                                <option value="01:00"></option>
+                                                <option value="01:15"></option>
+                                                <option value="01:30"></option>
+                                                <option value="01:45"></option>
+                                                <option value="02:00"></option>
+                                                <option value="02:15"></option>
+                                                <option value="02:30"></option>
+                                                <option value="02:45"></option>
+                                                <option value="03:00"></option>
+                                                <option value="03:15"></option>
+                                                <option value="03:30"></option>
+                                                <option value="03:45"></option>
+                                                <option value="04:00"></option>
+                                                <option value="04:15"></option>
+                                                <option value="04:30"></option>
+                                                <option value="04:45"></option>
+                                                <option value="05:00"></option>
+                                                <option value="05:15"></option>
+                                                <option value="05:30"></option>
+                                                <option value="05:45"></option>
+                                                <option value="06:00"></option>
+                                                <option value="06:15"></option>
+                                                <option value="06:30"></option>
+                                                <option value="06:45"></option>
+                                                <option value="07:00"></option>
+                                                <option value="07:15"></option>
+                                                <option value="07:30"></option>
+                                                <option value="07:45"></option>
+                                                <option value="08:00"></option>
+                                                <option value="08:15"></option>
+                                                <option value="08:30"></option>
+                                                <option value="08:45"></option>
+                                                <option value="09:00"></option>
+                                                <option value="09:15"></option>
+                                                <option value="09:30"></option>
+                                                <option value="09:45"></option>
+                                                <option value="10:00"></option>
+                                                <option value="10:15"></option>
+                                                <option value="10:30"></option>
+                                                <option value="10:45"></option>
+                                                <option value="11:00"></option>
+                                                <option value="11:15"></option>
+                                                <option value="11:30"></option>
+                                                <option value="11:45"></option>
+                                                <option value="12:00"></option>
+                                                <option value="12:15"></option>
+                                                <option value="12:30"></option>
+                                                <option value="12:45"></option>
+                                                <option value="13:00"></option>
+                                                <option value="13:15"></option>
+                                                <option value="13:30"></option>
+                                                <option value="13:45"></option>
+                                                <option value="14:00"></option>
+                                                <option value="14:15"></option>
+                                                <option value="14:30"></option>
+                                                <option value="14:45"></option>
+                                                <option value="15:00"></option>
+                                                <option value="15:15"></option>
+                                                <option value="15:30"></option>
+                                                <option value="15:45"></option>
+                                                <option value="16:00"></option>
+                                                <option value="16:15"></option>
+                                                <option value="16:30"></option>
+                                                <option value="16:45"></option>
+                                                <option value="17:00"></option>
+                                                <option value="17:15"></option>
+                                                <option value="17:30"></option>
+                                                <option value="17:45"></option>
+                                                <option value="18:00"></option>
+                                                <option value="18:15"></option>
+                                                <option value="18:30"></option>
+                                                <option value="18:45"></option>
+                                                <option value="19:00"></option>
+                                                <option value="19:15"></option>
+                                                <option value="19:30"></option>
+                                                <option value="19:45"></option>
+                                                <option value="20:00"></option>
+                                                <option value="20:15"></option>
+                                                <option value="20:30"></option>
+                                                <option value="20:45"></option>
+                                                <option value="21:00"></option>
+                                                <option value="21:15"></option>
+                                                <option value="21:30"></option>
+                                                <option value="21:45"></option>
+                                                <option value="22:00"></option>
+                                                <option value="22:15"></option>
+                                                <option value="22:30"></option>
+                                                <option value="22:45"></option>
+                                                <option value="23:00"></option>
+                                                <option value="23:15"></option>
+                                                <option value="23:30"></option>
+                                                <option value="23:45"></option>
+                                            </datalist>
+                                            <input type="text" class="form-control form-control-sm text-center"
+                                                   list="@($"ts-{grpIdx}-{subIdx}")" pattern="[0-9]{2}:[0-9]{2}" placeholder="HH:mm" maxlength="5"
+                                                   value="@sub.StartTime.ToString("HH:mm")"
+                                                   @onchange="e => OnSubStartTimeChanged(grp, sub, e.Value?.ToString())" />
+                                        }
+                                        else
+                                        {
+                                            <input type="text" class="form-control form-control-sm bg-light text-muted text-center"
+                                                   value="@sub.StartTime.ToString("HH:mm")" readonly
+                                                   title="Tự tính = Kết thúc hàng trước" />
+                                        }
+                                    </td>
+
+                                    @* Kết thúc — hàng cuối luôn nhập tay, hàng giữa tự tính *@
+                                    <td>
+                                        @if (isLast)
+                                        {
+                                            @* Hàng cuối (kể cả 1 hàng duy nhất): nhập tay, cột Dự kiến để tham khảo *@
+                                            <datalist id="@($"te-{grpIdx}-{subIdx}")">
+                                                <option value="00:00"></option>
+                                                <option value="00:15"></option>
+                                                <option value="00:30"></option>
+                                                <option value="00:45"></option>
+                                                <option value="01:00"></option>
+                                                <option value="01:15"></option>
+                                                <option value="01:30"></option>
+                                                <option value="01:45"></option>
+                                                <option value="02:00"></option>
+                                                <option value="02:15"></option>
+                                                <option value="02:30"></option>
+                                                <option value="02:45"></option>
+                                                <option value="03:00"></option>
+                                                <option value="03:15"></option>
+                                                <option value="03:30"></option>
+                                                <option value="03:45"></option>
+                                                <option value="04:00"></option>
+                                                <option value="04:15"></option>
+                                                <option value="04:30"></option>
+                                                <option value="04:45"></option>
+                                                <option value="05:00"></option>
+                                                <option value="05:15"></option>
+                                                <option value="05:30"></option>
+                                                <option value="05:45"></option>
+                                                <option value="06:00"></option>
+                                                <option value="06:15"></option>
+                                                <option value="06:30"></option>
+                                                <option value="06:45"></option>
+                                                <option value="07:00"></option>
+                                                <option value="07:15"></option>
+                                                <option value="07:30"></option>
+                                                <option value="07:45"></option>
+                                                <option value="08:00"></option>
+                                                <option value="08:15"></option>
+                                                <option value="08:30"></option>
+                                                <option value="08:45"></option>
+                                                <option value="09:00"></option>
+                                                <option value="09:15"></option>
+                                                <option value="09:30"></option>
+                                                <option value="09:45"></option>
+                                                <option value="10:00"></option>
+                                                <option value="10:15"></option>
+                                                <option value="10:30"></option>
+                                                <option value="10:45"></option>
+                                                <option value="11:00"></option>
+                                                <option value="11:15"></option>
+                                                <option value="11:30"></option>
+                                                <option value="11:45"></option>
+                                                <option value="12:00"></option>
+                                                <option value="12:15"></option>
+                                                <option value="12:30"></option>
+                                                <option value="12:45"></option>
+                                                <option value="13:00"></option>
+                                                <option value="13:15"></option>
+                                                <option value="13:30"></option>
+                                                <option value="13:45"></option>
+                                                <option value="14:00"></option>
+                                                <option value="14:15"></option>
+                                                <option value="14:30"></option>
+                                                <option value="14:45"></option>
+                                                <option value="15:00"></option>
+                                                <option value="15:15"></option>
+                                                <option value="15:30"></option>
+                                                <option value="15:45"></option>
+                                                <option value="16:00"></option>
+                                                <option value="16:15"></option>
+                                                <option value="16:30"></option>
+                                                <option value="16:45"></option>
+                                                <option value="17:00"></option>
+                                                <option value="17:15"></option>
+                                                <option value="17:30"></option>
+                                                <option value="17:45"></option>
+                                                <option value="18:00"></option>
+                                                <option value="18:15"></option>
+                                                <option value="18:30"></option>
+                                                <option value="18:45"></option>
+                                                <option value="19:00"></option>
+                                                <option value="19:15"></option>
+                                                <option value="19:30"></option>
+                                                <option value="19:45"></option>
+                                                <option value="20:00"></option>
+                                                <option value="20:15"></option>
+                                                <option value="20:30"></option>
+                                                <option value="20:45"></option>
+                                                <option value="21:00"></option>
+                                                <option value="21:15"></option>
+                                                <option value="21:30"></option>
+                                                <option value="21:45"></option>
+                                                <option value="22:00"></option>
+                                                <option value="22:15"></option>
+                                                <option value="22:30"></option>
+                                                <option value="22:45"></option>
+                                                <option value="23:00"></option>
+                                                <option value="23:15"></option>
+                                                <option value="23:30"></option>
+                                                <option value="23:45"></option>
+                                            </datalist>
+                                            <input type="text" class="form-control form-control-sm text-center"
+                                                   style="border-color:#0d6efd"
+                                                   list="@($"te-{grpIdx}-{subIdx}")" pattern="[0-9]{2}:[0-9]{2}" placeholder="HH:mm" maxlength="5"
+                                                   value="@sub.EndTime.ToString("HH:mm")"
+                                                   @onchange="e => OnSubEndTimeChanged(grp, sub, e.Value?.ToString())" />
+                                        }
+                                        else
+                                        {
+                                            <input type="text" class="form-control form-control-sm bg-light text-muted text-center"
+                                                   value="@sub.EndTime.ToString("HH:mm")" readonly
+                                                   title="Tự tính theo tỉ lệ SL" />
+                                        }
+                                    </td>
+
+                                    @* T.Kết thúc dự kiến theo công thức — màu xanh/đỏ *@
+                                    <td class="text-center">
+                                        @if (hasEst)
+                                        {
+                                            var isLate     = actualEnd > estEnd!.Value;
+                                            var estColor   = SubEstColor(isLate);
+                                            var diffMin    = (int)Math.Abs((actualEnd - estEnd!.Value).TotalMinutes);
+                                            <span style="font-size:11px;font-weight:600;color:@estColor">
+                                                @estEnd!.Value.ToString("HH:mm")
+                                            </span>
+                                            <div style="font-size:9px;color:@estColor">
+                                                @(isLate ? "▲" : "✓") @diffMin ph
+                                            </div>
+                                            @if (isLate)
+                                            {
+                                                <div style="font-size:9px;color:#dc3545;margin-top:1px">
+                                                    Trễ @diffMin ph so dự kiến
+                                                </div>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted" style="font-size:11px">—</span>
+                                        }
+                                    </td>
+
+                                    @* Timing columns — chỉ GC *@
+                                    @if (IsGcGroup)
+                                    {
+                                        @* T.Gá *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div> }
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.SetupTime_Actual > 0 ? sub.SetupTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubSetupInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.GC *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div> }
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.MachiningTime_Actual > 0 ? sub.MachiningTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubMachiningInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.Ktra *@
+                                        <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
+                                            @if (isFirst) { <div style="font-size:10px;color:#185fa5;text-align:center;margin-bottom:1px">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div> }
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(!isSerial)"
+                                                   value="@(sub.InspectionTime_Actual > 0 ? sub.InspectionTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubInspectionInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.CB *@
+                                        <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
+                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div> }
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(isSerial)"
+                                                   value="@(sub.PreparationTime_Actual > 0 ? sub.PreparationTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubPrepInput(grp, sub, e)" />
+                                        </td>
+                                        @* T.Chạy *@
+                                        <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
+                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div> }
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   disabled="@(isSerial)"
+                                                   value="@(sub.TrialRunTime_Actual > 0 ? sub.TrialRunTime_Actual.ToString() : "")"
+                                                   @oninput="e => OnSubTrialInput(grp, sub, e)" />
+                                        </td>
+                                    }
+
+                                    @* T.Phát sinh (phút) *@
+                                    <td>
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.ExtraMinutes > 0 ? sub.ExtraMinutes.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubExtraMinInput(grp, sub, e)" />
+                                    </td>
+
+                                    @* Nội dung *@
+                                    <td>
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               value="@sub.Notes" placeholder="Ghi chú..."
+                                               @oninput="e => sub.Notes = e.Value?.ToString()" />
+                                    </td>
+
+                                    @* Xóa sub-row *@
+                                    <td class="text-center">
+                                        @if (grp.SubRows.Count > 1)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                                    @onclick="() => RemoveSubRow(grp, sub)">
+                                                <i class="bi bi-x"></i>
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+
+                                @* Error sub-row *@
+                                @if (!string.IsNullOrEmpty(sub.ErrorMsg))
+                                {
+                                    <tr class="table-danger">
+                                        <td colspan="12" class="small text-danger py-1 ps-2">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>@sub.ErrorMsg
+                                        </td>
+                                    </tr>
+                                }
+                            }
+
+                            @* Hàng tổng *@
+                            @{
+                                var totalOk    = grp.SubRows.Sum(s => s.QtyOk);
+                                var totalNg    = grp.SubRows.Sum(s => s.QtyNg);
+                                var totalSl    = totalOk + totalNg;
+                                var tStart     = grp.SubRows.FirstOrDefault()?.StartTime;
+                                var tEnd       = grp.SubRows.LastOrDefault()?.EndTime;
+                                var grpTotalMin = (tStart.HasValue && tEnd.HasValue && tEnd > tStart)
+                                    ? (int)(tEnd.Value - tStart.Value).TotalMinutes : 0;
+                            }
+                            <tr class="table-light" style="font-size:11px;font-weight:500">
+                                <td class="text-muted ps-2" colspan="@(IsGcGroup ? 4 : (IsHtspGroup ? 4 : 3))">Tổng</td>
+                                <td class="text-center text-success">@totalOk</td>
+                                <td class="text-center text-danger">@(totalNg > 0 ? totalNg.ToString() : "—")</td>
+                                <td></td>
+                                <td class="text-center text-muted">@(tStart.HasValue ? tStart.Value.ToString("HH:mm") : "—")</td>
+                                <td class="text-center text-muted">@(tEnd.HasValue ? tEnd.Value.ToString("HH:mm") : "—")</td>
+                                <td class="text-center">
+                                    @if (tStart.HasValue && tEnd.HasValue && tEnd > tStart)
+                                    {
+                                        var effMin = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
+                                        var rawMin = (int)(tEnd.Value - tStart.Value).TotalMinutes;
+                                        <span class="small fw-semibold">@effMin ph</span>
+                                        @if (SelectedCa != null && effMin != rawMin)
+                                        {
+                                            <div style="font-size:9px;color:#6c757d">(@rawMin ph - @(rawMin-effMin) ph nghỉ)</div>
+                                        }
+                                    }
+                                </td>
+                                @if (IsGcGroup)
+                                {
+                                    <td colspan="5" class="text-muted">
+                                        @if (tStart.HasValue && tEnd.HasValue && tEnd > tStart && totalSl > 0)
+                                        {
+                                            var effMinCycle = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
+                                            <text>@effMinCycle ph · @totalSl sp · ~@((effMinCycle / (double)totalSl).ToString("0.0")) ph/sp</text>
+                                        }
+                                    </td>
+                                }
+                                <td class="text-center text-muted" style="font-size:11px">
+                                    @{
+                                        var totalExtra = grp.SubRows.Sum(s => s.ExtraMinutes);
+                                    }
+                                    @(totalExtra > 0 ? totalExtra.ToString() + " ph" : "—")
+                                </td>
+                                <td></td>
+                                <td></td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @* Footer nhóm: thêm KH + lưu nhóm *@
+                    <div class="d-flex align-items-center gap-2 px-3 pb-2 flex-wrap">
+                        <button class="btn btn-sm btn-outline-secondary py-0"
+                                style="font-size:11px" @onclick="() => AddSubRow(grp)">
+                            <i class="bi bi-plus me-1"></i>Thêm số KH
+                        </button>
+                        <div class="ms-auto d-flex align-items-center gap-1">
+                            @if (!string.IsNullOrEmpty(grp.ErrorMsg))
+                            {
+                                <span class="text-danger small me-2">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
+                                </span>
+                            }
+                            <button class="btn btn-sm btn-success py-0 px-3"
+                                    style="font-size:12px"
+                                    @onclick="async () => await SaveGroupAsync(grp)"
+                                    disabled="@(grp.IsSaving)">
+                                @if (grp.IsSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                <i class="bi bi-check-lg me-1"></i>Lưu
+                            </button>
+                        </div>
+                    </div>
+
+                    @* Error nhóm *@
+                    @if (!string.IsNullOrEmpty(grp.ErrorMsg))
+                    {
+                        <div class="px-3 pb-2">
+                            <div class="alert alert-danger py-1 small mb-0">
+                                <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+
+                @if (!_groupsOT.Any() && !_rows.Any(r => r.Saved && r.IsOvertime))
+                {
+                    <div class="text-center text-muted py-2 small fst-italic">Chưa có dữ liệu OT. Bấm "Thêm nhóm OT".</div>
+                }
+            </div>
+        }
+    </div>
+
     @* ── Bảng quy trình snapshot — hiện khi có PO đang chọn ── *@
     @if (GetActivePO() != null)
     {
@@ -1629,6 +2419,9 @@ else
 
     // ── Danh sách nhóm đang nhập (chưa lưu) ──
     private List<WtsGroup> _groups = new();
+    // ── Danh sách nhóm tăng ca (OT) ──
+    private List<WtsGroup> _groupsOT = new();
+    private bool _showOtSection = false; // toggle mở/đóng vùng OT
 
     // ── Ca làm việc ──
     private List<CaLamViec> _caList = new();
@@ -2109,6 +2902,7 @@ else
     {
         _rows.Clear();
         _groups.Clear();
+        _groupsOT.Clear();
         await LoadSavedRowsAsync();
         AddGroup();
     }
@@ -2337,23 +3131,29 @@ else
     }
 
     // ── AddGroup / RemoveGroup ──
-    private void AddGroup()
+    private void AddGroup(bool isOT = false)
     {
         if (!IsToday) return;
-        var lastSaved = _rows.LastOrDefault(r => r.Saved);
+        var lastSaved = _rows.LastOrDefault(r => r.Saved && r.IsOvertime == isOT);
         var startTime = lastSaved?.EndTime ?? _workDate.Date.AddHours(8);
-        var grp = new WtsGroup { UseStdAsDefault = _useStdAsDefault };
+        var grp = new WtsGroup { UseStdAsDefault = _useStdAsDefault, IsOvertime = isOT };
         var sub = new WtsRow
         {
             StartTime       = startTime,
             EndTime         = startTime.AddMinutes(1),
             UseStdAsDefault = _useStdAsDefault,
             ProductionMode  = "serial",
+            IsOvertime      = isOT,
         };
         grp.SubRows.Add(sub);
-        _groups.Add(grp);
+        if (isOT) _groupsOT.Add(grp);
+        else       _groups.Add(grp);
     }
-    private void RemoveGroup(WtsGroup grp) => _groups.Remove(grp);
+    private void RemoveGroup(WtsGroup grp)
+    {
+        _groups.Remove(grp);
+        _groupsOT.Remove(grp);
+    }
 
     // ── AddSubRow / RemoveSubRow ──
     private void AddSubRow(WtsGroup grp)
@@ -2656,6 +3456,7 @@ else
     {
         if (!TryParseHHmm(timeStr, out var h, out var m)) return;
         sub.StartTime = _workDate.Date.AddHours(h).AddMinutes(m);
+        CheckCaTimeWarning(grp, sub);
         RecalcGroupTimeline(grp);
         StateHasChanged();
     }
@@ -2663,8 +3464,30 @@ else
     {
         if (!TryParseHHmm(timeStr, out var h, out var m)) return;
         sub.EndTime = _workDate.Date.AddHours(h).AddMinutes(m);
+        CheckCaTimeWarning(grp, sub);
         RecalcGroupTimeline(grp);
         StateHasChanged();
+    }
+
+    // Kiểm tra thời gian nằm trong khung ca — cảnh báo realtime (không block)
+    private void CheckCaTimeWarning(WtsGroup grp, WtsRow sub)
+    {
+        sub.ErrorMsg = null;
+        if (grp.IsOvertime || SelectedCa == null) return; // OT hoặc chưa chọn ca → bỏ qua
+
+        var caStart = _workDate.Date.Add(SelectedCa.GioBatDau.ToTimeSpan());
+        var caEnd   = _workDate.Date.Add(SelectedCa.GioKetThuc.ToTimeSpan());
+        if (SelectedCa.IsOvernight) caEnd = caEnd.AddDays(1);
+
+        if (sub.StartTime != default && (sub.StartTime < caStart || sub.StartTime > caEnd))
+        {
+            sub.ErrorMsg = $"⚠ T.Bắt đầu ngoài ca {SelectedCa.TenCa} ({SelectedCa.GioBatDau:HH:mm}–{SelectedCa.GioKetThuc:HH:mm})";
+            return;
+        }
+        if (sub.EndTime != default && sub.EndTime > caEnd)
+        {
+            sub.ErrorMsg = $"⚠ T.Kết thúc ({sub.EndTime:HH:mm}) vượt ca {SelectedCa.TenCa} (hết lúc {SelectedCa.GioKetThuc:HH:mm}). Dùng vùng Tăng ca nếu làm thêm.";
+        }
     }
 
     // Parse "HH:mm", "H:mm" hoặc "HHmm" (4 chữ số liền) — trả false nếu không hợp lệ
@@ -2770,6 +3593,19 @@ else
                 { sub.ErrorMsg = "Phải nhập lý do NG."; grp.ErrorMsg = "Có hàng thiếu lý do NG."; return; }
                 if (sub.EndTime <= sub.StartTime)
                 { sub.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu."; grp.ErrorMsg = "Lỗi thời gian."; return; }
+
+                // Validate khung giờ ca — chỉ vùng thường (không OT)
+                if (!grp.IsOvertime && SelectedCa != null)
+                {
+                    var caStart = _workDate.Date.Add(SelectedCa.GioBatDau.ToTimeSpan());
+                    var caEnd   = _workDate.Date.Add(SelectedCa.GioKetThuc.ToTimeSpan());
+                    if (SelectedCa.IsOvernight) caEnd = caEnd.AddDays(1);
+                    if (sub.StartTime < caStart || sub.StartTime > caEnd)
+                        sub.ErrorMsg = $"T.Bắt đầu nằm ngoài ca {SelectedCa.TenCa} ({SelectedCa.GioBatDau:HH:mm}–{SelectedCa.GioKetThuc:HH:mm}).";
+                    else if (sub.EndTime > caEnd)
+                        sub.ErrorMsg = $"T.Kết thúc vượt quá ca {SelectedCa.TenCa} (kết thúc {SelectedCa.GioKetThuc:HH:mm}). Dùng vùng Tăng ca nếu làm thêm.";
+                    if (sub.ErrorMsg != null) { grp.ErrorMsg = sub.ErrorMsg; return; }
+                }
             }
 
             // Lưu từng sub-row
@@ -2780,8 +3616,9 @@ else
                 { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg}"; return; }
             }
 
-            // Xóa nhóm sau khi lưu xong
-            _groups.Remove(grp);
+            // Xóa nhóm sau khi lưu xong (khỏi đúng list)
+            if (grp.IsOvertime) _groupsOT.Remove(grp);
+            else                _groups.Remove(grp);
 
             // Reload saved rows + thêm nhóm mới trống nếu muốn
             var unsavedGroups = _groups.ToList();
@@ -3080,6 +3917,8 @@ else
                     EndTime                 = row.EndTime,
                     Notes                   = row.Notes,
                     ExtraMinutes            = row.ExtraMinutes > 0 ? row.ExtraMinutes : (int?)null,
+                    CaId                    = _selectedCaId,  // Ca làm việc — dùng cho báo cáo
+                    IsOvertime              = row.IsOvertime,  // Tăng ca flag
                     SetupTime_Actual        = row.SetupTime_Actual,
                     MachiningTime_Actual    = row.MachiningTime_Actual,
                     InspectionTime_Actual   = row.InspectionTime_Actual,
@@ -3312,6 +4151,7 @@ else
         public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0)
         public string? Notes   { get; set; }
         public string? PoFilter     { get; set; } // text user đang gõ để lọc datalist PO
+        public bool    IsOvertime   { get; set; } = false;
         public int     ExtraMinutes { get; set; } = 0; // T.Phát sinh (phút) — lưu DB
 
         // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime
@@ -3365,6 +4205,9 @@ else
 
         // Nhóm nhỏ HTSP: "Taro" | "Bavia" | "Rua" — chỉ dùng khi IsHtspGroup
         public string HtspSubGroup { get; set; } = "";
+
+        // Tăng ca — không validate khung giờ ca, ghi IsOvertime=true vào DB
+        public bool IsOvertime { get; set; } = false;
 
         public List<WtsRow> SubRows { get; set; } = new();
     }
