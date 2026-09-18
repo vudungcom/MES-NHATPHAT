@@ -100,6 +100,8 @@
 }
 else
 {
+    @if (_activeTab == "input")
+    {
     @* ── Header: Chọn ngày + tổng phút ── *@
     <div class="card mb-3">
         <div class="card-body py-2">
@@ -195,17 +197,18 @@ else
                     <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.8rem;">
                         <thead class="table-light">
                             <tr>
-                                <th style="width:90px">Bắt đầu</th>
-                                <th style="width:90px">Kết thúc</th>
-                                <th style="width:50px" class="text-center">Phút</th>
-                                <th>Số KH / PO</th>
-                                <th>Part No</th>
-                                <th>NC</th>
-                                <th>Máy</th>
-                                <th class="text-success text-center">OK</th>
-                                <th class="text-danger text-center">NG</th>
-                                <th>Lý do NG</th>
-                                <th>Ghi chú</th>
+                                <th style="width:75px" class="text-center">Bắt đầu</th>
+                                <th style="width:75px" class="text-center">Kết thúc</th>
+                                <th style="width:45px" class="text-center">Phút</th>
+                                <th style="width:110px">Số KH / PO</th>
+                                <th style="width:100px">Part No</th>
+                                <th style="width:50px" class="text-center">NC</th>
+                                <th style="width:65px" class="text-center">Máy</th>
+                                <th style="width:52px" class="text-success text-center">OK</th>
+                                <th style="width:52px" class="text-danger text-center">NG</th>
+                                <th style="width:110px">Lý do NG</th>
+                                <th style="width:50px" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
+                                <th>Nội dung</th>
                                 <th style="width:60px" class="text-center">Thao tác</th>
                             </tr>
                         </thead>
@@ -232,6 +235,7 @@ else
                                 <td class="text-center text-success fw-semibold">@row.QtyOk</td>
                                 <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
                                 <td><small class="text-muted">@(row.NgReason ?? "")</small></td>
+                                <td class="text-center small">@(row.ExtraMinutes > 0 ? row.ExtraMinutes.ToString() : "—")</td>
                                 <td><small class="text-muted">@(row.Notes ?? "")</small></td>
                                 <td class="text-center">
                                     @if (IsToday)
@@ -909,7 +913,9 @@ else
                                         @if (tStart.HasValue && tEnd.HasValue && tEnd > tStart && totalSl > 0)
                                         {
                                             var effMinCycle = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
-                                            <text>@effMinCycle ph · @totalSl sp · ~@((effMinCycle / (double)totalSl).ToString("0.0")) ph/sp</text>
+                                            var totalExtraGrp = (int)grp.SubRows.Sum(s => s.ExtraMinutes);
+                                            var prodMinCycle  = effMinCycle - totalExtraGrp;
+                                            <text>@effMinCycle ph · @totalSl sp · ~@((prodMinCycle > 0 ? prodMinCycle / (double)totalSl : effMinCycle / (double)totalSl).ToString("0.0")) ph/sp (cycle thuần)</text>
                                         }
                                     </td>
                                 }
@@ -1699,7 +1705,9 @@ else
                                         @if (tStart.HasValue && tEnd.HasValue && tEnd > tStart && totalSl > 0)
                                         {
                                             var effMinCycle = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
-                                            <text>@effMinCycle ph · @totalSl sp · ~@((effMinCycle / (double)totalSl).ToString("0.0")) ph/sp</text>
+                                            var totalExtraGrp = (int)grp.SubRows.Sum(s => s.ExtraMinutes);
+                                            var prodMinCycle  = effMinCycle - totalExtraGrp;
+                                            <text>@effMinCycle ph · @totalSl sp · ~@((prodMinCycle > 0 ? prodMinCycle / (double)totalSl : effMinCycle / (double)totalSl).ToString("0.0")) ph/sp (cycle thuần)</text>
                                         }
                                     </td>
                                 }
@@ -2258,6 +2266,7 @@ else
         </div>
         }
     }
+    } @* end @if entry *@
 }
 
 @if (_activeTab == "report" && _canViewReport)
@@ -2346,9 +2355,12 @@ else
                                     <th style="width: 80px;" class="text-center">NC</th>
                                     <th style="width: 80px;" class="text-center">Máy</th>
                                     <th style="width: 150px;">Mã WTS / Tên</th>
-                                    <th style="width: 60px;" class="text-center">SL</th>
+                                    <th style="width: 46px;" class="text-center text-success">OK</th>
+                                    <th style="width: 46px;" class="text-center text-danger">NG</th>
+                                    <th style="width: 120px;">Lý do NG</th>
                                     <th style="width: 90px;" class="text-center">Phân loại</th>
-                                    <th>Ghi chú</th>
+                                    <th style="width: 60px;" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
+                                    <th style="width: 150px;">Nội dung</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2378,9 +2390,18 @@ else
                                                 <span>—</span>
                                             }
                                         </td>
-                                        <td class="text-center small">@(row.QtyDone > 0 ? row.QtyDone.ToString("0.##") : "—")</td>
+                                        <td class="text-center small text-success fw-semibold">@(row.QtyOk > 0 ? row.QtyOk.Value.ToString("0.##") : "—")</td>
+                                        <td class="@ReportNgCls(row.QtyNg)">@(row.QtyNg > 0 ? row.QtyNg.Value.ToString("0.##") : "—")</td>
+                                        <td class="small text-muted">@(string.IsNullOrEmpty(row.NgReason) ? "—" : row.NgReason)</td>
                                         <td class="text-center">
                                             <span class="@productiveBadge" style="font-size: 0.7rem;">@productiveLabel</span>
+                                            @if (row.IsOvertime)
+                                            {
+                                                <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">OT</span>
+                                            }
+                                        </td>
+                                        <td class="text-center small">
+                                            @(row.ExtraMinutes > 0 ? row.ExtraMinutes.ToString() : "—")
                                         </td>
                                         <td class="small text-muted">@row.Notes</td>
                                     </tr>
@@ -2616,12 +2637,31 @@ else
             }
         }
 
-        // 3. Cuối cùng fallback về _timingStdCache (Part Master live — cũ)
+        // 3. Fallback: lấy timing bất kỳ TimingRow nào thuộc NC này (bỏ qua máy)
+        if (snapList.TimingRows.Any())
+        {
+            var firstTr = snapList.TimingRows.First();
+            return new TimingStd(nc, firstTr.SoMay ?? soMay,
+                firstTr.SetupTime, firstTr.MachiningTime, firstTr.InspectionTime,
+                firstTr.PreparationTime, firstTr.TrialRunTime);
+        }
+
+        // 4. Fallback cuối: timing trực tiếp trên snap (bỏ qua match máy)
+        if (snapList.SetupTime.HasValue || snapList.MachiningTime.HasValue ||
+            snapList.InspectionTime.HasValue)
+        {
+            return new TimingStd(nc, soMay,
+                snapList.SetupTime, snapList.MachiningTime, snapList.InspectionTime,
+                snapList.PreparationTime, snapList.TrialRunTime);
+        }
+
+        // 5. Cuối cùng fallback về _timingStdCache (Part Master live — cũ)
         if (!_timingStdCache.TryGetValue(detailId, out var list)) return null;
         return list.FirstOrDefault(t =>
             t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase) &&
             t.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Any(m => m.Equals(soMay, StringComparison.OrdinalIgnoreCase)));
+                .Any(m => m.Equals(soMay, StringComparison.OrdinalIgnoreCase)))
+            ?? list.FirstOrDefault(t => t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase));
     }
 
     private bool HasStdTiming(WtsRow row)
@@ -2874,6 +2914,9 @@ else
                 QtyNg          = log.QtyNg ?? 0m,
                 NgReason       = log.NgReason,
                 Notes          = log.Notes,
+                MachineUsed    = log.MachineUsed,
+                ExtraMinutes   = log.ExtraMinutes ?? 0,
+                IsOvertime     = log.IsOvertime,
                 Saved          = true,
             });
         }
@@ -3108,6 +3151,9 @@ else
         await LoadSavedRowsAsync();
     }
 
+    private static string ReportNgCls(decimal? qtyNg)
+        => qtyNg > 0 ? "text-center small text-danger fw-semibold" : "text-center small text-muted";
+
     private static string SavedRowCls(WtsRow row)
         => row.HasWarning ? "table-warning" : "table-success bg-opacity-10";
     private static string SubRowCls(WtsRow sub)
@@ -3331,28 +3377,31 @@ else
     /// Tính số phút làm việc thực sự trong khoảng [start, end],
     /// trừ đi thời gian nghỉ giải lao của ca đang chọn.
     /// </summary>
-    private double CalcEffectiveMinutes(DateTime start, DateTime end, CaLamViec? ca)
+    // Tính tổng phút nghỉ giải lao trong khoảng [start, end] của ca
+    private double CalcBreakMinutes(DateTime start, DateTime end, CaLamViec? ca)
     {
-        if (end <= start) return 0;
-        var total = (end - start).TotalMinutes;
-        if (ca == null) return total; // không chọn ca → dùng thô
-
-        // Trừ từng khoảng nghỉ nằm trong [start, end]
+        if (ca == null || end <= start) return 0;
         var date = start.Date;
+        double total = 0;
         foreach (var nghi in ca.NghiGiaiLaos)
         {
             var nghiStart = date.Add(nghi.NghiBatDau.ToTimeSpan());
             var nghiEnd   = date.Add(nghi.NghiKetThuc.ToTimeSpan());
-            // Nếu nghỉ vắt sang ngày hôm sau (ca đêm)
             if (nghi.NghiKetThuc < nghi.NghiBatDau) nghiEnd = nghiEnd.AddDays(1);
-
-            // Tìm phần giao nhau giữa [start,end] và [nghiStart,nghiEnd]
             var overlapStart = nghiStart < start ? start : nghiStart;
             var overlapEnd   = nghiEnd   > end   ? end   : nghiEnd;
             if (overlapEnd > overlapStart)
-                total -= (overlapEnd - overlapStart).TotalMinutes;
+                total += (overlapEnd - overlapStart).TotalMinutes;
         }
-        return Math.Max(0, total);
+        return total;
+    }
+
+    private double CalcEffectiveMinutes(DateTime start, DateTime end, CaLamViec? ca)
+    {
+        if (end <= start) return 0;
+        var total = (end - start).TotalMinutes;
+        if (ca == null) return total;
+        return Math.Max(0, total - CalcBreakMinutes(start, end, ca));
     }
 
     private static string CaButtonTooltip(CaLamViec ca)
@@ -4218,9 +4267,13 @@ else
     {
         // Dự kiến = dùng timing CHUẨN từ snapshot để so sánh với thực tế user nhập
         if (sub.StartTime == default) return null;
-        var sl = sub.QtyDone;
-        if (sl <= 0) return null;
         if (!sub.KhPlanDetailId.HasValue) return null;
+
+        // Dùng SL thực tế nếu đã nhập, fallback SL PO nếu chưa nhập
+        var sl = sub.QtyDone > 0
+            ? sub.QtyDone
+            : (_allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m);
+        if (sl <= 0) return null;
 
         var std = GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed);
         if (std == null) return null;
@@ -4241,9 +4294,17 @@ else
         }
         if (cycleMin <= 0) return null;
 
-        // Dự kiến = cycle chuẩn × SL + T.Phát sinh
-        var totalMin = (double)(cycleMin * sl) + sub.ExtraMinutes;
-        return sub.StartTime.AddMinutes(totalMin);
+        // Dự kiến = cycle chuẩn × SL + T.Phát sinh + thời gian nghỉ ca trong khoảng đó
+        var prodMin   = (double)(cycleMin * sl) + sub.ExtraMinutes;
+        // Tính nghỉ: ước lượng end = start + prodMin rồi tính nghỉ trong đoạn đó
+        // Lặp hội tụ vì nghỉ phụ thuộc end, end phụ thuộc nghỉ
+        var estEnd = sub.StartTime.AddMinutes(prodMin);
+        for (int i = 0; i < 3; i++) // 3 vòng là đủ hội tụ
+        {
+            var breakMin = CalcBreakMinutes(sub.StartTime, estEnd, SelectedCa);
+            estEnd = sub.StartTime.AddMinutes(prodMin + breakMin);
+        }
+        return estEnd;
     }
 
     private static string SubEstColor(bool isLate)
@@ -4400,14 +4461,12 @@ else
     private async Task SwitchToReport()
     {
         _activeTab = "report";
-        // Load danh sách workers có WTS trong 30 ngày gần nhất khi mở tab lần đầu
+        // Load TẤT CẢ users active — admin cần xem bất kỳ ai, không chỉ người có log
         if (!_reportWorkers.Any())
-        {
-            var from = DateOnly.FromDateTime(DateTime.Today.AddDays(-30));
-            var to   = DateOnly.FromDateTime(DateTime.Today);
-            _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to);
-        }
-        // Tự load report hôm nay luôn
+            _reportWorkers = await ReportSvc.GetAllActiveWorkersAsync();
+        // Mặc định 30 ngày gần nhất nếu chưa set
+        if (_reportDateFrom == DateTime.Today)
+            _reportDateFrom = DateTime.Today.AddDays(-30);
         await LoadReportAsync();
     }
 

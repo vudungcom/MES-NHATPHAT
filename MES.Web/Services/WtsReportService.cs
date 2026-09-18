@@ -90,7 +90,12 @@ public class WtsReportService
                 WtsName         = "",
                 MachineUsed     = p.MachineUsed ?? "",
                 QtyDone         = p.QtyDone,
+                QtyOk           = p.QtyOk,
+                QtyNg           = p.QtyNg,
+                NgReason        = p.NgReason,
                 Notes           = p.Notes ?? "",
+                ExtraMinutes    = p.ExtraMinutes,
+                IsOvertime      = p.IsOvertime,
                 IsProductiveTask = true, // production logs luôn là có ích
                 RowType         = WtsRowType.Production,
             });
@@ -167,6 +172,23 @@ public class WtsReportService
             .OrderBy(x => x.Name)
             .ToList();
     }
+
+    /// <summary>
+    /// Lấy TẤT CẢ users active trong hệ thống — dùng cho dropdown report Admin.
+    /// Không lọc theo khoảng ngày, vì admin cần xem bất kỳ người nào.
+    /// </summary>
+    public async Task<List<(int Id, string Name)>> GetAllActiveWorkersAsync()
+    {
+        return await _db.Users
+            .Where(u => u.IsActive)
+            .OrderBy(u => u.FullName)
+            .Select(u => new { u.UserId, u.FullName })
+            .AsNoTracking()
+            .ToListAsync()
+            .ContinueWith(t => t.Result
+                .Select(u => (u.UserId, u.FullName))
+                .ToList());
+    }
 }
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
@@ -188,7 +210,12 @@ public class WtsReportRow
     public string    WtsName          { get; set; } = "";
     public string    MachineUsed      { get; set; } = "";
     public decimal   QtyDone          { get; set; }
+    public decimal?  QtyOk            { get; set; }
+    public decimal?  QtyNg            { get; set; }
+    public string?   NgReason         { get; set; }
     public string    Notes            { get; set; } = "";
+    public int?      ExtraMinutes     { get; set; }  // T.Phát sinh (phút)
+    public bool      IsOvertime       { get; set; }  // Tăng ca
     public bool      IsProductiveTask { get; set; }
     public WtsRowType RowType         { get; set; }
 }
