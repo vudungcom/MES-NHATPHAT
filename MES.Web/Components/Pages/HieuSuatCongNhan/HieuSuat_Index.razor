@@ -339,9 +339,10 @@ else
                                             <th colspan="2" class="text-center" style="background:#faeeda;font-size:10px;color:#854f0b">Chạy thử — phút</th>
                                         }
                                     }
-                                    <th rowspan="2" style="width:52px" class="text-center">T.Phát sinh<br/><small style="font-size:9px">(phút)</small></th>
-                                    <th rowspan="2" style="width:120px">Nội dung</th>
-                                    <th rowspan="2" style="width:28px"></th>
+                                    <th rowspan="2" style="width:90px;background:#fff8e6">Mã WTS PS</th>
+                                    <th rowspan="2" style="width:52px;background:#fff8e6" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
+                                    <th rowspan="2" style="width:120px;background:#fff8e6">Nội dung PS</th>
+                                    <th rowspan="2" style="width:40px"></th>
                                 </tr>
                                 <tr>
                                     <th class="text-success text-center" style="width:48px">OK</th>
@@ -840,9 +841,40 @@ else
                                         </td>
                                     }
 
-                                    @* T.PS — tổng readonly *@
-                                    <td class="text-center" style="background:#fff8e6;font-size:11px;font-weight:500">
-                                        @(sub.ExtraMinutes > 0 ? sub.ExtraMinutes + " ph" : "—")
+                                    @* Mã WTS PS — input trực tiếp cho ExtraItem[0] *@
+                                    <td style="background:#fff8e6">
+                                        <input list="@($"dl-wtsps-{grpIdx}-{subIdx}")"
+                                               class="form-control form-control-sm" style="font-size:11px"
+                                               value="@(sub.ExtraItems.Count > 0 ? sub.ExtraItems[0].WtsCode : "")"
+                                               placeholder="Mã WTS..."
+                                               autocomplete="off"
+                                               @onchange="e => OnSubPsWtsCode(sub, e.Value?.ToString())" />
+                                        <datalist id="@($"dl-wtsps-{grpIdx}-{subIdx}")">
+                                            @foreach (var t in _wtsTasks)
+                                            {
+                                                <option value="@t.TaskCode">@t.TaskCode — @t.TaskName</option>
+                                            }
+                                        </datalist>
+                                        @if (sub.ExtraItems.Count > 0 && !string.IsNullOrEmpty(sub.ExtraItems[0].WtsName))
+                                        {
+                                            <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.ExtraItems[0].WtsName</div>
+                                        }
+                                    </td>
+
+                                    @* T.PS — input cho ExtraItem[0] *@
+                                    <td style="background:#fff8e6">
+                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                               value="@(sub.ExtraItems.Count > 0 && sub.ExtraItems[0].Minutes > 0 ? sub.ExtraItems[0].Minutes.ToString() : "")"
+                                               placeholder="0"
+                                               @oninput="e => OnSubPsMinutes(grp, sub, e)" />
+                                    </td>
+
+                                    @* Nội dung PS — input cho ExtraItem[0] *@
+                                    <td style="background:#fff8e6">
+                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                               value="@(sub.ExtraItems.Count > 0 ? sub.ExtraItems[0].Notes : "")"
+                                               placeholder="Nội dung PS..."
+                                               @oninput="e => OnSubPsNotes(sub, e)" />
                                     </td>
 
                                     @* Nút + thêm PS, × xóa sub-row *@
@@ -862,17 +894,21 @@ else
                                     </td>
                                 </tr>
 
-                                @* ── Dòng phát sinh (ExtraItems) ── *@
-                                @foreach (var ei in sub.ExtraItems)
+                                @* ── Dòng phát sinh phụ (ExtraItem[1+]) ── *@
+                                @foreach (var ei in sub.ExtraItems.Skip(1))
                                 {
                                     var eiIdx  = sub.ExtraItems.IndexOf(ei);
                                     var eiDlId = $"dl-ei-{grpIdx}-{subIdx}-{eiIdx}";
+                                    @* Dồn sang phải: colspan hết các cột trước Mã WTS PS *@
                                     <tr @key="ei" style="background:#fffbf0">
-                                        <td colspan="2" style="padding-left:24px">
+                                        @* Cột trái: Số PO + Part No + NC/Máy + OK/NG/SL/LýdoNG/BĐ/KT/DK + timing — empty, dồn hết *@
+                                        <td colspan="@(IsGcGroup ? 16 : (IsHtspGroup ? 11 : 10))" style="background:#fffbf0"
+                                            class="text-end pe-1">
                                             <span style="color:#adb5bd;font-size:11px">└</span>
-                                            <span style="font-size:10px;font-weight:600;color:#9a6700;background:#fff3cd;padding:1px 5px;border-radius:3px;margin-left:2px">Phát sinh</span>
+                                            <span style="font-size:10px;font-weight:600;color:#9a6700;background:#fff3cd;padding:1px 5px;border-radius:3px">PS</span>
                                         </td>
-                                        <td colspan="2">
+                                        @* Mã WTS PS — gióng thẳng cột header *@
+                                        <td style="background:#fffbf0">
                                             <input list="@eiDlId"
                                                    class="form-control form-control-sm" style="font-size:11px"
                                                    value="@ei.WtsCode"
@@ -890,19 +926,21 @@ else
                                                 <div style="font-size:10px;color:#6c757d;margin-top:1px">@ei.WtsName</div>
                                             }
                                         </td>
-                                        <td colspan="@(IsGcGroup ? 8 : 5)" style="background:#fffbf0"></td>
-                                        <td style="background:#fff3cd">
+                                        @* T.PS — gióng thẳng cột header *@
+                                        <td style="background:#fff8e6">
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
                                                    value="@(ei.Minutes > 0 ? ei.Minutes.ToString() : "")"
                                                    placeholder="0"
                                                    @oninput="e => OnExtraItemMinutes(grp, sub, ei, e)" />
                                         </td>
+                                        @* Nội dung PS — gióng thẳng cột header *@
                                         <td style="background:#fffbf0">
                                             <input class="form-control form-control-sm" style="font-size:11px"
                                                    value="@ei.Notes"
-                                                   placeholder="Nội dung phát sinh..."
+                                                   placeholder="Nội dung PS..."
                                                    @oninput="e => OnExtraItemNotes(ei, e)" />
                                         </td>
+                                        @* Nút − xóa — gióng thẳng cột action *@
                                         <td class="text-center" style="background:#fffbf0">
                                             <button class="btn btn-sm btn-outline-danger py-0 px-1"
                                                     @onclick="() => RemoveExtraItem(grp, sub, ei)">
@@ -964,12 +1002,14 @@ else
                                         }
                                     </td>
                                 }
+                                <td></td>
                                 <td class="text-center" style="background:#fff8e6;font-size:11px;font-weight:500">
                                     @{
                                         var totalExtra = grp.SubRows.Sum(s => s.ExtraMinutes);
                                     }
                                     @(totalExtra > 0 ? totalExtra.ToString() + " ph" : "—")
                                 </td>
+                                <td></td>
                                 <td></td>
                             </tr>
                             </tbody>
@@ -2766,6 +2806,33 @@ else
     }
 
     // OnSubExtraMinInput — replaced by OnExtraItemMinutes (ExtraMinutes now computed)
+
+    // Hàng gốc: Mã WTS PS → ExtraItem[0] (tạo nếu chưa có)
+    private void OnSubPsWtsCode(WtsRow sub, string? code)
+    {
+        if (!sub.ExtraItems.Any()) sub.ExtraItems.Add(new WtsExtraItem());
+        var ei = sub.ExtraItems[0];
+        ei.WtsCode = string.IsNullOrEmpty(code) ? null : code;
+        var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == code);
+        ei.WtsName = matched?.TaskName;
+        if (matched != null && string.IsNullOrEmpty(ei.Notes))
+            ei.Notes = matched.TaskName;
+    }
+
+    // Hàng gốc: T.PS → ExtraItem[0].Minutes
+    private void OnSubPsMinutes(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    {
+        if (!sub.ExtraItems.Any()) sub.ExtraItems.Add(new WtsExtraItem());
+        sub.ExtraItems[0].Minutes = int.TryParse(e.Value?.ToString(), out var vm) ? Math.Max(0, vm) : 0;
+        RecalcGroupTimeline(grp);
+    }
+
+    // Hàng gốc: Nội dung PS → ExtraItem[0].Notes
+    private void OnSubPsNotes(WtsRow sub, ChangeEventArgs e)
+    {
+        if (!sub.ExtraItems.Any()) sub.ExtraItems.Add(new WtsExtraItem());
+        sub.ExtraItems[0].Notes = e.Value?.ToString();
+    }
 
     private void AddExtraItem(WtsRow sub)
         => sub.ExtraItems.Add(new WtsExtraItem());
