@@ -3573,40 +3573,59 @@ else
     // Các hàng trung gian: Start = End hàng trước, End = Start + (SL_i / SL_tổng) × tổng_thời_gian
     private void RecalcGroupTimeline(WtsGroup grp)
     {
-        // Chỉ phân bổ hàng TRUNG GIAN — KHÔNG tự thay StartTime hàng đầu
-        // và EndTime hàng cuối (user nhập tay, không được override)
+        // Quy tắc:
+        // - 1 hàng: không làm gì — user tự nhập Start và End
+        // - Nhiều hàng: user nhập Start hàng đầu + End hàng cuối
+        //   Phần mềm tự phân bổ Start/End các hàng trung gian theo tỉ lệ SL
+        //   KHÔNG bao giờ override StartTime hàng đầu hoặc EndTime hàng cuối
         if (!grp.SubRows.Any()) return;
-        if (grp.SubRows.Count <= 1) return; // 1 hàng: user tự nhập Start+End, không làm gì
+        if (grp.SubRows.Count <= 1) return;
 
         var totalSl = grp.SubRows.Sum(s => s.QtyDone);
         if (totalSl <= 0) return;
 
         var first = grp.SubRows.First();
         var last  = grp.SubRows.Last();
-        var totalRealMin = (last.EndTime > first.StartTime)
-            ? (double)(last.EndTime - first.StartTime).TotalMinutes
-            : 0;
-        if (totalRealMin <= 0) return;
+        if (last.EndTime <= first.StartTime) return;
 
-        // Trừ tổng T.Phát sinh để ra thời gian sản xuất thực
+        // Tổng span = end cuối - start đầu
+        var totalSpanMin = (last.EndTime - first.StartTime).TotalMinutes;
+
+        // Nghỉ giải lao: trừ 1 lần cho cả nhóm
+        var totalBreakMin = CalcBreakMinutes(first.StartTime, last.EndTime, SelectedCa);
+
+        // T.Phát sinh tổng — trừ ra để còn thời gian sản xuất thuần
         var totalExtraMin = (double)grp.SubRows.Sum(s => s.ExtraMinutes);
-        var prodMin = Math.Max(0, totalRealMin - totalExtraMin);
 
-        // Phân bổ từ hàng 1 trở đi (giữ nguyên StartTime hàng 0)
+        // Thời gian sản xuất thuần để phân bổ
+        var totalProdMin = Math.Max(0, totalSpanMin - totalBreakMin - totalExtraMin);
+
+        // Phân bổ cursor qua các hàng trung gian (không đụng hàng đầu và hàng cuối)
         var cursor = first.StartTime;
-        for (int i = 0; i < grp.SubRows.Count - 1; i++) // bỏ qua hàng cuối
+        for (int i = 0; i < grp.SubRows.Count - 1; i++)
         {
-            var sub        = grp.SubRows[i];
-            sub.StartTime  = cursor;
-            var fraction   = (double)sub.QtyDone / (double)totalSl;
-            var subProdMin = prodMin * fraction;
-            sub.EndTime    = cursor.AddMinutes(subProdMin + sub.ExtraMinutes);
-            cursor         = sub.EndTime;
+            var sub       = grp.SubRows[i];
+            // Hàng đầu (i=0): giữ nguyên StartTime user nhập, chỉ tính EndTime
+            // Hàng sau: StartTime = EndTime hàng trước
+            if (i > 0) sub.StartTime = cursor;
+            else cursor = first.StartTime; // cursor bắt đầu từ start hàng đầu
+
+            var fraction   = totalSl > 0 ? (double)sub.QtyDone / (double)totalSl : 0;
+            var subPureMin = totalProdMin * fraction;  // phần sản xuất thuần hàng này
+
+            // End hàng này = cursor + sản xuất thuần + T.Phát sinh hàng này + nghỉ trong khoảng
+            var subEnd = cursor.AddMinutes(subPureMin + sub.ExtraMinutes);
+            for (int j = 0; j < 3; j++) // hội tụ 3 vòng
+            {
+                var br = CalcBreakMinutes(cursor, subEnd, SelectedCa);
+                subEnd = cursor.AddMinutes(subPureMin + sub.ExtraMinutes + br);
+            }
+            sub.EndTime = subEnd;
+            cursor      = sub.EndTime; // hàng sau bắt đầu từ đây
         }
-        // Hàng cuối: StartTime = end hàng trước, EndTime giữ nguyên do user nhập
+        // Hàng cuối: StartTime = end hàng trước; EndTime giữ nguyên user nhập
         grp.SubRows.Last().StartTime = cursor;
-        // Ghim hàng cuối đúng với EndTime user nhập (tránh lệch do làm tròn)
-        grp.SubRows.Last().EndTime = last.EndTime;
+        // KHÔNG đổi EndTime hàng cuối
     }
 
     // ── Lưu toàn bộ nhóm ─────────────────────────────────────────────────
@@ -4278,24 +4297,25 @@ else
         var std = GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed);
         if (std == null) return null;
 
-        decimal cycleMin = 0;
+        double prodMin;
         if (grp.ProductionMode == "serial")
         {
+            // Hàng loạt: (T.Gá + max(T.GC, T.Ktra)) × SL
             var setup   = std.SetupTime      ?? 0m;
             var machine = std.MachiningTime  ?? 0m;
             var inspect = std.InspectionTime ?? 0m;
-            cycleMin = setup + Math.Max(machine, inspect);
+            var cycle   = setup + Math.Max(machine, inspect);
+            if (cycle <= 0) return null;
+            prodMin = (double)(cycle * sl) + sub.ExtraMinutes;
         }
         else
         {
+            // Chạy thử: T.Chuẩn bị + T.Chạy thử — 1 lần, KHÔNG nhân SL
             var prep  = std.PreparationTime ?? 0m;
             var trial = std.TrialRunTime    ?? 0m;
-            cycleMin = prep + trial;
+            if (prep + trial <= 0) return null;
+            prodMin = (double)(prep + trial) + sub.ExtraMinutes;
         }
-        if (cycleMin <= 0) return null;
-
-        // Dự kiến = cycle chuẩn × SL + T.Phát sinh + thời gian nghỉ ca trong khoảng đó
-        var prodMin   = (double)(cycleMin * sl) + sub.ExtraMinutes;
         // Tính nghỉ: ước lượng end = start + prodMin rồi tính nghỉ trong đoạn đó
         // Lặp hội tụ vì nghỉ phụ thuộc end, end phụ thuộc nghỉ
         var estEnd = sub.StartTime.AddMinutes(prodMin);
