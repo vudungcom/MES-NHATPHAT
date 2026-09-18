@@ -172,20 +172,6 @@ else
         </div>
     </div>
 
-    @* ── Guard: bắt buộc chọn ca trước khi nhập WTS ── *@
-    @if (SelectedCa == null)
-    {
-        <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
-            <i class="bi bi-hand-index-thumb fs-5"></i>
-            <div>
-                <strong>Vui lòng chọn ca làm việc</strong> ở trên trước khi nhập WTS.
-                <div class="small text-muted mt-1">Chọn đúng ca để hệ thống tính thời gian nghỉ và phân bổ chính xác.</div>
-            </div>
-        </div>
-    }
-    else
-    {
-
     @* ── Bảng timeline ── *@
     <div class="card mb-3">
         <div class="card-header py-2 d-flex justify-content-between align-items-center">
@@ -854,23 +840,18 @@ else
                                         </td>
                                     }
 
-                                    @* T.Phát sinh (phút) *@
-                                    <td>
-                                        <input type="number" class="form-control form-control-sm text-center" min="0"
-                                               value="@(sub.ExtraMinutes > 0 ? sub.ExtraMinutes.ToString() : "")"
-                                               placeholder="0"
-                                               @oninput="e => OnSubExtraMinInput(grp, sub, e)" />
+                                    @* T.PS — tổng readonly *@
+                                    <td class="text-center" style="background:#fff8e6;font-size:11px;font-weight:500">
+                                        @(sub.ExtraMinutes > 0 ? sub.ExtraMinutes + " ph" : "—")
                                     </td>
 
-                                    @* Nội dung *@
-                                    <td>
-                                        <input class="form-control form-control-sm" style="font-size:11px"
-                                               value="@sub.Notes" placeholder="Ghi chú..."
-                                               @oninput="e => sub.Notes = e.Value?.ToString()" />
-                                    </td>
-
-                                    @* Xóa sub-row *@
-                                    <td class="text-center">
+                                    @* Nút + thêm PS, × xóa sub-row *@
+                                    <td class="text-center" style="white-space:nowrap">
+                                        <button class="btn btn-sm btn-outline-warning py-0 px-1 me-1"
+                                                title="Thêm dòng phát sinh"
+                                                @onclick="() => AddExtraItem(sub)">
+                                            <i class="bi bi-plus"></i>
+                                        </button>
                                         @if (grp.SubRows.Count > 1)
                                         {
                                             <button class="btn btn-sm btn-outline-danger py-0 px-1"
@@ -880,6 +861,56 @@ else
                                         }
                                     </td>
                                 </tr>
+
+                                @* ── Dòng phát sinh (ExtraItems) ── *@
+                                @foreach (var ei in sub.ExtraItems)
+                                {
+                                    var eiIdx  = sub.ExtraItems.IndexOf(ei);
+                                    var eiDlId = $"dl-ei-{grpIdx}-{subIdx}-{eiIdx}";
+                                    <tr @key="ei" style="background:#fffbf0">
+                                        <td colspan="2" style="padding-left:24px">
+                                            <span style="color:#adb5bd;font-size:11px">└</span>
+                                            <span style="font-size:10px;font-weight:600;color:#9a6700;background:#fff3cd;padding:1px 5px;border-radius:3px;margin-left:2px">Phát sinh</span>
+                                        </td>
+                                        <td colspan="2">
+                                            <input list="@eiDlId"
+                                                   class="form-control form-control-sm" style="font-size:11px"
+                                                   value="@ei.WtsCode"
+                                                   placeholder="Mã WTS..."
+                                                   autocomplete="off"
+                                                   @onchange="e => OnExtraItemWtsCode(sub, ei, e.Value?.ToString())" />
+                                            <datalist id="@eiDlId">
+                                                @foreach (var t in _wtsTasks)
+                                                {
+                                                    <option value="@t.TaskCode">@t.TaskCode — @t.TaskName</option>
+                                                }
+                                            </datalist>
+                                            @if (!string.IsNullOrEmpty(ei.WtsName))
+                                            {
+                                                <div style="font-size:10px;color:#6c757d;margin-top:1px">@ei.WtsName</div>
+                                            }
+                                        </td>
+                                        <td colspan="@(IsGcGroup ? 8 : 5)" style="background:#fffbf0"></td>
+                                        <td style="background:#fff3cd">
+                                            <input type="number" class="form-control form-control-sm text-center" min="0"
+                                                   value="@(ei.Minutes > 0 ? ei.Minutes.ToString() : "")"
+                                                   placeholder="0"
+                                                   @oninput="e => OnExtraItemMinutes(grp, sub, ei, e)" />
+                                        </td>
+                                        <td style="background:#fffbf0">
+                                            <input class="form-control form-control-sm" style="font-size:11px"
+                                                   value="@ei.Notes"
+                                                   placeholder="Nội dung phát sinh..."
+                                                   @oninput="e => OnExtraItemNotes(ei, e)" />
+                                        </td>
+                                        <td class="text-center" style="background:#fffbf0">
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                                    @onclick="() => RemoveExtraItem(grp, sub, ei)">
+                                                <i class="bi bi-dash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
 
                                 @* Error sub-row *@
                                 @if (!string.IsNullOrEmpty(sub.ErrorMsg))
@@ -933,13 +964,12 @@ else
                                         }
                                     </td>
                                 }
-                                <td class="text-center text-muted" style="font-size:11px">
+                                <td class="text-center" style="background:#fff8e6;font-size:11px;font-weight:500">
                                     @{
                                         var totalExtra = grp.SubRows.Sum(s => s.ExtraMinutes);
                                     }
                                     @(totalExtra > 0 ? totalExtra.ToString() + " ph" : "—")
                                 </td>
-                                <td></td>
                                 <td></td>
                             </tr>
                             </tbody>
@@ -1489,7 +1519,6 @@ else
         </div>
         }
     }
-    } @* end SelectedCa guard *@
     } @* end @if entry *@
 }
 
@@ -1988,7 +2017,8 @@ else
                 .Where(c => c.IsActive)
                 .OrderBy(c => c.SortOrder)
                 .ToListAsync();
-            // Load ca từ localStorage — ĐÃ BỎ 2026-09: luôn reset, bắt user chọn lại ca mỗi lần vào trang.
+            // Load ca đã chọn lần trước từ localStorage — ĐÃ BỎ 2026-09:
+            // Luôn reset về null khi vào trang, bắt user chọn lại ca mỗi lần.
             AddGroup();
         }
     }
@@ -2131,7 +2161,9 @@ else
                 NgReason       = log.NgReason,
                 Notes          = log.Notes,
                 MachineUsed    = log.MachineUsed,
-                ExtraMinutes   = log.ExtraMinutes ?? 0,
+                // ExtraItems load từ WtsExtraItems DB
+                // (sẽ được fill sau khi query — xem LoadExtraItemsAsync)
+                ExtraItems     = new List<WtsExtraItem>(),
                 IsOvertime     = log.IsOvertime,
                 Saved          = true,
             });
@@ -2155,6 +2187,44 @@ else
         }
 
         _rows = rows.OrderBy(r => r.StartTime).ToList();
+
+        // Load ExtraItems từ DB cho các dòng đã lưu
+        await LoadExtraItemsAsync();
+    }
+
+    // Load chi tiết phát sinh (WtsExtraItems) cho tất cả _rows đã saved
+    private async Task LoadExtraItemsAsync()
+    {
+        var wtsLogIds  = _rows.Where(r => r.WtsLogId.HasValue)
+                              .Select(r => r.WtsLogId!.Value).ToList();
+        var actLogIds  = _rows.Where(r => r.ActivityLogId.HasValue)
+                              .Select(r => r.ActivityLogId!.Value).ToList();
+
+        if (!wtsLogIds.Any() && !actLogIds.Any()) return;
+
+        var extraLogs = await Db.WtsExtraItems
+            .Where(e => (e.WtsLogId.HasValue    && wtsLogIds.Contains(e.WtsLogId.Value)) ||
+                        (e.ActivityLogId.HasValue && actLogIds.Contains(e.ActivityLogId.Value)))
+            .ToListAsync();
+
+        foreach (var row in _rows)
+        {
+            IEnumerable<WtsExtraItemLog> mine;
+            if (row.WtsLogId.HasValue)
+                mine = extraLogs.Where(e => e.WtsLogId == row.WtsLogId);
+            else if (row.ActivityLogId.HasValue)
+                mine = extraLogs.Where(e => e.ActivityLogId == row.ActivityLogId);
+            else
+                continue;
+
+            row.ExtraItems = mine.Select(e => new WtsExtraItem
+            {
+                WtsCode = e.WtsCode,
+                WtsName = e.WtsName,
+                Minutes = e.Minutes,
+                Notes   = e.Notes,
+            }).ToList();
+        }
     }
 
     private async Task OnWorkDateChanged()
@@ -2656,7 +2726,7 @@ else
     private async Task OnCaSelected(int caId)
     {
         _selectedCaId = _selectedCaId == caId ? (int?)null : caId; // click lại để bỏ chọn
-        // localStorage save ca — ĐÃ BỎ 2026-09: không lưu ca, luôn chọn lại mỗi lần vào trang.
+        // localStorage.setItem ca — ĐÃ BỎ 2026-09: không lưu ca, luôn chọn lại mỗi lần vào trang.
     }
 
     private static string FormatNghiLabel(CaLamViec_NghiGiaiLao n)
@@ -2695,12 +2765,34 @@ else
             sub.ErrorMsg = $"SL nhập ({sub.QtyDone}) vượt SL PO ({poQty}). Kiểm tra lại.";
     }
 
-    private void OnSubExtraMinInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    // OnSubExtraMinInput — replaced by OnExtraItemMinutes (ExtraMinutes now computed)
+
+    private void AddExtraItem(WtsRow sub)
+        => sub.ExtraItems.Add(new WtsExtraItem());
+
+    private void RemoveExtraItem(WtsGroup grp, WtsRow sub, WtsExtraItem item)
     {
-        sub.ExtraMinutes = int.TryParse(e.Value?.ToString(), out var vm) ? vm : 0;
+        sub.ExtraItems.Remove(item);
         RecalcGroupTimeline(grp);
-        StateHasChanged();
     }
+
+    private void OnExtraItemWtsCode(WtsRow sub, WtsExtraItem item, string? code)
+    {
+        item.WtsCode = code;
+        var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == code);
+        item.WtsName = matched?.TaskName;
+        if (matched != null && string.IsNullOrEmpty(item.Notes))
+            item.Notes = matched.TaskName;
+    }
+
+    private void OnExtraItemMinutes(WtsGroup grp, WtsRow sub, WtsExtraItem item, ChangeEventArgs e)
+    {
+        item.Minutes = int.TryParse(e.Value?.ToString(), out var vm) ? Math.Max(0, vm) : 0;
+        RecalcGroupTimeline(grp);
+    }
+
+    private void OnExtraItemNotes(WtsExtraItem item, ChangeEventArgs e)
+        => item.Notes = e.Value?.ToString();
 
     // Wrapper: tránh string literal trong @oninput — CS1056
     private void OnSubSetupInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
@@ -3219,6 +3311,24 @@ else
                 Db.WtsProductionLogs.Add(log);
                 await Db.SaveChangesAsync();
                 row.WtsLogId = log.WtsLogId;
+
+                // Lưu từng dòng phát sinh chi tiết vào WtsExtraItems
+                if (row.ExtraItems.Any())
+                {
+                    foreach (var ei in row.ExtraItems.Where(e => e.Minutes > 0))
+                    {
+                        Db.WtsExtraItems.Add(new WtsExtraItemLog
+                        {
+                            WtsLogId   = log.WtsLogId,
+                            WtsCode    = ei.WtsCode,
+                            WtsName    = ei.WtsName,
+                            Minutes    = ei.Minutes,
+                            Notes      = ei.Notes,
+                            CreatedAt  = DateTime.Now,
+                        });
+                    }
+                    await Db.SaveChangesAsync();
+                }
                 Db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
 
                 // Reload qty cache + flow (v0.8)
@@ -3254,6 +3364,24 @@ else
                 Db.WorkerActivityLogs.Add(actLog);
                 await Db.SaveChangesAsync();
                 row.ActivityLogId = actLog.ActivityLogId;
+
+                // Lưu từng dòng phát sinh chi tiết
+                if (row.ExtraItems.Any())
+                {
+                    foreach (var ei in row.ExtraItems.Where(e => e.Minutes > 0))
+                    {
+                        Db.WtsExtraItems.Add(new WtsExtraItemLog
+                        {
+                            ActivityLogId = actLog.ActivityLogId,
+                            WtsCode       = ei.WtsCode,
+                            WtsName       = ei.WtsName,
+                            Minutes       = ei.Minutes,
+                            Notes         = ei.Notes,
+                            CreatedAt     = DateTime.Now,
+                        });
+                    }
+                    await Db.SaveChangesAsync();
+                }
                 Db.ChangeTracker.Clear();
             }
             catch (Exception ex)
@@ -3441,7 +3569,10 @@ else
         public string? Notes   { get; set; }
         public string? PoFilter     { get; set; } // text user đang gõ để lọc datalist PO
         public bool    IsOvertime   { get; set; } = false;
-        public int     ExtraMinutes { get; set; } = 0; // T.Phát sinh (phút) — lưu DB
+        // T.Phát sinh chi tiết — mỗi phần việc là 1 WtsExtraItem
+        public List<WtsExtraItem> ExtraItems { get; set; } = new();
+        // ExtraMinutes computed — dùng cho RecalcGroupTimeline & SaveRowAsync (không đổi)
+        public int ExtraMinutes => ExtraItems.Sum(x => x.Minutes);
 
         // Thời gian thực tế (phút) — chỉ nhóm GC, tổng = EndTime - StartTime
         public decimal? SetupTime_Actual      { get; set; }
@@ -3727,6 +3858,15 @@ else
         _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to);
 
         _reportLoading = false;
+    }
+
+    // ── WtsExtraItem: 1 dòng phát sinh chi tiết của 1 sub-row ──
+    public class WtsExtraItem
+    {
+        public string? WtsCode { get; set; }
+        public string? WtsName { get; set; }
+        public int     Minutes { get; set; }
+        public string? Notes   { get; set; }
     }
 
 }

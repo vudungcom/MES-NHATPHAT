@@ -72,6 +72,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
 
     // ==== Worker Activity Log (thời gian chết / hoạt động không link PO) ====
     public DbSet<WorkerActivityLog> WorkerActivityLogs => Set<WorkerActivityLog>();
+    public DbSet<WtsExtraItemLog> WtsExtraItems => Set<WtsExtraItemLog>(); // Chi tiết phát sinh
 
     // ==== Handover — Giao nhận hàng giữa các nhóm công đoạn ====
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
@@ -593,6 +594,19 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<CaLamViec_NghiGiaiLao>()
             .HasOne(x => x.Ca).WithMany(x => x.NghiGiaiLaos)
             .HasForeignKey(x => x.CaId).OnDelete(DeleteBehavior.Cascade);
+
+        // ==== WtsExtraItems ====
+        mb.Entity<WtsExtraItemLog>().HasKey(x => x.Id);
+        mb.Entity<WtsExtraItemLog>()
+            .HasOne(x => x.WtsProductionLog)
+            .WithMany()
+            .HasForeignKey(x => x.WtsLogId)
+            .OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<WtsExtraItemLog>()
+            .HasOne(x => x.WorkerActivityLog)
+            .WithMany()
+            .HasForeignKey(x => x.ActivityLogId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(mb);
     }
