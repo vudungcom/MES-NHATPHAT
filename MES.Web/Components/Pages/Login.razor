@@ -18,19 +18,29 @@
         </div>
     }
 
-    <form method="post" action="/login-submit">
+    <form method="post" action="/login-submit" id="loginForm">
         @if (!string.IsNullOrEmpty(ReturnUrl))
         {
             <input type="hidden" name="returnUrl" value="@ReturnUrl" />
         }
         <div class="mb-3">
             <label class="form-label small">Tên đăng nhập</label>
-            <input type="text" name="username" class="form-control" required autofocus />
+            <input type="text" name="username" id="username" class="form-control" required autofocus
+                   autocomplete="username" />
         </div>
         <div class="mb-3">
             <label class="form-label small">Mật khẩu</label>
-            <input type="password" name="password" class="form-control" required />
+            <input type="password" name="password" id="password" class="form-control" required
+                   autocomplete="current-password" />
         </div>
+
+        <div class="mb-3 d-flex align-items-center gap-2">
+            <input type="checkbox" id="rememberMe" class="form-check-input mt-0" />
+            <label for="rememberMe" class="form-check-label small text-muted" style="cursor:pointer">
+                Nhớ tài khoản
+            </label>
+        </div>
+
         <button type="submit" class="btn btn-primary w-100">
             <i class="bi bi-box-arrow-in-right"></i> Đăng nhập
         </button>
@@ -43,6 +53,39 @@
         </small>
     </div>
 </div>
+
+<script>
+(function () {
+    var KEY_USER = 'mes_saved_username';
+    var KEY_PASS = 'mes_saved_password';
+    var KEY_REM  = 'mes_remember_me';
+
+    var uEl  = document.getElementById('username');
+    var pEl  = document.getElementById('password');
+    var cbEl = document.getElementById('rememberMe');
+    var form = document.getElementById('loginForm');
+
+    // Restore nếu đã lưu
+    if (localStorage.getItem(KEY_REM) === '1') {
+        uEl.value    = localStorage.getItem(KEY_USER) || '';
+        pEl.value    = localStorage.getItem(KEY_PASS) || '';
+        cbEl.checked = true;
+    }
+
+    // Trước khi submit: lưu hoặc xóa
+    form.addEventListener('submit', function () {
+        if (cbEl.checked) {
+            localStorage.setItem(KEY_USER, uEl.value);
+            localStorage.setItem(KEY_PASS, pEl.value);
+            localStorage.setItem(KEY_REM,  '1');
+        } else {
+            localStorage.removeItem(KEY_USER);
+            localStorage.removeItem(KEY_PASS);
+            localStorage.removeItem(KEY_REM);
+        }
+    });
+})();
+</script>
 
 @code {
     [SupplyParameterFromQuery(Name = "error")]
