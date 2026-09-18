@@ -3396,6 +3396,26 @@ else
         return total;
     }
 
+    // Nếu thời điểm t rơi vào khoảng nghỉ → đẩy ra đến hết khoảng nghỉ đó
+    private DateTime SkipBreaks(DateTime t, CaLamViec? ca)
+    {
+        if (ca == null) return t;
+        var date = t.Date;
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var nghi in ca.NghiGiaiLaos)
+            {
+                var ns = date.Add(nghi.NghiBatDau.ToTimeSpan());
+                var ne = date.Add(nghi.NghiKetThuc.ToTimeSpan());
+                if (nghi.NghiKetThuc < nghi.NghiBatDau) ne = ne.AddDays(1);
+                if (t >= ns && t < ne) { t = ne; changed = true; }
+            }
+        }
+        return t;
+    }
+
     private double CalcEffectiveMinutes(DateTime start, DateTime end, CaLamViec? ca)
     {
         if (end <= start) return 0;
@@ -3621,7 +3641,8 @@ else
                 subEnd = cursor.AddMinutes(subPureMin + sub.ExtraMinutes + br);
             }
             sub.EndTime = subEnd;
-            cursor      = sub.EndTime; // hàng sau bắt đầu từ đây
+            // Đẩy cursor ra khỏi khoảng nghỉ nếu end rơi vào giờ nghỉ
+            cursor = SkipBreaks(sub.EndTime, SelectedCa);
         }
         // Hàng cuối: StartTime = end hàng trước; EndTime giữ nguyên user nhập
         grp.SubRows.Last().StartTime = cursor;
