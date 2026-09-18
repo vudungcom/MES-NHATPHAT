@@ -1973,15 +1973,8 @@ else
                 .Where(c => c.IsActive)
                 .OrderBy(c => c.SortOrder)
                 .ToListAsync();
-            // Load ca đã chọn lần trước từ localStorage
-            try
-            {
-                var storedCa = await JS.InvokeAsync<string?>("localStorage.getItem",
-                    $"wts_selectedCa_{_currentUserId}");
-                if (int.TryParse(storedCa, out var cid) && _caList.Any(c => c.CaId == cid))
-                    _selectedCaId = cid;
-            }
-            catch { }
+            // Load ca đã chọn lần trước từ localStorage — ĐÃ BỎ 2026-09:
+            // Luôn reset về null khi vào trang, bắt user chọn lại ca mỗi lần.
             AddGroup();
         }
     }
@@ -2649,13 +2642,7 @@ else
     private async Task OnCaSelected(int caId)
     {
         _selectedCaId = _selectedCaId == caId ? (int?)null : caId; // click lại để bỏ chọn
-        try
-        {
-            var val = _selectedCaId.HasValue ? _selectedCaId.Value.ToString() : "";
-            await JS.InvokeVoidAsync("localStorage.setItem",
-                $"wts_selectedCa_{_currentUserId}", val);
-        }
-        catch { }
+        // localStorage.setItem ca — ĐÃ BỎ 2026-09: không lưu ca, luôn chọn lại mỗi lần vào trang.
     }
 
     private static string FormatNghiLabel(CaLamViec_NghiGiaiLao n)
