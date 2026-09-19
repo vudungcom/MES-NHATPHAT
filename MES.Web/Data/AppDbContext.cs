@@ -43,6 +43,9 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<StandardWtsTask> StandardWtsTasks => Set<StandardWtsTask>();
     public DbSet<StandardWtsTaskChangeLog> StandardWtsTaskChangeLogs => Set<StandardWtsTaskChangeLog>();
 
+    // ==== WTS Category → ProcessGroup Mapping ====
+    public DbSet<WtsCategoryGroupMapping> WtsCategoryGroupMappings => Set<WtsCategoryGroupMapping>();
+
     // ==== Luot 6A - Part Master process step tables (5 bang + 1 log) ====
     public DbSet<PartMachiningStep> PartMachiningSteps => Set<PartMachiningStep>();
     public DbSet<PartTaroStep> PartTaroSteps => Set<PartTaroStep>();
@@ -206,6 +209,18 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasOne(x => x.ChangedByUser)
             .WithMany()
             .HasForeignKey(x => x.ChangedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== WtsCategoryGroupMapping ====
+        mb.Entity<WtsCategoryGroupMapping>().HasKey(x => x.MappingId);
+        mb.Entity<WtsCategoryGroupMapping>().HasIndex(x => x.ProcessGroup);
+        mb.Entity<WtsCategoryGroupMapping>().HasIndex(x => x.CategoryCode);
+        mb.Entity<WtsCategoryGroupMapping>()
+            .HasIndex(x => new { x.CategoryCode, x.ProcessGroup }).IsUnique();
+        mb.Entity<WtsCategoryGroupMapping>()
+            .HasOne(x => x.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(x => x.CreatedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
         // ==== KhPlan ====

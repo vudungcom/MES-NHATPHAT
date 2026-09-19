@@ -44,6 +44,7 @@ builder.Services.AddScoped<ThietBiService>();
 builder.Services.AddScoped<DepartmentService>();
 builder.Services.AddScoped<DoGaService>();
 builder.Services.AddScoped<StandardWtsTaskService>();
+builder.Services.AddScoped<WtsCategoryGroupMappingService>(); // ==== WTS Category Mapping ====
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<PartPackagingService>();
 builder.Services.AddScoped<CustomerService>();
