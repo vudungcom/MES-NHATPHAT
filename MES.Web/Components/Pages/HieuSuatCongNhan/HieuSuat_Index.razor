@@ -2847,8 +2847,7 @@ else
         ei.WtsCode = string.IsNullOrEmpty(code) ? null : code;
         var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == code);
         ei.WtsName = matched?.TaskName;
-        if (matched != null && string.IsNullOrEmpty(ei.Notes))
-            ei.Notes = matched.TaskName;
+        // Notes KHÔNG auto-fill — user tự gõ
     }
 
     // Hàng gốc: T.PS → ExtraItem[0].Minutes
@@ -2880,8 +2879,7 @@ else
         item.WtsCode = code;
         var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == code);
         item.WtsName = matched?.TaskName;
-        if (matched != null && string.IsNullOrEmpty(item.Notes))
-            item.Notes = matched.TaskName;
+        // Notes KHÔNG auto-fill — user tự gõ
     }
 
     private void OnExtraItemMinutes(WtsGroup grp, WtsRow sub, WtsExtraItem item, ChangeEventArgs e)
@@ -3319,9 +3317,11 @@ else
                 row.WarningMsg = (row.WarningMsg ?? "") + " Chưa chọn máy sử dụng.";
             }
 
-            // Validate tổng thời gian thực tế không vượt thời gian ca
-            if (row.TimeActualSum > row.Minutes && row.Minutes > 0)
-            { row.ErrorMsg = $"Tổng thời gian thực tế ({row.TimeActualSum} phút) vượt quá thời gian ca ({row.Minutes} phút)."; return; }
+            // Cảnh báo tổng thời gian thực tế — dùng đúng công thức: T.Gá + max(T.GC, T.Ktra)
+            var _actualSum = (row.SetupTime_Actual ?? 0)
+                           + Math.Max(row.MachiningTime_Actual ?? 0, row.InspectionTime_Actual ?? 0);
+            if (_actualSum > row.Minutes && row.Minutes > 0)
+                row.WarningMsg = (row.WarningMsg ?? "") + $" Tổng thời gian thực tế ({_actualSum} phút) vượt quá thời gian ca ({row.Minutes} phút).";
 
             CheckQtyWarning(row);
 
@@ -3532,7 +3532,6 @@ else
             }
         }
 
-        AddGroup(); // mở sẵn nhóm mới sau khi lưu
     }
 
     // ── Classes ───────────────────────────────────────────────
