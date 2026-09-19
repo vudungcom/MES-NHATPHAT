@@ -212,6 +212,7 @@ else
                     <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.8rem;">
                         <thead class="table-light">
                             <tr>
+                                <th style="width:28px" class="text-center"></th>
                                 <th style="width:75px" class="text-center">Bắt đầu</th>
                                 <th style="width:75px" class="text-center">Kết thúc</th>
                                 <th style="width:45px" class="text-center">Phút</th>
@@ -222,8 +223,9 @@ else
                                 <th style="width:52px" class="text-success text-center">OK</th>
                                 <th style="width:52px" class="text-danger text-center">NG</th>
                                 <th style="width:110px">Lý do NG</th>
+                                <th style="width:110px">Mã WTS PS</th>
                                 <th style="width:50px" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
-                                <th>Nội dung</th>
+                                <th>Nội dung PS</th>
                                 <th style="width:60px" class="text-center">Thao tác</th>
                             </tr>
                         </thead>
@@ -231,6 +233,17 @@ else
                         @foreach (var row in _rows.Where(r => r.Saved && !r.IsOvertime).OrderBy(r => r.StartTime))
                         {
                             <tr class="@SavedRowCls(row)">
+                                <td class="text-center p-0" style="width:28px">
+                                    @if (row.ExtraItems.Any())
+                                    {
+                                        <button class="btn btn-link btn-sm py-0 px-1"
+                                                style="font-size:12px;color:#0d6efd"
+                                                @onclick="() => row.ShowTimeDetail = !row.ShowTimeDetail"
+                                                title="@(row.ShowTimeDetail ? "Ẩn phát sinh" : "Xem phát sinh")">
+                                            <i class="bi @(row.ShowTimeDetail ? "bi-chevron-up" : "bi-chevron-down")"></i>
+                                        </button>
+                                    }
+                                </td>
                                 <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
                                 <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
                                 <td class="text-center">@row.Minutes</td>
@@ -250,8 +263,41 @@ else
                                 <td class="text-center text-success fw-semibold">@row.QtyOk</td>
                                 <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
                                 <td><small class="text-muted">@(row.NgReason ?? "")</small></td>
-                                <td class="text-center small">@(row.ExtraMinutes > 0 ? row.ExtraMinutes.ToString() : "—")</td>
-                                <td><small class="text-muted">@(row.Notes ?? "")</small></td>
+                                <td style="background:#fff8e6">
+                                    <small class="text-muted">
+                                        @if (row.ExtraItems.Count == 1)
+                                        {
+                                            @(row.ExtraItems[0].WtsCode ?? "—")
+                                            @if (!string.IsNullOrEmpty(row.ExtraItems[0].WtsName))
+                                            {
+                                                <div style="font-size:10px;color:#6c757d">@row.ExtraItems[0].WtsName</div>
+                                            }
+                                        }
+                                        else if (row.ExtraItems.Count > 1)
+                                        {
+                                            <span style="font-size:10px;color:#0d6efd">
+                                                <i class="bi bi-chevron-down" style="font-size:10px"></i>
+                                                @row.ExtraItems.Count mục — click để xem
+                                            </span>
+                                        }
+                                        else { <span>—</span> }
+                                    </small>
+                                </td>
+                                <td class="text-center small" style="background:#fff8e6">
+                                    @(row.ExtraMinutes > 0 ? row.ExtraMinutes.ToString() : "—")
+                                </td>
+                                <td style="background:#fff8e6">
+                                    <small class="text-muted">
+                                        @if (row.ExtraItems.Count == 1)
+                                        {
+                                            @(row.ExtraItems[0].Notes ?? "")
+                                        }
+                                        else if (row.ExtraItems.Count > 1)
+                                        {
+                                            <span class="text-muted fst-italic" style="font-size:10px">—</span>
+                                        }
+                                    </small>
+                                </td>
                                 <td class="text-center">
                                     @if (IsToday)
                                     {
@@ -268,6 +314,39 @@ else
                                     }
                                 </td>
                             </tr>
+                            @* Dòng phát sinh xổ ra — giống Part Master ──*@
+                            @if (row.ShowTimeDetail && row.ExtraItems.Any())
+                            {
+                                foreach (var ei in row.ExtraItems)
+                                {
+                                    <tr style="background:#fffbf0;font-size:0.75rem;">
+                                        <td class="text-center text-muted" style="padding:2px 4px">
+                                            <span style="font-size:9px;color:#9a6700;background:#fff3cd;padding:1px 4px;border-radius:3px">PS</span>
+                                        </td>
+                                        <td colspan="10" class="text-muted" style="padding:2px 8px">—</td>
+                                        <td style="background:#fffbf0;padding:2px 6px">
+                                            <small>
+                                                @if (!string.IsNullOrEmpty(ei.WtsCode))
+                                                {
+                                                    @ei.WtsCode
+                                                    @if (!string.IsNullOrEmpty(ei.WtsName))
+                                                    {
+                                                        <div style="font-size:10px;color:#6c757d">@ei.WtsName</div>
+                                                    }
+                                                }
+                                                else { <span class="text-muted">—</span> }
+                                            </small>
+                                        </td>
+                                        <td class="text-center" style="background:#fffbf0;padding:2px 6px">
+                                            <small>@(ei.Minutes > 0 ? ei.Minutes.ToString() : "—")</small>
+                                        </td>
+                                        <td style="background:#fffbf0;padding:2px 6px">
+                                            <small class="text-muted">@(ei.Notes ?? "")</small>
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                }
+                            }
                         }
                         </tbody>
                     </table>
