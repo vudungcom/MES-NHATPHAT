@@ -172,6 +172,20 @@ else
         </div>
     </div>
 
+    @* ── Guard: bắt buộc chọn ca trước khi nhập WTS ── *@
+    @if (SelectedCa == null)
+    {
+        <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
+            <i class="bi bi-hand-index-thumb fs-5"></i>
+            <div>
+                <strong>Vui lòng chọn ca làm việc</strong> ở trên trước khi nhập WTS.
+                <div class="small text-muted mt-1">Chọn đúng ca để hệ thống tính thời gian nghỉ và phân bổ chính xác.</div>
+            </div>
+        </div>
+    }
+    else
+    {
+
     @* ── Bảng timeline ── *@
     <div class="card mb-3">
         <div class="card-header py-2 d-flex justify-content-between align-items-center">
@@ -1559,6 +1573,7 @@ else
         </div>
         }
     }
+    } @* end SelectedCa guard *@
     } @* end @if entry *@
 }
 
