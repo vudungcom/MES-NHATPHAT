@@ -7,11 +7,11 @@ namespace MES.Web.Services;
 /// <summary>
 /// Quản lý mapping CategoryCode (nhóm WTS tiêu chuẩn) → ProcessGroup (GC/HTSP/KCS/PKG).
 /// Thay thế hardcode trong HieuSuat_Index.razor.
+/// Quyền truy cập tab cấu hình được kiểm soát bởi WTS_MAPPING permission — không cần PIN.
 /// </summary>
 public class WtsCategoryGroupMappingService
 {
     private readonly AppDbContext _db;
-    private readonly AuthService _authSvc;
 
     // Danh sách ProcessGroup cố định — chỉ 4 giá trị hợp lệ trong hệ thống
     public static readonly List<(string Code, string Name)> ProcessGroups = new()
@@ -22,10 +22,9 @@ public class WtsCategoryGroupMappingService
         ("PKG",  "Đóng gói (PKG)"),
     };
 
-    public WtsCategoryGroupMappingService(AppDbContext db, AuthService authSvc)
+    public WtsCategoryGroupMappingService(AppDbContext db)
     {
-        _db      = db;
-        _authSvc = authSvc;
+        _db = db;
     }
 
     // ─────────────────────────────────────────────
@@ -72,23 +71,15 @@ public class WtsCategoryGroupMappingService
 
     /// <summary>
     /// Thay thế toàn bộ mapping của 1 ProcessGroup bằng danh sách mới.
-    /// PIN xác nhận bắt buộc.
+    /// Không cần PIN — quyền đã được kiểm soát bởi WTS_MAPPING permission ở tầng UI.
     /// </summary>
     public async Task<(bool Success, string? Error)> SaveGroupMappingAsync(
         string processGroup,
         List<(string Code, string Name)> selectedCategories,
-        int currentUserId,
-        string pin)
+        int currentUserId)
     {
-        if (string.IsNullOrWhiteSpace(pin))
-            return (false, "Vui lòng nhập mã PIN xác nhận.");
-
         if (!ProcessGroups.Any(g => g.Code == processGroup))
             return (false, $"ProcessGroup '{processGroup}' không hợp lệ.");
-
-        bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid)
-            return (false, "Mã PIN xác nhận không chính xác.");
 
         // Xoá toàn bộ mapping cũ của ProcessGroup này
         var existing = await _db.WtsCategoryGroupMappings
@@ -102,11 +93,11 @@ public class WtsCategoryGroupMappingService
         {
             _db.WtsCategoryGroupMappings.Add(new WtsCategoryGroupMapping
             {
-                CategoryCode  = cat.Code.Trim().ToUpper(),
-                CategoryName  = cat.Name.Trim(),
-                ProcessGroup  = processGroup,
-                CreatedAt     = now,
-                CreatedBy     = currentUserId,
+                CategoryCode = cat.Code.Trim().ToUpper(),
+                CategoryName = cat.Name.Trim(),
+                ProcessGroup = processGroup,
+                CreatedAt    = now,
+                CreatedBy    = currentUserId,
             });
         }
 

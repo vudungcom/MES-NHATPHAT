@@ -16,6 +16,7 @@ public static class SystemPermissions
     public const string DoGa        = "DO_GA";
     public const string Dao         = "DAO";
     public const string WtsMaster   = "WTS_MASTER";
+    public const string WtsMapping  = "WTS_MAPPING"; // Quyền cấu hình nhóm WTS → ProcessGroup
     public const string SettingAdmin = "SETTING_ADMIN";
     public const string CaLamViec   = "CA_LAM_VIEC";
 
@@ -51,6 +52,7 @@ public static class SystemPermissions
         new PermissionSection(DoGa,        "Quản lý Đồ gá",        "Quản lý danh mục & mượn trả đồ gá"),
         new PermissionSection(Dao,         "Quản lý dao",           "Quản lý danh mục dao cụ CNC, mũi khoan, taro và tồn kho"),
         new PermissionSection(WtsMaster,   "WTS Tiêu chuẩn",        "Thêm/sửa danh mục WTS chuẩn"),
+        new PermissionSection(WtsMapping,  "WTS: Cấu hình nhóm",   "Gán nhóm công việc WTS vào nhóm sản xuất (GC/HTSP/KCS/PKG)"),
 
         // 4 Vùng phân quyền Nhập WTS công nhân
         new PermissionSection(WtsGc,      "Nhập WTS: Gia công",        "Công nhân gia công ghi nhận NC, thời gian, sản lượng thực tế"),

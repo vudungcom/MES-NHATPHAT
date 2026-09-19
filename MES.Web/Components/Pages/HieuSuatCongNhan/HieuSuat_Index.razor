@@ -15,6 +15,7 @@
 @inject ThietBiService ThietBiSvc
 @inject WtsReportService ReportSvc
 @inject AuthenticationStateProvider AuthState
+@inject MES.Web.Services.WtsCategoryGroupMappingService MappingSvc
 @inject IJSRuntime JS
 
 <style>
@@ -453,15 +454,20 @@ else
                                         <td>
                                             @if (isFirst)
                                             {
-                                                <select class="form-select form-select-sm" style="font-size:11px"
-                                                        disabled="@(IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))"
-                                                        @onchange="e => OnSubWtsCodeChanged(grp, sub, e.Value?.ToString())">
-                                                    <option value="">-- Chọn CV --</option>
+                                                var dlCvId = $"dl-cv-{grpIdx}-{subIdx}";
+                                                <input list="@dlCvId"
+                                                       class="form-control form-control-sm" style="font-size:11px"
+                                                       value="@sub.WtsCode"
+                                                       placeholder="Mã CV..."
+                                                       autocomplete="off"
+                                                       disabled="@(IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))"
+                                                       @onchange="e => OnSubWtsCodeChanged(grp, sub, e.Value?.ToString())" />
+                                                <datalist id="@dlCvId">
                                                     @foreach (var item in grp.WtsItems)
                                                     {
-                                                        <option value="@item.NC" selected="@(sub.WtsCode == item.NC)">@item.NC — @item.Name</option>
+                                                        <option value="@item.NC">@item.NC — @item.Name</option>
                                                     }
-                                                </select>
+                                                </datalist>
                                                 @if (!string.IsNullOrEmpty(sub.WtsCode))
                                                 {
                                                     <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.WtsName</div>
@@ -864,7 +870,7 @@ else
                                                autocomplete="off"
                                                @onchange="e => OnSubPsWtsCode(sub, e.Value?.ToString())" />
                                         <datalist id="@($"dl-wtsps-{grpIdx}-{subIdx}")">
-                                            @foreach (var t in _wtsTasks)
+                                            @foreach (var t in WtsTasksForGroup)
                                             {
                                                 <option value="@t.TaskCode">@t.TaskCode — @t.TaskName</option>
                                             }
@@ -930,7 +936,7 @@ else
                                                    autocomplete="off"
                                                    @onchange="e => OnExtraItemWtsCode(sub, ei, e.Value?.ToString())" />
                                             <datalist id="@eiDlId">
-                                                @foreach (var t in _wtsTasks)
+                                                @foreach (var t in WtsTasksForGroup)
                                                 {
                                                     <option value="@t.TaskCode">@t.TaskCode — @t.TaskName</option>
                                                 }
@@ -1781,34 +1787,44 @@ else
     // Data
     private List<KhPlanDetailRow> _allRows = new(); // tất cả phiếu KH
     private List<StandardWtsTask> _wtsTasks = new(); // tất cả WTS active
+    private Dictionary<string, List<string>> _categoryMapping = new(); // ProcessGroup → List<CategoryCode> từ DB
     private string _groupCode = ""; // GroupCode của công nhân hiện tại
 
     /// <summary>
     /// Danh sách WTS tasks lọc theo nhóm công nhân.
-    /// PRODUCTION → GC + KT_NC
-    /// FINISHING → TARO + BAVIA + RUA
-    /// QC → KCS
-    /// ADMIN/TECHNICAL → tất cả
+    /// Dùng _categoryMapping từ DB (WtsCategoryGroupMappings) thay hardcode CategoryCode.
+    /// Admin thấy tất cả.
     /// </summary>
     private IEnumerable<StandardWtsTask> WtsTasksForGroup
     {
         get
         {
-            var result = new List<StandardWtsTask>();
             var isAdmin = _groupCode == "ADMIN";
+            if (isAdmin) return _wtsTasks;
 
-            // Lọc WTS theo quyền được cấp — không hardcode GroupCode
-            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsGc, out var g) && g.CanView))
-                result.AddRange(_wtsTasks.Where(t => t.CategoryCode is "GIA CÔNG" or "KT_NC"));
+            var result = new List<StandardWtsTask>();
 
-            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView))
-                result.AddRange(_wtsTasks.Where(t => t.CategoryCode is "TARO" or "BAVIA" or "RUA"));
-
-            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsKcs, out var k) && k.CanView))
-                result.AddRange(_wtsTasks.Where(t => t.CategoryCode == "KCS"));
-
-            if (isAdmin || (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView))
-                result.AddRange(_wtsTasks.Where(t => t.CategoryCode == "DONG_GOI"));
+            // Lọc theo ProcessGroup mà user có quyền WTS vào
+            if (_perms.TryGetValue(SystemPermissions.WtsGc, out var g) && g.CanView)
+            {
+                var codes = _categoryMapping.GetValueOrDefault("GC") ?? new();
+                result.AddRange(_wtsTasks.Where(t => codes.Contains(t.CategoryCode)));
+            }
+            if (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView)
+            {
+                var codes = _categoryMapping.GetValueOrDefault("HTSP") ?? new();
+                result.AddRange(_wtsTasks.Where(t => codes.Contains(t.CategoryCode)));
+            }
+            if (_perms.TryGetValue(SystemPermissions.WtsKcs, out var k) && k.CanView)
+            {
+                var codes = _categoryMapping.GetValueOrDefault("KCS") ?? new();
+                result.AddRange(_wtsTasks.Where(t => codes.Contains(t.CategoryCode)));
+            }
+            if (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView)
+            {
+                var codes = _categoryMapping.GetValueOrDefault("PKG") ?? new();
+                result.AddRange(_wtsTasks.Where(t => codes.Contains(t.CategoryCode)));
+            }
 
             return result.DistinctBy(t => t.TaskId);
         }
@@ -2055,6 +2071,7 @@ else
         {
             _allRows  = await KhSvc.GetDetailRowsAsync();
             _wtsTasks = await WtsSvc.GetAllActiveAsync();
+            _categoryMapping = await MappingSvc.GetAllGroupedAsync();
 
             // Load danh sách máy đang hỏng
             await LoadBrokenMachinesAsync();
