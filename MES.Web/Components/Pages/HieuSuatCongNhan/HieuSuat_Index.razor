@@ -213,6 +213,7 @@ else
                         <thead class="table-light">
                             <tr>
                                 <th style="width:28px" class="text-center"></th>
+                                <th style="width:70px" class="text-center">Ca</th>
                                 <th style="width:75px" class="text-center">Bắt đầu</th>
                                 <th style="width:75px" class="text-center">Kết thúc</th>
                                 <th style="width:45px" class="text-center">Phút</th>
@@ -243,6 +244,9 @@ else
                                             <i class="bi @(row.ShowTimeDetail ? "bi-chevron-up" : "bi-chevron-down")"></i>
                                         </button>
                                     }
+                                </td>
+                                <td class="text-center" style="font-size:10px;color:#0d6efd">
+                                    @(row.CaName ?? "—")
                                 </td>
                                 <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
                                 <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
@@ -1658,6 +1662,7 @@ else
         </div>
         }
     }
+    } @* end @if _activeTab == "input" *@
     } @* end SelectedCa guard *@
     } @* end @if entry *@
 }
@@ -2316,6 +2321,10 @@ else
                 // (sẽ được fill sau khi query — xem LoadExtraItemsAsync)
                 ExtraItems     = new List<WtsExtraItem>(),
                 IsOvertime     = log.IsOvertime,
+                CaId           = log.CaId,
+                CaName         = log.CaId.HasValue
+                    ? _caList.FirstOrDefault(c => c.CaId == log.CaId)?.TenCa
+                    : null,
                 Saved          = true,
             });
         }
@@ -3746,6 +3755,8 @@ else
         public string? Notes   { get; set; }
         public string? PoFilter     { get; set; } // text user đang gõ để lọc datalist PO
         public bool    IsOvertime   { get; set; } = false;
+        public int?    CaId         { get; set; } // Ca làm việc khi lưu
+        public string? CaName       { get; set; } // Tên ca — cache để hiển thị
         // T.Phát sinh chi tiết — mỗi phần việc là 1 WtsExtraItem
         public List<WtsExtraItem> ExtraItems { get; set; } = new();
         // ExtraMinutes computed — dùng cho RecalcGroupTimeline & SaveRowAsync (không đổi)
