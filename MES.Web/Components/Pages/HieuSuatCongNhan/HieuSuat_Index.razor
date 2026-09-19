@@ -233,16 +233,12 @@ else
                         <tbody>
                         @foreach (var row in _rows.Where(r => r.Saved && !r.IsOvertime).OrderBy(r => r.StartTime))
                         {
-                            <tr class="@SavedRowCls(row)">
+                            <tr class="@SavedRowCls(row)" style="@(row.ExtraItems.Any() ? "cursor:pointer" : "")" @onclick="() => { if (row.ExtraItems.Any()) row.ShowTimeDetail = !row.ShowTimeDetail; }">
                                 <td class="text-center p-0" style="width:28px">
                                     @if (row.ExtraItems.Any())
                                     {
-                                        <button class="btn btn-link btn-sm py-0 px-1"
-                                                style="font-size:12px;color:#0d6efd"
-                                                @onclick="() => row.ShowTimeDetail = !row.ShowTimeDetail"
-                                                title="@(row.ShowTimeDetail ? "Ẩn phát sinh" : "Xem phát sinh")">
-                                            <i class="bi @(row.ShowTimeDetail ? "bi-chevron-up" : "bi-chevron-down")"></i>
-                                        </button>
+                                        <i class="bi @(row.ShowTimeDetail ? "bi-chevron-up" : "bi-chevron-down")"
+                                           style="font-size:12px;color:#0d6efd"></i>
                                     }
                                 </td>
                                 <td class="text-center" style="font-size:10px;color:#0d6efd">
@@ -264,8 +260,8 @@ else
                                 <td><small>@(row.PartNo ?? "—")</small></td>
                                 <td><small>@(row.NC ?? row.WtsCode ?? "—")</small></td>
                                 <td><small>@(row.MachineUsed ?? "—")</small></td>
-                                <td class="text-center text-success fw-semibold">@row.QtyOk</td>
-                                <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
+                                <td class="text-center text-success fw-semibold">@row.QtyOk.ToString("0.##")</td>
+                                <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString("0.##") : "—")</td>
                                 <td><small class="text-muted">@(row.NgReason ?? "")</small></td>
                                 <td style="background:#fff8e6">
                                     <small class="text-muted">
@@ -327,7 +323,7 @@ else
                                         <td class="text-center text-muted" style="padding:2px 4px">
                                             <span style="font-size:9px;color:#9a6700;background:#fff3cd;padding:1px 4px;border-radius:3px">PS</span>
                                         </td>
-                                        <td colspan="10" class="text-muted" style="padding:2px 8px">—</td>
+                                        <td colspan="11" class="text-muted" style="padding:2px 8px">—</td>
                                         <td style="background:#fffbf0;padding:2px 6px">
                                             <small>
                                                 @if (!string.IsNullOrEmpty(ei.WtsCode))
