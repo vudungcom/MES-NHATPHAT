@@ -28,6 +28,7 @@ public class AppDbContext : DbContext
     public DbSet<DepartmentChangeLog> DepartmentChangeLogs => Set<DepartmentChangeLog>();
     public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
 	public DbSet<PartMachiningTiming> PartMachiningTimings { get; set; }
+	public DbSet<PartMachiningTimingConfirm> PartMachiningTimingConfirms { get; set; }
 public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTimings { get; set; }
 
     // ==== Do Ga & Phu Kien module ====

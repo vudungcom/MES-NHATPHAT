@@ -327,12 +327,37 @@ else
                                         </div>
                                     </td>
 
-                                    @* Các cột thời gian — tự gõ *@
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
-                                    <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" /></td>
+                                    @* Các cột thời gian — icon ✓ per-ô, xanh khi confirmed *@
+                                    <td class="@SetupCellCss(edit)">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (edit.StepId > 0) { <i class="@SetupIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@SetupIconTitle(edit)" @onclick="() => ToggleSetupAsync(edit)"></i> }
+                                        </div>
+                                    </td>
+                                    <td class="@MachiningCellCss(edit)">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (edit.StepId > 0) { <i class="@MachiningIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@MachiningIconTitle(edit)" @onclick="() => ToggleMachiningAsync(edit)"></i> }
+                                        </div>
+                                    </td>
+                                    <td class="@InspectionCellCss(edit)">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (edit.StepId > 0) { <i class="@InspectionIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@InspectionIconTitle(edit)" @onclick="() => ToggleInspectionAsync(edit)"></i> }
+                                        </div>
+                                    </td>
+                                    <td class="@PreparationCellCss(edit)">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (edit.StepId > 0) { <i class="@PreparationIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@PreparationIconTitle(edit)" @onclick="() => TogglePreparationAsync(edit)"></i> }
+                                        </div>
+                                    </td>
+                                    <td class="@TrialRunCellCss(edit)">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            @if (edit.StepId > 0) { <i class="@TrialRunIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrialRunIconTitle(edit)" @onclick="() => ToggleTrialRunAsync(edit)"></i> }
+                                        </div>
+                                    </td>
                                     
                                     <td class="text-center text-nowrap">
                                         @if (edit.StepId > 0)
@@ -424,11 +449,36 @@ else
                                                 }
                                             </div>
                                         </td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" /></td>
+                                        <td class="@TrSetupCellCss(edit, tr)">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                @if (tr.TimingId > 0) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
+                                            </div>
+                                        </td>
+                                        <td class="@TrMachiningCellCss(edit, tr)">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                @if (tr.TimingId > 0) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
+                                            </div>
+                                        </td>
+                                        <td class="@TrInspectionCellCss(edit, tr)">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                @if (tr.TimingId > 0) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
+                                            </div>
+                                        </td>
+                                        <td class="@TrPreparationCellCss(edit, tr)">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                @if (tr.TimingId > 0) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
+                                            </div>
+                                        </td>
+                                        <td class="@TrTrialRunCellCss(edit, tr)">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                @if (tr.TimingId > 0) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
+                                            </div>
+                                        </td>
                                         <td class="text-center">
                                             @if (CanEditTimings(edit))
                                             {
@@ -1337,9 +1387,9 @@ else
                                     {
                                         <tr>
                                             <td>@log.ChangedAt.ToString("dd/MM/yyyy HH:mm")</td>
-                                            <td><code class="text-secondary">@log.FieldName</code></td>
-                                            <td class="text-danger">@log.OldValue</td>
-                                            <td class="text-success fw-bold">@log.NewValue</td>
+                                            <td><span class="badge bg-light text-dark border">@FriendlyFieldName(log.FieldName)</span></td>
+                                            <td class="text-danger">@FriendlyLogValue(log.FieldName, log.OldValue)</td>
+                                            <td class="text-success fw-bold">@FriendlyLogValue(log.FieldName, log.NewValue)</td>
                                             <td>
                                                 <i class="bi bi-person-circle text-muted"></i> 
                                                 @(log.ChangedByUser?.FullName ?? log.ChangedBy.ToString())
@@ -1491,6 +1541,9 @@ else
     private string? _originalGhiChuMa;
 
     private List<MachiningEdit> _machiningEdits = new();
+    // [(stepId, timingId?)][fieldName] -> (IsConfirmed, ByName, At)
+    // timingId=null = NC chính; timingId!=null = máy đồng dạng
+    private Dictionary<(long StepId, long? TimingId), Dictionary<string, (bool IsConfirmed, string? ByName, DateTime At)>> _timingConfirms = new();
     private List<TaroEdit> _taroEdits = new();
     private List<BaviaEdit> _baviaEdits = new();
     private List<WashingEdit> _washingEdits = new();
@@ -1839,6 +1892,8 @@ else
                 e.TimingRows = trows.Select(TimingRowEdit.FromEntity).ToList();
             return e;
         }).ToList();
+        // Load trạng thái xác nhận thời gian chuẩn per-field
+        _timingConfirms = await MachiningSvc.GetTimingConfirmsAsync(stepIds);
         _taroEdits = tSteps.Select(TaroEdit.FromEntity).ToList();
         _baviaEdits = bSteps.Select(BaviaEdit.FromEntity).ToList();
         _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
@@ -1883,6 +1938,150 @@ else
         _showHistoryModal = false;
         _historyLogs.Clear();
     }
+
+    // ── Hiển thị lịch sử thay đổi thân thiện ────────────────────────────────
+    private static string FriendlyFieldName(string? field) => field switch
+    {
+        "SetupTime"       => "T.Gá lắp",
+        "MachiningTime"   => "T.Gia công",
+        "InspectionTime"  => "T.Kiểm tra",
+        "PreparationTime" => "T.Chuẩn bị",
+        "TrialRunTime"    => "T.Chạy thử",
+        "NC"              => "Mã NC",
+        "MachineRegistered" => "Máy đăng ký",
+        "FixtureType"     => "Đồ gá",
+        "ToolType"        => "Loại dao",
+        "TimingMachine"   => "Máy bấm giờ",
+        "Drawing"         => "Bản vẽ",
+        "ParentNC"        => "NC gốc",
+        "TimingConfirmed" => "Xác nhận TG chuẩn",
+        "Created"         => "Tạo mới",
+        "Deleted"         => "Xóa dòng",
+        "Restored"        => "Khôi phục",
+        _                 => field ?? "—"
+    };
+
+    private static string? FriendlyLogValue(string? field, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        // Với các field Created/Deleted — value là JSON snapshot, rút gọn hiển thị
+        if (field is "Created" or "Deleted" or "Restored")
+        {
+            // Chỉ hiện thông báo ngắn gọn thay vì JSON thô
+            if (field == "Created")  return "(Tạo mới dòng NC — xem chi tiết trong bản ghi đầu tiên)";
+            if (field == "Deleted")  return "(Đã xóa dòng NC)";
+            if (field == "Restored") return "(Khôi phục dòng NC)";
+        }
+        // Với field TimingConfirmed — value là chuỗi log dạng 'Confirmed by userId=X at ...' 
+        if (field == "TimingConfirmed")
+        {
+            return value.StartsWith("Confirmed") ? "✓ Đã xác nhận" : value;
+        }
+        return value;
+    }
+
+    // ── Timing confirm helpers ─────────────────────────────────────────────────
+    // Core lookup — timingId=null cho NC chính, có giá trị cho máy đồng dạng
+    private bool IsFieldConfirmed(long stepId, long? timingId, string field)
+    {
+        var key = (stepId, timingId);
+        return _timingConfirms.TryGetValue(key, out var fd) && fd.ContainsKey(field) && fd[field].IsConfirmed;
+    }
+
+    private string FieldCellCss(long stepId, long? timingId, string field)
+        => IsFieldConfirmed(stepId, timingId, field) ? "table-success" : "";
+
+    private string FieldIconCss(long stepId, long? timingId, string field)
+        => IsFieldConfirmed(stepId, timingId, field)
+               ? "bi bi-check-circle-fill text-success"
+               : "bi bi-circle text-secondary opacity-50";
+
+    private string FieldIconTitle(long stepId, long? timingId, string field)
+    {
+        var key = (stepId, timingId);
+        if (!_timingConfirms.TryGetValue(key, out var fd2) || !fd2.TryGetValue(field, out var info) || !info.IsConfirmed)
+            return "Chưa xác nhận — click để xác nhận chuẩn";
+        return $"Đã xác nhận bởi {info.ByName ?? "?"} lúc {info.At:dd/MM/yyyy HH:mm} — click để bỏ";
+    }
+
+    private async Task DoToggleAsync(long stepId, long? timingId, string field)
+    {
+        if (stepId <= 0 || !_canEditB) return;
+        try
+        {
+            var newState = await MachiningSvc.ToggleTimingConfirmAsync(stepId, timingId, field, _currentUserId);
+            var key = (stepId, timingId);
+            if (!_timingConfirms.ContainsKey(key))
+                _timingConfirms[key] = new();
+            if (newState)
+            {
+                var usr = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+                _timingConfirms[key][field] = (true, usr?.FullName, DateTime.Now);
+            }
+            else
+            {
+                _timingConfirms[key].Remove(field);
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"Lỗi: {ex.Message}");
+        }
+    }
+
+    // NC chính wrappers (timingId = null) — markup gọi, không có string literal
+    private string SetupCellCss(MachiningEdit e)        => FieldCellCss(e.StepId, null, "SetupTime");
+    private string SetupIconCss(MachiningEdit e)         => FieldIconCss(e.StepId, null, "SetupTime");
+    private string SetupIconTitle(MachiningEdit e)       => FieldIconTitle(e.StepId, null, "SetupTime");
+    private async Task ToggleSetupAsync(MachiningEdit e)        => await DoToggleAsync(e.StepId, null, "SetupTime");
+
+    private string MachiningCellCss(MachiningEdit e)    => FieldCellCss(e.StepId, null, "MachiningTime");
+    private string MachiningIconCss(MachiningEdit e)     => FieldIconCss(e.StepId, null, "MachiningTime");
+    private string MachiningIconTitle(MachiningEdit e)   => FieldIconTitle(e.StepId, null, "MachiningTime");
+    private async Task ToggleMachiningAsync(MachiningEdit e)    => await DoToggleAsync(e.StepId, null, "MachiningTime");
+
+    private string InspectionCellCss(MachiningEdit e)   => FieldCellCss(e.StepId, null, "InspectionTime");
+    private string InspectionIconCss(MachiningEdit e)    => FieldIconCss(e.StepId, null, "InspectionTime");
+    private string InspectionIconTitle(MachiningEdit e)  => FieldIconTitle(e.StepId, null, "InspectionTime");
+    private async Task ToggleInspectionAsync(MachiningEdit e)   => await DoToggleAsync(e.StepId, null, "InspectionTime");
+
+    private string PreparationCellCss(MachiningEdit e)  => FieldCellCss(e.StepId, null, "PreparationTime");
+    private string PreparationIconCss(MachiningEdit e)   => FieldIconCss(e.StepId, null, "PreparationTime");
+    private string PreparationIconTitle(MachiningEdit e) => FieldIconTitle(e.StepId, null, "PreparationTime");
+    private async Task TogglePreparationAsync(MachiningEdit e)  => await DoToggleAsync(e.StepId, null, "PreparationTime");
+
+    private string TrialRunCellCss(MachiningEdit e)     => FieldCellCss(e.StepId, null, "TrialRunTime");
+    private string TrialRunIconCss(MachiningEdit e)      => FieldIconCss(e.StepId, null, "TrialRunTime");
+    private string TrialRunIconTitle(MachiningEdit e)    => FieldIconTitle(e.StepId, null, "TrialRunTime");
+    private async Task ToggleTrialRunAsync(MachiningEdit e)     => await DoToggleAsync(e.StepId, null, "TrialRunTime");
+
+    // Máy đồng dạng wrappers (timingId = tr.TimingId) — cũng không có string literal
+    private string TrSetupCellCss(MachiningEdit e, TimingRowEdit tr)        => FieldCellCss(e.StepId, tr.TimingId, "SetupTime");
+    private string TrSetupIconCss(MachiningEdit e, TimingRowEdit tr)         => FieldIconCss(e.StepId, tr.TimingId, "SetupTime");
+    private string TrSetupIconTitle(MachiningEdit e, TimingRowEdit tr)       => FieldIconTitle(e.StepId, tr.TimingId, "SetupTime");
+    private async Task TrToggleSetupAsync(MachiningEdit e, TimingRowEdit tr)        => await DoToggleAsync(e.StepId, tr.TimingId, "SetupTime");
+
+    private string TrMachiningCellCss(MachiningEdit e, TimingRowEdit tr)    => FieldCellCss(e.StepId, tr.TimingId, "MachiningTime");
+    private string TrMachiningIconCss(MachiningEdit e, TimingRowEdit tr)     => FieldIconCss(e.StepId, tr.TimingId, "MachiningTime");
+    private string TrMachiningIconTitle(MachiningEdit e, TimingRowEdit tr)   => FieldIconTitle(e.StepId, tr.TimingId, "MachiningTime");
+    private async Task TrToggleMachiningAsync(MachiningEdit e, TimingRowEdit tr)    => await DoToggleAsync(e.StepId, tr.TimingId, "MachiningTime");
+
+    private string TrInspectionCellCss(MachiningEdit e, TimingRowEdit tr)   => FieldCellCss(e.StepId, tr.TimingId, "InspectionTime");
+    private string TrInspectionIconCss(MachiningEdit e, TimingRowEdit tr)    => FieldIconCss(e.StepId, tr.TimingId, "InspectionTime");
+    private string TrInspectionIconTitle(MachiningEdit e, TimingRowEdit tr)  => FieldIconTitle(e.StepId, tr.TimingId, "InspectionTime");
+    private async Task TrToggleInspectionAsync(MachiningEdit e, TimingRowEdit tr)   => await DoToggleAsync(e.StepId, tr.TimingId, "InspectionTime");
+
+    private string TrPreparationCellCss(MachiningEdit e, TimingRowEdit tr)  => FieldCellCss(e.StepId, tr.TimingId, "PreparationTime");
+    private string TrPreparationIconCss(MachiningEdit e, TimingRowEdit tr)   => FieldIconCss(e.StepId, tr.TimingId, "PreparationTime");
+    private string TrPreparationIconTitle(MachiningEdit e, TimingRowEdit tr) => FieldIconTitle(e.StepId, tr.TimingId, "PreparationTime");
+    private async Task TrTogglePreparationAsync(MachiningEdit e, TimingRowEdit tr)  => await DoToggleAsync(e.StepId, tr.TimingId, "PreparationTime");
+
+    private string TrTrialRunCellCss(MachiningEdit e, TimingRowEdit tr)     => FieldCellCss(e.StepId, tr.TimingId, "TrialRunTime");
+    private string TrTrialRunIconCss(MachiningEdit e, TimingRowEdit tr)      => FieldIconCss(e.StepId, tr.TimingId, "TrialRunTime");
+    private string TrTrialRunIconTitle(MachiningEdit e, TimingRowEdit tr)    => FieldIconTitle(e.StepId, tr.TimingId, "TrialRunTime");
+    private async Task TrToggleTrialRunAsync(MachiningEdit e, TimingRowEdit tr)     => await DoToggleAsync(e.StepId, tr.TimingId, "TrialRunTime");
+
 
     private void AddMachiningRow()
     {

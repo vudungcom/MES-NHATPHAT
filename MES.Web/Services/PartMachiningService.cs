@@ -185,6 +185,93 @@ public class PartMachiningService
         await _db.SaveChangesAsync();
     }
 
+    // FieldName constants cho timing confirm
+    public static class TimingField
+    {
+        public const string Setup       = "SetupTime";
+        public const string Machining   = "MachiningTime";
+        public const string Inspection  = "InspectionTime";
+        public const string Preparation = "PreparationTime";
+        public const string TrialRun    = "TrialRunTime";
+        public static readonly string[] All = { Setup, Machining, Inspection, Preparation, TrialRun };
+    }
+
+    /// <summary>
+    /// Lấy trạng thái confirm mới nhất của từng field cho một danh sách stepIds.
+    /// Trả về Dictionary[stepId -> Dictionary[fieldName -> (isConfirmed, byName, at)]].
+    /// </summary>
+    /// <summary>
+    /// Lấy trạng thái confirm mới nhất per (StepId, TimingId?, FieldName).
+    /// Key = (StepId, TimingId) — TimingId=null cho NC chính, có giá trị cho máy đồng dạng.
+    /// </summary>
+    public async Task<Dictionary<(long StepId, long? TimingId), Dictionary<string, (bool IsConfirmed, string? ByName, DateTime At)>>>
+        GetTimingConfirmsAsync(IEnumerable<long> stepIds)
+    {
+        var ids = stepIds.ToList();
+        if (!ids.Any())
+            return new();
+
+        var rows = await _db.PartMachiningTimingConfirms
+            .Where(x => ids.Contains(x.StepId))
+            .Include(x => x.ConfirmedByUser)
+            .AsNoTracking()
+            .ToListAsync();
+
+        // Group theo (StepId, TimingId), lấy bản ghi mới nhất per FieldName
+        var result = new Dictionary<(long, long?), Dictionary<string, (bool, string?, DateTime)>>();
+        foreach (var g in rows.GroupBy(x => (x.StepId, x.TimingId)))
+        {
+            var byField = new Dictionary<string, (bool, string?, DateTime)>();
+            foreach (var fg in g.GroupBy(x => x.FieldName))
+            {
+                var latest = fg.OrderByDescending(x => x.ConfirmedAt).First();
+                if (latest.IsConfirmed)
+                    byField[fg.Key] = (true, latest.ConfirmedByUser?.FullName, latest.ConfirmedAt);
+            }
+            result[g.Key] = byField;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Toggle xác nhận 1 field. Append-only — không UPDATE, không DELETE.
+    /// timingId = null → NC chính; timingId != null → máy đồng dạng.
+    /// Trả về trạng thái IsConfirmed mới sau toggle.
+    /// </summary>
+    public async Task<bool> ToggleTimingConfirmAsync(long stepId, long? timingId, string fieldName, int userId)
+    {
+        if (!TimingField.All.Contains(fieldName))
+            throw new ArgumentException($"FieldName không hợp lệ: {fieldName}");
+
+        await EnsurePermissionAsync(userId);
+
+        var step = await _db.PartMachiningSteps.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.StepId == stepId);
+        if (step == null || !step.IsActive)
+            throw new InvalidOperationException("Không tìm thấy NC hoặc NC đã bị xóa.");
+
+        // Lấy trạng thái hiện tại — filter theo cả timingId
+        var latest = await _db.PartMachiningTimingConfirms
+            .Where(x => x.StepId == stepId && x.TimingId == timingId && x.FieldName == fieldName)
+            .OrderByDescending(x => x.ConfirmedAt)
+            .FirstOrDefaultAsync();
+
+        var newState = !(latest?.IsConfirmed ?? false);
+
+        _db.PartMachiningTimingConfirms.Add(new PartMachiningTimingConfirm
+        {
+            StepId      = stepId,
+            TimingId    = timingId,
+            PartId      = step.PartId,
+            FieldName   = fieldName,
+            IsConfirmed = newState,
+            ConfirmedBy = userId,
+            ConfirmedAt = DateTime.Now
+        });
+        await _db.SaveChangesAsync();
+        return newState;
+    }
+
     private static void ValidateReason(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)

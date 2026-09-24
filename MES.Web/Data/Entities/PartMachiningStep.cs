@@ -94,6 +94,17 @@ public class PartMachiningStep
 
     public DateTime? UpdatedAt { get; set; }
 
+    // ── Xác nhận thời gian chuẩn ──────────────────────────────────────────────
+    /// <summary>Đã xác nhận thời gian chuẩn (kỹ thuật bấm sau khi chạy máy thực tế).</summary>
+    public bool IsTimingConfirmed { get; set; } = false;
+
+    public int? TimingConfirmedBy { get; set; }
+
+    [ForeignKey(nameof(TimingConfirmedBy))]
+    public User? TimingConfirmedByUser { get; set; }
+
+    public DateTime? TimingConfirmedAt { get; set; }
+
     /// <summary>Soft delete: false = đã xóa (chỉ Leader được set về false, có thể khôi phục).</summary>
     public bool IsActive { get; set; } = true;
 
