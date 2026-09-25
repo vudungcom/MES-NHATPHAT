@@ -2774,6 +2774,10 @@ else
         // Load WTS logs mới nhất cho bảng snapshot
         await ReloadWtsLogsAsync(det.PurchaseOrder, det.KhPlanDetailId);
 
+        // [FIX] Load NC flow để IsNcLockedByWorkflow đọc được WtsDone NC trước — thiếu dòng này
+        // khiến _ncFlowCache rỗng → GetFlowItem = null → WtsDone = 0 → NC sau bị lock oan
+        await ReloadFlowAsync(det.KhPlanDetailId);
+
         // Cập nhật AvailableNCs cho nhóm từ snapshot
         if (_snapshotCache.TryGetValue(det.PurchaseOrder, out var snaps))
         {
@@ -2801,7 +2805,7 @@ else
     {
         sub.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
-        ValidateSubQty(sub);
+        ValidateSubQty(sub, grp); // [WORKFLOW] pass grp de check realtime
         RecalcGroupTimeline(grp);
         StateHasChanged();
     }
@@ -2809,7 +2813,7 @@ else
     {
         sub.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
-        ValidateSubQty(sub);
+        ValidateSubQty(sub, grp); // [WORKFLOW] pass grp de check realtime
         RecalcGroupTimeline(grp);
         StateHasChanged();
     }
@@ -2923,13 +2927,45 @@ else
         StateHasChanged();
     }
 
-    private void ValidateSubQty(WtsRow sub)
+    private void ValidateSubQty(WtsRow sub, WtsGroup? grp = null)
     {
         sub.ErrorMsg = null;
         if (!sub.KhPlanDetailId.HasValue) return;
         var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
         if (poQty > 0 && sub.QtyDone > poQty)
+        {
             sub.ErrorMsg = $"SL nhập ({sub.QtyDone}) vượt SL PO ({poQty}). Kiểm tra lại.";
+            return;
+        }
+        // [WORKFLOW] Realtime: ceiling = min(prevDone, SL_PO) - da lam tai NC nay
+        if (grp != null && IsGcGroup && !string.IsNullOrEmpty(grp.NC))
+        {
+            var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId);
+            if (wfRow?.ApplyWorkflow == true)
+            {
+                var ncIdx       = grp.AvailableNCs.FindIndex(n => n.NC == grp.NC);
+                var thisFlow    = GetFlowItem(sub.KhPlanDetailId, grp.NC);
+                var alreadyDone = thisFlow?.WtsDone ?? 0m;
+                var totalQty    = grp.SubRows.Sum(s => s.QtyOk);
+                decimal ceiling;
+                string ceilLabel;
+                if (ncIdx > 0)
+                {
+                    var prevNc   = grp.AvailableNCs[ncIdx - 1];
+                    var prevFlow = GetFlowItem(sub.KhPlanDetailId, prevNc.NC);
+                    var prevDone = prevFlow?.WtsDone ?? 0m;
+                    ceiling   = Math.Min(prevDone, poQty) - alreadyDone;
+                    ceilLabel = $"NC trước {prevNc.NC}={prevDone:0.##}, PO={poQty:0.##}, đã làm={alreadyDone:0.##}";
+                }
+                else
+                {
+                    ceiling   = poQty - alreadyDone;
+                    ceilLabel = $"SL PO={poQty:0.##}, đã làm={alreadyDone:0.##}";
+                }
+                if (ceiling >= 0 && totalQty > ceiling)
+                    sub.ErrorMsg = $"⚠️ Workflow: SL nhập {grp.NC} ({totalQty:0.##}) vượt mức cho phép ({ceiling:0.##}). ({ceilLabel})";
+            }
+        }
     }
 
     // OnSubExtraMinInput — replaced by OnExtraItemMinutes (ExtraMinutes now computed)
@@ -3190,22 +3226,35 @@ else
                     var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId);
                     if (wfRow?.ApplyWorkflow == true)
                     {
-                        var ncList  = grp.AvailableNCs;
-                        var ncIdx   = ncList.FindIndex(n => n.NC == grp.NC);
+                        var ncList      = grp.AvailableNCs;
+                        var ncIdx       = ncList.FindIndex(n => n.NC == grp.NC);
+                        var thisFlowS   = GetFlowItem(firstSub.KhPlanDetailId, grp.NC);
+                        var alreadyDoneS = thisFlowS?.WtsDone ?? 0m;
+                        var totalNewQty = grp.SubRows.Sum(s => s.QtyOk);
+                        var poQtySave   = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId)?.Quantity ?? 0m;
                         if (ncIdx > 0)
                         {
                             var prevNc   = ncList[ncIdx - 1];
                             var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevNc.NC);
                             var prevDone = prevFlow?.WtsDone ?? 0m;
-                            var totalNewQty = grp.SubRows.Sum(s => s.QtyOk);
                             if (prevDone <= 0)
                             {
                                 grp.ErrorMsg = $"Workflow: NC trước ({prevNc.NC}) chưa có SL — chưa được làm {grp.NC}.";
                                 return;
                             }
-                            if (totalNewQty > prevDone)
+                            var ceilingSave = Math.Min(prevDone, poQtySave) - alreadyDoneS;
+                            if (totalNewQty > ceilingSave)
                             {
-                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt SL NC trước {prevNc.NC} ({prevDone:0.##}).";
+                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt mức cho phép ({ceilingSave:0.##} = min(NC trước={prevDone:0.##}, PO={poQtySave:0.##}) − đã làm={alreadyDoneS:0.##}).";
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            var ceilingSave = poQtySave - alreadyDoneS;
+                            if (totalNewQty > ceilingSave)
+                            {
+                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt SL còn được phép ({ceilingSave:0.##} = PO {poQtySave:0.##} − đã làm {alreadyDoneS:0.##}).";
                                 return;
                             }
                         }
