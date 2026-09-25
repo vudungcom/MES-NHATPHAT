@@ -576,7 +576,12 @@ else
                                                     <option value="">--</option>
                                                     @foreach (var nc in grp.AvailableNCs)
                                                     {
-                                                        <option value="@nc.NC" selected="@(grp.NC == nc.NC)">@nc.NC</option>
+                                                        @* [WORKFLOW] Lock NC *@
+                                                        <option value="@nc.NC"
+                                                                selected="@(grp.NC == nc.NC)"
+                                                                disabled="@IsNcLockedByWorkflow(grp, nc.NC)">
+                                                            @GetNcLabel(grp, nc.NC)
+                                                        </option>
                                                     }
                                                 </select>
                                             }
@@ -1922,7 +1927,8 @@ else
     /// </summary>
     private IEnumerable<KhPlanDetailRow> PriorityRows => _allRows
         .Where(r => _showWithoutSnapshot || _hasSnapshotForGroup.Contains(r.KhPlanDetailId))
-        .Where(r => _showWithoutHandover  || _hasReceivedForGroup.Contains(r.KhPlanDetailId))
+        // [WORKFLOW] Phiếu ApplyWorkflow=false: bỏ qua handover gate
+        .Where(r => !r.ApplyWorkflow || _showWithoutHandover || _hasReceivedForGroup.Contains(r.KhPlanDetailId))
         .OrderBy(r => r.Priority == "Gấp" ? 0 : 1)
         .ThenBy(r => r.STD)
         .ThenBy(r => r.PurchaseOrder);
@@ -3175,6 +3181,38 @@ else
                 // if (!grp.IsOvertime && SelectedCa != null) { ... }
             }
 
+            // [WORKFLOW] Validate SL NC theo thứ tự nếu ApplyWorkflow = true
+            if (IsGcGroup && !string.IsNullOrEmpty(grp.NC))
+            {
+                var firstSub = grp.SubRows.FirstOrDefault(s => s.KhPlanDetailId.HasValue);
+                if (firstSub != null)
+                {
+                    var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId);
+                    if (wfRow?.ApplyWorkflow == true)
+                    {
+                        var ncList  = grp.AvailableNCs;
+                        var ncIdx   = ncList.FindIndex(n => n.NC == grp.NC);
+                        if (ncIdx > 0)
+                        {
+                            var prevNc   = ncList[ncIdx - 1];
+                            var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevNc.NC);
+                            var prevDone = prevFlow?.WtsDone ?? 0m;
+                            var totalNewQty = grp.SubRows.Sum(s => s.QtyOk);
+                            if (prevDone <= 0)
+                            {
+                                grp.ErrorMsg = $"Workflow: NC trước ({prevNc.NC}) chưa có SL — chưa được làm {grp.NC}.";
+                                return;
+                            }
+                            if (totalNewQty > prevDone)
+                            {
+                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt SL NC trước {prevNc.NC} ({prevDone:0.##}).";
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Lưu từng sub-row
             foreach (var sub in grp.SubRows)
             {
@@ -3277,21 +3315,54 @@ else
         row.WtsName = matched?.TaskName;
     }
 
-    // [WORKFLOW Phase 3] Tính tổng SL đã làm WTS cho non-GC theo nhóm + WtsCode hiện tại
-    private decimal GetNonGcWtsDone(WtsRow row)
+    // [WORKFLOW Phase3] Tổng QtyOk toàn nhóm non-GC đã ghi WTS cho 1 KhPlanDetail
+    // Filter theo đúng processGroups của nhóm công nhân hiện tại
+    private decimal GetNonGcGroupWtsDone(int khPlanDetailId, string? po)
     {
-        if (!row.KhPlanDetailId.HasValue) return 0m;
-        // Key trong _wtsLogsCache là PO string
-        var po = row.PO;
         if (string.IsNullOrEmpty(po)) return 0m;
         if (!_wtsLogsCache.TryGetValue(po, out var logs)) return 0m;
-        // Lọc theo processGroup + WtsCode/NC hiện tại của row
-        var wtsCode = row.WtsCode ?? row.NC;
+        // Xác định processGroups thuộc nhóm hiện tại
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView)
+        { groups.Add("TARO"); groups.Add("BAVIA"); groups.Add("WASHING"); }
+        else if (_perms.TryGetValue(SystemPermissions.WtsKcs, out var k) && k.CanView)
+        { groups.Add("KCS"); }
+        else if (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView)
+        { groups.Add("PKG"); }
+        if (groups.Count == 0) return 0m;
         return logs
-            .Where(l => !l.IsVoided
-                     && l.ProcessGroup != "GC"
-                     && (l.WtsCode == wtsCode || l.NC == wtsCode))
-            .Sum(l => l.QtyOk ?? l.QtyDone);
+            .Where(l => !l.IsVoided && groups.Contains(l.ProcessGroup))
+            .Sum(l => l.QtyOk ?? 0m);
+    }
+
+    // [WORKFLOW Phase2] Helper: NC có bị lock không
+    private bool IsNcLockedByWorkflow(WtsGroup grp, string nc)
+    {
+        var firstSub = grp.SubRows.FirstOrDefault(s => s.KhPlanDetailId.HasValue);
+        if (firstSub == null) return false;
+        var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId);
+        if (wfRow?.ApplyWorkflow != true) return false;
+        var ncIdx = grp.AvailableNCs.FindIndex(n => n.NC == nc);
+        if (ncIdx <= 0) return false;
+        var prevNc   = grp.AvailableNCs[ncIdx - 1];
+        var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevNc.NC);
+        return (prevFlow?.WtsDone ?? 0m) <= 0;
+    }
+
+    // [WORKFLOW Phase2] Helper: label NC dropdown
+    private string GetNcLabel(WtsGroup grp, string nc)
+    {
+        var firstSub = grp.SubRows.FirstOrDefault(s => s.KhPlanDetailId.HasValue);
+        if (firstSub == null) return nc;
+        var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId);
+        if (wfRow?.ApplyWorkflow != true) return nc;
+        var ncIdx = grp.AvailableNCs.FindIndex(n => n.NC == nc);
+        if (ncIdx <= 0) return nc;
+        var prevNc   = grp.AvailableNCs[ncIdx - 1];
+        var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevNc.NC);
+        var prevDone = prevFlow?.WtsDone ?? 0m;
+        if (prevDone <= 0) return $"🔒 {nc} — chờ NC trước có SL";
+        return $"{nc} (tối đa {prevDone:0.##})";
     }
 
     private string GetWtsItemTitle(WtsRow row)
@@ -3442,15 +3513,18 @@ else
             if (detForSave != null && row.QtyDone > detForSave.Quantity)
             { row.ErrorMsg = $"Tổng OK+NG ({row.QtyDone}) vượt KH ({detForSave.Quantity} {detForSave.Unit}). Không được phép."; return; }
 
-            // [WORKFLOW Phase 3] Non-GC: tổng WTS + lần này ≤ ReceivedOk
+            // [WORKFLOW Phase 3] Non-GC: tổng WTS toàn nhóm + lần này ≤ ReceivedOk
             if (!IsGcGroup && detForSave?.ApplyWorkflow == true && row.KhPlanDetailId.HasValue)
             {
-                var receivedOk = _receivedOkCache.TryGetValue(row.KhPlanDetailId.Value, out var rv) ? rv : 0m;
-                var wtsDoneNonGc = GetNonGcWtsDone(row);
-                if (receivedOk > 0 && wtsDoneNonGc + row.QtyOk > receivedOk)
+                var receivedOk = _receivedOkCache.TryGetValue(row.KhPlanDetailId.Value, out var _rv) ? _rv : 0m;
+                if (receivedOk > 0)
                 {
-                    row.ErrorMsg = $"Workflow: Tổng đã làm ({wtsDoneNonGc:0.##}) + lần này ({row.QtyOk:0.##}) = {wtsDoneNonGc + row.QtyOk:0.##} vượt SL đã nhận ({receivedOk:0.##}). Chưa có đủ hàng.";
-                    return;
+                    var wtsDoneGroup = GetNonGcGroupWtsDone(row.KhPlanDetailId.Value, row.PO);
+                    if (wtsDoneGroup + row.QtyOk > receivedOk)
+                    {
+                        row.ErrorMsg = $"Workflow: Tổng đã làm ({wtsDoneGroup:0.##}) + lần này ({row.QtyOk:0.##}) = {wtsDoneGroup + row.QtyOk:0.##} — vượt SL nhận ({receivedOk:0.##}). Chờ thêm hàng từ nhóm trước.";
+                        return;
+                    }
                 }
             }
 
