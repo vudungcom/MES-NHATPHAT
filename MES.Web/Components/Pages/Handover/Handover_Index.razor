@@ -1370,7 +1370,10 @@ else
         if (string.IsNullOrEmpty(fromGroup))     { _modalError = "Chọn nhóm giao."; return; }
         if (string.IsNullOrEmpty(_issueToGroup)) { _modalError = "Chọn nhóm nhận."; return; }
         if (_issueQty <= 0)                      { _modalError = "Số lượng phải lớn hơn 0."; return; }
-        if (_issueQty > IssueMaxQty)             { _modalError = $"Vượt quá còn lại ({IssueMaxQty:0.##})."; return; }
+        // [WORKFLOW] Giao theo NC cụ thể → validate bằng _ncMaxQty (WtsDone NC đó)
+        // Giao tổng (không chọn NC) → validate bằng IssueMaxQty (từ GetRemainingAsync)
+        var effectiveMax = _useNcMode ? _ncMaxQty : IssueMaxQty;
+        if (_issueQty > effectiveMax)             { _modalError = $"Vượt quá còn lại ({effectiveMax:0.##})."; return; }
 
         if (_useNcMode && string.IsNullOrEmpty(_issueFromNC))
         {

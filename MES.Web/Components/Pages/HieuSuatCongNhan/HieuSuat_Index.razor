@@ -6603,6 +6603,10 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
         { row.ErrorMsg = "Chọn NC (nếu có PO) hoặc Mã WTS khác"; return; }
 
+        // Validate SL > 0 — áp dụng cho TẤT CẢ nhóm (GC, HTSP, KCS, PKG)
+        if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue)
+        { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
+
         // Nếu đang sửa dòng cũ → void record cũ trước
 
         if (row.IsEditing)
