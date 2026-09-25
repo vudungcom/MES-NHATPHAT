@@ -73,6 +73,28 @@
                 <label class="form-label small">Ghi chú chung</label>
                 <input type="text" class="form-control form-control-sm" @bind="_plan.Notes" placeholder="Ghi chú cho toàn phiếu KH" />
             </div>
+            @* ── Workflow control ── *@
+            <div class="col-12">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="applyWorkflowCreate"
+                           checked="@_plan.ApplyWorkflow"
+                           @onchange="e => _plan.ApplyWorkflow = (bool)(e.Value ?? true)" />
+                    <label class="form-check-label fw-semibold" for="applyWorkflowCreate">
+                        <i class="bi bi-diagram-3 me-1"></i> Áp dụng Workflow
+                    </label>
+                    <span class="ms-2 small @(_plan.ApplyWorkflow ? "text-success" : "text-warning")">
+                        @if (_plan.ApplyWorkflow)
+                        {
+                            <span><i class="bi bi-shield-check me-1"></i>Kiểm soát thứ tự NC &amp; số lượng giữa các nhóm</span>
+                        }
+                        else
+                        {
+                            <span><i class="bi bi-unlock me-1"></i>Thả tự do — không kiểm soát thứ tự sản xuất</span>
+                        }
+                    </span>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -426,8 +448,6 @@
             await KhSvc.CreateAsync(_plan, _currentUserId);
 
             // Snapshot quy trình B→E ngay tại thời điểm tạo phiếu
-            // CopyRouteSnapshotAsync đã có sẵn trong KhPlanService, gọi sau CreateAsync
-            // vì lúc này _plan.Details đã có KhPlanDetailId từ DB
             foreach (var detail in _plan.Details)
             {
                 if (_partLookup.TryGetValue(detail.PartNo, out var pmSnap))
@@ -437,7 +457,6 @@
             }
 
             // Tự động set IsPlanConfirmed = true cho các Part đã có trong PartMaster
-            // Lý do: user nhóm KH không có quyền vào Part Master để confirm thủ công
             var partNoList = _details.Select(d => d.PartNo).Distinct().ToList();
             var partsToConfirm = await Db.PartMasters
                 .Where(p => partNoList.Contains(p.PartNo) && p.IsActive && !p.IsPlanConfirmed)

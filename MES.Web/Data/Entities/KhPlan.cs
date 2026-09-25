@@ -35,6 +35,14 @@ public class KhPlan
     public int? ConfirmedBy { get; set; }
     public DateTime? ConfirmedAt { get; set; }
 
+    // ==== Workflow control ====
+    /// <summary>
+    /// Áp dụng workflow kiểm soát thứ tự sản xuất.
+    /// true (mặc định): NC/nhóm sau phải chờ NC/nhóm trước có SL.
+    /// false: thả tự do — dùng cho PO đặc biệt không cần kiểm soát.
+    /// </summary>
+    public bool ApplyWorkflow { get; set; } = true;
+
     public List<KhPlanDetail> Details { get; set; } = new();
 }
 

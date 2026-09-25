@@ -124,6 +124,28 @@ else
                     <label class="form-label small">Ghi chú chung</label>
                     <input type="text" class="form-control form-control-sm" @bind="_planNotes" />
                 </div>
+                @* ── Workflow control ── *@
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch"
+                               id="applyWorkflowEdit"
+                               checked="@_applyWorkflow"
+                               @onchange="e => _applyWorkflow = (bool)(e.Value ?? true)" />
+                        <label class="form-check-label fw-semibold" for="applyWorkflowEdit">
+                            <i class="bi bi-diagram-3 me-1"></i> Áp dụng Workflow
+                        </label>
+                        <span class="ms-2 small @(_applyWorkflow ? "text-success" : "text-warning")">
+                            @if (_applyWorkflow)
+                            {
+                                <span><i class="bi bi-shield-check me-1"></i>Kiểm soát thứ tự NC &amp; số lượng giữa các nhóm</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-unlock me-1"></i>Thả tự do — không kiểm soát thứ tự sản xuất</span>
+                            }
+                        </span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -452,7 +474,9 @@ else
     private DetailForm? _detailForm;
     private string? _planNotes;
     private DateTime? _receivedDate;
-    private int? _partId; // PartId trong PartMaster (null nếu Part mới)
+    // [WORKFLOW] Local state cho toggle — load từ _plan.ApplyWorkflow khi OnInitializedAsync
+    private bool _applyWorkflow = true;
+    private int? _partId;
     private RouteSnapshotData? _snapshot;
 
     private Dictionary<string, PartMaster> _partLookup = new();
@@ -485,6 +509,8 @@ else
         _plan         = plan;
         _planNotes    = _plan.Notes;
         _receivedDate = _plan.ReceivedDate;
+        // [WORKFLOW] Load giá trị hiện tại từ DB
+        _applyWorkflow = _plan.ApplyWorkflow;
 
         // Load PartMaster + attrs
         var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
@@ -517,7 +543,6 @@ else
             Status            = detail.Status
         };
 
-        // Load snapshot quy trình
         _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
     }
 
@@ -551,7 +576,6 @@ else
             await KhSvc.RefreshRouteSnapshotAsync(
                 DetailId, _partId.Value, _currentUserId, _refreshReason.Trim());
 
-            // Reload snapshot để hiển thị mới
             _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
             _refreshSuccess = true;
             _showRefreshConfirm = false;
@@ -617,16 +641,18 @@ else
             if (_plan != null)
             {
                 var planEntity = await Db.KhPlans.FirstAsync(x => x.KhPlanId == _plan.KhPlanId);
-                if (planEntity.Notes != _planNotes)         planEntity.Notes         = _planNotes;
-                if (planEntity.ReceivedDate != _receivedDate) planEntity.ReceivedDate = _receivedDate;
+                if (planEntity.Notes != _planNotes)             planEntity.Notes         = _planNotes;
+                if (planEntity.ReceivedDate != _receivedDate)   planEntity.ReceivedDate  = _receivedDate;
+                // [WORKFLOW] Lưu thay đổi ApplyWorkflow vào DB
+                if (planEntity.ApplyWorkflow != _applyWorkflow) planEntity.ApplyWorkflow = _applyWorkflow;
             }
 
             var d = _detailForm!;
             if (_partLookup.TryGetValue(d.PartNo, out var pm))
             {
-                await MaybeAddNewValue(pm.PartId, AttrMaterial,       d.Material);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialConfig,  d.MaterialConfig);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialNote,    d.MaterialNotes);
+                await MaybeAddNewValue(pm.PartId, AttrMaterial,      d.Material);
+                await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
+                await MaybeAddNewValue(pm.PartId, AttrMaterialNote,   d.MaterialNotes);
             }
 
             var newValues = new KhPlanDetail

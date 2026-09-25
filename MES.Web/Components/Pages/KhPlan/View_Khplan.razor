@@ -1,860 +1,869 @@
-@page "/kh-plan/{Id:int}/detail/{DetailId:int}"
-@attribute [Authorize]
-@rendermode InteractiveServer
-@using MES.Web.Data.Entities
-@using MES.Web.Services
-@inject KhPlanService KhSvc
-@inject KhoVatLieuService KhoSvc
-@inject NavigationManager Nav
-
-<PageTitle>Xem phiếu KH - MES</PageTitle>
-
-@if (_plan == null || _detail == null)
-{
-    <p><em>Đang tải...</em></p>
-}
-else
-{
-    <div class="d-flex justify-content-between align-items-start mb-3">
-        <div>
-            <h1 class="mb-1">Phiếu KH <code>@_plan.PlanNo</code></h1>
-            <p class="text-muted mb-0 small">
-                <i class="bi bi-calendar"></i> Ngày lập: @_plan.PlanDate.ToString("dd/MM/yyyy") ·
-                @if (_plan.ReceivedDate.HasValue)
-                {
-                    <span><i class="bi bi-inbox"></i> Ngày nhận: @_plan.ReceivedDate.Value.ToString("dd/MM/yyyy") ·</span>
-                }
-                <i class="bi bi-building"></i> @_plan.Customer?.CustomerName ·
-                <span class="badge bg-@GetStatusColor(_detail.Status)">@_detail.Status</span> ·
-                <span class="text-muted">Tạo bởi @_plan.CreatedByUser?.FullName lúc @_plan.CreatedAt.ToString("dd/MM/yyyy HH:mm")</span>
-            </p>
-        </div>
-        <div class="d-flex gap-2">
-            <a href="/kh-plan" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left"></i> Danh sách
-            </a>
-            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detail.KhPlanDetailId}/edit")" class="btn btn-primary">
-                <i class="bi bi-pencil-square"></i> Sửa phiếu
-            </a>
-        </div>
-    </div>
-
-    <div class="alert alert-secondary py-2 small">
-        <i class="bi bi-eye"></i> Chế độ <strong>chỉ xem</strong>.
-        Bấm "Sửa phiếu" để chỉnh sửa (bắt buộc nhập lý do).
-        @if (!string.IsNullOrEmpty(_detail.OldPurchaseOrder))
-        {
-            <span>· Dòng này được <strong>tách từ PO cũ</strong> <code>@_detail.OldPurchaseOrder</code>.</span>
-        }
-    </div>
-
-    @* ── Thông tin phiếu ── *@
-    <div class="card mb-3">
-        <div class="card-body">
-            <h6 class="text-secondary"><i class="bi bi-file-earmark-text"></i> Thông tin phiếu</h6>
-            <div class="row g-3">
-                <div class="col-md-2">
-                    <label class="form-label small text-muted">Số phiếu</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_plan.PlanNo" readonly />
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small text-muted">Ngày lập PO khách</label>
-                    <input class="form-control form-control-sm bg-light" value="@_plan.PlanDate.ToString("dd/MM/yyyy")" readonly />
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small text-muted">Ngày nhận PO</label>
-                    <input class="form-control form-control-sm bg-light"
-                           value="@(_plan.ReceivedDate?.ToString("dd/MM/yyyy") ?? "(chưa điền)")" readonly />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small text-muted">Khách hàng</label>
-                    <input class="form-control form-control-sm bg-light" value="@_plan.Customer?.CustomerName" readonly />
-                </div>
-                @if (!string.IsNullOrEmpty(_plan.Notes))
-                {
-                    <div class="col-12">
-                        <label class="form-label small text-muted">Ghi chú chung</label>
-                        <input class="form-control form-control-sm bg-light" value="@_plan.Notes" readonly />
-                    </div>
-                }
-            </div>
-        </div>
-    </div>
-
-    @* ── Chi tiết Part ── *@
-    <div class="card mb-3">
-        <div class="card-body">
-            <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
-                <div>
-                    <strong>Chi tiết Part</strong>
-                    <span class="badge bg-@GetStatusColor(_detail.Status) ms-2">@_detail.Status</span>
-                    @if (!string.IsNullOrEmpty(_detail.OldPurchaseOrder))
-                    {
-                        <span class="badge bg-info ms-1" title="Tách từ PO cũ">
-                            <i class="bi bi-diagram-3"></i> Old PO: <code>@_detail.OldPurchaseOrder</code>
-                        </span>
-                    }
-                </div>
-            </div>
-
-            <p class="small text-secondary fw-500 mb-2">A. Thông tin Part từ PO khách</p>
-            <div class="row g-2 mb-2">
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">PO</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.PurchaseOrder" readonly />
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Part No</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.PartNo" readonly />
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small text-muted">SL</label>
-                    <input class="form-control form-control-sm text-end bg-light" value="@_detail.Quantity.ToString("0.####")" readonly />
-                </div>
-                <div class="col-md-1">
-                    <label class="form-label small text-muted">Đvị</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.Unit" readonly />
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">STD (deadline)</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.STD.ToString("dd/MM/yyyy")" readonly />
-                </div>
-            </div>
-            <div class="row g-2 mb-2">
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Loại hàng</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.Type" readonly />
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Ưu tiên</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.Priority" readonly />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small text-muted">Ghi chú Hàng</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.PartNotes" readonly />
-                </div>
-            </div>
-
-            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật</p>
-            <div class="row g-2 mb-2">
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Mã vật liệu</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.Material" readonly />
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Cấu hình phôi</label>
-                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.MaterialConfig" readonly />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small text-muted">Ghi chú Phôi</label>
-                    <input class="form-control form-control-sm bg-light" value="@_detail.MaterialNotes" readonly />
-                </div>
-                <div class="col-md-12">
-                    <label class="form-label small text-muted">Ghi chú mạ</label>
-                    <textarea class="form-control form-control-sm bg-light" rows="2"
-                              readonly
-                              placeholder="— Chưa có —">@(_detail.GhiChuMa ?? "")</textarea>
-                </div>
-            </div>
-
-            <p class="small text-secondary fw-500 mb-2 mt-3">
-                C. Thông tin nội bộ
-                <span class="text-muted fw-normal ms-2" style="font-size:0.78rem;">
-                    <i class="bi bi-box-seam me-1"></i>Lấy từ module Quản lý Kho — chỉ xem.
-                    @if (_khoItem == null)
-                    {
-                        <a href="/kho" class="text-warning ms-1"><i class="bi bi-exclamation-triangle"></i> Chưa có dữ liệu kho — vào Quản lý Kho để nhập</a>
-                    }
-                </span>
-            </p>
-            <div class="row g-2">
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Order VL <small class="text-muted">(Cột K - Kho)</small></label>
-                    <input class="form-control form-control-sm font-monospace bg-light"
-                           value="@(_khoItem?.OrderVatLieu ?? "—")" readonly />
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-muted">Vị trí kho <small class="text-muted">(Cột L - Kho)</small></label>
-                    <input class="form-control form-control-sm font-monospace bg-light"
-                           value="@(_khoItem?.ViTriDePhoi ?? "—")" readonly />
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small text-muted">Tình trạng phôi <small class="text-muted">(Cột M - Kho)</small></label>
-                    <input class="form-control form-control-sm bg-light"
-                           value="@(_khoItem?.TinhTrangPhoi ?? "—")" readonly />
-                </div>
-            </div>
-        </div>
-    </div>
-
-    @* ── Quy trình sản xuất (Snapshot tại thời điểm tạo phiếu) ── *@
-    @if (_snapshot != null)
-    {
-        <div class="card mb-3">
-            <div class="card-header py-2 d-flex justify-content-between align-items-center">
-                <span class="fw-semibold">
-                    <i class="bi bi-diagram-3 me-1"></i> Quy trình sản xuất
-                    <span class="badge bg-secondary ms-1" title="Snapshot tại thời điểm tạo phiếu">Snapshot</span>
-                </span>
-                @if (_snapshot.HasAny)
-                {
-                    <small class="text-muted">
-                        Được copy từ Part Master lúc tạo phiếu — không tự thay đổi theo Part Master.
-                    </small>
-                }
-            </div>
-            <div class="card-body p-2">
-                @if (!_snapshot.HasAny)
-                {
-                    <div class="alert alert-warning py-2 small mb-0">
-                        <i class="bi bi-exclamation-triangle"></i>
-                        Chưa có snapshot quy trình. Part này chưa có quy trình trong Part Master tại thời điểm tạo phiếu,
-                        hoặc phiếu được tạo trước khi tính năng này có mặt.
-                    </div>
-                }
-                else
-                {
-                    @* B. Machining *@
-                    @if (_snapshot.Machining.Count > 0)
-                    {
-                        <div class="mb-3">
-                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#1a73e8;color:white;">
-                                <i class="bi bi-gear-wide-connected me-1"></i> B. Quy trình gia công (@_snapshot.Machining.Count bước)
-                            </div>
-                            <div class="table-responsive">
-                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
-                                    <thead class="table-light">
-                                        @* Hàng 1: nhóm cột *@
-                                        <tr>
-                                            <th rowspan="2" style="width:30px;" class="text-center align-middle">#</th>
-                                            <th rowspan="2" style="width:55px;" class="align-middle">NC</th>
-                                            <th rowspan="2" class="align-middle">Máy đăng ký</th>
-                                            <th rowspan="2" class="align-middle">Máy đồng dạng</th>
-                                            <th rowspan="2" class="align-middle">Đồ gá</th>
-                                            <th rowspan="2" class="align-middle">Loại dao</th>
-                                            <th rowspan="2" class="align-middle text-center" style="width:100px;">Worker</th>
-                                            <th rowspan="2" class="align-middle text-center" style="width:60px;">SL chạy</th>
-                                            <th rowspan="2" class="align-middle text-center" style="width:110px;">T.Bắt đầu</th>
-                                            <th rowspan="2" class="align-middle text-center" style="width:110px;">T.Hoàn thành</th>
-                                            <th colspan="2" class="text-center">T.Gá lắp</th>
-                                            <th colspan="2" class="text-center">T.Gia công</th>
-                                            <th colspan="2" class="text-center">T.Kiểm tra</th>
-                                            <th colspan="2" class="text-center">T.Chuẩn bị</th>
-                                            <th colspan="2" class="text-center">T.Chạy thử</th>
-                                            <th rowspan="2" class="text-center align-middle" style="width:80px;">Trạng thái</th>
-                                        </tr>
-                                        @* Hàng 2: Chuẩn / Thực tế *@
-                                        <tr>
-                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
-                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
-                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
-                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
-                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var s in _snapshot.Machining)
-                                        {
-                                            var gcLogs    = GetLogsFor("GC", s.NC);
-                                            var qtyDone   = GetQtyDone("GC", s.NC);
-                                            var badgeColor = qtyDone == 0 ? "danger" : (qtyDone >= _detail!.Quantity ? "success" : "warning");
-
-                                            @* Tính rowspan: 1 (dòng NC) + logs máy đăng ký + placeholder nếu rỗng
-                                               + mỗi timing row: 1 + logs timing đó + placeholder nếu rỗng *@
-                                            var regLogs   = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered ||
-                                                                               string.IsNullOrEmpty(l.MachineUsed) ||
-                                                                               !s.TimingRows.Any(t => t.SoMay == l.MachineUsed)).ToList();
-                                            var regRowCount  = regLogs.Count == 0 ? 1 : regLogs.Count;
-                                            var timingTotal  = s.TimingRows.Sum(t => {
-                                                var tLogs = gcLogs.Where(l => l.MachineUsed == t.SoMay).ToList();
-                                                return 1 + (tLogs.Count == 0 ? 1 : tLogs.Count);
-                                            });
-                                            var totalRowspan = 1 + regRowCount + timingTotal;
-
-                                            @* Dòng NC chính (chuẩn) *@
-                                            <tr class="@(s.IsBackup ? "table-warning" : "")">
-                                                <td class="text-center">@s.StepOrder</td>
-                                                <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
-                                                <td>@(s.MachineRegistered ?? "—")</td>
-                                                <td class="text-muted small">—</td>
-                                                <td>@(s.FixtureType ?? "—")</td>
-                                                <td>@(s.ToolType ?? "—")</td>
-                                                <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
-                                                <td class="text-end text-muted">@FmtTime(s.SetupTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-end text-muted">@FmtTime(s.MachiningTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-end text-muted">@FmtTime(s.InspectionTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-end text-muted">@FmtTime(s.PreparationTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-end text-muted">@FmtTime(s.TrialRunTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-center" rowspan="@totalRowspan">
-                                                    <span class="badge bg-@badgeColor">@qtyDone.ToString("0.##") / @_detail!.Quantity.ToString("0.####")</span>
-                                                </td>
-                                            </tr>
-
-                                            @* WTS logs của máy đăng ký (hoặc log không khớp timing nào) *@
-                                            @if (regLogs.Count == 0)
-                                            {
-                                                <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
-                                                    <td></td><td></td><td></td><td></td><td></td><td></td>
-                                                    <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
-                                                </tr>
-                                            }
-                                            @foreach (var log in regLogs)
-                                            {
-                                                <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
-                                                    <td></td><td></td><td></td><td></td><td></td><td></td>
-                                                    <td class="fw-semibold text-primary small text-center">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                    <td class="text-center fw-bold small" style="color:#0d6efd;">@log.QtyDone.ToString("0.##")</td>
-                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.SetupTime_Actual)</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.MachiningTime_Actual)</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.InspectionTime_Actual)</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.PreparationTime_Actual)</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.TrialRunTime_Actual)</td>
-                                                </tr>
-                                            }
-
-                                            @* Timing sub-rows — mỗi máy đồng dạng 1 dòng chuẩn + WTS logs của máy đó *@
-                                            @foreach (var tr in s.TimingRows)
-                                            {
-                                                var trLogs = gcLogs.Where(l => l.MachineUsed == tr.SoMay).ToList();
-                                                @* Dòng chuẩn timing *@
-                                                <tr style="background:#f0f7ff;">
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td class="text-muted small">—</td>
-                                                    <td class="small fw-semibold" style="color:#185fa5;">@tr.SoMay</td>
-                                                    <td class="text-muted small">@(tr.FixtureType ?? "—")</td>
-                                                    <td class="text-muted small">@(tr.ToolType ?? "—")</td>
-                                                    <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
-                                                    <td class="text-end text-muted">@FmtTime(tr.SetupTime)</td>
-                                                    <td class="text-end"></td>
-                                                    <td class="text-end text-muted">@FmtTime(tr.MachiningTime)</td>
-                                                    <td class="text-end"></td>
-                                                    <td class="text-end text-muted">@FmtTime(tr.InspectionTime)</td>
-                                                    <td class="text-end"></td>
-                                                    <td class="text-end text-muted">@FmtTime(tr.PreparationTime)</td>
-                                                    <td class="text-end"></td>
-                                                    <td class="text-end text-muted">@FmtTime(tr.TrialRunTime)</td>
-                                                    <td class="text-end"></td>
-                                                </tr>
-                                                @* WTS logs của timing row này *@
-                                                @if (trLogs.Count == 0)
-                                                {
-                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
-                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
-                                                        <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
-                                                    </tr>
-                                                }
-                                                @foreach (var log in trLogs)
-                                                {
-                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
-                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
-                                                        <td class="fw-semibold small text-center" style="color:#185fa5;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                        <td class="text-center fw-bold small" style="color:#185fa5;">@log.QtyDone.ToString("0.##")</td>
-                                                        <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                        <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                        <td class="text-end text-muted">—</td>
-                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.SetupTime_Actual)</td>
-                                                        <td class="text-end text-muted">—</td>
-                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.MachiningTime_Actual)</td>
-                                                        <td class="text-end text-muted">—</td>
-                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.InspectionTime_Actual)</td>
-                                                        <td class="text-end text-muted">—</td>
-                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.PreparationTime_Actual)</td>
-                                                        <td class="text-end text-muted">—</td>
-                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.TrialRunTime_Actual)</td>
-                                                    </tr>
-                                                }
-                                            }
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    }
-
-                    @* Máy loại trừ (snapshot global tại thời điểm tạo phiếu) *@
-                    @if (_snapshot.MachineExclude.Count > 0)
-                    {
-                        <div class="mb-3">
-                            <div class="d-flex align-items-center gap-2 mb-1 px-2 py-1 rounded"
-                                 style="background:#fff3cd;border:1px solid #ffc107;">
-                                <i class="bi bi-slash-circle text-warning"></i>
-                                <span class="small fw-semibold text-warning-emphasis">
-                                    Máy loại trừ — không tính TG và đẩy xuống nguyên công dưới
-                                    <span class="text-muted fw-normal">(Cài đặt chung tại thời điểm tạo phiếu)</span>
-                                </span>
-                                <div class="d-flex flex-wrap gap-1 ms-2">
-                                    @foreach (var m in _snapshot.MachineExclude)
-                                    {
-                                        <span class="badge rounded-pill"
-                                              style="background:transparent;border:1px solid #dc3545;color:#dc3545;font-size:0.75rem;">
-                                            <i class="bi bi-slash-circle me-1"></i>@m.SoMay
-                                        </span>
-                                    }
-                                </div>
-                            </div>
-                        </div>
-                    }
-
-                    @* C. Taro / Bavia / Rửa *@
-                    @if (_snapshot.Taro.Count > 0 || _snapshot.Bavia.Count > 0 || _snapshot.Washing.Count > 0)
-                    {
-                        <div class="row g-2 mb-3">
-                            @if (_snapshot.Taro.Count > 0)
-                            {
-                                <div class="col-lg-4">
-                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
-                                        C.1 Taro (@_snapshot.Taro.Count)
-                                    </div>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th rowspan="2" style="width:70px;" class="align-middle">NC</th>
-                                                    <th rowspan="2" style="width:70px;" class="align-middle">Mã CV</th>
-                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
-                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
-                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
-                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
-                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
-                                                </tr>
-                                                <tr>
-                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
-                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var s in _snapshot.Taro)
-                                                {
-                                                    @* Taro: log lưu WtsCode = WtsTaskCode (snapshot mới) hoặc NC (snapshot cũ trước migration) *@
-                                                    var taroKey = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
-                                                    var taroLogs = GetLogsForWts("TARO", taroKey);
-                                                    var taroQty = GetQtyDone("TARO", null, taroKey);
-                                                    var taroBadge = taroQty == 0 ? "danger" : (taroQty >= _detail!.Quantity ? "success" : "warning");
-                                                    <tr>
-                                                        <td><code>@s.NC</code></td>
-                                                        <td class="small"><code class="text-success">@(s.WtsTaskCode ?? "—")</code></td>
-                                                        <td class="small">@(s.StepName ?? "—")</td>
-                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
-                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
-                                                        <td></td>
-                                                        <td class="text-center" rowspan="@(taroLogs.Count + 1)">
-                                                            <span class="badge bg-@taroBadge" style="font-size:0.62rem;">@taroQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
-                                                        </td>
-                                                    </tr>
-                                                    @if (taroLogs.Count == 0)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
-                                                        </tr>
-                                                    }
-                                                    @foreach (var log in taroLogs)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td></td><td></td><td></td>
-                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-end text-muted small">—</td>
-                                                            <td class="text-end small" style="color:#188038;">—</td>
-                                                        </tr>
-                                                    }
-                                                }
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            }
-                            @if (_snapshot.Bavia.Count > 0)
-                            {
-                                <div class="col-lg-4">
-                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
-                                        C.2 Bavia (@_snapshot.Bavia.Count)
-                                    </div>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle">Mã CV</th>
-                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
-                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
-                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
-                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
-                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
-                                                </tr>
-                                                <tr>
-                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
-                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var s in _snapshot.Bavia)
-                                                {
-                                                    var baviaLogs = GetLogsForWts("BAVIA", s.NC);
-                                                    var baviaQty = GetQtyDone("BAVIA", null, s.NC);
-                                                    var baviaBadge = baviaQty == 0 ? "danger" : (baviaQty >= _detail!.Quantity ? "success" : "warning");
-                                                    <tr>
-                                                        <td><code>@s.NC</code></td>
-                                                        <td class="small">@(s.StepName ?? "—")</td>
-                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
-                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
-                                                        <td></td>
-                                                        <td class="text-center" rowspan="@(baviaLogs.Count + 1)">
-                                                            <span class="badge bg-@baviaBadge" style="font-size:0.62rem;">@baviaQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
-                                                        </td>
-                                                    </tr>
-                                                    @if (baviaLogs.Count == 0)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
-                                                        </tr>
-                                                    }
-                                                    @foreach (var log in baviaLogs)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td></td><td></td>
-                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-end text-muted small">—</td>
-                                                            <td class="text-end small" style="color:#188038;">—</td>
-                                                        </tr>
-                                                    }
-                                                }
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            }
-                            @if (_snapshot.Washing.Count > 0)
-                            {
-                                <div class="col-lg-4">
-                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
-                                        C.3 Rửa (@_snapshot.Washing.Count)
-                                    </div>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle">Mã CV</th>
-                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
-                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
-                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
-                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
-                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
-                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
-                                                </tr>
-                                                <tr>
-                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
-                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                @foreach (var s in _snapshot.Washing)
-                                                {
-                                                    var washLogs = GetLogsForWts("WASHING", s.NC);
-                                                    var washQty = GetQtyDone("WASHING", null, s.NC);
-                                                    var washBadge = washQty == 0 ? "danger" : (washQty >= _detail!.Quantity ? "success" : "warning");
-                                                    <tr>
-                                                        <td><code>@s.NC</code></td>
-                                                        <td class="small">@(s.StepName ?? "—")</td>
-                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
-                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
-                                                        <td></td>
-                                                        <td class="text-center" rowspan="@(washLogs.Count + 1)">
-                                                            <span class="badge bg-@washBadge" style="font-size:0.62rem;">@washQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
-                                                        </td>
-                                                    </tr>
-                                                    @if (washLogs.Count == 0)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
-                                                        </tr>
-                                                    }
-                                                    @foreach (var log in washLogs)
-                                                    {
-                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
-                                                            <td></td><td></td>
-                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                            <td class="text-end text-muted small">—</td>
-                                                            <td class="text-end small" style="color:#188038;">—</td>
-                                                        </tr>
-                                                    }
-                                                }
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            }
-                        </div>
-                    }
-
-                    @* D. Inspection *@
-                    @if (_snapshot.Inspection.Count > 0)
-                    {
-                        <div class="mb-3">
-                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#e37400;color:white;">
-                                D. Kiểm tra chất lượng (KCS) (@_snapshot.Inspection.Count bước)
-                            </div>
-                            <div class="table-responsive">
-                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th rowspan="2" style="width:100px;" class="align-middle">Mã CV *</th>
-                                            <th rowspan="2" class="align-middle">Nội dung công việc (WTS Chuẩn)</th>
-                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Worker</th>
-                                            <th rowspan="2" style="width:60px;" class="align-middle text-center">SL chạy</th>
-                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Bắt đầu</th>
-                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Hoàn thành</th>
-                                            <th colspan="2" class="text-center">Thời gian</th>
-                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Trạng thái</th>
-                                        </tr>
-                                        <tr>
-                                            <th class="text-end text-muted fw-normal" style="width:55px;font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:55px;font-size:0.7rem;color:#e37400;">Thực tế</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var s in _snapshot.Inspection)
-                                        {
-                                            var kcsLogs = GetLogsForWts("KCS", s.NC);
-                                            var kcsQty = GetQtyDone("KCS", null, s.NC);
-                                            var kcsBadge = kcsQty == 0 ? "danger" : (kcsQty >= _detail!.Quantity ? "success" : "warning");
-                                            <tr>
-                                                <td class="fw-bold text-warning"><code>@s.NC</code></td>
-                                                <td>@(s.StepName ?? "—")</td>
-                                                <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
-                                                <td class="text-end text-muted">@FmtTime(s.StandardTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-center" rowspan="@(kcsLogs.Count + 1)">
-                                                    <span class="badge bg-@kcsBadge" style="font-size:0.65rem;">@kcsQty.ToString("0.##")/@_detail!.Quantity.ToString("0.####")</span>
-                                                </td>
-                                            </tr>
-                                            @if (kcsLogs.Count == 0)
-                                            {
-                                                <tr class="bg-light" style="border-left:3px solid #e37400;">
-                                                    <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
-                                                </tr>
-                                            }
-                                            @foreach (var log in kcsLogs)
-                                            {
-                                                <tr class="bg-light" style="border-left:3px solid #e37400;">
-                                                    <td></td><td></td>
-                                                    <td class="fw-semibold small text-center" style="color:#e37400;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                    <td class="text-center fw-bold small" style="color:#e37400;">@log.QtyDone.ToString("0.##")</td>
-                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#e37400;">—</td>
-                                                </tr>
-                                            }
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    }
-
-                    @* E. Packaging *@
-                    @if (_snapshot.Packaging.Count > 0)
-                    {
-                        <div class="mb-2">
-                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#6c757d;color:white;">
-                                E. Đóng gói (@_snapshot.Packaging.Count bước)
-                            </div>
-                            <div class="table-responsive">
-                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th rowspan="2" style="width:100px;" class="align-middle">Mã CV *</th>
-                                            <th rowspan="2" class="align-middle">Nội dung đóng gói (WTS Chuẩn)</th>
-                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Worker</th>
-                                            <th rowspan="2" style="width:60px;" class="align-middle text-center">SL chạy</th>
-                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Bắt đầu</th>
-                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Hoàn thành</th>
-                                            <th colspan="2" class="text-center">Thời gian</th>
-                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Trạng thái</th>
-                                        </tr>
-                                        <tr>
-                                            <th class="text-end text-muted fw-normal" style="width:55px;font-size:0.7rem;">Chuẩn</th>
-                                            <th class="text-end fw-normal" style="width:55px;font-size:0.7rem;color:#6c757d;">Thực tế</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var s in _snapshot.Packaging)
-                                        {
-                                            var pkgLogs = GetLogsForWts("PKG", s.NC);
-                                            var pkgQty = GetQtyDone("PKG", null, s.NC);
-                                            var pkgBadge = pkgQty == 0 ? "danger" : (pkgQty >= _detail!.Quantity ? "success" : "warning");
-                                            <tr>
-                                                <td class="fw-bold" style="color:#6c757d;"><code>@s.NC</code></td>
-                                                <td>@(s.StepName ?? "—")</td>
-                                                <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
-                                                <td class="text-end text-muted">@FmtTime(s.StandardTime)</td>
-                                                <td class="text-end"></td>
-                                                <td class="text-center" rowspan="@(pkgLogs.Count + 1)">
-                                                    <span class="badge bg-@pkgBadge" style="font-size:0.65rem;">@pkgQty.ToString("0.##")/@_detail!.Quantity.ToString("0.####")</span>
-                                                </td>
-                                            </tr>
-                                            @if (pkgLogs.Count == 0)
-                                            {
-                                                <tr class="bg-light" style="border-left:3px solid #6c757d;">
-                                                    <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
-                                                </tr>
-                                            }
-                                            @foreach (var log in pkgLogs)
-                                            {
-                                                <tr class="bg-light" style="border-left:3px solid #6c757d;">
-                                                    <td></td><td></td>
-                                                    <td class="fw-semibold small text-center" style="color:#6c757d;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                                                    <td class="text-center fw-bold small" style="color:#6c757d;">@log.QtyDone.ToString("0.##")</td>
-                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                                                    <td class="text-end text-muted">—</td>
-                                                    <td class="text-end" style="color:#6c757d;">—</td>
-                                                </tr>
-                                            }
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    }
-                }
-            </div>
-        </div>
-    }
-}
-
-@code {
-    [Parameter] public int Id { get; set; }        // KhPlanId
-    [Parameter] public int DetailId { get; set; }  // KhPlanDetailId
-
-    private KhPlan? _plan;
-    private KhPlanDetail? _detail;
-    private KhoVatLieuViewItem? _khoItem;
-    private RouteSnapshotData? _snapshot;
-    private List<WtsProductionLog> _wtsLogs = new();
-    private Dictionary<string, decimal> _wtsQtySummary = new();
-
-    protected override async Task OnInitializedAsync()
-    {
-        var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
-
-        if (plan != null && detail != null && plan.KhPlanId == Id)
-        {
-            _plan   = plan;
-            _detail = detail;
-
-            _khoItem = await KhoSvc.GetByDetailIdAsync(DetailId);
-
-            // Load snapshot quy trình B→E
-            _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
-
-            // Load WTS production logs
-            _wtsLogs = await KhSvc.GetWtsLogsAsync(DetailId);
-            _wtsQtySummary = await KhSvc.GetWtsQtySummaryAsync(DetailId);
-        }
-    }
-
-    // Lấy logs cho 1 NC cụ thể
-    private List<WtsProductionLog> GetLogsFor(string processGroup, string? nc)
-        => _wtsLogs.Where(x => x.ProcessGroup == processGroup
-                             && x.NC == nc
-                             && !x.IsVoided).ToList();
-
-    // Lấy logs cho 1 WtsCode (công đoạn C/D/E)
-    private List<WtsProductionLog> GetLogsForWts(string processGroup, string? wtsCode)
-        => _wtsLogs.Where(x => x.ProcessGroup == processGroup
-                             && x.WtsCode == wtsCode
-                             && !x.IsVoided).ToList();
-
-    // Tổng SL đã hoàn thành theo key
-    private decimal GetQtyDone(string processGroup, string? nc, string? wtsCode = null)
-    {
-        var key = nc != null ? $"{processGroup}|{nc}" : $"{processGroup}|{wtsCode}";
-        return _wtsQtySummary.TryGetValue(key, out var v) ? v : 0;
-    }
-
-    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.##") : "—";
-
-    /// <summary>Sub-table cho C/D/E — header 2 tầng, Thời gian Chuẩn/Thực tế</summary>
-    private RenderFragment WtsSimpleSubTable(List<WtsProductionLog> logs) => __builder =>
-    {
-        <table class="table table-sm mb-0" style="font-size:0.72rem; border-left: 3px solid #198754;">
-            <thead class="text-muted">
-                <tr>
-                    <th rowspan="2" style="width:120px;" class="align-middle">Worker</th>
-                    <th rowspan="2" style="width:70px;" class="text-center align-middle">SL chạy</th>
-                    <th rowspan="2" style="width:110px;" class="align-middle">Máy dùng</th>
-                    <th rowspan="2" style="width:110px;" class="text-center align-middle">T.Bắt đầu</th>
-                    <th rowspan="2" style="width:110px;" class="text-center align-middle">T.Hoàn thành</th>
-                    <th colspan="2" class="text-center">Thời gian</th>
-                    <th rowspan="2" class="align-middle">Ghi chú</th>
-                </tr>
-                <tr>
-                    <th class="text-end fw-normal" style="width:60px; font-size:0.7rem;">Chuẩn</th>
-                    <th class="text-end fw-normal" style="width:60px; font-size:0.7rem; color:#198754;">Thực tế</th>
-                </tr>
-            </thead>
-            <tbody>
-                @if (logs.Count == 0)
-                {
-                    <tr><td colspan="8" class="text-center text-muted py-1 fst-italic">Chưa có dữ liệu sản xuất</td></tr>
-                }
-                @foreach (var log in logs)
-                {
-                    <tr>
-                        <td class="fw-semibold text-success">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
-                        <td class="text-center fw-bold" style="color:#198754;">@log.QtyDone.ToString("0.##")</td>
-                        <td>@(log.MachineUsed ?? "—")</td>
-                        <td class="text-center">@log.StartTime.ToString("dd/MM HH:mm")</td>
-                        <td class="text-center">@log.EndTime.ToString("dd/MM HH:mm")</td>
-                        <td class="text-end text-muted">—</td>
-                        <td class="text-end" style="color:#198754;">—</td>
-                        <td class="text-muted">@log.Notes</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    };
-
-    private string GetStatusColor(string status) => status switch
-    {
-        "WaitingSupplierOrder" => "info",
-        "Ordered"              => "primary",
-        "PartialReceived"      => "primary",
-        "FullyReceived"        => "success",
-        "InProduction"         => "success",
-        "Completed"            => "success",
-        "Cancelled"            => "secondary",
-        _                      => "secondary"
-    };
-}
+@page "/kh-plan/{Id:int}/detail/{DetailId:int}"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject KhPlanService KhSvc
+@inject KhoVatLieuService KhoSvc
+@inject NavigationManager Nav
+
+<PageTitle>Xem phiếu KH - MES</PageTitle>
+
+@if (_plan == null || _detail == null)
+{
+    <p><em>Đang tải...</em></p>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h1 class="mb-1">Phiếu KH <code>@_plan.PlanNo</code></h1>
+            <p class="text-muted mb-0 small">
+                <i class="bi bi-calendar"></i> Ngày lập: @_plan.PlanDate.ToString("dd/MM/yyyy") ·
+                @if (_plan.ReceivedDate.HasValue)
+                {
+                    <span><i class="bi bi-inbox"></i> Ngày nhận: @_plan.ReceivedDate.Value.ToString("dd/MM/yyyy") ·</span>
+                }
+                <i class="bi bi-building"></i> @_plan.Customer?.CustomerName ·
+                <span class="badge bg-@GetStatusColor(_detail.Status)">@_detail.Status</span> ·
+                @* [WORKFLOW] Badge hiển thị trạng thái áp dụng workflow *@
+                @if (_plan.ApplyWorkflow)
+                {
+                    <span class="badge bg-success bg-opacity-75 me-1"><i class="bi bi-diagram-3 me-1"></i>Workflow ON</span>
+                }
+                else
+                {
+                    <span class="badge bg-warning text-dark me-1"><i class="bi bi-unlock me-1"></i>Workflow OFF</span>
+                }
+                <span class="text-muted">Tạo bởi @_plan.CreatedByUser?.FullName lúc @_plan.CreatedAt.ToString("dd/MM/yyyy HH:mm")</span>
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="/kh-plan" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> Danh sách
+            </a>
+            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detail.KhPlanDetailId}/edit")" class="btn btn-primary">
+                <i class="bi bi-pencil-square"></i> Sửa phiếu
+            </a>
+        </div>
+    </div>
+
+    <div class="alert alert-secondary py-2 small">
+        <i class="bi bi-eye"></i> Chế độ <strong>chỉ xem</strong>.
+        Bấm "Sửa phiếu" để chỉnh sửa (bắt buộc nhập lý do).
+        @if (!string.IsNullOrEmpty(_detail.OldPurchaseOrder))
+        {
+            <span>· Dòng này được <strong>tách từ PO cũ</strong> <code>@_detail.OldPurchaseOrder</code>.</span>
+        }
+    </div>
+
+    @* ── Thông tin phiếu ── *@
+    <div class="card mb-3">
+        <div class="card-body">
+            <h6 class="text-secondary"><i class="bi bi-file-earmark-text"></i> Thông tin phiếu</h6>
+            <div class="row g-3">
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Số phiếu</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_plan.PlanNo" readonly />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Ngày lập PO khách</label>
+                    <input class="form-control form-control-sm bg-light" value="@_plan.PlanDate.ToString("dd/MM/yyyy")" readonly />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Ngày nhận PO</label>
+                    <input class="form-control form-control-sm bg-light"
+                           value="@(_plan.ReceivedDate?.ToString("dd/MM/yyyy") ?? "(chưa điền)")" readonly />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Khách hàng</label>
+                    <input class="form-control form-control-sm bg-light" value="@_plan.Customer?.CustomerName" readonly />
+                </div>
+                @if (!string.IsNullOrEmpty(_plan.Notes))
+                {
+                    <div class="col-12">
+                        <label class="form-label small text-muted">Ghi chú chung</label>
+                        <input class="form-control form-control-sm bg-light" value="@_plan.Notes" readonly />
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @* ── Chi tiết Part ── *@
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
+                <div>
+                    <strong>Chi tiết Part</strong>
+                    <span class="badge bg-@GetStatusColor(_detail.Status) ms-2">@_detail.Status</span>
+                    @if (!string.IsNullOrEmpty(_detail.OldPurchaseOrder))
+                    {
+                        <span class="badge bg-info ms-1" title="Tách từ PO cũ">
+                            <i class="bi bi-diagram-3"></i> Old PO: <code>@_detail.OldPurchaseOrder</code>
+                        </span>
+                    }
+                </div>
+            </div>
+
+            <p class="small text-secondary fw-500 mb-2">A. Thông tin Part từ PO khách</p>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">PO</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.PurchaseOrder" readonly />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Part No</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.PartNo" readonly />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">SL</label>
+                    <input class="form-control form-control-sm text-end bg-light" value="@_detail.Quantity.ToString("0.####")" readonly />
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label small text-muted">Đvị</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.Unit" readonly />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">STD (deadline)</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.STD.ToString("dd/MM/yyyy")" readonly />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Loại hàng</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.Type" readonly />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Ưu tiên</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.Priority" readonly />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Ghi chú Hàng</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.PartNotes" readonly />
+                </div>
+            </div>
+
+            <p class="small text-secondary fw-500 mb-2 mt-3">B. Thông tin kỹ thuật</p>
+            <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Mã vật liệu</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.Material" readonly />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Cấu hình phôi</label>
+                    <input class="form-control form-control-sm font-monospace bg-light" value="@_detail.MaterialConfig" readonly />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Ghi chú Phôi</label>
+                    <input class="form-control form-control-sm bg-light" value="@_detail.MaterialNotes" readonly />
+                </div>
+                <div class="col-md-12">
+                    <label class="form-label small text-muted">Ghi chú mạ</label>
+                    <textarea class="form-control form-control-sm bg-light" rows="2"
+                              readonly
+                              placeholder="— Chưa có —">@(_detail.GhiChuMa ?? "")</textarea>
+                </div>
+            </div>
+
+            <p class="small text-secondary fw-500 mb-2 mt-3">
+                C. Thông tin nội bộ
+                <span class="text-muted fw-normal ms-2" style="font-size:0.78rem;">
+                    <i class="bi bi-box-seam me-1"></i>Lấy từ module Quản lý Kho — chỉ xem.
+                    @if (_khoItem == null)
+                    {
+                        <a href="/kho" class="text-warning ms-1"><i class="bi bi-exclamation-triangle"></i> Chưa có dữ liệu kho — vào Quản lý Kho để nhập</a>
+                    }
+                </span>
+            </p>
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Order VL <small class="text-muted">(Cột K - Kho)</small></label>
+                    <input class="form-control form-control-sm font-monospace bg-light"
+                           value="@(_khoItem?.OrderVatLieu ?? "—")" readonly />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Vị trí kho <small class="text-muted">(Cột L - Kho)</small></label>
+                    <input class="form-control form-control-sm font-monospace bg-light"
+                           value="@(_khoItem?.ViTriDePhoi ?? "—")" readonly />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Tình trạng phôi <small class="text-muted">(Cột M - Kho)</small></label>
+                    <input class="form-control form-control-sm bg-light"
+                           value="@(_khoItem?.TinhTrangPhoi ?? "—")" readonly />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ── Quy trình sản xuất (Snapshot tại thời điểm tạo phiếu) ── *@
+    @if (_snapshot != null)
+    {
+        <div class="card mb-3">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">
+                    <i class="bi bi-diagram-3 me-1"></i> Quy trình sản xuất
+                    <span class="badge bg-secondary ms-1" title="Snapshot tại thời điểm tạo phiếu">Snapshot</span>
+                </span>
+                @if (_snapshot.HasAny)
+                {
+                    <small class="text-muted">
+                        Được copy từ Part Master lúc tạo phiếu — không tự thay đổi theo Part Master.
+                    </small>
+                }
+            </div>
+            <div class="card-body p-2">
+                @if (!_snapshot.HasAny)
+                {
+                    <div class="alert alert-warning py-2 small mb-0">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Chưa có snapshot quy trình. Part này chưa có quy trình trong Part Master tại thời điểm tạo phiếu,
+                        hoặc phiếu được tạo trước khi tính năng này có mặt.
+                    </div>
+                }
+                else
+                {
+                    @* B. Machining *@
+                    @if (_snapshot.Machining.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#1a73e8;color:white;">
+                                <i class="bi bi-gear-wide-connected me-1"></i> B. Quy trình gia công (@_snapshot.Machining.Count bước)
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light">
+                                        @* Hàng 1: nhóm cột *@
+                                        <tr>
+                                            <th rowspan="2" style="width:30px;" class="text-center align-middle">#</th>
+                                            <th rowspan="2" style="width:55px;" class="align-middle">NC</th>
+                                            <th rowspan="2" class="align-middle">Máy đăng ký</th>
+                                            <th rowspan="2" class="align-middle">Máy đồng dạng</th>
+                                            <th rowspan="2" class="align-middle">Đồ gá</th>
+                                            <th rowspan="2" class="align-middle">Loại dao</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:100px;">Worker</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:60px;">SL chạy</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:110px;">T.Bắt đầu</th>
+                                            <th rowspan="2" class="align-middle text-center" style="width:110px;">T.Hoàn thành</th>
+                                            <th colspan="2" class="text-center">T.Gá lắp</th>
+                                            <th colspan="2" class="text-center">T.Gia công</th>
+                                            <th colspan="2" class="text-center">T.Kiểm tra</th>
+                                            <th colspan="2" class="text-center">T.Chuẩn bị</th>
+                                            <th colspan="2" class="text-center">T.Chạy thử</th>
+                                            <th rowspan="2" class="text-center align-middle" style="width:80px;">Trạng thái</th>
+                                        </tr>
+                                        @* Hàng 2: Chuẩn / Thực tế *@
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
+                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
+                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
+                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
+                                            <th class="text-end text-muted fw-normal" style="width:50px; font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:50px; font-size:0.7rem; color:#0d6efd;">Thực tế</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Machining)
+                                        {
+                                            var gcLogs    = GetLogsFor("GC", s.NC);
+                                            var qtyDone   = GetQtyDone("GC", s.NC);
+                                            var badgeColor = qtyDone == 0 ? "danger" : (qtyDone >= _detail!.Quantity ? "success" : "warning");
+
+                                            @* Tính rowspan: 1 (dòng NC) + logs máy đăng ký + placeholder nếu rỗng
+                                               + mỗi timing row: 1 + logs timing đó + placeholder nếu rỗng *@
+                                            var regLogs   = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered ||
+                                                                               string.IsNullOrEmpty(l.MachineUsed) ||
+                                                                               !s.TimingRows.Any(t => t.SoMay == l.MachineUsed)).ToList();
+                                            var regRowCount  = regLogs.Count == 0 ? 1 : regLogs.Count;
+                                            var timingTotal  = s.TimingRows.Sum(t => {
+                                                var tLogs = gcLogs.Where(l => l.MachineUsed == t.SoMay).ToList();
+                                                return 1 + (tLogs.Count == 0 ? 1 : tLogs.Count);
+                                            });
+                                            var totalRowspan = 1 + regRowCount + timingTotal;
+
+                                            @* Dòng NC chính (chuẩn) *@
+                                            <tr class="@(s.IsBackup ? "table-warning" : "")">
+                                                <td class="text-center">@s.StepOrder</td>
+                                                <td><code>@s.NC</code> @if (s.IsBackup) { <span class="badge bg-warning text-dark" style="font-size:0.65rem;">DP</span> }</td>
+                                                <td>@(s.MachineRegistered ?? "—")</td>
+                                                <td class="text-muted small">—</td>
+                                                <td>@(s.FixtureType ?? "—")</td>
+                                                <td>@(s.ToolType ?? "—")</td>
+                                                <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
+                                                <td class="text-end text-muted">@FmtTime(s.SetupTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted">@FmtTime(s.MachiningTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted">@FmtTime(s.InspectionTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted">@FmtTime(s.PreparationTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-end text-muted">@FmtTime(s.TrialRunTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-center" rowspan="@totalRowspan">
+                                                    <span class="badge bg-@badgeColor">@qtyDone.ToString("0.##") / @_detail!.Quantity.ToString("0.####")</span>
+                                                </td>
+                                            </tr>
+
+                                            @* WTS logs của máy đăng ký (hoặc log không khớp timing nào) *@
+                                            @if (regLogs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
+                                                    <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                    <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in regLogs)
+                                            {
+                                                <tr class="bg-light" style="border-left: 3px solid #0d6efd;">
+                                                    <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                    <td class="fw-semibold text-primary small text-center">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#0d6efd;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.SetupTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.MachiningTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.InspectionTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.PreparationTime_Actual)</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#0d6efd;">@FmtTime(log.TrialRunTime_Actual)</td>
+                                                </tr>
+                                            }
+
+                                            @* Timing sub-rows — mỗi máy đồng dạng 1 dòng chuẩn + WTS logs của máy đó *@
+                                            @foreach (var tr in s.TimingRows)
+                                            {
+                                                var trLogs = gcLogs.Where(l => l.MachineUsed == tr.SoMay).ToList();
+                                                @* Dòng chuẩn timing *@
+                                                <tr style="background:#f0f7ff;">
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td class="text-muted small">—</td>
+                                                    <td class="small fw-semibold" style="color:#185fa5;">@tr.SoMay</td>
+                                                    <td class="text-muted small">@(tr.FixtureType ?? "—")</td>
+                                                    <td class="text-muted small">@(tr.ToolType ?? "—")</td>
+                                                    <td class="text-muted text-center fst-italic small" colspan="4">← Thực tế từ WTS công nhân</td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.SetupTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.MachiningTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.InspectionTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.PreparationTime)</td>
+                                                    <td class="text-end"></td>
+                                                    <td class="text-end text-muted">@FmtTime(tr.TrialRunTime)</td>
+                                                    <td class="text-end"></td>
+                                                </tr>
+                                                @* WTS logs của timing row này *@
+                                                @if (trLogs.Count == 0)
+                                                {
+                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
+                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                        <td class="text-muted fst-italic small" colspan="15">Chưa có dữ liệu sản xuất</td>
+                                                    </tr>
+                                                }
+                                                @foreach (var log in trLogs)
+                                                {
+                                                    <tr class="bg-light" style="border-left: 3px solid #185fa5;">
+                                                        <td></td><td></td><td></td><td></td><td></td><td></td>
+                                                        <td class="fw-semibold small text-center" style="color:#185fa5;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                        <td class="text-center fw-bold small" style="color:#185fa5;">@log.QtyDone.ToString("0.##")</td>
+                                                        <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                        <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.SetupTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.MachiningTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.InspectionTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.PreparationTime_Actual)</td>
+                                                        <td class="text-end text-muted">—</td>
+                                                        <td class="text-end" style="color:#185fa5;">@FmtTime(log.TrialRunTime_Actual)</td>
+                                                    </tr>
+                                                }
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+
+                    @* Máy loại trừ (snapshot global tại thời điểm tạo phiếu) *@
+                    @if (_snapshot.MachineExclude.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center gap-2 mb-1 px-2 py-1 rounded"
+                                 style="background:#fff3cd;border:1px solid #ffc107;">
+                                <i class="bi bi-slash-circle text-warning"></i>
+                                <span class="small fw-semibold text-warning-emphasis">
+                                    Máy loại trừ — không tính TG và đẩy xuống nguyên công dưới
+                                    <span class="text-muted fw-normal">(Cài đặt chung tại thời điểm tạo phiếu)</span>
+                                </span>
+                                <div class="d-flex flex-wrap gap-1 ms-2">
+                                    @foreach (var m in _snapshot.MachineExclude)
+                                    {
+                                        <span class="badge rounded-pill"
+                                              style="background:transparent;border:1px solid #dc3545;color:#dc3545;font-size:0.75rem;">
+                                            <i class="bi bi-slash-circle me-1"></i>@m.SoMay
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    @* C. Taro / Bavia / Rửa *@
+                    @if (_snapshot.Taro.Count > 0 || _snapshot.Bavia.Count > 0 || _snapshot.Washing.Count > 0)
+                    {
+                        <div class="row g-2 mb-3">
+                            @if (_snapshot.Taro.Count > 0)
+                            {
+                                <div class="col-lg-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.1 Taro (@_snapshot.Taro.Count)
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th rowspan="2" style="width:70px;" class="align-middle">NC</th>
+                                                    <th rowspan="2" style="width:70px;" class="align-middle">Mã CV</th>
+                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
+                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
+                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
+                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
+                                                </tr>
+                                                <tr>
+                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
+                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var s in _snapshot.Taro)
+                                                {
+                                                    @* Taro: log lưu WtsCode = WtsTaskCode (snapshot mới) hoặc NC (snapshot cũ trước migration) *@
+                                                    var taroKey = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+                                                    var taroLogs = GetLogsForWts("TARO", taroKey);
+                                                    var taroQty = GetQtyDone("TARO", null, taroKey);
+                                                    var taroBadge = taroQty == 0 ? "danger" : (taroQty >= _detail!.Quantity ? "success" : "warning");
+                                                    <tr>
+                                                        <td><code>@s.NC</code></td>
+                                                        <td class="small"><code class="text-success">@(s.WtsTaskCode ?? "—")</code></td>
+                                                        <td class="small">@(s.StepName ?? "—")</td>
+                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
+                                                        <td></td>
+                                                        <td class="text-center" rowspan="@(taroLogs.Count + 1)">
+                                                            <span class="badge bg-@taroBadge" style="font-size:0.62rem;">@taroQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
+                                                        </td>
+                                                    </tr>
+                                                    @if (taroLogs.Count == 0)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                        </tr>
+                                                    }
+                                                    @foreach (var log in taroLogs)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td></td><td></td><td></td>
+                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-end text-muted small">—</td>
+                                                            <td class="text-end small" style="color:#188038;">—</td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            }
+                            @if (_snapshot.Bavia.Count > 0)
+                            {
+                                <div class="col-lg-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.2 Bavia (@_snapshot.Bavia.Count)
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle">Mã CV</th>
+                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
+                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
+                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
+                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
+                                                </tr>
+                                                <tr>
+                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
+                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var s in _snapshot.Bavia)
+                                                {
+                                                    var baviaLogs = GetLogsForWts("BAVIA", s.NC);
+                                                    var baviaQty = GetQtyDone("BAVIA", null, s.NC);
+                                                    var baviaBadge = baviaQty == 0 ? "danger" : (baviaQty >= _detail!.Quantity ? "success" : "warning");
+                                                    <tr>
+                                                        <td><code>@s.NC</code></td>
+                                                        <td class="small">@(s.StepName ?? "—")</td>
+                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
+                                                        <td></td>
+                                                        <td class="text-center" rowspan="@(baviaLogs.Count + 1)">
+                                                            <span class="badge bg-@baviaBadge" style="font-size:0.62rem;">@baviaQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
+                                                        </td>
+                                                    </tr>
+                                                    @if (baviaLogs.Count == 0)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                        </tr>
+                                                    }
+                                                    @foreach (var log in baviaLogs)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td></td><td></td>
+                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-end text-muted small">—</td>
+                                                            <td class="text-end small" style="color:#188038;">—</td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            }
+                            @if (_snapshot.Washing.Count > 0)
+                            {
+                                <div class="col-lg-4">
+                                    <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#188038;color:white;">
+                                        C.3 Rửa (@_snapshot.Washing.Count)
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered mb-0" style="font-size:0.75rem;">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle">Mã CV</th>
+                                                    <th rowspan="2" class="align-middle">Công đoạn chuẩn</th>
+                                                    <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
+                                                    <th rowspan="2" style="width:45px;" class="align-middle text-center">SL</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.Bắt đầu</th>
+                                                    <th rowspan="2" style="width:80px;" class="align-middle text-center">T.HT</th>
+                                                    <th colspan="2" class="text-center" style="font-size:0.7rem;">TG</th>
+                                                    <th rowspan="2" style="width:65px;" class="align-middle text-center">TT</th>
+                                                </tr>
+                                                <tr>
+                                                    <th class="text-end text-muted fw-normal" style="width:40px;font-size:0.68rem;">Chuẩn</th>
+                                                    <th class="text-end fw-normal" style="width:40px;font-size:0.68rem;color:#188038;">TT</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var s in _snapshot.Washing)
+                                                {
+                                                    var washLogs = GetLogsForWts("WASHING", s.NC);
+                                                    var washQty = GetQtyDone("WASHING", null, s.NC);
+                                                    var washBadge = washQty == 0 ? "danger" : (washQty >= _detail!.Quantity ? "success" : "warning");
+                                                    <tr>
+                                                        <td><code>@s.NC</code></td>
+                                                        <td class="small">@(s.StepName ?? "—")</td>
+                                                        <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                        <td class="text-end text-muted small">@FmtTime(s.StandardTime)</td>
+                                                        <td></td>
+                                                        <td class="text-center" rowspan="@(washLogs.Count + 1)">
+                                                            <span class="badge bg-@washBadge" style="font-size:0.62rem;">@washQty.ToString("0.##")/@_detail!.Quantity.ToString("0.##")</span>
+                                                        </td>
+                                                    </tr>
+                                                    @if (washLogs.Count == 0)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                        </tr>
+                                                    }
+                                                    @foreach (var log in washLogs)
+                                                    {
+                                                        <tr class="bg-light" style="border-left:3px solid #188038;">
+                                                            <td></td><td></td>
+                                                            <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                            <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-center small" style="font-size:0.68rem;">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                            <td class="text-end text-muted small">—</td>
+                                                            <td class="text-end small" style="color:#188038;">—</td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @* D. Inspection *@
+                    @if (_snapshot.Inspection.Count > 0)
+                    {
+                        <div class="mb-3">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#e37400;color:white;">
+                                D. Kiểm tra chất lượng (KCS) (@_snapshot.Inspection.Count bước)
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th rowspan="2" style="width:100px;" class="align-middle">Mã CV *</th>
+                                            <th rowspan="2" class="align-middle">Nội dung công việc (WTS Chuẩn)</th>
+                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Worker</th>
+                                            <th rowspan="2" style="width:60px;" class="align-middle text-center">SL chạy</th>
+                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Bắt đầu</th>
+                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Hoàn thành</th>
+                                            <th colspan="2" class="text-center">Thời gian</th>
+                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Trạng thái</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:55px;font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:55px;font-size:0.7rem;color:#e37400;">Thực tế</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Inspection)
+                                        {
+                                            var kcsLogs = GetLogsForWts("KCS", s.NC);
+                                            var kcsQty = GetQtyDone("KCS", null, s.NC);
+                                            var kcsBadge = kcsQty == 0 ? "danger" : (kcsQty >= _detail!.Quantity ? "success" : "warning");
+                                            <tr>
+                                                <td class="fw-bold text-warning"><code>@s.NC</code></td>
+                                                <td>@(s.StepName ?? "—")</td>
+                                                <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                                <td class="text-end text-muted">@FmtTime(s.StandardTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-center" rowspan="@(kcsLogs.Count + 1)">
+                                                    <span class="badge bg-@kcsBadge" style="font-size:0.65rem;">@kcsQty.ToString("0.##")/@_detail!.Quantity.ToString("0.####")</span>
+                                                </td>
+                                            </tr>
+                                            @if (kcsLogs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #e37400;">
+                                                    <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in kcsLogs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #e37400;">
+                                                    <td></td><td></td>
+                                                    <td class="fw-semibold small text-center" style="color:#e37400;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#e37400;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#e37400;">—</td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+
+                    @* E. Packaging *@
+                    @if (_snapshot.Packaging.Count > 0)
+                    {
+                        <div class="mb-2">
+                            <div class="fw-semibold small py-1 px-2 rounded mb-1" style="background:#6c757d;color:white;">
+                                E. Đóng gói (@_snapshot.Packaging.Count bước)
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th rowspan="2" style="width:100px;" class="align-middle">Mã CV *</th>
+                                            <th rowspan="2" class="align-middle">Nội dung đóng gói (WTS Chuẩn)</th>
+                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Worker</th>
+                                            <th rowspan="2" style="width:60px;" class="align-middle text-center">SL chạy</th>
+                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Bắt đầu</th>
+                                            <th rowspan="2" style="width:100px;" class="align-middle text-center">T.Hoàn thành</th>
+                                            <th colspan="2" class="text-center">Thời gian</th>
+                                            <th rowspan="2" style="width:80px;" class="align-middle text-center">Trạng thái</th>
+                                        </tr>
+                                        <tr>
+                                            <th class="text-end text-muted fw-normal" style="width:55px;font-size:0.7rem;">Chuẩn</th>
+                                            <th class="text-end fw-normal" style="width:55px;font-size:0.7rem;color:#6c757d;">Thực tế</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var s in _snapshot.Packaging)
+                                        {
+                                            var pkgLogs = GetLogsForWts("PKG", s.NC);
+                                            var pkgQty = GetQtyDone("PKG", null, s.NC);
+                                            var pkgBadge = pkgQty == 0 ? "danger" : (pkgQty >= _detail!.Quantity ? "success" : "warning");
+                                            <tr>
+                                                <td class="fw-bold" style="color:#6c757d;"><code>@s.NC</code></td>
+                                                <td>@(s.StepName ?? "—")</td>
+                                                <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                                <td class="text-end text-muted">@FmtTime(s.StandardTime)</td>
+                                                <td class="text-end"></td>
+                                                <td class="text-center" rowspan="@(pkgLogs.Count + 1)">
+                                                    <span class="badge bg-@pkgBadge" style="font-size:0.65rem;">@pkgQty.ToString("0.##")/@_detail!.Quantity.ToString("0.####")</span>
+                                                </td>
+                                            </tr>
+                                            @if (pkgLogs.Count == 0)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #6c757d;">
+                                                    <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                                </tr>
+                                            }
+                                            @foreach (var log in pkgLogs)
+                                            {
+                                                <tr class="bg-light" style="border-left:3px solid #6c757d;">
+                                                    <td></td><td></td>
+                                                    <td class="fw-semibold small text-center" style="color:#6c757d;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                                                    <td class="text-center fw-bold small" style="color:#6c757d;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-center small">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                                                    <td class="text-end text-muted">—</td>
+                                                    <td class="text-end" style="color:#6c757d;">—</td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }        // KhPlanId
+    [Parameter] public int DetailId { get; set; }  // KhPlanDetailId
+
+    private KhPlan? _plan;
+    private KhPlanDetail? _detail;
+    private KhoVatLieuViewItem? _khoItem;
+    private RouteSnapshotData? _snapshot;
+    private List<WtsProductionLog> _wtsLogs = new();
+    private Dictionary<string, decimal> _wtsQtySummary = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
+
+        if (plan != null && detail != null && plan.KhPlanId == Id)
+        {
+            _plan   = plan;
+            _detail = detail;
+
+            _khoItem = await KhoSvc.GetByDetailIdAsync(DetailId);
+
+            // Load snapshot quy trình B→E
+            _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
+
+            // Load WTS production logs
+            _wtsLogs = await KhSvc.GetWtsLogsAsync(DetailId);
+            _wtsQtySummary = await KhSvc.GetWtsQtySummaryAsync(DetailId);
+        }
+    }
+
+    // Lấy logs cho 1 NC cụ thể
+    private List<WtsProductionLog> GetLogsFor(string processGroup, string? nc)
+        => _wtsLogs.Where(x => x.ProcessGroup == processGroup
+                             && x.NC == nc
+                             && !x.IsVoided).ToList();
+
+    // Lấy logs cho 1 WtsCode (công đoạn C/D/E)
+    private List<WtsProductionLog> GetLogsForWts(string processGroup, string? wtsCode)
+        => _wtsLogs.Where(x => x.ProcessGroup == processGroup
+                             && x.WtsCode == wtsCode
+                             && !x.IsVoided).ToList();
+
+    // Tổng SL đã hoàn thành theo key
+    private decimal GetQtyDone(string processGroup, string? nc, string? wtsCode = null)
+    {
+        var key = nc != null ? $"{processGroup}|{nc}" : $"{processGroup}|{wtsCode}";
+        return _wtsQtySummary.TryGetValue(key, out var v) ? v : 0;
+    }
+
+    private static string FmtTime(decimal? t) => t.HasValue ? t.Value.ToString("0.##") : "—";
+
+    /// <summary>Sub-table cho C/D/E — header 2 tầng, Thời gian Chuẩn/Thực tế</summary>
+    private RenderFragment WtsSimpleSubTable(List<WtsProductionLog> logs) => __builder =>
+    {
+        <table class="table table-sm mb-0" style="font-size:0.72rem; border-left: 3px solid #198754;">
+            <thead class="text-muted">
+                <tr>
+                    <th rowspan="2" style="width:120px;" class="align-middle">Worker</th>
+                    <th rowspan="2" style="width:70px;" class="text-center align-middle">SL chạy</th>
+                    <th rowspan="2" style="width:110px;" class="align-middle">Máy dùng</th>
+                    <th rowspan="2" style="width:110px;" class="text-center align-middle">T.Bắt đầu</th>
+                    <th rowspan="2" style="width:110px;" class="text-center align-middle">T.Hoàn thành</th>
+                    <th colspan="2" class="text-center">Thời gian</th>
+                    <th rowspan="2" class="align-middle">Ghi chú</th>
+                </tr>
+                <tr>
+                    <th class="text-end fw-normal" style="width:60px; font-size:0.7rem;">Chuẩn</th>
+                    <th class="text-end fw-normal" style="width:60px; font-size:0.7rem; color:#198754;">Thực tế</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (logs.Count == 0)
+                {
+                    <tr><td colspan="8" class="text-center text-muted py-1 fst-italic">Chưa có dữ liệu sản xuất</td></tr>
+                }
+                @foreach (var log in logs)
+                {
+                    <tr>
+                        <td class="fw-semibold text-success">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
+                        <td class="text-center fw-bold" style="color:#198754;">@log.QtyDone.ToString("0.##")</td>
+                        <td>@(log.MachineUsed ?? "—")</td>
+                        <td class="text-center">@log.StartTime.ToString("dd/MM HH:mm")</td>
+                        <td class="text-center">@log.EndTime.ToString("dd/MM HH:mm")</td>
+                        <td class="text-end text-muted">—</td>
+                        <td class="text-end" style="color:#198754;">—</td>
+                        <td class="text-muted">@log.Notes</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    private string GetStatusColor(string status) => status switch
+    {
+        "WaitingSupplierOrder" => "info",
+        "Ordered"              => "primary",
+        "PartialReceived"      => "primary",
+        "FullyReceived"        => "success",
+        "InProduction"         => "success",
+        "Completed"            => "success",
+        "Cancelled"            => "secondary",
+        _                      => "secondary"
+    };
+}
