@@ -4828,7 +4828,11 @@ else
 
             var receivedOk = await HandoverSvc.GetReceivedOkAsync(detail.KhPlanDetailId, groupCode);
 
-            _receivedOkCache[detail.KhPlanDetailId] = receivedOk > 0 ? receivedOk : detail.Quantity;
+            // [BUG1 FIX] Chỉ fallback về PlanQty khi workflow OFF.
+            // Workflow ON + receivedOk=0 → lưu 0 thật → Phase3 sẽ block đúng (chưa nhận = không làm được).
+            _receivedOkCache[detail.KhPlanDetailId] = (!detail.ApplyWorkflow && receivedOk <= 0)
+                ? detail.Quantity
+                : receivedOk;
 
         }
 
@@ -5278,6 +5282,17 @@ else
 
         }
 
+        // [BUG4 FIX] Load _receivedOkCache cho Non-GC trong chế độ Chạy thử.
+        // OnPOChanged (Hàng loạt/GC) đã load cache, nhưng OnSubRowKhChanged thì không.
+        // Thiếu load này → ValidateSubQty đọc rcvOk=0 → báo "Chưa có giao nhận" sai.
+        if (!IsGcGroup && !_receivedOkCache.ContainsKey(det.KhPlanDetailId))
+        {
+            var receivedOk4 = await HandoverSvc.GetReceivedOkAsync(det.KhPlanDetailId, HandoverGroupCode);
+            _receivedOkCache[det.KhPlanDetailId] = (!det.ApplyWorkflow && receivedOk4 <= 0)
+                ? det.Quantity
+                : receivedOk4;
+        }
+
         if (grp.UseStdAsDefault) TryFillStdValues(sub);
 
     }
@@ -5522,7 +5537,19 @@ else
 
         var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
 
-        if (poQty > 0 && sub.QtyDone > poQty)
+        // [BUG3 FIX] Non-GC + workflow ON: ceiling = receivedOk thực tế (không dùng SL PO).
+        var wfRowVal = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId);
+        var isNonGcWfOn = !IsGcGroup && wfRowVal?.ApplyWorkflow == true;
+        if (isNonGcWfOn && sub.KhPlanDetailId.HasValue)
+        {
+            var rcvOk = _receivedOkCache.TryGetValue(sub.KhPlanDetailId.Value, out var _rcv2) ? _rcv2 : 0m;
+            var wtsGrpDone = GetNonGcGroupWtsDone(sub.KhPlanDetailId.Value, sub.PO);
+            if (rcvOk <= 0)
+            { sub.ErrorMsg = "⚠️ Chưa có giao nhận về nhóm này. Không thể nhập số lượng."; return; }
+            if (sub.QtyDone > 0 && wtsGrpDone + sub.QtyDone > rcvOk)
+            { sub.ErrorMsg = $"⚠️ Tổng đã làm ({wtsGrpDone:0.##}) + lần này ({sub.QtyDone:0.##}) = {wtsGrpDone + sub.QtyDone:0.##} — vượt SL nhận ({rcvOk:0.##})."; return; }
+        }
+        else if (poQty > 0 && sub.QtyDone > poQty)
 
         {
 
@@ -6691,7 +6718,10 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
             var detForSave = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
 
-            if (detForSave != null && row.QtyDone > detForSave.Quantity)
+            // [BUG2 FIX] Workflow ON + Non-GC: ceiling = receivedOk (Phase3 bên dưới xử lý).
+            // Workflow OFF hoặc GC: giữ check cứng theo PlanQty.
+            var isNonGcWorkflowOn = !IsGcGroup && detForSave?.ApplyWorkflow == true;
+            if (!isNonGcWorkflowOn && detForSave != null && row.QtyDone > detForSave.Quantity)
 
             { row.ErrorMsg = $"Tổng OK+NG ({row.QtyDone}) vượt KH ({detForSave.Quantity} {detForSave.Unit}). Không được phép."; return; }
 
