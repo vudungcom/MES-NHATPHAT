@@ -27,6 +27,12 @@ public class PartProcessStepChangeLog
     [Required]
     public long StepId { get; set; }
 
+    /// <summary>
+    /// ID máy đồng dạng (PartMachiningTimings). LOOSE reference — KHÔNG có FK.
+    /// null = log thuộc NC chính; có giá trị = log thuộc máy đồng dạng cụ thể.
+    /// </summary>
+    public long? TimingId { get; set; }
+
     /// <summary>PartId — redundant để query nhanh mọi log liên quan 1 Part.</summary>
     [Required]
     public int PartId { get; set; }

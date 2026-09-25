@@ -479,7 +479,14 @@ else
                                                 @if (tr.TimingId > 0) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
-                                        <td class="text-center">
+                                        <td class="text-center text-nowrap">
+                                            @if (tr.TimingId > 0)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary p-0 px-1 me-1" title="Xem lịch sử máy này"
+                                                        @onclick="() => ShowTimingHistoryForRow(edit, tr)">
+                                                    <i class="bi bi-clock-history"></i>
+                                                </button>
+                                            }
                                             @if (CanEditTimings(edit))
                                             {
                                                 <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa dòng" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-x"></i></button>
@@ -1906,21 +1913,42 @@ else
         await ReloadStepsAsync();
     }
 
+    // Xem lịch sử NC chính
     private async Task ShowHistoryAsync(long stepId, string tableTag, string nc)
+        => await ShowHistoryInternalAsync(stepId, null, tableTag, $"Lịch sử NC — {nc}");
+
+    // Xem lịch sử máy đồng dạng — wrapper không có string literal, dùng trong markup
+    private async Task ShowTimingHistoryForRow(MachiningEdit edit, TimingRowEdit tr)
+        => await ShowHistoryInternalAsync(edit.StepId, tr.TimingId, "Machining", $"Lịch sử — {edit.NC ?? "NC"} / {tr.SoMay}");
+
+    // Xem lịch sử máy đồng dạng cụ thể
+    private async Task ShowTimingHistoryAsync(long stepId, long timingId, string nc, string soMay)
+        => await ShowHistoryInternalAsync(stepId, timingId, "Machining", $"Lịch sử — {nc} / {soMay}");
+
+    private async Task ShowHistoryInternalAsync(long stepId, long? timingId, string tableTag, string title)
     {
-        _historyTitle = $"Lịch sử sửa — {nc}";
+        _historyTitle = title;
         _showHistoryModal = true;
         _historyLoading = true;
         StateHasChanged();
 
         try
         {
-            _historyLogs = await Db.PartProcessStepChangeLogs
-                .Where(x => x.StepTable == tableTag && x.StepId == stepId)
-                .OrderByDescending(x => x.ChangedAt)
-                .Include(x => x.ChangedByUser)
-                .AsNoTracking()
-                .ToListAsync();
+            _historyLogs = timingId.HasValue
+                // Log của máy đồng dạng: filter theo TimingId
+                ? await Db.PartProcessStepChangeLogs
+                    .Where(x => x.StepTable == tableTag && x.StepId == stepId && x.TimingId == timingId)
+                    .OrderByDescending(x => x.ChangedAt)
+                    .Include(x => x.ChangedByUser)
+                    .AsNoTracking()
+                    .ToListAsync()
+                // Log của NC chính: chỉ lấy bản ghi TimingId == null
+                : await Db.PartProcessStepChangeLogs
+                    .Where(x => x.StepTable == tableTag && x.StepId == stepId && x.TimingId == null)
+                    .OrderByDescending(x => x.ChangedAt)
+                    .Include(x => x.ChangedByUser)
+                    .AsNoTracking()
+                    .ToListAsync();
         }
         catch
         {
@@ -1947,6 +1975,7 @@ else
         "InspectionTime"  => "T.Kiểm tra",
         "PreparationTime" => "T.Chuẩn bị",
         "TrialRunTime"    => "T.Chạy thử",
+        "SoMay"           => "Máy đồng dạng",
         "NC"              => "Mã NC",
         "MachineRegistered" => "Máy đăng ký",
         "FixtureType"     => "Đồ gá",
@@ -3071,6 +3100,7 @@ else
 
     private async Task SaveMachiningTimingsAsync(List<MachiningEdit> edits, List<string> log, List<string> errors)
     {
+        var now = DateTime.Now;
         foreach (var edit in edits.Where(e => e.State != EditState.Deleted && e.StepId > 0))
         {
             foreach (var tr in edit.TimingRows)
@@ -3080,26 +3110,73 @@ else
                     if (tr.State == EditState.New)
                     {
                         if (string.IsNullOrWhiteSpace(tr.SoMay)) continue;
-                        var ent = new PartMachiningTiming { StepId = edit.StepId, SoMay = tr.SoMay.Trim(), DisplayOrder = tr.DisplayOrder, FixtureType = tr.FixtureType, ToolType = tr.ToolType, SetupTime = tr.SetupTime, MachiningTime = tr.MachiningTime, InspectionTime = tr.InspectionTime, PreparationTime = tr.PreparationTime, TrialRunTime = tr.TrialRunTime, IsActive = true, CreatedBy = _currentUserId, CreatedAt = DateTime.Now };
+                        var ent = new PartMachiningTiming { StepId = edit.StepId, SoMay = tr.SoMay.Trim(), DisplayOrder = tr.DisplayOrder, FixtureType = tr.FixtureType, ToolType = tr.ToolType, SetupTime = tr.SetupTime, MachiningTime = tr.MachiningTime, InspectionTime = tr.InspectionTime, PreparationTime = tr.PreparationTime, TrialRunTime = tr.TrialRunTime, IsActive = true, CreatedBy = _currentUserId, CreatedAt = now };
                         Db.PartMachiningTimings.Add(ent);
                         await Db.SaveChangesAsync();
                         tr.TimingId = ent.TimingId; tr.State = EditState.Unchanged;
+                        // Log tạo mới máy đồng dạng
+                        Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+                        {
+                            StepTable = "Machining", StepId = edit.StepId, TimingId = ent.TimingId,
+                            PartId = _part!.PartId, FieldName = "Created",
+                            NewValue = $"Thêm máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}",
+                            ChangedBy = _currentUserId, ChangedAt = now, Reason = _reason ?? "Lưu quy trình"
+                        });
+                        await Db.SaveChangesAsync();
                         log.Add($"✓ [Timing] NC={edit.NC} thêm {tr.SoMay}");
                     }
                     else if (tr.State == EditState.Modified && tr.TimingId > 0)
                     {
                         var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
-                        if (ent != null) { ent.SoMay = tr.SoMay.Trim(); ent.DisplayOrder = tr.DisplayOrder; ent.FixtureType = tr.FixtureType; ent.ToolType = tr.ToolType; ent.SetupTime = tr.SetupTime; ent.MachiningTime = tr.MachiningTime; ent.InspectionTime = tr.InspectionTime; ent.PreparationTime = tr.PreparationTime; ent.TrialRunTime = tr.TrialRunTime; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = DateTime.Now; await Db.SaveChangesAsync(); tr.State = EditState.Unchanged; log.Add($"✓ [Timing] NC={edit.NC} sửa {tr.SoMay}"); }
+                        if (ent != null)
+                        {
+                            // Log từng field thay đổi
+                            if (ent.SoMay != tr.SoMay.Trim())           AddTimingLog(edit, tr.TimingId, "SoMay",        ent.SoMay,                                    tr.SoMay.Trim(), now);
+                            if (ent.SetupTime != tr.SetupTime)           AddTimingLog(edit, tr.TimingId, "SetupTime",     ent.SetupTime?.ToString(),                    tr.SetupTime?.ToString(), now);
+                            if (ent.MachiningTime != tr.MachiningTime)   AddTimingLog(edit, tr.TimingId, "MachiningTime", ent.MachiningTime?.ToString(),                tr.MachiningTime?.ToString(), now);
+                            if (ent.InspectionTime != tr.InspectionTime) AddTimingLog(edit, tr.TimingId, "InspectionTime",ent.InspectionTime?.ToString(),               tr.InspectionTime?.ToString(), now);
+                            if (ent.PreparationTime != tr.PreparationTime) AddTimingLog(edit, tr.TimingId, "PreparationTime", ent.PreparationTime?.ToString(),          tr.PreparationTime?.ToString(), now);
+                            if (ent.TrialRunTime != tr.TrialRunTime)     AddTimingLog(edit, tr.TimingId, "TrialRunTime",  ent.TrialRunTime?.ToString(),                 tr.TrialRunTime?.ToString(), now);
+                            if (ent.FixtureType != tr.FixtureType)       AddTimingLog(edit, tr.TimingId, "FixtureType",   ent.FixtureType,                              tr.FixtureType, now);
+                            if (ent.ToolType != tr.ToolType)             AddTimingLog(edit, tr.TimingId, "ToolType",      ent.ToolType,                                 tr.ToolType, now);
+                            ent.SoMay = tr.SoMay.Trim(); ent.DisplayOrder = tr.DisplayOrder; ent.FixtureType = tr.FixtureType; ent.ToolType = tr.ToolType;
+                            ent.SetupTime = tr.SetupTime; ent.MachiningTime = tr.MachiningTime; ent.InspectionTime = tr.InspectionTime;
+                            ent.PreparationTime = tr.PreparationTime; ent.TrialRunTime = tr.TrialRunTime;
+                            ent.UpdatedBy = _currentUserId; ent.UpdatedAt = now;
+                            await Db.SaveChangesAsync();
+                            tr.State = EditState.Unchanged;
+                            log.Add($"✓ [Timing] NC={edit.NC} sửa {tr.SoMay}");
+                        }
                     }
                     else if (tr.State == EditState.Deleted && tr.TimingId > 0)
                     {
                         var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
-                        if (ent != null) { ent.IsActive = false; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = DateTime.Now; await Db.SaveChangesAsync(); log.Add($"✓ [Timing] NC={edit.NC} xóa {tr.SoMay}"); }
+                        if (ent != null)
+                        {
+                            AddTimingLog(edit, tr.TimingId, "Deleted",
+                                $"Xóa máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}",
+                                null, now);
+                            ent.IsActive = false; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = now;
+                            await Db.SaveChangesAsync();
+                            log.Add($"✓ [Timing] NC={edit.NC} xóa {tr.SoMay}");
+                        }
                     }
                 }
                 catch (Exception ex) { errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: {ex.Message}"); }
             }
         }
+    }
+
+    // Helper: ghi log cho máy đồng dạng vào PartProcessStepChangeLogs
+    private void AddTimingLog(MachiningEdit edit, long timingId, string field, string? oldVal, string? newVal, DateTime at)
+    {
+        Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+        {
+            StepTable = "Machining", StepId = edit.StepId, TimingId = timingId,
+            PartId = _part!.PartId, FieldName = field,
+            OldValue = oldVal, NewValue = newVal,
+            ChangedBy = _currentUserId, ChangedAt = at, Reason = _reason ?? "Lưu quy trình"
+        });
     }
 
     public enum EditState { Unchanged, Modified, New, Deleted, Restored }
