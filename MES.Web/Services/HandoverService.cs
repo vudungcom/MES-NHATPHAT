@@ -94,6 +94,16 @@ namespace MES.Web.Services
 
             : Math.Max(0, ReceivedOk - NgReturned - IssuedOut);
 
+        /// <summary>
+
+        /// v1.0 — SL NG nhóm này đã trả ngược về nhóm trước (IsReturnNg tx).
+
+        /// Dùng để hiển thị badge/tooltip giải thích tại sao Remaining giảm.
+
+        /// </summary>
+
+        public decimal NgReturnedOut { get; set; }
+
         /// <summary>Số phiếu nhóm này đã giao đi nhưng bên nhận chưa xác nhận</summary>
 
         public int PendingToIssue   { get; set; }
@@ -518,9 +528,27 @@ namespace MES.Web.Services
 
             qty.NgReturned = CalcNgReturned(groupCode, txs, receivesByTx);
 
+            // v1.0: trừ ngay SL NG đang trả ngược (cả PENDING) khỏi "Đã nhận"
+            // → ReceivedOk phản ánh hàng OK thực sự đang giữ, không cần đợi bên nhận xác nhận
+            var ngReturnPending = txs
+                .Where(t => t.FromGroupCode == groupCode && t.IsReturnNg && t.Status != "COMPLETED")
+                .Sum(t =>
+                {
+                    var recv = receivesByTx.TryGetValue(t.HandoverTxId, out var rxs2)
+                        ? rxs2.Sum(r => r.QtyOk + r.QtyNg) : 0m;
+                    return Math.Max(0m, t.QtyIssued - recv);
+                });
+            var ngReturnConfirmed = txs
+                .Where(t => t.FromGroupCode == groupCode && t.IsReturnNg)
+                .SelectMany(t => receivesByTx.TryGetValue(t.HandoverTxId, out var rxs3) ? rxs3 : new List<HandoverReceive>())
+                .Sum(r => r.QtyOk + r.QtyNg);
+            qty.ReceivedOk = Math.Max(0, qty.ReceivedOk - ngReturnPending - ngReturnConfirmed);
+
             // IssuedOut = SL bên nhận đã confirmed (QtyOk + QtyNg)
 
             //           + SL đang PENDING/PARTIAL chưa được nhận (tránh double-giao và phản ánh đúng tồn kho)
+
+            // v1.0: IsReturnNg tx vẫn tính vào IssuedOut — hàng NG đã ra khỏi tay nhóm rồi
 
             var confirmedOut = txs
 
@@ -547,6 +575,32 @@ namespace MES.Web.Services
                 });
 
             qty.IssuedOut = confirmedOut + pendingOut;
+
+            // v1.0: tính riêng SL NG đã trả ngược để hiển thị trên bảng
+
+            qty.NgReturnedOut = txs
+
+                .Where(t => t.FromGroupCode == groupCode && t.IsReturnNg)
+
+                .SelectMany(t => receivesByTx.TryGetValue(t.HandoverTxId, out var rxs2) ? rxs2 : new List<HandoverReceive>())
+
+                .Sum(r => r.QtyOk + r.QtyNg)
+
+              + txs
+
+                .Where(t => t.FromGroupCode == groupCode && t.IsReturnNg && t.Status != "COMPLETED")
+
+                .Sum(t =>
+
+                {
+
+                    var recv = receivesByTx.TryGetValue(t.HandoverTxId, out var rxs3)
+
+                        ? rxs3.Sum(r => r.QtyOk + r.QtyNg) : 0m;
+
+                    return Math.Max(0m, t.QtyIssued - recv);
+
+                });
 
             if (wts != null)
 
@@ -1012,15 +1066,17 @@ namespace MES.Web.Services
 
             int issuedByUserId,
 
-            string? fromNC   = null,
+            string? fromNC      = null,
 
-            string? notes    = null,
+            string? notes       = null,
 
-            string? toNC     = null,
+            string? toNC        = null,
 
-            decimal ngQty    = 0,
+            decimal ngQty       = 0,
 
-            string? ngReason = null)
+            string? ngReason    = null,
+
+            bool isReturnNg     = false)   // v1.0 — phiếu trả hàng NG ngược chiều
 
         {
 
@@ -1038,7 +1094,7 @@ namespace MES.Web.Services
 
                 return (false, "Mã nhóm không hợp lệ.");
 
-            // v0.9: validate NgQty
+            // v0.9: validate NgQty (tổng số lượng giao = OK + NG)
 
             if (ngQty < 0)
 
@@ -1046,13 +1102,31 @@ namespace MES.Web.Services
 
             if (ngQty > qtyIssued)
 
-                return (false, $"Số lượng NG ({ngQty}) không thể lớn hơn số lượng giao ({qtyIssued}).");
+                return (false, $"Số lượng NG ({ngQty}) không thể lớn hơn tổng số lượng giao ({qtyIssued}).");
 
             if (ngQty > 0 && string.IsNullOrWhiteSpace(ngReason))
 
                 return (false, "Bắt buộc nhập lý do khi có hàng NG.");
 
-            if (!string.IsNullOrEmpty(fromNC))
+            // v1.0 — Giao NG ngược: toàn bộ QtyIssued là NG, lấy từ SL đang giữ (ReceivedOk chưa xử lý)
+
+            if (isReturnNg)
+
+            {
+
+                if (string.IsNullOrWhiteSpace(ngReason))
+
+                    return (false, "Bắt buộc nhập lý do khi trả hàng NG ngược.");
+
+                var ngRemain = await GetRemainingForNgReturnAsync(khPlanDetailId, fromGroupCode);
+
+                if (qtyIssued > ngRemain)
+
+                    return (false, $"Số lượng NG trả về ({qtyIssued}) vượt quá SL đang giữ tại {fromGroupCode} ({ngRemain:0.##}).");
+
+            }
+
+            else if (!string.IsNullOrEmpty(fromNC))
 
             {
 
@@ -1090,11 +1164,15 @@ namespace MES.Web.Services
 
                 if (qtyIssued > remaining)
 
-                    return (false, $"Số lượng giao ({qtyIssued}) vượt quá còn lại tại {fromGroupCode} ({remaining:0.##}).");
+                    return (false, $"Tổng số lượng giao ({qtyIssued}) vượt quá còn lại tại {fromGroupCode} ({remaining:0.##}).");
 
             }
 
-            var effectiveToNc = toGroupCode == "KHO" ? null : toNC;
+            // v1.0: giao ngược NG — không gắn NC, không gắn ToNC
+
+            var effectiveToNc   = (toGroupCode == "KHO" || isReturnNg) ? null : toNC;
+
+            var effectiveFromNc = isReturnNg ? null : fromNC;
 
             _db.HandoverTransactions.Add(new HandoverTransaction
 
@@ -1108,13 +1186,15 @@ namespace MES.Web.Services
 
                 QtyIssued      = qtyIssued,
 
-                FromNC         = fromNC,
+                FromNC         = effectiveFromNc,
 
                 ToNC           = effectiveToNc,
 
-                NgQty          = ngQty,                                    // v0.9
+                NgQty          = isReturnNg ? qtyIssued : ngQty,          // v1.0: ReturnNg → toàn bộ là NG
 
-                NgReason       = ngQty > 0 ? ngReason?.Trim() : null,     // v0.9
+                NgReason       = ngReason?.Trim(),
+
+                IsReturnNg     = isReturnNg,                               // v1.0
 
                 Status         = "PENDING",
 
@@ -2041,6 +2121,102 @@ namespace MES.Web.Services
                          && r.Transaction.FromGroupCode == groupCode)
 
                 .SumAsync(r => (decimal?)(r.QtyOk + r.QtyNg)) ?? 0m;
+
+            var pendingTxs = await _db.HandoverTransactions
+
+                .Where(t => !t.IsVoided
+
+                         && t.KhPlanDetailId == khPlanDetailId
+
+                         && t.FromGroupCode == groupCode
+
+                         && t.Status != "COMPLETED")
+
+                .Include(t => t.Receives)
+
+                .ToListAsync();
+
+            var pendingOut = pendingTxs.Sum(t =>
+
+            {
+
+                var received = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+
+                return Math.Max(0, t.QtyIssued - received);
+
+            });
+
+            return Math.Max(0, baseQty - confirmedOut - pendingOut);
+
+        }
+
+        // ----------------------------------------------------------------
+
+        // HELPER: Tính SL đang giữ thực tế để validate giao NG ngược (v1.0)
+
+        // Khác GetRemainingAsync: luôn dùng ReceivedOk làm base (bỏ qua WtsDone gate)
+
+        // Logic: SL đã nhận vào nhóm - người đã xác nhận ra - đang pending ra
+
+        // ----------------------------------------------------------------
+
+        public async Task<decimal> GetRemainingForNgReturnAsync(int khPlanDetailId, string groupCode)
+
+        {
+
+            // BaseQty = SL đã nhận OK vào nhóm này (từ nhóm trước giao tới)
+
+            decimal baseQty;
+
+            if (groupCode == "KHO")
+
+            {
+
+                // KHO: lấy từ KhoVatLieu (nhận từ KH)
+
+                baseQty = (decimal)(await _db.KhoVatLieus
+
+                    .Where(k => k.PlanDetailId == (long)khPlanDetailId && k.IsActive)
+
+                    .SumAsync(k => (int?)k.SoLuongThucNhan) ?? 0);
+
+            }
+
+            else
+
+            {
+
+                // Các nhóm khác: tổng QtyOk từ Handover nhận vào nhóm này
+
+                baseQty = await _db.HandoverReceives
+
+                    .Where(r => !r.IsVoided
+
+                             && !r.Transaction.IsVoided
+
+                             && r.Transaction.KhPlanDetailId == khPlanDetailId
+
+                             && r.Transaction.ToGroupCode == groupCode)
+
+                    .SumAsync(r => (decimal?)r.QtyOk) ?? 0m;
+
+            }
+
+            // Trừ SL đã giao ra khỏi nhóm này (cả thuận lẫn ngược, cả OK lẫn NG)
+
+            var confirmedOut = await _db.HandoverReceives
+
+                .Where(r => !r.IsVoided
+
+                         && !r.Transaction.IsVoided
+
+                         && r.Transaction.KhPlanDetailId == khPlanDetailId
+
+                         && r.Transaction.FromGroupCode == groupCode)
+
+                .SumAsync(r => (decimal?)(r.QtyOk + r.QtyNg)) ?? 0m;
+
+            // Trừ SL đang pending giao ra (chưa được xác nhận)
 
             var pendingTxs = await _db.HandoverTransactions
 

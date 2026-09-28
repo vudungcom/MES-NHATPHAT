@@ -562,6 +562,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         // v0.9 — NgQty / NgReason (bên giao khai báo NG ngay khi tạo phiếu)
         mb.Entity<HandoverTransaction>().Property(x => x.NgQty).HasPrecision(10, 2).HasDefaultValue(0m);
         mb.Entity<HandoverTransaction>().Property(x => x.NgReason).HasMaxLength(500);
+        // v1.0 — IsReturnNg: phiếu trả hàng NG ngược chiều (GC→KHO, HTSP→GC...)
+        mb.Entity<HandoverTransaction>().Property(x => x.IsReturnNg).HasDefaultValue(false);
         mb.Entity<HandoverTransaction>()
             .HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
         mb.Entity<HandoverTransaction>()

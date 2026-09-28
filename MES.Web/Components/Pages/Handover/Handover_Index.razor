@@ -309,8 +309,8 @@ else
                     }
                 </div>
 
-                @* ── Chế độ giao theo NC cụ thể (inter-group) ── *@
-                @if (!string.IsNullOrEmpty(EffectiveFromGroup) && _ncOptions.Any())
+                @* ── Chế độ giao theo NC cụ thể (inter-group) — ẩn khi ReturnNg ── *@
+                @if (!_issueIsReturnNg && !string.IsNullOrEmpty(EffectiveFromGroup) && _ncOptions.Any())
                 {
                     <div class="mb-3 p-2 border rounded" style="background:#fffbf0">
                         <div class="d-flex align-items-center gap-2 mb-2">
@@ -355,8 +355,8 @@ else
                     </select>
                 </div>
 
-                @* v0.8: ToNC — chọn NC đích ở nhóm nhận *@
-                @if (!string.IsNullOrEmpty(_issueToGroup) && _issueToGroup != "KHO")
+                @* v0.8: ToNC — chọn NC đích ở nhóm nhận (ẩn khi ReturnNg) *@
+                @if (!_issueIsReturnNg && !string.IsNullOrEmpty(_issueToGroup) && _issueToGroup != "KHO")
                 {
                     <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
                         <label class="form-label form-label-sm fw-semibold mb-1">
@@ -395,9 +395,45 @@ else
                     </div>
                 }
 
+                @* ── v1.0: Checkbox trả hàng NG ngược ── *@
+                <div class="mb-3 p-2 border rounded @(_issueIsReturnNg ? "border-danger bg-danger bg-opacity-10" : "bg-light")">
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="returnNgSwitch"
+                               @bind="_issueIsReturnNg" @bind:after="OnReturnNgChangedAsync" />
+                        <label class="form-check-label fw-semibold @(_issueIsReturnNg ? "text-danger" : "")" for="returnNgSwitch">
+                            Trả hàng NG ngược
+                            <i class="bi bi-info-circle text-muted fw-normal ms-1"
+                               title="Dùng khi nhóm chưa làm, phát hiện hàng NG và cần trả về nhóm trước. SL lấy từ số lượng đang giữ (đã nhận vào nhóm này)."></i>
+                        </label>
+                    </div>
+                    @if (_issueIsReturnNg)
+                    {
+                        <div class="mt-2 small text-danger">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Toàn bộ số lượng giao sẽ được ghi nhận là NG. Bên nhận vẫn cần xác nhận.
+                        </div>
+                        @if (_returnNgMaxQty > 0)
+                        {
+                            <div class="mt-1 small text-muted">
+                                SL đang giữ có thể trả: <strong class="text-danger">@_returnNgMaxQty.ToString("0.##")</strong>
+                            </div>
+                        }
+                        else if (_returnNgLoading)
+                        {
+                            <div class="mt-1 small text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Đang tải...</div>
+                        }
+                        else
+                        {
+                            <div class="mt-1 small text-warning-emphasis">Không có SL nào đang giữ để trả.</div>
+                        }
+                    }
+                </div>
+
+                @if (!_issueIsReturnNg)
+                {
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold">
-                        Số lượng giao
+                        Tổng số lượng giao (OK + NG)
                         @{
                             var _dispMax = _useNcMode ? _ncMaxQty : IssueMaxQty;
                         }
@@ -409,13 +445,30 @@ else
                     <input type="number" class="form-control form-control-sm"
                            @bind="_issueQty" min="0.01" max="@(_useNcMode ? _ncMaxQty : IssueMaxQty)" step="0.01" />
                 </div>
+                }
+                else
+                {
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold text-danger">
+                        Số lượng NG trả về
+                        @if (_returnNgMaxQty > 0)
+                        {
+                            <span class="text-muted fw-normal small">(tối đa @_returnNgMaxQty.ToString("0.##"))</span>
+                        }
+                    </label>
+                    <input type="number" class="form-control form-control-sm border-danger"
+                           @bind="_issueQty" min="0.01" max="@_returnNgMaxQty" step="0.01" />
+                </div>
+                }
 
-                @* ── v0.9: NgQty + NgReason — bên giao khai báo NG ngay khi tạo phiếu ── *@
+                @* ── v0.9: NgQty + NgReason — bên giao khai báo NG (chỉ cho giao xuôi bình thường) ── *@
+                @if (!_issueIsReturnNg)
+                {
                 <div class="mb-3 p-2 border rounded" style="background:#fff5f5">
                     <label class="form-label form-label-sm fw-semibold text-danger mb-1">
-                        Trong đó NG
+                        Trong đó có NG khai báo trước
                         <i class="bi bi-info-circle text-muted fw-normal ms-1"
-                           title="Khai báo nếu lô này có hàng NG (VD: trả lại sau khi phát hiện lỗi). Bên nhận vẫn tự nhập OK/NG khi xác nhận."></i>
+                           title="Nhập nếu lô này có một số NG. Tổng số lượng giao (trường bên trên) = OK + NG. Bên nhận vẫn tự nhập OK/NG thực tế khi xác nhận."></i>
                     </label>
                     <input type="number" class="form-control form-control-sm border-danger"
                            @bind="_issueNgQty" min="0" max="@_issueQty" step="0.01"
@@ -429,6 +482,18 @@ else
                                placeholder="VD: phát hiện vết nứt sau kiểm lại..." />
                     </div>
                 </div>
+                }
+                else
+                {
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold text-danger">
+                        Lý do trả NG <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" class="form-control form-control-sm border-danger"
+                           @bind="_issueNgReason"
+                           placeholder="Bắt buộc — VD: phát hiện xước bề mặt trước khi gia công..." />
+                </div>
+                }
 
                 <div class="mb-2">
                     <label class="form-label form-label-sm @(_useNcMode ? "fw-semibold text-danger" : "")">
@@ -439,7 +504,15 @@ else
                            placeholder="@(_useNcMode ? "Bắt buộc khi giao NC: VD: Taro NC1 xong, giao lại GC làm NC3..." : "VD: Lô buổi sáng...")" />
                 </div>
 
-                @if (_useNcMode)
+                @if (_issueIsReturnNg)
+                {
+                    <div class="alert alert-danger py-1 small">
+                        <i class="bi bi-arrow-return-left me-1"></i>
+                        <strong>Trả NG ngược:</strong> Toàn bộ SL này ghi nhận là NG.
+                        Bên nhận (nhóm trước) vẫn cần xác nhận lại. SL nhóm này sẽ giảm tương ứng.
+                    </div>
+                }
+                else if (_useNcMode)
                 {
                     <div class="alert alert-warning py-1 small">
                         <i class="bi bi-exclamation-triangle me-1"></i>
@@ -450,7 +523,8 @@ else
                 else
                 {
                     <div class="alert alert-secondary py-1 small">
-                        <i class="bi bi-info-circle me-1"></i>Bên nhận sẽ xác nhận OK/NG sau khi kiểm hàng.
+                        <i class="bi bi-info-circle me-1"></i>
+                        Tổng số lượng giao = OK + NG. Bên nhận sẽ xác nhận OK/NG thực tế sau khi kiểm hàng.
                     </div>
                 }
 
@@ -865,6 +939,11 @@ else
     // v0.9 — NgQty/NgReason bên giao khai báo
     decimal _issueNgQty     = 0;
     string  _issueNgReason  = "";
+
+    // v1.0 — Trả hàng NG ngược
+    bool    _issueIsReturnNg  = false;
+    decimal _returnNgMaxQty   = 0;
+    bool    _returnNgLoading  = false;
 
     // NC selector — giao inter-group theo NC cụ thể
     bool              _useNcMode    = false;
@@ -1309,10 +1388,13 @@ else
         _issueToGroup   = "";
         _issueQty       = 1;
         _issueNotes     = "";
-        _issueNgQty     = 0;       // v0.9
-        _issueNgReason  = "";      // v0.9
-        _modalError     = "";
-        _useNcMode      = false;
+        _issueNgQty       = 0;       // v0.9
+        _issueNgReason    = "";      // v0.9
+        _issueIsReturnNg  = false;   // v1.0
+        _returnNgMaxQty   = 0;       // v1.0
+        _returnNgLoading  = false;   // v1.0
+        _modalError       = "";
+        _useNcMode        = false;
         _issueFromNC    = "";
         _ncOptions      = new();
         _ncMaxQty       = 0;
@@ -1362,6 +1444,38 @@ else
         _issueQty = _ncMaxQty;
     }
 
+    // v1.0 — Khi toggle checkbox Trả NG ngược
+    async Task OnReturnNgChangedAsync()
+    {
+        _issueNgQty    = 0;
+        _issueNgReason = "";
+        _issueQty      = 1;
+        _returnNgMaxQty = 0;
+
+        if (!_issueIsReturnNg || _selectedRow == null) return;
+
+        // Bỏ qua NC mode và chuyển về nhóm giao đơn thuần
+        _useNcMode   = false;
+        _issueFromNC = "";
+
+        var fromGroup = EffectiveFromGroup;
+        if (string.IsNullOrEmpty(fromGroup)) return;
+
+        _returnNgLoading = true;
+        StateHasChanged();
+        try
+        {
+            _returnNgMaxQty = await HandoverSvc.GetRemainingForNgReturnAsync(
+                _selectedRow.KhPlanDetailId, fromGroup);
+            _issueQty = _returnNgMaxQty > 0 ? _returnNgMaxQty : 1;
+        }
+        finally
+        {
+            _returnNgLoading = false;
+            StateHasChanged();
+        }
+    }
+
     async Task ConfirmIssueAsync()
     {
         if (_selectedRow == null) return;
@@ -1372,8 +1486,12 @@ else
         if (_issueQty <= 0)                      { _modalError = "Số lượng phải lớn hơn 0."; return; }
         // [WORKFLOW] Giao theo NC cụ thể → validate bằng _ncMaxQty (WtsDone NC đó)
         // Giao tổng (không chọn NC) → validate bằng IssueMaxQty (từ GetRemainingAsync)
-        var effectiveMax = _useNcMode ? _ncMaxQty : IssueMaxQty;
-        if (_issueQty > effectiveMax)             { _modalError = $"Vượt quá còn lại ({effectiveMax:0.##})."; return; }
+        // v1.0: bỏ qua check này khi ReturnNg — service sẽ validate bằng GetRemainingForNgReturnAsync
+        if (!_issueIsReturnNg)
+        {
+            var effectiveMax = _useNcMode ? _ncMaxQty : IssueMaxQty;
+            if (_issueQty > effectiveMax) { _modalError = $"Vượt quá còn lại ({effectiveMax:0.##})."; return; }
+        }
 
         if (_useNcMode && string.IsNullOrEmpty(_issueFromNC))
         {
@@ -1402,15 +1520,31 @@ else
             return;
         }
 
+        // v1.0: validate ReturnNg trước khi gọi service
+        if (_issueIsReturnNg)
+        {
+            if (string.IsNullOrWhiteSpace(_issueNgReason))
+            {
+                _modalError = "Bắt buộc nhập lý do khi trả hàng NG.";
+                return;
+            }
+            if (_issueQty > _returnNgMaxQty)
+            {
+                _modalError = $"Số lượng ({_issueQty}) vượt quá SL đang giữ ({_returnNgMaxQty:0.##}).";
+                return;
+            }
+        }
+
         _saving = true;
         (bool ok, string err) = await HandoverSvc.IssueAsync(
             _selectedRow.KhPlanDetailId, fromGroup, _issueToGroup,
             _issueQty, _currentUserId,
-            fromNC:   _useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,
-            notes:    _issueNotes,
-            toNC:     string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-            ngQty:    _issueNgQty,       // v0.9
-            ngReason: _issueNgReason);   // v0.9
+            fromNC:      _issueIsReturnNg ? null : (_useNcMode && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null),
+            notes:       _issueNotes,
+            toNC:        (_issueIsReturnNg || string.IsNullOrEmpty(_issueToNC)) ? null : _issueToNC,
+            ngQty:       _issueIsReturnNg ? _issueQty : _issueNgQty,   // v1.0: ReturnNg = toàn bộ là NG
+            ngReason:    _issueNgReason,                                // v0.9 / v1.0
+            isReturnNg:  _issueIsReturnNg);                             // v1.0
         _saving = false;
         if (!ok) { _modalError = err; return; }
 
@@ -1620,6 +1754,7 @@ else
         _useNcMode        = false; _issueFromNC      = "";
         _ncOptions        = new(); _ncMaxQty         = 0;
         _issueNgQty       = 0;     _issueNgReason    = "";  // v0.9
+        _issueIsReturnNg  = false; _returnNgMaxQty   = 0;   // v1.0
     }
 
     string GetStatusBadge(string status) => status switch

@@ -34,6 +34,14 @@ namespace MES.Web.Data.Entities
         /// <summary>Bắt buộc nếu NgQty > 0 — lý do NG bên giao khai báo</summary>
         public string? NgReason { get; set; }
 
+        /// <summary>
+        /// v1.0 — Phiếu trả hàng NG ngược chiều luồng sản xuất.
+        /// true  = giao ngược (VD: GC→KHO, HTSP→GC...) để trả lại hàng NG/phát hiện lỗi.
+        ///         SL lấy từ ReceivedOk chưa xử lý (không cần WtsDone).
+        /// false = giao thông thường (xuôi hoặc inter-group theo NC đã làm).
+        /// </summary>
+        public bool IsReturnNg { get; set; }
+
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
 
