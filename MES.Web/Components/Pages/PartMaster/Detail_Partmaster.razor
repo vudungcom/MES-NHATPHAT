@@ -1494,6 +1494,8 @@ else
             }
 
             if (_canEditB && _machiningEdits.Any(e => e.State != EditState.Unchanged)) return true;
+            // [FIX] Có pending timing confirmations chưa lưu
+            if (_canEditB && _pendingConfirms.Count > 0) return true;
 
             if (_canEditC)
             {
@@ -1551,6 +1553,9 @@ else
     // [(stepId, timingId?)][fieldName] -> (IsConfirmed, ByName, At)
     // timingId=null = NC chính; timingId!=null = máy đồng dạng
     private Dictionary<(long StepId, long? TimingId), Dictionary<string, (bool IsConfirmed, string? ByName, DateTime At)>> _timingConfirms = new();
+    // [FIX] Pending confirms chưa lưu vào DB — true=pending confirm, false=pending unconfirm
+    // Chỉ được ghi vào DB khi user nhấn nút Lưu (DoSaveAsync)
+    private Dictionary<(long StepId, long? TimingId), Dictionary<string, bool>> _pendingConfirms = new();
     private List<TaroEdit> _taroEdits = new();
     private List<BaviaEdit> _baviaEdits = new();
     private List<WashingEdit> _washingEdits = new();
@@ -1660,7 +1665,7 @@ else
     }
 
     private bool CanEditTimings(MachiningEdit edit)
-        => _canEditB && !RowLocked(edit) && (edit.IsEditingWts || edit.StepId == 0);
+        => _canEditB && !RowLocked(edit); // [FIX] bỏ điều kiện IsEditingWts — timing rows luôn editable khi có quyền B, không cần click bút chì NC cha
 
     private IEnumerable<ThietBi> GetTimingMachineOptions(MachiningEdit edit)
     {
@@ -2017,46 +2022,70 @@ else
         return _timingConfirms.TryGetValue(key, out var fd) && fd.ContainsKey(field) && fd[field].IsConfirmed;
     }
 
+    // [FIX] FieldCellCss — vàng nếu có pending chưa lưu, xanh nếu đã xác nhận, trắng nếu chưa
     private string FieldCellCss(long stepId, long? timingId, string field)
-        => IsFieldConfirmed(stepId, timingId, field) ? "table-success" : "";
+    {
+        if (_pendingConfirms.TryGetValue((stepId, timingId), out var pf) && pf.ContainsKey(field))
+            return "table-warning"; // pending chưa lưu
+        return IsFieldConfirmed(stepId, timingId, field) ? "table-success" : "";
+    }
 
+    // [FIX] FieldIconCss — icon vàng nếu pending, xanh nếu confirmed, xám nếu chưa
     private string FieldIconCss(long stepId, long? timingId, string field)
-        => IsFieldConfirmed(stepId, timingId, field)
+    {
+        if (_pendingConfirms.TryGetValue((stepId, timingId), out var pf) && pf.TryGetValue(field, out var pendingVal))
+            return pendingVal ? "bi bi-check-circle text-warning" : "bi bi-circle text-warning opacity-75";
+        return IsFieldConfirmed(stepId, timingId, field)
                ? "bi bi-check-circle-fill text-success"
                : "bi bi-circle text-secondary opacity-50";
+    }
 
+    // [FIX] FieldIconTitle — tooltip thể hiện trạng thái pending hoặc đã lưu
     private string FieldIconTitle(long stepId, long? timingId, string field)
     {
+        if (_pendingConfirms.TryGetValue((stepId, timingId), out var pf) && pf.TryGetValue(field, out var pendingVal))
+            return pendingVal ? "⏳ Chờ lưu: Xác nhận — nhấn Lưu & Xác nhận OK để áp dụng"
+                              : "⏳ Chờ lưu: Bỏ xác nhận — nhấn Lưu & Xác nhận OK để áp dụng";
         var key = (stepId, timingId);
         if (!_timingConfirms.TryGetValue(key, out var fd2) || !fd2.TryGetValue(field, out var info) || !info.IsConfirmed)
             return "Chưa xác nhận — click để xác nhận chuẩn";
         return $"Đã xác nhận bởi {info.ByName ?? "?"} lúc {info.At:dd/MM/yyyy HH:mm} — click để bỏ";
     }
 
-    private async Task DoToggleAsync(long stepId, long? timingId, string field)
+    // [FIX] DoToggleAsync — KHÔNG auto-save vào DB nữa.
+    // Chỉ cập nhật _pendingConfirms để hiển thị trạng thái "chờ lưu" (màu vàng).
+    // Dữ liệu thực sự được ghi vào DB khi user nhấn nút Lưu (DoSaveAsync → SavePendingTimingConfirmsAsync).
+    private Task DoToggleAsync(long stepId, long? timingId, string field)
     {
-        if (stepId <= 0 || !_canEditB) return;
-        try
+        if (stepId <= 0 || !_canEditB) return Task.CompletedTask;
+
+        var key = (stepId, timingId);
+
+        // Trạng thái đã lưu trong DB (từ lần load gần nhất)
+        bool currentConfirmedInDb = _timingConfirms.TryGetValue(key, out var fd)
+                                    && fd.ContainsKey(field) && fd[field].IsConfirmed;
+
+        // Kiểm tra xem đã có pending chưa
+        bool hasPending = _pendingConfirms.TryGetValue(key, out var pf) && pf.ContainsKey(field);
+
+        if (hasPending)
         {
-            var newState = await MachiningSvc.ToggleTimingConfirmAsync(stepId, timingId, field, _currentUserId);
-            var key = (stepId, timingId);
-            if (!_timingConfirms.ContainsKey(key))
-                _timingConfirms[key] = new();
-            if (newState)
-            {
-                var usr = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == _currentUserId);
-                _timingConfirms[key][field] = (true, usr?.FullName, DateTime.Now);
-            }
-            else
-            {
-                _timingConfirms[key].Remove(field);
-            }
-            StateHasChanged();
+            // Đã có pending: click lần nữa = hủy pending, quay về trạng thái DB
+            _pendingConfirms[key].Remove(field);
+            if (_pendingConfirms[key].Count == 0) _pendingConfirms.Remove(key);
         }
-        catch (Exception ex)
+        else
         {
-            await JS.InvokeVoidAsync("alert", $"Lỗi: {ex.Message}");
+            // Chưa có pending: đăng ký pending ngược với trạng thái DB
+            if (!_pendingConfirms.ContainsKey(key)) _pendingConfirms[key] = new();
+            _pendingConfirms[key][field] = !currentConfirmedInDb;
         }
+
+        _hasChanges = true;
+        _isDraftSaved = false;
+        _savedSuccessfully = false;
+        StateHasChanged();
+        return Task.CompletedTask;
     }
 
     // NC chính wrappers (timingId = null) — markup gọi, không có string literal
@@ -2939,6 +2968,9 @@ else
                 // Save timing rows per-máy
                 await SaveMachiningTimingsAsync(_machiningEdits, log, errors);
 
+                // [FIX] Lưu các pending timing confirmations (tích xác nhận chưa được lưu vào DB)
+                await SavePendingTimingConfirmsAsync(log, errors);
+
                 _part!.IsMachiningConfirmed = confirmOk;
             }
 
@@ -3165,6 +3197,79 @@ else
                 catch (Exception ex) { errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: {ex.Message}"); }
             }
         }
+    }
+
+    // [FIX] Lưu các pending timing confirmations vào DB và ghi PartProcessStepChangeLogs
+    // Được gọi từ DoSaveAsync — KHÔNG auto-save, chỉ lưu khi user nhấn Lưu
+    private async Task SavePendingTimingConfirmsAsync(List<string> log, List<string> errors)
+    {
+        if (_pendingConfirms.Count == 0) return;
+        var now = DateTime.Now;
+        var usr = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+        var userName = usr?.FullName ?? "?";
+
+        foreach (var kvp in _pendingConfirms.ToList()) // ToList để tránh collection-modified nếu có retry
+        {
+            var (stepId, timingId) = kvp.Key;
+            foreach (var fieldKvp in kvp.Value)
+            {
+                var field = fieldKvp.Key;
+                var wantConfirm = fieldKvp.Value; // true=muốn xác nhận, false=muốn bỏ
+                try
+                {
+                    // Lấy trạng thái hiện tại trong DB để biết có cần toggle không
+                    bool currentInDb = _timingConfirms.TryGetValue((stepId, timingId), out var fd)
+                                       && fd.ContainsKey(field) && fd[field].IsConfirmed;
+
+                    // Toggle cho đến khi đạt trạng thái mong muốn (tối đa 2 lần)
+                    bool actualState = currentInDb;
+                    if (actualState != wantConfirm)
+                        actualState = await MachiningSvc.ToggleTimingConfirmAsync(stepId, timingId, field, _currentUserId);
+                    if (actualState != wantConfirm) // vẫn chưa đúng (hiếm gặp) — toggle thêm lần nữa
+                        actualState = await MachiningSvc.ToggleTimingConfirmAsync(stepId, timingId, field, _currentUserId);
+
+                    // Cập nhật _timingConfirms để đồng bộ UI sau khi LoadAllAsync
+                    var key = (stepId, timingId);
+                    if (!_timingConfirms.ContainsKey(key)) _timingConfirms[key] = new();
+                    if (actualState)
+                        _timingConfirms[key][field] = (true, userName, now);
+                    else
+                        _timingConfirms[key].Remove(field);
+
+                    // Ghi lịch sử vào PartProcessStepChangeLogs để clock icon hiển thị
+                    Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+                    {
+                        StepTable = "Machining",
+                        StepId = stepId,
+                        TimingId = timingId,
+                        PartId = _part!.PartId,
+                        FieldName = "TimingConfirmed",
+                        OldValue = currentInDb ? $"Confirmed by userId={_currentUserId}" : null,
+                        NewValue = actualState ? $"Confirmed by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed",
+                        ChangedBy = _currentUserId,
+                        ChangedAt = now,
+                        Reason = _reason ?? "Lưu quy trình"
+                    });
+                    await Db.SaveChangesAsync();
+
+                    var fieldLabel = field switch
+                    {
+                        "SetupTime"      => "T.Gá lắp",
+                        "MachiningTime"  => "T.Gia công",
+                        "InspectionTime" => "T.Kiểm tra",
+                        "PreparationTime"=> "T.Chuẩn bị",
+                        "TrialRunTime"   => "T.Chạy thử",
+                        _ => field
+                    };
+                    log.Add($"✓ {(actualState ? "Xác nhận" : "Bỏ xác nhận")} {fieldLabel} (step {stepId}{(timingId.HasValue ? $", máy timing {timingId}" : "")})");
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"✗ Toggle xác nhận {field} (step {stepId}): {ex.Message}");
+                }
+            }
+        }
+        _pendingConfirms.Clear();
     }
 
     // Helper: ghi log cho máy đồng dạng vào PartProcessStepChangeLogs
