@@ -5615,6 +5615,58 @@ else
 
     }
 
+    /// <summary>
+    /// Tính DateTime kết thúc sau khi đã làm đủ <paramref name="prodMin"/> phút thực sự,
+    /// bỏ qua các khoảng nghỉ của ca. Thay thế vòng lặp hội tụ 3 bước — vòng lặp đó
+    /// không hội tụ khi end-time rơi gần boundary khoảng nghỉ (ví dụ: leo dần đến nghỉ
+    /// trưa nhưng dừng trước khi nhảy qua, khiến kết quả thiếu tới ~14 phút).
+    /// </summary>
+    private DateTime AddEffectiveMinutes(DateTime start, double prodMin, CaLamViec? ca)
+    {
+        if (prodMin <= 0) return start;
+        if (ca == null)   return start.AddMinutes(prodMin);
+
+        var date   = start.Date;
+        var cursor = start;
+        var rem    = prodMin;
+
+        // Chuẩn hoá khoảng nghỉ, lọc những khoảng kết thúc trước start
+        var breaks = ca.NghiGiaiLaos
+            .Select(n =>
+            {
+                var ns = date.Add(n.NghiBatDau.ToTimeSpan());
+                var ne = date.Add(n.NghiKetThuc.ToTimeSpan());
+                if (n.NghiKetThuc < n.NghiBatDau) ne = ne.AddDays(1);
+                return (S: ns, E: ne);
+            })
+            .Where(b => b.E > start)
+            .OrderBy(b => b.S)
+            .ToList();
+
+        foreach (var brk in breaks)
+        {
+            if (rem <= 0) break;
+
+            // Cursor đang nằm trong khoảng nghỉ → nhảy qua
+            if (cursor >= brk.S && cursor < brk.E)
+            {
+                cursor = brk.E;
+                continue;
+            }
+
+            var toBreak = (brk.S - cursor).TotalMinutes;
+            if (toBreak <= 0) continue; // break đã qua
+
+            if (rem <= toBreak)
+                return cursor.AddMinutes(rem); // xong trước khi chạm break
+
+            rem   -= toBreak;
+            cursor = brk.E; // nhảy qua break, tiếp tục làm
+        }
+
+        return cursor.AddMinutes(rem);
+    }
+
     private static string CaButtonTooltip(CaLamViec ca)
 
     {
@@ -7654,13 +7706,7 @@ var ceilingSave = poQtySave - alreadyDoneS;
         {
             if (!sub.ActualTimePerPc.HasValue || sub.ActualTimePerPc <= 0) return null;
             var prodMin4 = (double)(sub.ActualTimePerPc.Value * sl) + sub.ExtraMinutes;
-            var estEnd4  = sub.StartTime.AddMinutes(prodMin4);
-            for (int i = 0; i < 3; i++)
-            {
-                var breakMin4 = CalcBreakMinutes(sub.StartTime, estEnd4, SelectedCa);
-                estEnd4 = sub.StartTime.AddMinutes(prodMin4 + breakMin4);
-            }
-            return estEnd4;
+            return AddEffectiveMinutes(sub.StartTime, prodMin4, SelectedCa);
         }
 
         var std = GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed);
@@ -7710,23 +7756,9 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
         }
 
-        // Tính nghỉ: ước lượng end = start + prodMin rồi tính nghỉ trong đoạn đó
-
-        // Lặp hội tụ vì nghỉ phụ thuộc end, end phụ thuộc nghỉ
-
-        var estEnd = sub.StartTime.AddMinutes(prodMin);
-
-        for (int i = 0; i < 3; i++) // 3 vòng là đủ hội tụ
-
-        {
-
-            var breakMin = CalcBreakMinutes(sub.StartTime, estEnd, SelectedCa);
-
-            estEnd = sub.StartTime.AddMinutes(prodMin + breakMin);
-
-        }
-
-        return estEnd;
+        // [FIX-EST-CONV] Dùng AddEffectiveMinutes — đi thẳng qua từng khoảng nghỉ,
+        // không dùng vòng lặp hội tụ 3 bước (không đủ khi end gần boundary nghỉ).
+        return AddEffectiveMinutes(sub.StartTime, prodMin, SelectedCa);
 
     }
 
