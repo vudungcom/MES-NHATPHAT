@@ -55,6 +55,7 @@ builder.Services.AddHostedService<MES.Web.Services.LicenseBackgroundWorker>();
 // Luot 6B - Part Master process step services
 builder.Services.AddScoped<PartMachiningService>();
 builder.Services.AddScoped<PartStepStdTimeConfirmService>();
+builder.Services.AddScoped<StdUpdateService>();   // [STD-UPDATE] Nút "Update TG chuẩn" ở Part Master
 builder.Services.AddScoped<PartTaroService>();
 builder.Services.AddScoped<PartBaviaService>();
 builder.Services.AddScoped<PartWashingService>();

@@ -423,7 +423,8 @@ else
 
                                 <th style="width:100px">Part No</th>
 
-                                <th style="width:50px" class="text-center">NC</th>
+                                @* [FIX-NONGC-NC] Tiêu đề theo nhóm đăng nhập: GC = "NC", HTSP/KCS/PKG = "Mã CV" *@
+                                <th style="width:50px" class="text-center">@NcColumnTitle</th>
 
                                 <th style="width:65px" class="text-center">Máy</th>
 
@@ -3908,6 +3909,9 @@ else
 
     private Dictionary<string, RouteSnapshotData> _fullSnapshotCache = new();
 
+    // [FIX-NONGC-NC] Tiêu đề cột NC của bảng dòng đã lưu — non-GC không có NC, cột này hiện Mã CV
+    private string NcColumnTitle => IsGcGroup ? "NC" : "Mã CV";
+
     // Cache: KhPlanDetailId → có snapshot phù hợp với nhóm không
 
     private HashSet<int> _hasSnapshotForGroup = new();
@@ -4527,7 +4531,10 @@ else
 
                 PO             = po,
 
-                NC             = log.NC,
+                // [FIX-NONGC-NC] Non-GC không có NC → cột NC hiển thị Mã CV (log.WtsCode).
+                // Đồng thời giữ đúng mã khi bấm Sửa dòng (SaveRowAsync lưu row.NC vào WtsCode cho non-GC).
+                NC             = log.NC ?? log.WtsCode,
+                HtspSubGroup   = log.HtspSubGroup,   // [FIX-NONGC-SUBGROUP] giữ nhóm nhỏ khi Sửa dòng
 
                 PartNo         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.KhPlanDetailId)?.PartNo,
 
@@ -5371,6 +5378,7 @@ else
         sub.PartNo         = det.PartNo;
 
         sub.NC             = grp.NC;
+        if (IsHtspGroup) sub.HtspSubGroup = grp.HtspSubGroup;   // [FIX-NONGC-SUBGROUP] kế thừa nhóm nhỏ của nhóm
 
         sub.MachineUsed    = grp.MachineUsed;
 
@@ -5752,6 +5760,9 @@ else
         // Reset WtsCode cũ
 
         foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; }
+        // [FIX-NONGC-SUBGROUP] Gán nhóm nhỏ xuống từng dòng — trước đây chỉ gán cho nhóm → khi lưu
+        // row.HtspSubGroup = null → ProcessGroup rơi về mặc định "TARO" (sai với Bavia/Rửa).
+        foreach (var s in grp.SubRows) s.HtspSubGroup = grp.HtspSubGroup;
 
         // Lấy PO từ sub-row đầu tiên có PO
 
@@ -6262,6 +6273,9 @@ else
             if (IsGcGroup && string.IsNullOrEmpty(grp.MachineUsed))
 
             { grp.ErrorMsg = "Chưa chọn máy sử dụng."; return; }
+            // [FIX-NONGC-SUBGROUP] HTSP bắt buộc chọn nhóm nhỏ (Taro/Bavia/Rửa) — không để rơi về mặc định TARO
+            if (IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))
+            { grp.ErrorMsg = "Chưa chọn nhóm nhỏ (Taro / Bavia / Rửa)."; return; }
 
             if (!grp.SubRows.Any())
 
@@ -6279,6 +6293,7 @@ else
                 // → SaveRowAsync coi là "Mã WTS khác" (Loại 2) → lưu vào WorkerActivityLogs, MẤT PO + số lượng.
                 // Sửa: non-GC lấy NC = Mã CV của chính dòng đó (SaveRowAsync lưu row.NC vào cột WtsCode). GC giữ nguyên.
                 sub.NC          = IsGcGroup ? grp.NC : sub.WtsCode;
+                if (IsHtspGroup) sub.HtspSubGroup = grp.HtspSubGroup;   // [FIX-NONGC-SUBGROUP]
 
                 sub.MachineUsed = grp.MachineUsed;
 
@@ -6939,7 +6954,8 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
             // Khuyến nghị chọn máy — cảnh báo nhưng vẫn cho save
 
-            if (string.IsNullOrEmpty(row.MachineUsed))
+            // [FIX-NONGC-MACHINE] Chỉ GC mới có máy — non-GC không cảnh báo "Chưa chọn máy"
+            if (IsGcGroup && string.IsNullOrEmpty(row.MachineUsed))
 
             {
 
@@ -7108,7 +7124,9 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
                     WorkerId                = _currentUserId,
 
-                    MachineUsed             = row.MachineUsed,
+                    // [FIX-NONGC-MACHINE] Non-GC (HTSP/KCS/PKG) chưa có khái niệm máy → để NULL, cột Máy hiện "—".
+                    // Nếu sau này cột này dùng cho thông tin khác của non-GC (bàn, trạm, dụng cụ…) → sửa tại đây.
+                    MachineUsed             = IsGcGroup ? row.MachineUsed : null,
 
                     QtyDone                 = row.QtyDone,
 

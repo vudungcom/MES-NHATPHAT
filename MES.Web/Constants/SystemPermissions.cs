@@ -9,6 +9,9 @@ public static class SystemPermissions
     public const string PartHtsp    = "PART_HTSP";
     public const string PartKcs     = "PART_KCS";
     public const string PartDongGoi = "PART_DONGGOI";
+    // [STD-UPDATE] Nút "Update TG chuẩn" ở Part Master: đẩy TG chuẩn Part Master → snapshot mọi phiếu KH
+    // + cập nhật số chuẩn của WTS lưu từ mốc thời gian. Dùng CanEdit. ADMIN luôn có quyền.
+    public const string PartStdUpdate = "PART_STD_UPDATE";
     public const string Kho         = "KHO";
     public const string SoDoTc      = "SO_DO_TC";
     public const string KhachHang   = "KHACH_HANG";
@@ -44,6 +47,7 @@ public static class SystemPermissions
         new PermissionSection(PartHtsp,    "Part Master: C. Taro/Bavia/Rửa",   "Quyền chọn WTS & sửa bước HTSP"),
         new PermissionSection(PartKcs,     "Part Master: D. Kiểm tra (KCS)",   "Quyền chọn WTS & sửa thông số đo kiểm"),
         new PermissionSection(PartDongGoi, "Part Master: E. Đóng gói",         "Quyền chọn WTS & sửa quy cách đóng gói"),
+        new PermissionSection(PartStdUpdate, "Part Master: Update TG chuẩn",   "Đẩy thời gian chuẩn Part Master sang phiếu KH + WTS từ mốc thời gian chọn (cần PIN)"),
 
         new PermissionSection(Kho,         "Quản lý Kho",          "Quản lý xuất nhập tồn, vị trí, tình trạng & cấp phát phôi"),
         new PermissionSection(SoDoTc,      "Sơ đồ tổ chức",        "Quản lý sơ đồ nhân sự & phòng ban"),

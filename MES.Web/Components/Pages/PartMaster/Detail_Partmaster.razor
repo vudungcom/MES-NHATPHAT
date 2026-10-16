@@ -10,6 +10,8 @@
 @inject PartMasterListService ListSvc
 @inject PartMachiningService MachiningSvc
 @inject PartStepStdTimeConfirmService StdConfirmSvc
+@* [STD-UPDATE] Service nút Update TG chuẩn *@
+@inject StdUpdateService StdUpdSvc
 @inject PartTaroService TaroSvc
 @inject PartBaviaService BaviaSvc
 @inject PartWashingService WashingSvc
@@ -115,26 +117,17 @@ else
                     </button>
                 }
             }
-            @if (CanEditAnyArea)
+            @* [STD-UPDATE] Nút "Update TG chuẩn" — quyền PART_STD_UPDATE (ADMIN luôn có). Khóa khi còn thay đổi chưa lưu. *@
+            @if (_canStdUpdate)
             {
-                <div class="d-flex flex-column align-items-center">
-                    <button class="btn @(_hasChanges ? "btn-warning" : "btn-outline-secondary") shadow-sm w-100"
-                            @onclick="TrySaveDraftAsync"
-                            disabled="@(_draftSaving || !_hasChanges)">
-                        <i class="bi bi-floppy"></i>
-                        @(_draftSaving ? "Đang lưu..." : "Lưu nháp")
-                    </button>
-                    @if (_isDraftSaved && !_hasChanges)
-                    {
-                        <small class="text-danger fw-bold mt-1" style="font-size: 0.75rem;">Đã lưu nháp (NG)</small>
-                    }
-                </div>
-                <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") shadow-sm" style="height: 38px;"
-                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully || !HasUnsavedChanges)">
-                    <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle")"></i>
-                    @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
+                <button class="btn btn-outline-info shadow-sm" style="height: 38px;"
+                        title="@StdUpdBtnTitle"
+                        @onclick="OpenStdUpdModal"
+                        disabled="@StdUpdBtnDisabled">
+                    <i class="bi bi-arrow-repeat"></i> Update TG chuẩn
                 </button>
             }
+            @* [UI-ONE-SAVE] Bỏ nút Lưu nháp / Lưu & Xác nhận OK ở đầu trang — chỉ lưu ở khung "Lý do" cuối trang (có ô lý do + PIN) *@
         </div>
     </div>
 
@@ -401,8 +394,8 @@ else
                                                        readonly
                                                        value="@tr.SoMay"
                                                        placeholder="-- Chọn máy --"
-                                                       disabled="@(!CanEditTimings(edit))" />
-                                                @if (CanEditTimings(edit))
+                                                       disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                @if (CanEditTimingRow(edit, tr))
                                                 {
                                                     <button class="btn btn-outline-secondary" type="button"
                                                             title="Chọn máy"
@@ -420,8 +413,8 @@ else
                                                           rows="@GetCsvRowCount(tr.FixtureType)"
                                                           readonly
                                                           placeholder="-- Chọn đồ gá --"
-                                                          disabled="@(!CanEditTimings(edit))">@GetCsvDisplay(tr.FixtureType)</textarea>
-                                                @if (CanEditTimings(edit))
+                                                          disabled="@(!CanEditTimingRow(edit, tr))">@GetCsvDisplay(tr.FixtureType)</textarea>
+                                                @if (CanEditTimingRow(edit, tr))
                                                 {
                                                     <button class="btn btn-outline-secondary" type="button"
                                                             title="Chọn nhiều đồ gá"
@@ -439,8 +432,8 @@ else
                                                           rows="@GetCsvRowCount(tr.ToolType)"
                                                           readonly
                                                           placeholder="-- Chọn dao --"
-                                                          disabled="@(!CanEditTimings(edit))">@GetCsvDisplay(tr.ToolType)</textarea>
-                                                @if (CanEditTimings(edit))
+                                                          disabled="@(!CanEditTimingRow(edit, tr))">@GetCsvDisplay(tr.ToolType)</textarea>
+                                                @if (CanEditTimingRow(edit, tr))
                                                 {
                                                     <button class="btn btn-outline-secondary" type="button"
                                                             title="Chọn nhiều loại dao"
@@ -452,31 +445,31 @@ else
                                         </td>
                                         <td class="@TrSetupCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrMachiningCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrInspectionCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrPreparationCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrTrialRunCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimings(edit))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
@@ -488,7 +481,15 @@ else
                                                     <i class="bi bi-clock-history"></i>
                                                 </button>
                                             }
-                                            @if (CanEditTimings(edit))
+                                            @* [TIMING-PENCIL] Bút chì riêng cho dòng máy đồng dạng (dòng đã lưu) — không dùng chung bút chì NC cha *@
+                                            @if (CanEditTimings(edit) && tr.TimingId > 0 && tr.State != EditState.New)
+                                            {
+                                                <button class="btn btn-sm @TimingPencilCss(tr) p-0 px-1 me-1" title="@TimingPencilTitle(tr)"
+                                                        @onclick="() => ToggleTimingEdit(tr)">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                            }
+                                            @if (CanEditTimingRow(edit, tr))
                                             {
                                                 <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa dòng" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-x"></i></button>
                                             }
@@ -1453,6 +1454,102 @@ else
     </div>
 }
 
+@* ==================== [STD-UPDATE] MODAL UPDATE TG CHUẨN ==================== *@
+@if (_showStdUpd && _part != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" style="max-width: 1100px; width: 96vw;" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0 fw-bold text-info"><i class="bi bi-arrow-repeat me-2"></i>Update thời gian chuẩn — <code>@_part.PartNo</code></h5>
+                <button class="btn-close" @onclick="CloseStdUpdModal" disabled="@_stdUpdBusy"></button>
+            </div>
+            <div class="mes-modal-body" style="max-height: 70vh; overflow-y: auto;">
+                @* [STD-UPDATE-V4] Giải thích 1 dòng *@
+                <div class="small text-muted mb-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    WTS lưu <b>trước mốc</b> giữ nguyên · WTS lưu <b>từ mốc</b> và phiếu KH lấy số chuẩn mới của Part Master.
+                </div>
+                <div class="row g-2 align-items-end mb-3">
+                    @* [STD-UPDATE] Tách Ngày + Giờ, bind dạng chuỗi — datetime-local bị nhảy khi gõ phím *@
+                    <div class="col-md-2">
+                        <label class="form-label small mb-1 fw-semibold">Mốc: Ngày <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control form-control-sm"
+                               value="@_stdUpdDateText" @onchange="OnStdUpdDateChanged" disabled="@_stdUpdBusy" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small mb-1 fw-semibold">Giờ (WTS lưu từ) <span class="text-danger">*</span></label>
+                        <input type="time" class="form-control form-control-sm" step="60"
+                               value="@_stdUpdTimeText" @onchange="OnStdUpdTimeChanged" disabled="@_stdUpdBusy" />
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small mb-1 fw-semibold">Lý do <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" placeholder="VD: Sửa T.GC NC1 máy P11 theo đo thực tế"
+                               @bind="_stdUpdReason" @bind:event="oninput" @bind:after="ClearStdUpdRunError" disabled="@_stdUpdBusy" />
+                    </div>
+                    <div class="col-md-3 d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary flex-fill" @onclick="PreviewStdUpdAsync" disabled="@_stdUpdBusy">
+                            @if (_stdUpdBusy) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            <i class="bi bi-eye"></i> Xem trước
+                        </button>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(_stdUpdError))
+                {
+                    <div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i> @_stdUpdError</div>
+                }
+
+                @if (_stdUpdResult != null)
+                {
+                    <div class="alert alert-success py-2 small">
+                        <i class="bi bi-check-circle me-1"></i>
+                        <b>Đã Update (Batch #@_stdUpdResult.BatchId).</b>
+                        @_stdUpdResult.Applied.Plans.Count phiếu KH ·
+                        @_stdUpdResult.Applied.SnapshotCellChanged ô snapshot ·
+                        @_stdUpdResult.Applied.WtsCellChanged ô chuẩn WTS (trên @_stdUpdResult.Applied.WtsLogCount dòng WTS từ mốc)
+                    </div>
+                }
+
+                @if (_stdUpdPreview != null)
+                {
+                    @* [STD-UPDATE-V4] Không có gì cần Update → chỉ 1 dòng xanh, ẩn danh sách + nút Chạy *@
+                    @if (!_stdUpdPreview.HasChanges)
+                    {
+                        <div class="alert alert-success py-2 mb-0">
+                            <i class="bi bi-check-circle-fill me-1"></i>
+                            Tất cả @_stdUpdPreview.Plans.Count PO của part này đã khớp Part Master — <b>không cần Update</b>.
+                        </div>
+                    }
+                    @* [STD-UPDATE-V3] Kiểu bảng: 2 mục (PO đang dở dang / PO chưa có WTS), mỗi PO 1 dòng, xổ chi tiết *@
+                    @if (_stdUpdPreview.HasChanges)
+                    {
+                        <div class="small mb-2">
+                            <b>@StdUpdAffectedCount(_stdUpdPreview)</b> PO bị ảnh hưởng · đang chọn <b class="text-primary">@_stdUpdSelected.Count</b>
+                            · sẽ đổi <b>@StdUpdApplyWtsCount</b> ô chuẩn WTS (lưu từ @_stdUpdPreview.EffectiveFrom.ToString("dd/MM/yyyy HH:mm")) + <b>@StdUpdApplySnapCount</b> ô phiếu KH
+                        </div>
+                    }
+                    @if (_stdUpdPreview.HasChanges) { @StdUpdSection(_stdUpdPreview, true) }
+                    @if (_stdUpdPreview.HasChanges) { @StdUpdSection(_stdUpdPreview, false) }
+                    @StdUpdWarnings(_stdUpdPreview)
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-secondary" @onclick="CloseStdUpdModal" disabled="@_stdUpdBusy">Đóng</button>
+                @* [STD-UPDATE-V4] Nút Chạy chỉ hiện khi có thứ cần Update; thiếu lý do / chưa chọn PO → bấm sẽ báo *@
+                @if (!string.IsNullOrEmpty(_stdUpdRunError)) { <span class="small text-danger fw-semibold me-2"><i class="bi bi-exclamation-circle me-1"></i>@_stdUpdRunError</span> }
+                @if (StdUpdShowRunButton)
+                {
+                    <button class="btn btn-info fw-bold text-white" @onclick="AskStdUpdPin" disabled="@_stdUpdBusy">
+                        <i class="bi bi-shield-lock me-1"></i> Chạy Update (PIN)
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<PinConfirmModal IsOpen="_showStdUpdPin" Title="Xác nhận Update TG chuẩn" Description="@StdUpdPinDescription" OnConfirmed="OnStdUpdPinConfirmed" OnCancelled="OnStdUpdPinCancelled" />
+
 @code {
     [SupplyParameterFromQuery(Name = "partNo")]
     public string? PartNo { get; set; }
@@ -1467,6 +1564,403 @@ else
 
     private PartMaster? _part;
     private int _currentUserId;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // [STD-UPDATE] Nút "Update TG chuẩn"
+    // ════════════════════════════════════════════════════════════════════════
+    private bool _canStdUpdate;
+    private bool _showStdUpd;
+    private bool _showStdUpdPin;
+    private bool _stdUpdBusy;
+    private bool _stdUpdShowAll;
+    private DateTime _stdUpdFrom = DateTime.Now;          // mốc đã dùng cho lần Xem trước gần nhất
+    private string _stdUpdDateText = "";                   // yyyy-MM-dd (input type=date)
+    private string _stdUpdTimeText = "";                   // HH:mm      (input type=time)
+    private string _stdUpdReason = "";
+    private string? _stdUpdError;
+    private StdUpdateService.Preview? _stdUpdPreview;
+    private StdUpdateService.RunResult? _stdUpdResult;
+    private const int StdUpdMaxRows = 200;
+
+    private bool StdUpdBtnDisabled => HasUnsavedChanges || _stdUpdBusy;
+    private string StdUpdBtnTitle => HasUnsavedChanges
+        ? "Đang có thay đổi chưa lưu — bấm Lưu trước khi Update TG chuẩn"
+        : "Đẩy TG chuẩn hiện tại sang phiếu KH + WTS lưu từ mốc thời gian chọn";
+    // [STD-UPDATE-V2] Chỉ tính ô sẽ áp dụng: phiếu chưa có WTS + phiếu đang dở dang được tích
+    private bool StdUpdCanRun => _canStdUpdate && _stdUpdPreview != null && (StdUpdApplySnapCount + StdUpdApplyWtsCount) > 0
+                                 && !string.IsNullOrWhiteSpace(_stdUpdReason) && !_stdUpdBusy;
+    private string StdUpdRunTitle => _stdUpdPreview == null ? "Bấm Xem trước trước"
+        : (StdUpdApplySnapCount + StdUpdApplyWtsCount) == 0 ? "Chưa chọn PO nào (hoặc không có ô nào cần đổi)"
+        : string.IsNullOrWhiteSpace(_stdUpdReason) ? "Nhập Lý do (ô phía trên) để chạy" : "Nhập PIN để chạy";
+    private string StdUpdPinDescription => _stdUpdPreview == null ? "" :
+        $"Part {_stdUpdPreview.PartNo}: đổi {StdUpdApplySnapCount} ô phiếu KH và {StdUpdApplyWtsCount} ô chuẩn WTS " +
+        $"(WTS lưu từ {_stdUpdPreview.EffectiveFrom:dd/MM/yyyy HH:mm}). Vui lòng nhập mã PIN.";
+
+    private void OpenStdUpdModal()
+    {
+        if (!_canStdUpdate || HasUnsavedChanges) return;
+        var n = DateTime.Now;
+        _stdUpdFrom     = new DateTime(n.Year, n.Month, n.Day, n.Hour, n.Minute, 0);
+        _stdUpdDateText = _stdUpdFrom.ToString("yyyy-MM-dd");
+        _stdUpdTimeText = _stdUpdFrom.ToString("HH:mm");
+        _stdUpdReason  = "";
+        _stdUpdPreview = null;
+        _stdUpdResult  = null;
+        _stdUpdError   = null;
+        _stdUpdShowAll = false;
+        _stdUpdShowSnap = false;
+        _stdUpdRunError = null;
+        _showStdUpd    = true;
+    }
+
+    private void CloseStdUpdModal()
+    {
+        if (_stdUpdBusy) return;
+        _showStdUpd = false;
+    }
+
+    // Đổi mốc → kết quả xem trước cũ không còn đúng
+    private void OnStdUpdParamChanged()
+    {
+        _stdUpdPreview  = null;
+        _stdUpdResult   = null;
+        _stdUpdRunError = null;
+    }
+
+    private void ClearStdUpdRunError() => _stdUpdRunError = null;
+
+    // [STD-UPDATE] Không dùng @bind cho type=date/time với biến string (Razor ép kiểu DateTime → CS1503)
+    private void OnStdUpdDateChanged(ChangeEventArgs e)
+    {
+        _stdUpdDateText = e.Value?.ToString() ?? "";
+        OnStdUpdParamChanged();
+    }
+
+    private void OnStdUpdTimeChanged(ChangeEventArgs e)
+    {
+        _stdUpdTimeText = e.Value?.ToString() ?? "";
+        OnStdUpdParamChanged();
+    }
+
+    private void ToggleStdUpdShowAll() => _stdUpdShowAll = !_stdUpdShowAll;
+
+    // [STD-UPDATE-VIEW] Thu gọn / mở phần đồng bộ snapshot
+    private bool _stdUpdShowSnap;
+    private void ToggleStdUpdShowSnap() => _stdUpdShowSnap = !_stdUpdShowSnap;
+    private string StdUpdSnapIcon => _stdUpdShowSnap ? "bi-chevron-down" : "bi-chevron-right";
+
+    // ── [STD-UPDATE-V3] Chọn PO (mặc định chọn tất cả) + xổ chi tiết từng PO ──
+    private HashSet<int> _stdUpdSelected = new();   // PO được tích (cả đang dở dang lẫn chưa có WTS)
+    private HashSet<int> _stdUpdOpenPlan = new();   // PO đang xổ chi tiết
+
+    private static List<StdUpdateService.CellChange> StdUpdPlanChanges(StdUpdateService.Preview pv, int detailId)
+        => pv.Changes.Where(c => c.KhPlanDetailId == detailId)
+                     .OrderBy(c => c.Target == StdTrack.Target.WtsLog ? 0 : 1)
+                     .ThenBy(c => c.WtsCreatedAt).ThenBy(c => c.WtsLogId).ThenBy(c => c.FieldName).ToList();
+
+    private static List<StdUpdateService.PlanSummary> StdUpdPlansWithChanges(StdUpdateService.Preview pv, bool hasWts)
+        => pv.Plans.Where(p => p.HasWts == hasWts && pv.Changes.Any(c => c.KhPlanDetailId == p.KhPlanDetailId)).ToList();
+
+    private static int StdUpdAffectedCount(StdUpdateService.Preview pv)
+        => pv.Changes.Select(c => c.KhPlanDetailId).Distinct().Count();
+
+    private bool StdUpdIsApplied(StdUpdateService.CellChange c) => _stdUpdSelected.Contains(c.KhPlanDetailId);
+
+    private int StdUpdApplySnapCount => _stdUpdPreview?.Changes.Count(c => c.Target == StdTrack.Target.Snapshot && StdUpdIsApplied(c)) ?? 0;
+    private int StdUpdApplyWtsCount  => _stdUpdPreview?.Changes.Count(c => c.Target == StdTrack.Target.WtsLog   && StdUpdIsApplied(c)) ?? 0;
+
+    // Sau mỗi lần Xem trước: chọn tất cả PO có thay đổi
+    private void StdUpdSelectAllAfterPreview()
+    {
+        _stdUpdSelected.Clear();
+        _stdUpdOpenPlan.Clear();
+        if (_stdUpdPreview == null) return;
+        foreach (var id in _stdUpdPreview.Changes.Select(c => c.KhPlanDetailId).Distinct()) _stdUpdSelected.Add(id);
+    }
+
+    private void StdUpdSelectSection(bool hasWts, bool on)
+    {
+        if (_stdUpdPreview == null) return;
+        foreach (var p in StdUpdPlansWithChanges(_stdUpdPreview, hasWts))
+            if (on) _stdUpdSelected.Add(p.KhPlanDetailId); else _stdUpdSelected.Remove(p.KhPlanDetailId);
+    }
+
+    private void OnStdUpdPlanToggled(int detailId, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        if (on) _stdUpdSelected.Add(detailId); else _stdUpdSelected.Remove(detailId);
+    }
+
+    private void ToggleStdUpdPlanOpen(int detailId)
+    {
+        if (!_stdUpdOpenPlan.Remove(detailId)) _stdUpdOpenPlan.Add(detailId);
+    }
+    private string StdUpdPlanOpenIcon(int detailId)
+        => _stdUpdOpenPlan.Contains(detailId) ? "bi-chevron-down" : "bi-chevron-right";
+
+    private static int StdUpdCnt(StdUpdateService.Preview pv, int detailId, string target)
+        => pv.Changes.Count(c => c.KhPlanDetailId == detailId && c.Target == target);
+
+    // 1 mục (đang dở dang / chưa có WTS): tiêu đề + nút chọn/bỏ chọn + bảng PO 1 dòng/PO, xổ chi tiết
+    private RenderFragment StdUpdSection(StdUpdateService.Preview pv, bool hasWts) => __builder =>
+    {
+        var plans   = StdUpdPlansWithChanges(pv, hasWts);
+        var matched = pv.Plans.Count(p => p.HasWts == hasWts) - plans.Count;
+        var title   = hasWts ? "PO đang dở dang (đã có WTS)" : "PO chưa có WTS";
+        var note    = hasWts ? "WTS lưu trước mốc giữ nguyên · WTS lưu từ mốc + phiếu KH lấy số Part Master"
+                             : "Cập nhật toàn bộ số chuẩn + xác nhận của phiếu KH theo Part Master";
+        var icon    = hasWts ? "bi-hourglass-split" : "bi-file-earmark";   // tránh nested quotes trong class=
+        if (plans.Count == 0) return;   // [STD-UPDATE-V4] mục không có PO cần update → ẩn hẳn
+        <div class="border rounded mb-3">
+            <div class="d-flex align-items-center gap-2 px-2 py-1 bg-light border-bottom">
+                <i class="bi @icon"></i>
+                <b>@title</b>
+                <span class="small text-muted">@plans.Count PO cần update · @matched PO đã khớp</span>
+                <span class="small text-muted d-none d-md-inline">— @note</span>
+                <span class="ms-auto"></span>
+                @if (plans.Count > 0)
+                {
+                    <button class="btn btn-sm btn-outline-primary py-0" @onclick="() => StdUpdSelectSection(hasWts, true)">Chọn tất cả</button>
+                    <button class="btn btn-sm btn-outline-secondary py-0" @onclick="() => StdUpdSelectSection(hasWts, false)">Bỏ chọn tất cả</button>
+                }
+            </div>
+            @if (plans.Count == 0)
+            {
+                <div class="small text-muted fst-italic px-2 py-1">Không có PO nào cần update.</div>
+            }
+            else
+            {
+                <table class="table table-sm table-hover small mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:32px"></th>
+                            <th style="width:140px">PO</th>
+                            <th class="text-center" style="width:90px">Tổng WTS</th>
+                            <th class="text-center" style="width:110px">WTS từ mốc</th>
+                            <th class="text-center" style="width:110px">Ô WTS đổi</th>
+                            <th class="text-center" style="width:120px">Ô phiếu KH đổi</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in plans)
+                        {
+                            <tr @key="p.KhPlanDetailId">
+                                <td class="text-center">
+                                    <input type="checkbox" class="form-check-input mt-0"
+                                           checked="@_stdUpdSelected.Contains(p.KhPlanDetailId)"
+                                           @onchange="e => OnStdUpdPlanToggled(p.KhPlanDetailId, e)" />
+                                </td>
+                                <td><code>@p.PurchaseOrder</code></td>
+                                <td class="text-center">@p.WtsTotal</td>
+                                <td class="text-center">@p.WtsLogCount</td>
+                                <td class="text-center fw-bold">@StdUpdCnt(pv, p.KhPlanDetailId, StdTrack.Target.WtsLog)</td>
+                                <td class="text-center">@StdUpdCnt(pv, p.KhPlanDetailId, StdTrack.Target.Snapshot)</td>
+                                <td>
+                                    <button class="btn btn-link btn-sm p-0" @onclick="() => ToggleStdUpdPlanOpen(p.KhPlanDetailId)">
+                                        <i class="bi @StdUpdPlanOpenIcon(p.KhPlanDetailId)"></i> chi tiết
+                                    </button>
+                                </td>
+                            </tr>
+                            if (_stdUpdOpenPlan.Contains(p.KhPlanDetailId))
+                            {
+                                <tr>
+                                    <td></td>
+                                    <td colspan="6">@StdUpdChangeTable(StdUpdPlanChanges(pv, p.KhPlanDetailId), "")</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    };
+
+    // Danh sách cảnh báo (chỉ hiện khi có) — RenderFragment vì foreach lồng (phiếu → cảnh báo)
+    private RenderFragment StdUpdWarnings(StdUpdateService.Preview pv) => __builder =>
+    {
+        if (pv.WarningCount == 0) return;
+        <div class="alert alert-warning py-2 small mt-2 mb-0">
+            @foreach (var p in pv.Plans.Where(x => x.Warnings.Count > 0))
+            {
+                foreach (var w in p.Warnings)
+                {
+                    <div><code>@p.PurchaseOrder</code>: @w</div>
+                }
+            }
+        </div>
+    };
+
+    private async Task PreviewStdUpdAsync()
+    {
+        if (_part == null || !_canStdUpdate) return;
+        _stdUpdError = null; _stdUpdResult = null; _stdUpdRunError = null;
+        // Ghép Ngày + Giờ → mốc (input type=time có thể trả "HH:mm" hoặc "HH:mm:ss")
+        var timeText = (_stdUpdTimeText ?? "").Length >= 5 ? _stdUpdTimeText!.Substring(0, 5) : _stdUpdTimeText;
+        if (!DateTime.TryParseExact($"{_stdUpdDateText} {timeText}", "yyyy-MM-dd HH:mm",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var from))
+        {
+            _stdUpdPreview = null;
+            _stdUpdError = "Ngày / giờ mốc không hợp lệ.";
+            return;
+        }
+        _stdUpdFrom = from;
+        _stdUpdSelected.Clear();   // xem trước mới → chọn lại từ đầu (sau khi có kết quả: chọn tất cả)
+        _stdUpdOpenPlan.Clear();
+        _stdUpdBusy = true;
+        try { _stdUpdPreview = await StdUpdSvc.PreviewAsync(_part.PartId, _stdUpdFrom); StdUpdSelectAllAfterPreview(); }
+        catch (Exception ex) { _stdUpdPreview = null; _stdUpdError = ex.InnerException?.Message ?? ex.Message; }
+        finally { _stdUpdBusy = false; }
+    }
+
+    // [STD-UPDATE-V4] Bấm Chạy: kiểm tra và BÁO lý do thay vì khóa nút
+    private string? _stdUpdRunError;
+    private bool StdUpdShowRunButton => _stdUpdPreview != null && _stdUpdPreview.HasChanges && _stdUpdResult == null;
+
+    private void AskStdUpdPin()
+    {
+        _stdUpdRunError = null;
+        if (_stdUpdPreview == null) { _stdUpdRunError = "Bấm Xem trước trước khi chạy."; return; }
+        if (_stdUpdSelected.Count == 0 || (StdUpdApplySnapCount + StdUpdApplyWtsCount) == 0)
+        { _stdUpdRunError = "Chưa chọn PO nào để Update."; return; }
+        if (string.IsNullOrWhiteSpace(_stdUpdReason))
+        { _stdUpdRunError = "Nhập Lý do trước khi chạy."; return; }
+        if (!StdUpdCanRun) return;
+        _showStdUpdPin = true;
+    }
+
+    private void OnStdUpdPinCancelled() => _showStdUpdPin = false;
+
+    private async Task OnStdUpdPinConfirmed()
+    {
+        _showStdUpdPin = false;
+        if (_part == null || !StdUpdCanRun) return;
+        _stdUpdBusy = true; _stdUpdError = null;
+        try
+        {
+            // Service tính lại từ đầu trong transaction (không dùng lại kết quả xem trước)
+            _stdUpdResult  = await StdUpdSvc.RunAsync(_part.PartId, _stdUpdFrom, _stdUpdReason, _currentUserId, _stdUpdSelected.ToList());
+            _stdUpdPreview = null;
+        }
+        catch (Exception ex) { _stdUpdError = "Lỗi khi Update: " + (ex.InnerException?.Message ?? ex.Message); }
+        finally { _stdUpdBusy = false; }
+    }
+
+    private static string StdUpdFmt(decimal? v) => v.HasValue ? v.Value.ToString("0.##") : "—";
+
+    private static string StdUpdFieldLabel(string f) => f switch
+    {
+        StdTrack.Field.Setup       => "T.Gá",
+        StdTrack.Field.Machining   => "T.GC",
+        StdTrack.Field.Inspection  => "T.Ktra",
+        StdTrack.Field.Preparation => "T.CB",
+        StdTrack.Field.TrialRun    => "T.Chạy",
+        StdTrack.Field.Standard    => "T.Chuẩn",
+        _                          => f
+    };
+
+    private static string StdUpdTableLabel(string? t) => t switch
+    {
+        StdTrack.Table.Machining       => "GC (NC chính)",
+        StdTrack.Table.MachiningTiming => "GC (máy đồng dạng)",
+        StdTrack.Table.Taro            => "Taro",
+        StdTrack.Table.Bavia           => "Bavia",
+        StdTrack.Table.Washing         => "Rửa",
+        StdTrack.Table.Inspection      => "KCS",
+        StdTrack.Table.Packaging       => "Đóng gói",
+        _                              => t ?? "—"
+    };
+
+    private static string StdUpdConfText(bool? confirmed, string? byName)
+        => confirmed == true ? $"✓ {byName ?? "?"}" : confirmed == false ? "○" : "(chưa có)";
+
+    private static string StdUpdTargetText(StdUpdateService.CellChange c)
+        => c.Target == StdTrack.Target.Snapshot
+            ? "Phiếu KH"
+            : $"WTS #{c.WtsLogId} ({c.WtsCreatedAt:dd/MM HH:mm})";
+
+    private static string StdUpdRowCss(StdUpdateService.CellChange c)
+        => c.Target == StdTrack.Target.Snapshot ? "" : "table-light";
+
+    private string StdUpdShowAllText(int total)
+        => _stdUpdShowAll ? "Thu gọn" : $"Xem tất cả {total} dòng";
+
+    // Bảng tóm tắt theo phiếu KH (có danh sách cảnh báo) — RenderFragment để tránh foreach lồng trong markup
+    private RenderFragment StdUpdPlanTable(StdUpdateService.Preview pv) => __builder =>
+    {
+        <table class="table table-sm table-bordered small mb-3">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:140px">PO</th>
+                    <th class="text-center" style="width:120px">Ô snapshot đổi</th>
+                    <th class="text-center" style="width:120px">Dòng WTS từ mốc</th>
+                    <th class="text-center" style="width:110px">Ô WTS đổi</th>
+                    <th>Cảnh báo</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in pv.Plans)
+                {
+                    <tr @key="p.KhPlanDetailId">
+                        <td><code>@p.PurchaseOrder</code></td>
+                        <td class="text-center">@p.SnapshotCellChanged / @p.SnapshotCellCount</td>
+                        <td class="text-center">@p.WtsLogCount</td>
+                        <td class="text-center">@p.WtsCellChanged</td>
+                        <td>
+                            @foreach (var w in p.Warnings)
+                            {
+                                <div class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>@w</div>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    // Bảng chi tiết ô thay đổi (tối đa StdUpdMaxRows dòng, có nút xem tất cả)
+    private RenderFragment StdUpdChangeTable(List<StdUpdateService.CellChange> all, string emptyText) => __builder =>
+    {
+        if (all.Count == 0)
+        {
+            <div class="small text-muted fst-italic mb-2">@emptyText</div>
+            return;
+        }
+        var rows = _stdUpdShowAll ? all : all.Take(StdUpdMaxRows).ToList();
+        <table class="table table-sm table-bordered small mb-1">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:150px">Đối tượng</th>
+                    <th style="width:110px">PO</th>
+                    <th style="width:130px">Bảng</th>
+                    <th style="width:60px">NC</th>
+                    <th style="width:110px">Máy / Mã</th>
+                    <th style="width:70px">Trường</th>
+                    <th class="text-center" style="width:110px">Số: cũ → mới</th>
+                    <th>Xác nhận: cũ → mới</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in rows)
+                {
+                    <tr class="@StdUpdRowCss(c)">
+                        <td>@StdUpdTargetText(c)</td>
+                        <td><code>@c.PurchaseOrder</code></td>
+                        <td>@StdUpdTableLabel(c.SnapshotTable)</td>
+                        <td>@c.NC</td>
+                        <td>@c.MachineOrCode</td>
+                        <td>@StdUpdFieldLabel(c.FieldName)</td>
+                        <td class="text-center">@StdUpdFmt(c.OldValue) → <b>@StdUpdFmt(c.NewValue)</b></td>
+                        <td>@StdUpdConfText(c.OldIsConfirmed, c.OldConfirmedByName) → <b>@StdUpdConfText(c.NewIsConfirmed, c.NewConfirmedByName)</b></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        if (all.Count > StdUpdMaxRows)
+        {
+            <button class="btn btn-link btn-sm p-0" @onclick="ToggleStdUpdShowAll">@StdUpdShowAllText(all.Count)</button>
+        }
+    };
 
     private bool _isAdmin;
     private bool _canViewA, _canViewB, _canViewC, _canViewD, _canViewE;
@@ -1676,6 +2170,20 @@ else
     private bool CanEditTimings(MachiningEdit edit)
         => _canEditB && !RowLocked(edit); // [FIX] bỏ điều kiện IsEditingWts — timing rows luôn editable khi có quyền B, không cần click bút chì NC cha
 
+    // [TIMING-PENCIL] Dòng máy đồng dạng: đã lưu → khóa, bấm bút chì riêng mới sửa; dòng mới thêm → mở sẵn.
+    // Vòng tích xác nhận ✓/○ KHÔNG khóa theo bút chì (thao tác riêng, có trạng thái chờ lưu màu vàng).
+    private bool CanEditTimingRow(MachiningEdit edit, TimingRowEdit tr)
+        => CanEditTimings(edit) && (tr.TimingId == 0 || tr.State == EditState.New || tr.IsEditing);
+
+    private void ToggleTimingEdit(TimingRowEdit tr)
+    {
+        tr.IsEditing = !tr.IsEditing;
+        _savedSuccessfully = false;
+    }
+
+    private static string TimingPencilCss(TimingRowEdit tr) => tr.IsEditing ? "btn-warning" : "btn-outline-primary";
+    private static string TimingPencilTitle(TimingRowEdit tr) => tr.IsEditing ? "Đang sửa — click để khóa lại" : "Sửa dòng máy đồng dạng này";
+
     private IEnumerable<ThietBi> GetTimingMachineOptions(MachiningEdit edit)
     {
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1802,6 +2310,7 @@ else
             _canViewA = _canViewB = _canViewC = _canViewD = _canViewE = true;
             _canEditA = _canEditB = _canEditC = _canEditD = _canEditE = true;
             _canDelete = true;
+            _canStdUpdate = true;   // [STD-UPDATE] ADMIN luôn có quyền Update TG chuẩn
         }
         else if (_currentUserId > 0)
         {
@@ -1823,6 +2332,9 @@ else
 
             _canViewE = perms.TryGetValue("PART_DONGGOI", out var pvE) && pvE.CanView;
             _canEditE = perms.TryGetValue("PART_DONGGOI", out var pE) && pE.CanEdit;
+
+            // [STD-UPDATE] Quyền nút "Update TG chuẩn" (cần CanEdit)
+            _canStdUpdate = perms.TryGetValue(MES.Web.Constants.SystemPermissions.PartStdUpdate, out var pSu) && pSu.CanEdit;
         }
 
         _allWtsTasks = await WtsSvc.GetAllActiveAsync();
@@ -3550,6 +4062,8 @@ else
         public int DisplayOrder { get; set; } = 1;
         public string? FixtureType { get; set; }
         public string? ToolType { get; set; }
+        /// <summary>[TIMING-PENCIL] Đang mở sửa bằng bút chì riêng của dòng máy đồng dạng (chỉ UI, không lưu DB)</summary>
+        public bool IsEditing { get; set; }
 
         private static decimal? R(decimal? v) => v.HasValue ? Math.Round(v.Value, 1) : null;
         private decimal? _setup; public decimal? SetupTime { get => _setup; set => _setup = R(value); }
@@ -3715,4 +4229,4 @@ else
             ParentNC = ParentNC
         };
     }
-}
+}
