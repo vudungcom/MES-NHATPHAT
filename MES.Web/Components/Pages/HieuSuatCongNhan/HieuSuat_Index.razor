@@ -7402,6 +7402,15 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
     }
 
+    // [FLAT-CODE] Mã CV tính theo tổng thời gian thực tế (không nhân SL): 1V / 1T / 1K / 1G
+    private static readonly string[] _flatTimeCodes = { "1V", "1T", "1K", "1G" };
+    private bool IsFlatTimeCode(WtsRow sub)
+    {
+        var code = !string.IsNullOrEmpty(sub.WtsCode) ? sub.WtsCode : sub.NC;
+        return !string.IsNullOrEmpty(code)
+            && _flatTimeCodes.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase);
+    }
+
     // [STD-CONFIRM-ROW] Tag bảng Part Master tương ứng nhóm đang nhập (non-GC)
     private string StdTableTagForRow(WtsRow row)
     {
@@ -7769,13 +7778,22 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
             : (_allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m);
 
+        // [FLAT-CODE] Non-GC, Mã CV 1V/1T/1K/1G: T.bắt đầu + T.thực tế + T.PS + T.nghỉ = T.kết thúc
+        // (T.thực tế là tổng phút công nhân nhập — KHÔNG nhân SL; giống "Chạy thử" bên gia công)
+        if (!IsGcGroup && IsFlatTimeCode(sub))
+        {
+            if (!sub.ActualTimePerPc.HasValue || sub.ActualTimePerPc.Value <= 0) return null;
+            var flatMin = (double)sub.ActualTimePerPc.Value + sub.ExtraMinutes;
+            return AddEffectiveMinutes(sub.StartTime, flatMin, SelectedCa);
+        }
+
         if (sl <= 0) return null;
 
-        // [FIX4] Non-GC: dùng T.Thực tế/pc (công nhân nhập) × SL + T.Phát sinh + T.Nghỉ
+        // [FIX4] Non-GC (các mã CV còn lại): (SL OK + SL NG) × T.chuẩn/pc + T.PS + T.nghỉ
+        // Nếu công nhân đã nhập T.thực tế/pc thì dùng số đó thay T.chuẩn.
         if (!IsGcGroup)
         {
             // Ưu tiên T.Thực tế/pc nếu công nhân đã nhập; fallback T.Chuẩn/pc (mã CV thường).
-            // Mã 1V/1T/1K/1G không có T.Chuẩn → chỉ tính khi đã nhập thực tế.
             var timePerPc = (sub.ActualTimePerPc.HasValue && sub.ActualTimePerPc.Value > 0)
                 ? sub.ActualTimePerPc.Value
                 : GetStdTimeForSubRow(sub);
