@@ -23,6 +23,10 @@ public class KhPlanRouteSnapshotMachining
     /// <summary>PartId lúc copy — dùng để so sánh với PartMaster sau này</summary>
     public int SourcePartId { get; set; }
 
+    /// <summary>[STD-UPDATE] StepId nguồn (PartMachiningSteps.StepId) — nối chắc chắn về Part Master
+    /// khi bấm "Update TG chuẩn". NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
+
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]
@@ -60,6 +64,8 @@ public class KhPlanRouteSnapshotTaro
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     public int SourcePartId { get; set; }
+    /// <summary>[STD-UPDATE] StepId nguồn ở Part Master (PartXxxSteps.StepId). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]
@@ -87,6 +93,8 @@ public class KhPlanRouteSnapshotBavia
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     public int SourcePartId { get; set; }
+    /// <summary>[STD-UPDATE] StepId nguồn ở Part Master (PartXxxSteps.StepId). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]
@@ -112,6 +120,8 @@ public class KhPlanRouteSnapshotWashing
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     public int SourcePartId { get; set; }
+    /// <summary>[STD-UPDATE] StepId nguồn ở Part Master (PartXxxSteps.StepId). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]
@@ -137,6 +147,8 @@ public class KhPlanRouteSnapshotInspection
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     public int SourcePartId { get; set; }
+    /// <summary>[STD-UPDATE] StepId nguồn ở Part Master (PartXxxSteps.StepId). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]
@@ -189,6 +201,8 @@ public class KhPlanRouteSnapshotPackaging
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     public int SourcePartId { get; set; }
+    /// <summary>[STD-UPDATE] StepId nguồn ở Part Master (PartXxxSteps.StepId). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
     public DateTime SnapshotAt { get; set; } = DateTime.Now;
     public int SnapshotBy { get; set; }
     [ForeignKey(nameof(SnapshotBy))]

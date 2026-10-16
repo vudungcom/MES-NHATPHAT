@@ -1828,16 +1828,14 @@ else
                                     @if (IsGcGroup)
 
                                     {
-                                        @* [FIX-STD-COLOR-GC] Xanh lá nếu IsMachiningConfirmed, xanh dương nếu chưa *@
-                                        var gcStdColor = (!string.IsNullOrEmpty(sub.PO)
-                                            && _poStdConfirmed.TryGetValue(sub.PO, out var _gsc) && _gsc)
-                                            ? "#198754" : "#185fa5";
+                                        @* [STD-UPDATE] Bỏ tô màu theo cờ cả section (IsMachiningConfirmed).
+                                           Mỗi ô tự tra xác nhận trong SNAPSHOT: xanh = đã xác nhận, xám = chưa. Tooltip = người + thời điểm. *@
 
                                         @* T.Gá *@
 
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
 
-                                            @if (isFirst) { <div style="font-size:10px;font-weight:600;color:@gcStdColor;text-align:center;margin-bottom:1px">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div> }
+                                            @if (isFirst) { <div style="@GcStdStyle(sub, subStd, StdTrack.Field.Setup)" title="@GcStdTitle(sub, subStd, StdTrack.Field.Setup)">@(subStd?.SetupTime?.ToString("0.#") ?? "—")</div> }
 
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1853,7 +1851,7 @@ else
 
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
 
-                                            @if (isFirst) { <div style="font-size:10px;font-weight:600;color:@gcStdColor;text-align:center;margin-bottom:1px">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div> }
+                                            @if (isFirst) { <div style="@GcStdStyle(sub, subStd, StdTrack.Field.Machining)" title="@GcStdTitle(sub, subStd, StdTrack.Field.Machining)">@(subStd?.MachiningTime?.ToString("0.#") ?? "—")</div> }
 
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1869,7 +1867,7 @@ else
 
                                         <td style="background:@(!isSerial ? "#f8f9fa" : "transparent")">
 
-                                            @if (isFirst) { <div style="font-size:10px;font-weight:600;color:@gcStdColor;text-align:center;margin-bottom:1px">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div> }
+                                            @if (isFirst) { <div style="@GcStdStyle(sub, subStd, StdTrack.Field.Inspection)" title="@GcStdTitle(sub, subStd, StdTrack.Field.Inspection)">@(subStd?.InspectionTime?.ToString("0.#") ?? "—")</div> }
 
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1885,7 +1883,7 @@ else
 
                                         <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
 
-                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div> }
+                                            @if (isFirst) { <div style="@GcStdStyle(sub, subStd, StdTrack.Field.Preparation)" title="@GcStdTitle(sub, subStd, StdTrack.Field.Preparation)">@(subStd?.PreparationTime?.ToString("0.#") ?? "—")</div> }
 
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1901,7 +1899,7 @@ else
 
                                         <td style="background:@(isSerial ? "#f8f9fa" : "transparent")">
 
-                                            @if (isFirst) { <div style="font-size:10px;color:#854f0b;text-align:center;margin-bottom:1px">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div> }
+                                            @if (isFirst) { <div style="@GcStdStyle(sub, subStd, StdTrack.Field.TrialRun)" title="@GcStdTitle(sub, subStd, StdTrack.Field.TrialRun)">@(subStd?.TrialRunTime?.ToString("0.#") ?? "—")</div> }
 
                                             <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -3922,6 +3920,10 @@ else
     private Dictionary<string, bool> _poStdConfirmed = new();
     // [STD-CONFIRM-ROW] Non-GC: PO → tập "Bảng|Mã" của các dòng T.Chuẩn ĐÃ được tích xác nhận bên Part Master
     private Dictionary<string, HashSet<string>> _poStdRowKeys = new();
+    // [STD-UPDATE] KhPlanDetailId → trạng thái xác nhận từng ô của SNAPSHOT phiếu KH.
+    // Đây là nguồn DUY NHẤT cho màu xanh/xám + tooltip T.Chuẩn (GC và non-GC).
+    // _poStdConfirmed / _poStdRowKeys ở trên không còn dùng để tô màu nữa.
+    private Dictionary<int, Dictionary<(string Table, long RowId, string Field), KhPlanRouteSnapshotStdConfirm>> _snapStdConfirmCache = new();
 
     // Máy đang hỏng/bảo trì — HashSet SoMay để lookup O(1)
 
@@ -3969,11 +3971,15 @@ else
 
     private Dictionary<int, List<TimingStd>> _timingStdCache = new();
 
+    // [STD-UPDATE] Thêm SrcTable/SrcRowId = dòng snapshot đã lấy số (để tra trạng thái xác nhận).
+    // NULL = không lấy từ snapshot (fallback Part Master live) → coi như CHƯA xác nhận.
     private record TimingStd(string NC, string SoMay,
 
         decimal? SetupTime, decimal? MachiningTime, decimal? InspectionTime,
 
-        decimal? PreparationTime, decimal? TrialRunTime);
+        decimal? PreparationTime, decimal? TrialRunTime,
+
+        string? SrcTable = null, long? SrcRowId = null);
 
     /// <summary>
 
@@ -4025,7 +4031,9 @@ else
 
                     tr.SetupTime, tr.MachiningTime, tr.InspectionTime,
 
-                    tr.PreparationTime, tr.TrialRunTime);
+                    tr.PreparationTime, tr.TrialRunTime,
+
+                    StdTrack.Table.MachiningTiming, tr.TimingSnapshotId); // [STD-UPDATE]
 
         }
 
@@ -4049,7 +4057,9 @@ else
 
                     snapList.SetupTime, snapList.MachiningTime, snapList.InspectionTime,
 
-                    snapList.PreparationTime, snapList.TrialRunTime);
+                    snapList.PreparationTime, snapList.TrialRunTime,
+
+                    StdTrack.Table.Machining, snapList.SnapshotId); // [STD-UPDATE]
 
             }
 
@@ -4067,7 +4077,9 @@ else
 
                 firstTr.SetupTime, firstTr.MachiningTime, firstTr.InspectionTime,
 
-                firstTr.PreparationTime, firstTr.TrialRunTime);
+                firstTr.PreparationTime, firstTr.TrialRunTime,
+
+                StdTrack.Table.MachiningTiming, firstTr.TimingSnapshotId); // [STD-UPDATE]
 
         }
 
@@ -4083,7 +4095,9 @@ else
 
                 snapList.SetupTime, snapList.MachiningTime, snapList.InspectionTime,
 
-                snapList.PreparationTime, snapList.TrialRunTime);
+                snapList.PreparationTime, snapList.TrialRunTime,
+
+                StdTrack.Table.Machining, snapList.SnapshotId); // [STD-UPDATE]
 
         }
 
@@ -4797,6 +4811,9 @@ else
 
             row.AvailableNCs = _snapshotCache[row.PO];
 
+            // [STD-UPDATE] Nạp trạng thái xác nhận T.Chuẩn từ snapshot phiếu KH
+            await EnsureSnapStdConfirmsAsync(row.KhPlanDetailId.Value);
+
             await ReloadFlowAsync(row.KhPlanDetailId.Value);
 
         }
@@ -4964,6 +4981,9 @@ else
         if (!_wtsLogsCache.ContainsKey(po))
 
             await ReloadWtsLogsAsync(po, detail.KhPlanDetailId);
+
+        // [STD-UPDATE] Nạp trạng thái xác nhận T.Chuẩn từ snapshot phiếu KH
+        await EnsureSnapStdConfirmsAsync(detail.KhPlanDetailId);
 
         // Load timing chuẩn theo part
 
@@ -5442,6 +5462,9 @@ else
             if (pmRow != null)
                 _poStdRowKeys[det.PurchaseOrder] = await StdConfirmSvc.GetConfirmedCodeKeysAsync(pmRow.PartId);
         }
+
+        // [STD-UPDATE] Nạp trạng thái xác nhận T.Chuẩn từ snapshot phiếu KH (flow nhóm)
+        await EnsureSnapStdConfirmsAsync(det.KhPlanDetailId);
 
         if (grp.UseStdAsDefault) TryFillStdValues(sub);
 
@@ -6252,7 +6275,10 @@ else
 
                 sub.ErrorMsg = null;
 
-                sub.NC          = grp.NC;
+                // [FIX-NONGC-NC] Non-GC (HTSP/KCS/PKG): nhóm không có NC (grp.NC = null) → trước đây ghi đè sub.NC = null
+                // → SaveRowAsync coi là "Mã WTS khác" (Loại 2) → lưu vào WorkerActivityLogs, MẤT PO + số lượng.
+                // Sửa: non-GC lấy NC = Mã CV của chính dòng đó (SaveRowAsync lưu row.NC vào cột WtsCode). GC giữ nguyên.
+                sub.NC          = IsGcGroup ? grp.NC : sub.WtsCode;
 
                 sub.MachineUsed = grp.MachineUsed;
 
@@ -7160,6 +7186,10 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
                 }
 
+                // [STD-UPDATE] Đóng băng số chuẩn + trạng thái xác nhận (theo snapshot phiếu KH) cho dòng WTS vừa lưu.
+                // Lỗi ở bước này KHÔNG làm hỏng dòng WTS (đã lưu) — chỉ báo cảnh báo, chạy lại SQL backfill để bù.
+                await SaveWtsLogStdsAsync(log, row);
+
                 Db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
 
                 // Reload qty cache + flow (v0.8)
@@ -7446,15 +7476,13 @@ var ceilingSave = poQtySave - alreadyDoneS;
         return GetStdTimeForWtsCode(sub);
     }
 
-    // [STD-CONFIRM-ROW] Chỉ xanh khi ĐÚNG dòng T.Chuẩn này đã được tích xác nhận bên Part Master
+    // [STD-CONFIRM-ROW] Chỉ xanh khi ĐÚNG dòng T.Chuẩn này đã được tích xác nhận
+    // [STD-UPDATE] Đổi nguồn: đọc xác nhận từ SNAPSHOT phiếu KH (KhPlanRouteSnapshotStdConfirms),
+    //   không đọc Part Master live (_poStdRowKeys) nữa. Dòng snapshot = dòng mà GetStdTimeForSubRow lấy số.
     private bool IsStdRowConfirmed(WtsRow sub)
     {
-        if (IsGcGroup || string.IsNullOrEmpty(sub.PO)) return false;
-        if (!_poStdRowKeys.TryGetValue(sub.PO, out var keys) || keys.Count == 0) return false;
-        var tbl = StdTableTagForRow(sub);
-        if (string.IsNullOrEmpty(tbl)) return false;
-        return (!string.IsNullOrEmpty(sub.WtsCode) && keys.Contains(tbl + "|" + sub.WtsCode))
-            || (!string.IsNullOrEmpty(sub.NC)      && keys.Contains(tbl + "|" + sub.NC));
+        if (IsGcGroup) return false;
+        return GetStdSnapConfirmForSubRow(sub)?.IsConfirmed == true;
     }
 
     private string StdTimeText(WtsRow sub)
@@ -7463,10 +7491,187 @@ var ceilingSave = poQtySave - alreadyDoneS;
         return v.HasValue ? v.Value.ToString("0.##") : "—";
     }
 
+    // [STD-UPDATE] Tooltip có người + thời điểm xác nhận (theo snapshot phiếu KH)
     private string StdTimeTitle(WtsRow sub)
-        => IsStdRowConfirmed(sub)
-            ? "Thời gian chuẩn đã được xác nhận ở Part Master ✓"
-            : "Thời gian chuẩn/pc từ Part Master (phút) — CHƯA xác nhận";
+    {
+        if (GetStdSourceForSubRow(sub) == null)
+            return "T.Chuẩn/pc: không tìm thấy dòng chuẩn trong snapshot phiếu KH — CHƯA xác nhận";
+        return StdConfirmTitle(GetStdSnapConfirmForSubRow(sub), GetStdTimeForSubRow(sub), "T.Chuẩn/pc");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // [STD-UPDATE] Xác nhận T.Chuẩn theo SNAPSHOT phiếu KH — helpers
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Ghi WtsProductionLogStds cho 1 dòng WTS vừa lưu — dùng ĐÚNG số + xác nhận đang hiện trên form
+    // (cùng GetStdTiming / GetStdTimeForSubRow / GetStdSourceForSubRow như phần hiển thị).
+    private async Task SaveWtsLogStdsAsync(WtsProductionLog log, WtsRow row)
+    {
+        try
+        {
+            var detailId = log.KhPlanDetailId;
+            if (!_snapStdConfirmCache.ContainsKey(detailId))
+                await EnsureSnapStdConfirmsAsync(detailId);
+
+            var now  = DateTime.Now;
+            var list = new List<WtsProductionLogStd>();
+
+            WtsProductionLogStd Make(string field, decimal? value, string? table, long? rowId, string? note)
+            {
+                var cf = GetSnapConfirm(detailId, table, rowId, field);
+                var ok = cf?.IsConfirmed == true;
+                return new WtsProductionLogStd
+                {
+                    WtsLogId        = log.WtsLogId,
+                    KhPlanDetailId  = detailId,
+                    FieldName       = field,
+                    StdValue        = value,
+                    IsConfirmed     = ok,
+                    ConfirmedBy     = ok ? cf!.ConfirmedBy     : null,
+                    ConfirmedByName = ok ? cf!.ConfirmedByName : null,
+                    ConfirmedAt     = ok ? cf!.ConfirmedAt     : null,
+                    SnapshotTable   = table,
+                    SnapshotRowId   = rowId,
+                    SyncSource      = StdTrack.Source.Save,
+                    SyncedAt        = now,
+                    SyncedBy        = _currentUserId,
+                    Note            = note,
+                };
+            }
+
+            if (IsGcGroup)
+            {
+                var std  = GetStdTiming(detailId, row.NC, row.MachineUsed);
+                var note = std == null                       ? "Không tìm thấy chuẩn trong snapshot phiếu KH"
+                         : string.IsNullOrEmpty(std.SrcTable) ? "Chuẩn lấy từ Part Master live (không có trong snapshot)"
+                         : null;
+                list.Add(Make(StdTrack.Field.Setup,       std?.SetupTime,       std?.SrcTable, std?.SrcRowId, note));
+                list.Add(Make(StdTrack.Field.Machining,   std?.MachiningTime,   std?.SrcTable, std?.SrcRowId, note));
+                list.Add(Make(StdTrack.Field.Inspection,  std?.InspectionTime,  std?.SrcTable, std?.SrcRowId, note));
+                list.Add(Make(StdTrack.Field.Preparation, std?.PreparationTime, std?.SrcTable, std?.SrcRowId, note));
+                list.Add(Make(StdTrack.Field.TrialRun,    std?.TrialRunTime,    std?.SrcTable, std?.SrcRowId, note));
+            }
+            else
+            {
+                var src = GetStdSourceForSubRow(row);
+                list.Add(Make(StdTrack.Field.Standard, GetStdTimeForSubRow(row), src?.Table, src?.RowId,
+                    src == null ? "Không tìm thấy chuẩn trong snapshot phiếu KH" : null));
+            }
+
+            Db.WtsProductionLogStds.AddRange(list);
+            await Db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Db.ChangeTracker.Clear();
+            row.HasWarning = true;
+            row.WarningMsg = (row.WarningMsg ?? "") + " Đã lưu WTS nhưng chưa ghi được số chuẩn: "
+                           + (ex.InnerException?.Message ?? ex.Message);
+        }
+    }
+
+    // Nạp (luôn đọc mới) trạng thái xác nhận từng ô snapshot của 1 phiếu KH
+    private async Task EnsureSnapStdConfirmsAsync(int detailId)
+    {
+        _snapStdConfirmCache[detailId] = await KhSvc.GetSnapshotStdConfirmsAsync(detailId);
+    }
+
+    private KhPlanRouteSnapshotStdConfirm? GetSnapConfirm(int? detailId, string? table, long? rowId, string field)
+    {
+        if (!detailId.HasValue || string.IsNullOrEmpty(table) || !rowId.HasValue) return null;
+        if (!_snapStdConfirmCache.TryGetValue(detailId.Value, out var map)) return null;
+        return map.TryGetValue((table, rowId.Value, field), out var c) ? c : null;
+    }
+
+    private static string StdConfirmTitle(KhPlanRouteSnapshotStdConfirm? c, decimal? value, string label)
+    {
+        var v = value.HasValue ? value.Value.ToString("0.##") : "—";
+        if (c != null && c.IsConfirmed)
+            return $"{label}: {v} phút — ĐÃ xác nhận bởi {c.ConfirmedByName ?? "?"} lúc {c.ConfirmedAt:dd/MM/yyyy HH:mm}";
+        return $"{label}: {v} phút — CHƯA xác nhận ở Part Master";
+    }
+
+    // ── GC: 5 ô chuẩn (T.Gá, T.GC, T.Ktra, T.CB, T.Chạy) ──
+    private const string StdStyleConfirmed   = "font-size:10px;font-weight:600;color:#198754;text-align:center;margin-bottom:1px;cursor:help";
+    private const string StdStyleUnconfirmed = "font-size:10px;font-weight:400;color:#6c757d;text-align:center;margin-bottom:1px;cursor:help";
+
+    private bool IsGcStdConfirmed(WtsRow sub, TimingStd? std, string field)
+        => std != null && GetSnapConfirm(sub.KhPlanDetailId, std.SrcTable, std.SrcRowId, field)?.IsConfirmed == true;
+
+    private string GcStdStyle(WtsRow sub, TimingStd? std, string field)
+        => IsGcStdConfirmed(sub, std, field) ? StdStyleConfirmed : StdStyleUnconfirmed;
+
+    private string GcStdTitle(WtsRow sub, TimingStd? std, string field)
+    {
+        var label = field switch
+        {
+            StdTrack.Field.Setup       => "T.Gá lắp",
+            StdTrack.Field.Machining   => "T.Gia công",
+            StdTrack.Field.Inspection  => "T.Kiểm tra",
+            StdTrack.Field.Preparation => "T.Chuẩn bị",
+            StdTrack.Field.TrialRun    => "T.Chạy thử",
+            _                          => field
+        };
+        if (std == null) return $"{label}: không tìm thấy thời gian chuẩn trong snapshot phiếu KH";
+        decimal? v = field switch
+        {
+            StdTrack.Field.Setup       => std.SetupTime,
+            StdTrack.Field.Machining   => std.MachiningTime,
+            StdTrack.Field.Inspection  => std.InspectionTime,
+            StdTrack.Field.Preparation => std.PreparationTime,
+            StdTrack.Field.TrialRun    => std.TrialRunTime,
+            _                          => null
+        };
+        if (string.IsNullOrEmpty(std.SrcTable))
+            return $"{label}: {(v.HasValue ? v.Value.ToString("0.##") : "—")} phút — không lấy từ snapshot phiếu KH, CHƯA xác nhận";
+        var where = std.SrcTable == StdTrack.Table.MachiningTiming ? $" (máy đồng dạng {std.SoMay})" : " (NC chính)";
+        return StdConfirmTitle(GetSnapConfirm(sub.KhPlanDetailId, std.SrcTable, std.SrcRowId, field), v, label + where);
+    }
+
+    // ── Non-GC: dòng snapshot mà GetStdTimeForSubRow lấy số ──
+    // Cùng quy tắc: khớp mã WTS trước (Taro: WtsTaskCode ?? NC; còn lại: NC); dòng đó không có số → fallback theo NC.
+    private (string Table, long RowId)? GetStdSourceForSubRow(WtsRow sub)
+    {
+        if (string.IsNullOrEmpty(sub.PO) || !_fullSnapshotCache.TryGetValue(sub.PO, out var snap)) return null;
+        if (IsHtspGroup)
+            return sub.HtspSubGroup switch
+            {
+                "Taro"  => PickStdSource(snap.Taro, StdTrack.Table.Taro, sub.WtsCode, sub.NC,
+                               s => s.WtsTaskCode ?? s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId),
+                "Bavia" => PickStdSource(snap.Bavia, StdTrack.Table.Bavia, sub.WtsCode, sub.NC,
+                               s => s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId),
+                "Rua"   => PickStdSource(snap.Washing, StdTrack.Table.Washing, sub.WtsCode, sub.NC,
+                               s => s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId),
+                _       => null
+            };
+        if (HandoverGroupCode == "KCS")
+            return PickStdSource(snap.Inspection, StdTrack.Table.Inspection, sub.WtsCode, sub.NC,
+                       s => s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId);
+        return PickStdSource(snap.Packaging, StdTrack.Table.Packaging, sub.WtsCode, sub.NC,
+                   s => s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId);
+    }
+
+    private static (string Table, long RowId)? PickStdSource<T>(IEnumerable<T> list, string table, string? code, string? nc,
+        Func<T, string?> codeKey, Func<T, string> ncKey, Func<T, decimal?> value, Func<T, long> rowId)
+    {
+        T? byCode = default;
+        var hasCode = false;
+        if (!string.IsNullOrEmpty(code))
+            foreach (var s in list)
+                if (codeKey(s) == code) { byCode = s; hasCode = true; break; }
+        if (hasCode && value(byCode!).HasValue) return (table, rowId(byCode!));
+        if (!string.IsNullOrEmpty(nc))
+            foreach (var s in list)
+                if (ncKey(s) == nc) return (table, rowId(s));
+        return hasCode ? (table, rowId(byCode!)) : null;
+    }
+
+    private KhPlanRouteSnapshotStdConfirm? GetStdSnapConfirmForSubRow(WtsRow sub)
+    {
+        var src = GetStdSourceForSubRow(sub);
+        if (src == null) return null;
+        return GetSnapConfirm(sub.KhPlanDetailId, src.Value.Table, src.Value.RowId, StdTrack.Field.Standard);
+    }
 
     private decimal? GetStdTimeForWtsCode(WtsRow row)
 

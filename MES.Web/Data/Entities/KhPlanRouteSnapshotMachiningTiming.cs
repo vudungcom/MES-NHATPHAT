@@ -22,6 +22,13 @@ public class KhPlanRouteSnapshotMachiningTiming
     /// <summary>Lưu thêm để query trực tiếp không cần JOIN qua Machining snapshot</summary>
     public int KhPlanDetailId { get; set; }
 
+    /// <summary>[STD-UPDATE] StepId nguồn (PartMachiningSteps.StepId của NC cha). NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceStepId { get; set; }
+
+    /// <summary>[STD-UPDATE] TimingId nguồn (PartMachiningTimings.TimingId) — nối chắc chắn về dòng máy đồng dạng
+    /// ở Part Master khi bấm "Update TG chuẩn". NULL = snapshot cũ chưa nối được.</summary>
+    public long? SourceTimingId { get; set; }
+
     /// <summary>Thứ tự hiển thị (copy từ PartMachiningTiming.DisplayOrder)</summary>
     public int DisplayOrder { get; set; } = 1;
 

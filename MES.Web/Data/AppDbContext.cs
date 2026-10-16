@@ -32,6 +32,11 @@ public class AppDbContext : DbContext
 	// Xác nhận T.Chuẩn per-dòng cho Taro/Bavia/Washing/Inspection/Packaging (Vùng C/D/E)
 	public DbSet<PartStepStdTimeConfirm> PartStepStdTimeConfirms { get; set; }
 public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTimings { get; set; }
+    // [STD-UPDATE] Theo dõi thời gian tiêu chuẩn WTS (snapshot + đóng băng theo dòng WTS + lịch sử Update)
+    public DbSet<KhPlanRouteSnapshotStdConfirm> KhPlanRouteSnapshotStdConfirms => Set<KhPlanRouteSnapshotStdConfirm>();
+    public DbSet<WtsProductionLogStd>           WtsProductionLogStds           => Set<WtsProductionLogStd>();
+    public DbSet<StdUpdateBatch>                StdUpdateBatches               => Set<StdUpdateBatch>();
+    public DbSet<StdUpdateBatchDetail>          StdUpdateBatchDetails          => Set<StdUpdateBatchDetail>();
 
     // ==== Do Ga & Phu Kien module ====
     public DbSet<DoGa> DoGas => Set<DoGa>();
@@ -627,6 +632,31 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .WithMany()
             .HasForeignKey(x => x.ActivityLogId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // ==== [STD-UPDATE] Thời gian tiêu chuẩn WTS ====
+        // Khớp với SQL_StdUpdate_01_Schema.sql (unique index + FK cascade)
+        mb.Entity<KhPlanRouteSnapshotStdConfirm>()
+            .HasIndex(x => new { x.SnapshotTable, x.SnapshotRowId, x.FieldName }).IsUnique();
+        mb.Entity<KhPlanRouteSnapshotStdConfirm>()
+            .HasIndex(x => x.KhPlanDetailId);
+
+        mb.Entity<WtsProductionLogStd>()
+            .HasIndex(x => new { x.WtsLogId, x.FieldName }).IsUnique();
+        mb.Entity<WtsProductionLogStd>()
+            .HasIndex(x => x.KhPlanDetailId);
+        mb.Entity<WtsProductionLogStd>()
+            .HasOne(x => x.WtsProductionLog).WithMany()
+            .HasForeignKey(x => x.WtsLogId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        mb.Entity<StdUpdateBatch>()
+            .HasIndex(x => new { x.PartId, x.RunAt });
+        mb.Entity<StdUpdateBatchDetail>()
+            .HasOne(x => x.Batch).WithMany(x => x.Details)
+            .HasForeignKey(x => x.BatchId)
+            .OnDelete(DeleteBehavior.Cascade);
+        mb.Entity<StdUpdateBatchDetail>().HasIndex(x => x.KhPlanDetailId);
+        mb.Entity<StdUpdateBatchDetail>().HasIndex(x => x.WtsLogId);
 
         base.OnModelCreating(mb);
     }
