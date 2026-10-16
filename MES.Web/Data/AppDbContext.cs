@@ -29,6 +29,8 @@ public class AppDbContext : DbContext
     public DbSet<CustomerChangeLog> CustomerChangeLogs { get; set; }
 	public DbSet<PartMachiningTiming> PartMachiningTimings { get; set; }
 	public DbSet<PartMachiningTimingConfirm> PartMachiningTimingConfirms { get; set; }
+	// Xác nhận T.Chuẩn per-dòng cho Taro/Bavia/Washing/Inspection/Packaging (Vùng C/D/E)
+	public DbSet<PartStepStdTimeConfirm> PartStepStdTimeConfirms { get; set; }
 public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTimings { get; set; }
 
     // ==== Do Ga & Phu Kien module ====

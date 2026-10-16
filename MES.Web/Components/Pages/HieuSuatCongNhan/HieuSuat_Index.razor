@@ -17,6 +17,7 @@
 @using MES.Web.Constants
 
 @inject AppDbContext Db
+@inject PartStepStdTimeConfirmService StdConfirmSvc
 
 @inject KhPlanService KhSvc
 
@@ -1920,8 +1921,7 @@ else
 
                                     {
                                         @* [FIX-STD-COLOR] Xanh nếu PartMaster section đã xác nhận OK *@
-                                        var stdConfirmed = !string.IsNullOrEmpty(sub.PO)
-                                            && _poStdConfirmed.TryGetValue(sub.PO, out var _sc) && _sc;
+                                        var stdConfirmed = IsStdRowConfirmed(sub);
 
                                         <td class="text-center">
 
@@ -1930,9 +1930,9 @@ else
 
                                                    style="font-size:11px;color:@(stdConfirmed ? "#198754" : "#6c757d");font-weight:@(stdConfirmed ? "600" : "400");border-color:@(stdConfirmed ? "#198754" : "");"
 
-                                                   value="@(sub.StandardTimePerPc.HasValue ? sub.StandardTimePerPc.Value.ToString("0.##") : "—")"
+                                                   value="@StdTimeText(sub)"
 
-                                                   readonly title="@(stdConfirmed ? "Thời gian chuẩn đã xác nhận ✓" : "Thời gian chuẩn/pc từ Part Master (phút)")" />
+                                                   readonly title="@StdTimeTitle(sub)" />
 
                                         </td>
 
@@ -3920,6 +3920,8 @@ else
 
     // [FIX-STD-COLOR] PO → true nếu phần PartMaster tương ứng nhóm này đã xác nhận OK
     private Dictionary<string, bool> _poStdConfirmed = new();
+    // [STD-CONFIRM-ROW] Non-GC: PO → tập "Bảng|Mã" của các dòng T.Chuẩn ĐÃ được tích xác nhận bên Part Master
+    private Dictionary<string, HashSet<string>> _poStdRowKeys = new();
 
     // Máy đang hỏng/bảo trì — HashSet SoMay để lookup O(1)
 
@@ -4979,6 +4981,9 @@ else
                     : HandoverGroupCode == "KCS"           ? pm.IsKcsConfirmed
                     :                                        pm.IsPkgConfirmed;
             }
+            // [STD-CONFIRM-ROW] Non-GC: nạp các dòng T.Chuẩn đã tích xác nhận (per-dòng) của Part
+            if (!IsGcGroup && !_poStdRowKeys.ContainsKey(po))
+                _poStdRowKeys[po] = await StdConfirmSvc.GetConfirmedCodeKeysAsync(pm.PartId);
         }
 
     }
@@ -5428,6 +5433,14 @@ else
                     : HandoverGroupCode == "KCS"                          ? pmStd.IsKcsConfirmed
                     :                                                        pmStd.IsPkgConfirmed;
             }
+        }
+
+        // [STD-CONFIRM-ROW] Non-GC: nạp các dòng T.Chuẩn đã tích xác nhận (per-dòng) của Part
+        if (!IsGcGroup && !_poStdRowKeys.ContainsKey(det.PurchaseOrder))
+        {
+            var pmRow = await Db.PartMasters.AsNoTracking().FirstOrDefaultAsync(p => p.PartNo == det.PartNo);
+            if (pmRow != null)
+                _poStdRowKeys[det.PurchaseOrder] = await StdConfirmSvc.GetConfirmedCodeKeysAsync(pmRow.PartId);
         }
 
         if (grp.UseStdAsDefault) TryFillStdValues(sub);
@@ -7389,6 +7402,63 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
     }
 
+    // [STD-CONFIRM-ROW] Tag bảng Part Master tương ứng nhóm đang nhập (non-GC)
+    private string StdTableTagForRow(WtsRow row)
+    {
+        if (IsHtspGroup)
+            return row.HtspSubGroup switch { "Taro" => "Taro", "Bavia" => "Bavia", "Rua" => "Washing", _ => "" };
+        if (HandoverGroupCode == "KCS") return "Inspection";
+        return "Packaging";
+    }
+
+    // T.Chuẩn/pc của dòng: ưu tiên theo Mã CV đã chọn (cùng quy tắc khớp với lúc auto-fill), fallback theo NC
+    private decimal? GetStdTimeForSubRow(WtsRow sub)
+    {
+        if (sub.StandardTimePerPc.HasValue) return sub.StandardTimePerPc;
+        if (!string.IsNullOrEmpty(sub.PO) && !string.IsNullOrEmpty(sub.WtsCode)
+            && _fullSnapshotCache.TryGetValue(sub.PO, out var snap))
+        {
+            var code = sub.WtsCode;
+            decimal? v;
+            if (IsHtspGroup)
+                v = sub.HtspSubGroup switch
+                {
+                    "Taro"  => snap.Taro   .FirstOrDefault(s => (s.WtsTaskCode ?? s.NC) == code)?.StandardTime,
+                    "Bavia" => snap.Bavia  .FirstOrDefault(s => s.NC == code)?.StandardTime,
+                    "Rua"   => snap.Washing.FirstOrDefault(s => s.NC == code)?.StandardTime,
+                    _       => null
+                };
+            else if (HandoverGroupCode == "KCS")
+                v = snap.Inspection.FirstOrDefault(s => s.NC == code)?.StandardTime;
+            else
+                v = snap.Packaging.FirstOrDefault(s => s.NC == code)?.StandardTime;
+            if (v.HasValue) return v;
+        }
+        return GetStdTimeForWtsCode(sub);
+    }
+
+    // [STD-CONFIRM-ROW] Chỉ xanh khi ĐÚNG dòng T.Chuẩn này đã được tích xác nhận bên Part Master
+    private bool IsStdRowConfirmed(WtsRow sub)
+    {
+        if (IsGcGroup || string.IsNullOrEmpty(sub.PO)) return false;
+        if (!_poStdRowKeys.TryGetValue(sub.PO, out var keys) || keys.Count == 0) return false;
+        var tbl = StdTableTagForRow(sub);
+        if (string.IsNullOrEmpty(tbl)) return false;
+        return (!string.IsNullOrEmpty(sub.WtsCode) && keys.Contains(tbl + "|" + sub.WtsCode))
+            || (!string.IsNullOrEmpty(sub.NC)      && keys.Contains(tbl + "|" + sub.NC));
+    }
+
+    private string StdTimeText(WtsRow sub)
+    {
+        var v = GetStdTimeForSubRow(sub);
+        return v.HasValue ? v.Value.ToString("0.##") : "—";
+    }
+
+    private string StdTimeTitle(WtsRow sub)
+        => IsStdRowConfirmed(sub)
+            ? "Thời gian chuẩn đã được xác nhận ở Part Master ✓"
+            : "Thời gian chuẩn/pc từ Part Master (phút) — CHƯA xác nhận";
+
     private decimal? GetStdTimeForWtsCode(WtsRow row)
 
     {
@@ -7704,8 +7774,13 @@ var ceilingSave = poQtySave - alreadyDoneS;
         // [FIX4] Non-GC: dùng T.Thực tế/pc (công nhân nhập) × SL + T.Phát sinh + T.Nghỉ
         if (!IsGcGroup)
         {
-            if (!sub.ActualTimePerPc.HasValue || sub.ActualTimePerPc <= 0) return null;
-            var prodMin4 = (double)(sub.ActualTimePerPc.Value * sl) + sub.ExtraMinutes;
+            // Ưu tiên T.Thực tế/pc nếu công nhân đã nhập; fallback T.Chuẩn/pc (mã CV thường).
+            // Mã 1V/1T/1K/1G không có T.Chuẩn → chỉ tính khi đã nhập thực tế.
+            var timePerPc = (sub.ActualTimePerPc.HasValue && sub.ActualTimePerPc.Value > 0)
+                ? sub.ActualTimePerPc.Value
+                : GetStdTimeForSubRow(sub);
+            if (!timePerPc.HasValue || timePerPc.Value <= 0) return null;
+            var prodMin4 = (double)(timePerPc.Value * sl) + sub.ExtraMinutes;
             return AddEffectiveMinutes(sub.StartTime, prodMin4, SelectedCa);
         }
 

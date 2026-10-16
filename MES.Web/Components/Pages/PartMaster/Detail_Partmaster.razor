@@ -9,6 +9,7 @@
 @inject PartMasterService PmSvc
 @inject PartMasterListService ListSvc
 @inject PartMachiningService MachiningSvc
+@inject PartStepStdTimeConfirmService StdConfirmSvc
 @inject PartTaroService TaroSvc
 @inject PartBaviaService BaviaSvc
 @inject PartWashingService WashingSvc
@@ -620,7 +621,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
                                             {
@@ -704,7 +705,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
@@ -789,7 +790,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" /></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
@@ -875,7 +876,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit))" />
                                     }
                                 </td>
-                                <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditD || RowLocked(edit))" /></td>
+                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditD || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                 
                                 <td class="text-center text-nowrap">
                                     @if (edit.StepId > 0)
@@ -959,7 +960,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit))" />
                                     }
                                 </td>
-                                <td><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditE || RowLocked(edit))" /></td>
+                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditE || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                 
                                 <td class="text-center text-nowrap">
                                     @if (edit.StepId > 0)
@@ -1507,6 +1508,9 @@ else
             if (_canEditD && _inspectionEdits.Any(e => e.State != EditState.Unchanged)) return true;
             if (_canEditE && _packagingEdits.Any(e => e.State != EditState.Unchanged)) return true;
 
+            // [STD-CONFIRM] Có tích xác nhận T.Chuẩn (C/D/E) chưa lưu
+            if (HasPendingStdForEditableArea()) return true;
+
             return false;
         }
     }
@@ -1556,6 +1560,11 @@ else
     // [FIX] Pending confirms chưa lưu vào DB — true=pending confirm, false=pending unconfirm
     // Chỉ được ghi vào DB khi user nhấn nút Lưu (DoSaveAsync)
     private Dictionary<(long StepId, long? TimingId), Dictionary<string, bool>> _pendingConfirms = new();
+
+    // [STD-CONFIRM] Xác nhận T.Chuẩn per-dòng cho Vùng C (Taro/Bavia/Washing), D (Inspection), E (Packaging).
+    // _stdConfirms = trạng thái đã lưu trong DB; _pendingStd = toggle chưa lưu (true = muốn xác nhận, false = muốn bỏ).
+    private Dictionary<(string Table, long StepId), (string? ByName, DateTime At)> _stdConfirms = new();
+    private Dictionary<(string Table, long StepId), bool> _pendingStd = new();
     private List<TaroEdit> _taroEdits = new();
     private List<BaviaEdit> _baviaEdits = new();
     private List<WashingEdit> _washingEdits = new();
@@ -1911,6 +1920,8 @@ else
         _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
         _inspectionEdits = iSteps.Select(InspectionEdit.FromEntity).ToList();
         _packagingEdits = pSteps.Select(PackagingEdit.FromEntity).ToList();
+        // [STD-CONFIRM] Load xác nhận T.Chuẩn của C/D/E — 1 truy vấn cho cả Part
+        _stdConfirms = await StdConfirmSvc.GetConfirmsAsync(pid);
     }
 
     private async Task ReloadDeletedAsync()
@@ -2050,6 +2061,124 @@ else
         if (!_timingConfirms.TryGetValue(key, out var fd2) || !fd2.TryGetValue(field, out var info) || !info.IsConfirmed)
             return "Chưa xác nhận — click để xác nhận chuẩn";
         return $"Đã xác nhận bởi {info.ByName ?? "?"} lúc {info.At:dd/MM/yyyy HH:mm} — click để bỏ";
+    }
+
+    // ── [STD-CONFIRM] Helpers xác nhận T.Chuẩn per-dòng cho C/D/E ─────────────────
+    private static string StdTableOf(SimpleStepEditBase e) => e switch
+    {
+        TaroEdit       => "Taro",
+        BaviaEdit      => "Bavia",
+        WashingEdit    => "Washing",
+        InspectionEdit => "Inspection",
+        PackagingEdit  => "Packaging",
+        _ => ""
+    };
+
+    private bool CanEditStdTable(string table) => table switch
+    {
+        "Taro" or "Bavia" or "Washing" => _canEditC,
+        "Inspection"                   => _canEditD,
+        "Packaging"                    => _canEditE,
+        _ => false
+    };
+
+    private bool HasPendingStdForEditableArea()
+        => _pendingStd.Keys.Any(k => CanEditStdTable(k.Table));
+
+    private bool IsStdConfirmed(SimpleStepEditBase e)
+        => e.StepId > 0 && _stdConfirms.ContainsKey((StdTableOf(e), e.StepId));
+
+    // Vàng nếu có pending chưa lưu, xanh nếu đã xác nhận, trắng nếu chưa
+    private string StdCellCss(SimpleStepEditBase e)
+    {
+        if (e.StepId > 0 && _pendingStd.ContainsKey((StdTableOf(e), e.StepId))) return "table-warning";
+        return IsStdConfirmed(e) ? "table-success" : "";
+    }
+
+    private string StdIconCss(SimpleStepEditBase e)
+    {
+        if (e.StepId > 0 && _pendingStd.TryGetValue((StdTableOf(e), e.StepId), out var want))
+            return want ? "bi bi-check-circle text-warning" : "bi bi-circle text-warning opacity-75";
+        return IsStdConfirmed(e)
+               ? "bi bi-check-circle-fill text-success"
+               : "bi bi-circle text-secondary opacity-50";
+    }
+
+    private string StdIconTitle(SimpleStepEditBase e)
+    {
+        var key = (StdTableOf(e), e.StepId);
+        if (_pendingStd.TryGetValue(key, out var want))
+            return want ? "⏳ Chờ lưu: Xác nhận — nhấn Lưu & Xác nhận OK để áp dụng"
+                        : "⏳ Chờ lưu: Bỏ xác nhận — nhấn Lưu & Xác nhận OK để áp dụng";
+        if (!_stdConfirms.TryGetValue(key, out var info))
+            return "Chưa xác nhận — click để xác nhận T.Chuẩn";
+        return $"Đã xác nhận bởi {info.ByName ?? "?"} lúc {info.At:dd/MM/yyyy HH:mm} — click để bỏ";
+    }
+
+    // Không auto-save: chỉ ghi vào _pendingStd (vàng), lưu thật khi nhấn Lưu (SavePendingStdConfirmsAsync).
+    private Task DoToggleStd(SimpleStepEditBase e)
+    {
+        var table = StdTableOf(e);
+        if (e.StepId <= 0 || !CanEditStdTable(table)) return Task.CompletedTask;
+
+        var key = (table, e.StepId);
+        bool inDb = _stdConfirms.ContainsKey(key);
+        if (_pendingStd.ContainsKey(key))
+            _pendingStd.Remove(key);          // click lần nữa = hủy pending
+        else
+            _pendingStd[key] = !inDb;         // đăng ký pending ngược với trạng thái DB
+
+        _hasChanges = true;
+        _isDraftSaved = false;
+        _savedSuccessfully = false;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    // Lưu pending xác nhận T.Chuẩn thuộc các bảng `tables`, ghi PartProcessStepChangeLogs (nút đồng hồ xem được)
+    private async Task SavePendingStdConfirmsAsync(string[] tables, List<string> log, List<string> errors)
+    {
+        var keys = _pendingStd.Keys.Where(k => tables.Contains(k.Table)).ToList();
+        if (keys.Count == 0) return;
+        var now = DateTime.Now;
+        var usr = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == _currentUserId);
+        var userName = usr?.FullName ?? "?";
+
+        foreach (var key in keys)
+        {
+            var want = _pendingStd[key];
+            try
+            {
+                bool before = _stdConfirms.ContainsKey(key);
+                bool after = await StdConfirmSvc.SetConfirmAsync(key.Table, key.StepId, _part!.PartId, want, _currentUserId);
+
+                if (after) _stdConfirms[key] = (userName, now);
+                else _stdConfirms.Remove(key);
+
+                if (before != after)
+                {
+                    Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+                    {
+                        StepTable = key.Table,
+                        StepId = key.StepId,
+                        PartId = _part!.PartId,
+                        FieldName = "TimingConfirmed",
+                        OldValue = before ? $"Confirmed by userId={_currentUserId}" : null,
+                        NewValue = after ? $"Confirmed by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed",
+                        ChangedBy = _currentUserId,
+                        ChangedAt = now,
+                        Reason = string.IsNullOrWhiteSpace(_reason) ? "Lưu quy trình" : _reason
+                    });
+                    await Db.SaveChangesAsync();
+                    log.Add($"✓ {(after ? "Xác nhận" : "Bỏ xác nhận")} T.Chuẩn ({key.Table}, step {key.StepId})");
+                }
+                _pendingStd.Remove(key);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"✗ Xác nhận T.Chuẩn {key.Table} (step {key.StepId}): {ex.Message}");
+            }
+        }
     }
 
     // [FIX] DoToggleAsync — KHÔNG auto-save vào DB nữa.
@@ -2997,6 +3126,9 @@ else
                     id => Task.CompletedTask, 
                     "Rửa", log, errors);
 
+                // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Taro/Bavia/Rửa
+                await SavePendingStdConfirmsAsync(new[] { "Taro", "Bavia", "Washing" }, log, errors);
+
                 _part!.IsHtspConfirmed = confirmOk;
             }
 
@@ -3009,6 +3141,9 @@ else
                     id => Task.CompletedTask, 
                     "Kiểm tra", log, errors);
 
+                // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Kiểm tra
+                await SavePendingStdConfirmsAsync(new[] { "Inspection" }, log, errors);
+
                 _part!.IsKcsConfirmed = confirmOk;
             }
 
@@ -3020,6 +3155,9 @@ else
                     id => PackagingSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => Task.CompletedTask, 
                     "Đóng gói", log, errors);
+
+                // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Đóng gói
+                await SavePendingStdConfirmsAsync(new[] { "Packaging" }, log, errors);
 
                 _part!.IsPkgConfirmed = confirmOk;
             }
@@ -3577,4 +3715,4 @@ else
             ParentNC = ParentNC
         };
     }
-}
+}
