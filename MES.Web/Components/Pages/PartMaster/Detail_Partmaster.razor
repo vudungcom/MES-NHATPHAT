@@ -383,7 +383,8 @@ else
                                 @* ── Timing sub-rows: col order = #, NC, MáyĐK, MáyĐD, Đồgá, Dao, Gálắp, GiaCông, KTra, ChuẩnBị, ChạyThử, TT ── *@
                                 @foreach (var tr in edit.TimingRows.Where(t => t.State != EditState.Deleted))
                                 {
-                                    <tr @key="@($"tr-{edit.NC}-{edit.StepId}-{tr.TimingId}-{tr.DisplayOrder}")">
+                                    @* [DEL-NC-FULL] NC chính bị xóa → máy đồng dạng cũng gạch ngang (sẽ bị xóa cùng khi Lưu) *@
+                                    <tr @key="@($"tr-{edit.NC}-{edit.StepId}-{tr.TimingId}-{tr.DisplayOrder}")" class="@TimingSubRowCss(edit)" title="@TimingSubRowTitle(edit)">
                                         <td></td>
                                         <td></td>
                                         <td></td>
@@ -489,9 +490,10 @@ else
                                                     <i class="bi bi-pencil"></i>
                                                 </button>
                                             }
-                                            @if (CanEditTimingRow(edit, tr))
+                                            @* [SUBROW-DEL] Nút xóa máy đồng dạng luôn hiện cạnh bút chì (không cần bấm bút chì trước) *@
+                                            @if (CanEditTimings(edit))
                                             {
-                                                <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa dòng" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-x"></i></button>
+                                                <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa máy đồng dạng này" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-trash"></i></button>
                                             }
                                         </td>
                                     </tr>
@@ -2182,6 +2184,12 @@ else
     }
 
     private static string TimingPencilCss(TimingRowEdit tr) => tr.IsEditing ? "btn-warning" : "btn-outline-primary";
+
+    // [DEL-NC-FULL] CSS/tooltip dòng máy đồng dạng khi NC chính đang đánh dấu xóa
+    private static string TimingSubRowCss(MachiningEdit edit)
+        => edit.State == EditState.Deleted ? "table-secondary text-muted text-decoration-line-through" : "";
+    private static string TimingSubRowTitle(MachiningEdit edit)
+        => edit.State == EditState.Deleted ? "NC chính đã bị xóa (chưa lưu) — máy đồng dạng này sẽ bị xóa cùng." : "";
     private static string TimingPencilTitle(TimingRowEdit tr) => tr.IsEditing ? "Đang sửa — click để khóa lại" : "Sửa dòng máy đồng dạng này";
 
     private IEnumerable<ThietBi> GetTimingMachineOptions(MachiningEdit edit)
@@ -2699,6 +2707,8 @@ else
     private Task DoToggleAsync(long stepId, long? timingId, string field)
     {
         if (stepId <= 0 || !_canEditB) return Task.CompletedTask;
+        // [DEL-NC-FULL] NC đang đánh dấu xóa → không cho tích xác nhận (dòng chính lẫn máy đồng dạng)
+        if (_machiningEdits.Any(m => m.StepId == stepId && m.State == EditState.Deleted)) return Task.CompletedTask;
 
         var key = (stepId, timingId);
 
@@ -3700,6 +3710,13 @@ else
                 log.Add(confirmOk ? "✓ Đã lưu & Xác nhận OK." : "✓ Đã lưu nháp (trạng thái chuyển về NG).");
             }
         }
+        catch (Exception ex)
+        {
+            // [SAVE-HANG-FIX] Trước đây exception thoát ra khỏi event handler → Blazor circuit chết → nút đứng "Đang xử lý..." mãi.
+            // Giờ bắt lại, báo lỗi rõ ràng trên trang và dọn DbContext để lần lưu sau chạy được.
+            Db.ChangeTracker.Clear();
+            errors.Add("✗ Lỗi hệ thống khi lưu: " + ex.GetBaseException().Message);
+        }
         finally
         {
             _saving = false;
@@ -3775,7 +3792,10 @@ else
             }
             catch (Exception ex)
             {
-                errors.Add($"✗ [{label}] NC={e.NC}: {ex.Message}");
+                // [SAVE-HANG-FIX] Gỡ entity lỗi (VD: Step đang Deleted bị FK chặn) khỏi DbContext dùng chung,
+                // nếu không mọi SaveChanges phía sau sẽ thử lại lệnh lỗi → exception → circuit chết → nút treo "Đang xử lý..."
+                Db.ChangeTracker.Clear();
+                errors.Add($"✗ [{label}] NC={e.NC}: {ex.GetBaseException().Message}");
             }
         }
     }
@@ -3844,7 +3864,12 @@ else
                         }
                     }
                 }
-                catch (Exception ex) { errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    // [SAVE-HANG-FIX] Gỡ entity lỗi khỏi DbContext dùng chung
+                    Db.ChangeTracker.Clear();
+                    errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: {ex.GetBaseException().Message}");
+                }
             }
         }
     }
@@ -3858,9 +3883,13 @@ else
         var usr = await Db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == _currentUserId);
         var userName = usr?.FullName ?? "?";
 
+        // [DEL-NC-FULL] NC đã xóa ở lượt lưu này → bỏ pending xác nhận của nó (step không còn trong DB)
+        var deletedStepIds = _machiningEdits.Where(m => m.State == EditState.Deleted && m.StepId > 0).Select(m => m.StepId).ToHashSet();
+
         foreach (var kvp in _pendingConfirms.ToList()) // ToList để tránh collection-modified nếu có retry
         {
             var (stepId, timingId) = kvp.Key;
+            if (deletedStepIds.Contains(stepId)) continue;
             foreach (var fieldKvp in kvp.Value)
             {
                 var field = fieldKvp.Key;
@@ -3915,7 +3944,9 @@ else
                 }
                 catch (Exception ex)
                 {
-                    errors.Add($"✗ Toggle xác nhận {field} (step {stepId}): {ex.Message}");
+                    // [SAVE-HANG-FIX] Gỡ entity lỗi khỏi DbContext dùng chung — tránh mọi SaveChanges sau đó lỗi dây chuyền
+                    Db.ChangeTracker.Clear();
+                    errors.Add($"✗ Toggle xác nhận {field} (step {stepId}): {ex.GetBaseException().Message}");
                 }
             }
         }

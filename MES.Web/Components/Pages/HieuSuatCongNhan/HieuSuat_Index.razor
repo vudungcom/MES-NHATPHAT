@@ -3377,7 +3377,7 @@ else
 
     } @* end @if entry *@
 
-}
+@* [FIX-STRAY-BRACE] Đã xóa 1 dấu '}' thừa ở đây — không đóng khối nào nên bị in ra thành chữ '}' trên trang *@
 
 @if (_activeTab == "report" && _canViewReport)
 
@@ -5752,7 +5752,11 @@ else
 
     {
 
-        _selectedCaId = _selectedCaId == caId ? (int?)null : caId; // click lại để bỏ chọn
+        // [FIX-CA-TOGGLE] Bấm = CHỌN (không bật/tắt nữa). Trước đây bấm lại ca đang chọn → BỎ chọn;
+        // qua mạng chậm (tunnel) người dùng bấm nhiều lần → các lệnh tới server lần lượt chọn/bỏ/chọn → "bấm mãi mới vào".
+        // Muốn đổi ca thì bấm ca khác.
+        if (_selectedCaId == caId) return;
+        _selectedCaId = caId;
 
         // localStorage.setItem ca — ĐÃ BỎ 2026-09: không lưu ca, luôn chọn lại mỗi lần vào trang.
 

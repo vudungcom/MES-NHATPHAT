@@ -166,6 +166,17 @@ public class PartMachiningService
         if (existing == null)
             throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
 
+        // [DEL-NC-FULL] Nghiệp vụ chốt 17/10/2026: xóa dòng chính = xóa luôn toàn bộ máy đồng dạng của NC.
+        // DB: FK_PartMachiningTimings_Steps = CASCADE, nhưng FK_TimingConfirms_Step / FK_TimingConfirms_Timing = NO ACTION
+        // → nếu NC đã có tích xác nhận, DELETE step bị SQL chặn (lỗi treo "Đang xử lý..." trước đây).
+        // Nên phải xóa tường minh: Confirms → Timings → Step, và snapshot đủ cả 3 vào ChangeLog trước khi xóa.
+        var timings = await _db.PartMachiningTimings
+            .Where(t => t.StepId == stepId)
+            .ToListAsync();
+        var confirms = await _db.PartMachiningTimingConfirms
+            .Where(c => c.StepId == stepId)
+            .ToListAsync();
+
         var snapshot = JsonSerializer.Serialize(new
         {
             existing.StepOrder, existing.NC, existing.Drawing,
@@ -173,14 +184,40 @@ public class PartMachiningService
             existing.ToolType, existing.TimingMachine, existing.IsBackup, existing.ParentNC,
             existing.SetupTime, existing.MachiningTime, existing.InspectionTime,
             existing.PreparationTime, existing.TrialRunTime,
-            existing.CreatedBy, existing.CreatedAt, existing.UpdatedBy, existing.UpdatedAt
+            existing.CreatedBy, existing.CreatedAt, existing.UpdatedBy, existing.UpdatedAt,
+            // [DEL-NC-FULL] Máy đồng dạng (cả dòng đã ẩn IsActive=0) + lịch sử tích xác nhận — để truy vết được sau khi xóa
+            Timings = timings.Select(t => new
+            {
+                t.TimingId, t.SoMay, t.DisplayOrder, t.FixtureType, t.ToolType,
+                t.SetupTime, t.MachiningTime, t.InspectionTime, t.PreparationTime, t.TrialRunTime,
+                t.IsActive, t.CreatedBy, t.CreatedAt, t.UpdatedBy, t.UpdatedAt
+            }),
+            Confirms = confirms.Select(c => new
+            {
+                c.Id, c.TimingId, c.FieldName, c.IsConfirmed, c.ConfirmedBy, c.ConfirmedAt
+            })
         });
         var partId = existing.PartId;
+        var now = DateTime.Now;
 
         _db.PartProcessStepChangeLogs.Add(BuildLog(
             stepId, partId, ProcessStepAction.Deleted,
             oldValue: snapshot, newValue: null, userId, reason));
 
+        // [DEL-NC-FULL] Log riêng cho từng máy đồng dạng đang hoạt động → nút lịch sử theo máy vẫn thấy dòng "Xóa"
+        foreach (var t in timings.Where(t => t.IsActive))
+        {
+            _db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+            {
+                StepTable = TableTag, StepId = stepId, TimingId = t.TimingId, PartId = partId,
+                FieldName = ProcessStepAction.Deleted,
+                OldValue = $"Xóa máy {t.SoMay} (theo NC chính) | GL={t.SetupTime} GC={t.MachiningTime} KT={t.InspectionTime} CB={t.PreparationTime} CT={t.TrialRunTime}",
+                NewValue = null, ChangedBy = userId, ChangedAt = now, Reason = reason
+            });
+        }
+
+        _db.PartMachiningTimingConfirms.RemoveRange(confirms);
+        _db.PartMachiningTimings.RemoveRange(timings);
         _db.PartMachiningSteps.Remove(existing);
         await _db.SaveChangesAsync();
     }
