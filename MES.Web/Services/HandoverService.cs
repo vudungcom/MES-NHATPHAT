@@ -214,7 +214,10 @@ namespace MES.Web.Services
 
         public decimal  QtyDone     { get; set; }
 
-        public string   Label       => $"NC{StepOrder} ({NC}) — đã làm: {QtyDone:0.##}";
+        // [WF-C2 2026-10-17] SL còn giao được từ NC này. Workflow ON = OK đã làm (gồm NC backup) − đã giao từ NC này
+        //   (phiếu đã nhận + đang chờ nhận, không tính phiếu void). Workflow OFF = QtyDone như cũ.
+        public decimal  Available   { get; set; }
+        public string   Label       => $"NC{StepOrder} ({NC}) — đã làm: {QtyDone:0.##} | còn giao: {Available:0.##}";
 
     }
 
@@ -970,7 +973,8 @@ namespace MES.Web.Services
 
         // ----------------------------------------------------------------
 
-        public async Task<List<NcOption>> GetNcOptionsAsync(
+        // [WF-C2 2026-10-17] Đổi tên thành ...BaseAsync (logic giữ nguyên) — GetNcOptionsAsync mới bọc thêm Available
+        private async Task<List<NcOption>> GetNcOptionsBaseAsync(
 
             int khPlanDetailId,
 
@@ -1046,8 +1050,175 @@ namespace MES.Web.Services
 
         }
 
-        // ----------------------------------------------------------------
+        // [WF-C2 2026-10-17] Tách phần return để gắn Available cho từng NC (xem NcOption.Available)
+        public async Task<List<NcOption>> GetNcOptionsAsync(
+            int khPlanDetailId,
+            string fromGroupCode)
+        {
+            var options = await GetNcOptionsBaseAsync(khPlanDetailId, fromGroupCode);
+            if (!options.Any()) return options;
+            var applyWf = await _db.KhPlanDetails
+                .Where(d => d.KhPlanDetailId == khPlanDetailId)
+                .Select(d => d.KhPlan.ApplyWorkflow)
+                .FirstOrDefaultAsync();
+            if (!applyWf)
+            {
+                foreach (var o in options) o.Available = o.QtyDone; // Workflow OFF: giữ như cũ
+                return options;
+            }
+            var flow  = await GetNcFlowAsync(khPlanDetailId, fromGroupCode);
+            var avail = await GetNcIssueAvailableAsync(khPlanDetailId, fromGroupCode, flow);
+            foreach (var o in options)
+                o.Available = avail.TryGetValue(o.NC, out var a) ? a : 0m;
+            return options;
+        }
 
+        // [WF-C2 2026-10-17] SL còn giao được theo NC chính = OK đã làm (NC chính + NC backup) − đã giao từ NC đó.
+        //   "Đã giao" lấy đúng cách GetNcFlowAsync tính (HandoverOutConfirmed + HandoverOutPending).
+        //   Log cũ chưa có QtyOk → lấy QtyDone.
+        private async Task<Dictionary<string, decimal>> GetNcIssueAvailableAsync(
+            int khPlanDetailId, string fromGroupCode, List<NcFlowItem> flow)
+        {
+            var result = new Dictionary<string, decimal>();
+            var processGroups = fromGroupCode switch
+            {
+                "GC"   => GcGroups,
+                "HTSP" => HtspGroups,
+                "KCS"  => KcsGroups,
+                "PKG"  => PkgGroups,
+                _      => Array.Empty<string>()
+            };
+            var logs = await _db.WtsProductionLogs
+                .Where(w => w.KhPlanDetailId == khPlanDetailId
+                         && processGroups.Contains(w.ProcessGroup)
+                         && !w.IsVoided)
+                .Select(w => new { w.NC, w.WtsCode, w.QtyOk, w.QtyDone })
+                .ToListAsync();
+            foreach (var item in flow.Where(f => !f.IsBackup))
+            {
+                var codes = flow.Where(f => f.IsBackup && f.SubGroup == item.SubGroup && f.ParentNC == item.NC)
+                                .Select(f => f.NC).ToHashSet();
+                codes.Add(item.NC);
+                var okDone = logs.Where(w => codes.Contains(w.NC ?? w.WtsCode ?? string.Empty))
+                                 .Sum(w => w.QtyOk ?? w.QtyDone);
+                result[item.NC] = Math.Max(0m, okDone - item.HandoverOutConfirmed - item.HandoverOutPending);
+            }
+            return result;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // [WF-C1 2026-10-17] Giao XUÔI từ HTSP / KCS / Đóng gói (Workflow ON)
+        //   Dây chuyền: KHO → GC → HTSP → KCS → PKG → KHO (nhập kho thành phẩm).
+        //   Giao xuôi : tối đa = min(SL OK đã làm của TỪNG Mã CV trong nhóm) − đã giao xuôi,
+        //               và không vượt tồn nhóm (GetRemainingAsync). Mã CV làm thứ tự nào cũng được.
+        //   Giao ngược: (lên nhóm trước, VD HTSP làm hộ xong trả GC) → GIỮ logic cũ (GetRemainingAsync).
+        //   Bỏ qua Mã CV chuẩn bị 1V/1T/1K/1G (không có SL). NC backup cộng vào NC chính.
+        //   GC / KHO giữ nguyên logic cũ (GC đã chặn theo NC cuối trong GetRemainingAsync).
+        // ═══════════════════════════════════════════════════════════════════
+        private static int GroupRank(string? g) => g switch
+        {
+            "KHO" => 0, "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1
+        };
+
+        /// <summary>true = giao xuôi dây chuyền; PKG → KHO là nhập kho thành phẩm (xuôi).</summary>
+        public static bool IsForwardIssue(string? fromGroupCode, string? toGroupCode)
+            => toGroupCode == "KHO" ? fromGroupCode == "PKG" : GroupRank(toGroupCode) > GroupRank(fromGroupCode);
+
+        private static readonly string[] FlatTimeCodes = { "1V", "1T", "1K", "1G" };
+        private static bool IsFlatTimeCode(string? code)
+            => !string.IsNullOrWhiteSpace(code) && FlatTimeCodes.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>SL tối đa được giao (không theo NC) từ nhóm from sang nhóm to.</summary>
+        public async Task<decimal> GetIssueMaxAsync(int khPlanDetailId, string fromGroupCode, string? toGroupCode)
+        {
+            var remaining = await GetRemainingAsync(khPlanDetailId, fromGroupCode);
+            if (fromGroupCode is not ("HTSP" or "KCS" or "PKG")) return remaining;
+            if (string.IsNullOrEmpty(toGroupCode) || !IsForwardIssue(fromGroupCode, toGroupCode)) return remaining;
+            var applyWf = await _db.KhPlanDetails
+                .Where(d => d.KhPlanDetailId == khPlanDetailId)
+                .Select(d => d.KhPlan.ApplyWorkflow)
+                .FirstOrDefaultAsync();
+            if (!applyWf) return remaining;
+            var cap = await GetNonGcForwardCapAsync(khPlanDetailId, fromGroupCode);
+            return cap.HasValue ? Math.Min(remaining, cap.Value) : remaining;
+        }
+
+        // min(SL OK từng Mã CV) − đã giao xuôi. null = nhóm không có Mã CV tính SL → không giới hạn thêm.
+        private async Task<decimal?> GetNonGcForwardCapAsync(int khPlanDetailId, string groupCode)
+        {
+            var steps = new List<(string Pg, string Code, string Nc, bool IsBackup, string? ParentNC)>();
+            string[] processGroups;
+            if (groupCode == "HTSP")
+            {
+                var taro = await _db.KhPlanRouteSnapshotTaro.Where(s => s.KhPlanDetailId == khPlanDetailId)
+                    .Select(s => new { s.NC, s.WtsTaskCode, s.IsBackup, s.ParentNC }).AsNoTracking().ToListAsync();
+                var bavia = await _db.KhPlanRouteSnapshotBavia.Where(s => s.KhPlanDetailId == khPlanDetailId)
+                    .Select(s => new { s.NC, s.IsBackup, s.ParentNC }).AsNoTracking().ToListAsync();
+                var washing = await _db.KhPlanRouteSnapshotWashing.Where(s => s.KhPlanDetailId == khPlanDetailId)
+                    .Select(s => new { s.NC, s.IsBackup, s.ParentNC }).AsNoTracking().ToListAsync();
+                // Mã CV Taro trên WTS = WtsTaskCode ?? NC (khớp HieuSuat_Index); Bavia/Rửa = NC
+                steps.AddRange(taro.Select(s => ("TARO", s.WtsTaskCode ?? s.NC, s.NC, s.IsBackup, s.ParentNC)));
+                steps.AddRange(bavia.Select(s => ("BAVIA", s.NC, s.NC, s.IsBackup, s.ParentNC)));
+                steps.AddRange(washing.Select(s => ("WASHING", s.NC, s.NC, s.IsBackup, s.ParentNC)));
+                processGroups = HtspGroups;
+            }
+            else if (groupCode == "KCS")
+            {
+                var kcs = await _db.KhPlanRouteSnapshotInspection.Where(s => s.KhPlanDetailId == khPlanDetailId)
+                    .Select(s => new { s.NC, s.IsBackup, s.ParentNC }).AsNoTracking().ToListAsync();
+                steps.AddRange(kcs.Select(s => ("KCS", s.NC, s.NC, s.IsBackup, s.ParentNC)));
+                processGroups = KcsGroups;
+            }
+            else if (groupCode == "PKG")
+            {
+                var pkg = await _db.KhPlanRouteSnapshotPackaging.Where(s => s.KhPlanDetailId == khPlanDetailId)
+                    .Select(s => new { s.NC, s.IsBackup, s.ParentNC }).AsNoTracking().ToListAsync();
+                steps.AddRange(pkg.Select(s => ("PKG", s.NC, s.NC, s.IsBackup, s.ParentNC)));
+                processGroups = PkgGroups;
+            }
+            else return null;
+
+            var mains = steps.Where(s => !s.IsBackup && !IsFlatTimeCode(s.Code)).ToList();
+            if (!mains.Any()) return null;
+
+            var logs = await _db.WtsProductionLogs
+                .Where(w => w.KhPlanDetailId == khPlanDetailId
+                         && processGroups.Contains(w.ProcessGroup)
+                         && !w.IsVoided)
+                .Select(w => new { w.ProcessGroup, w.WtsCode, w.NC, w.QtyOk, w.QtyDone })
+                .ToListAsync();
+
+            decimal minOk = decimal.MaxValue;
+            foreach (var m in mains)
+            {
+                var codes = steps.Where(b => b.IsBackup && b.Pg == m.Pg && b.ParentNC == m.Nc)
+                                 .Select(b => b.Code).ToHashSet();
+                codes.Add(m.Code);
+                var ok = logs.Where(w => string.Equals(w.ProcessGroup, m.Pg, StringComparison.OrdinalIgnoreCase)
+                                      && codes.Contains(w.WtsCode ?? w.NC ?? string.Empty))
+                             .Sum(w => w.QtyOk ?? w.QtyDone);
+                if (ok < minOk) minOk = ok;
+            }
+
+            // Đã giao xuôi (không tính phiếu void, phiếu trả NG ngược, phiếu giao ngược)
+            var txs = await _db.HandoverTransactions
+                .Where(t => !t.IsVoided
+                         && t.KhPlanDetailId == khPlanDetailId
+                         && t.FromGroupCode == groupCode
+                         && !t.IsReturnNg)
+                .Include(t => t.Receives)
+                .AsNoTracking()
+                .ToListAsync();
+            var fwdOut = txs.Where(t => IsForwardIssue(groupCode, t.ToGroupCode)).Sum(t =>
+            {
+                var rec = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+                return t.Status == "COMPLETED" ? rec : Math.Max(rec, t.QtyIssued);
+            });
+
+            return Math.Max(0m, minOk - fwdOut);
+        }
+
+        // ----------------------------------------------------------------
         // WRITE: Giao hàng
 
         // v0.9: thêm ngQty, ngReason — bên giao khai báo NG ngay khi tạo phiếu
@@ -1138,7 +1309,21 @@ namespace MES.Web.Services
 
                     return (false, $"NC {fromNC} không tìm thấy trong snapshot nhóm {fromGroupCode}.");
 
-                if (qtyIssued > ncItem.WtsDone && ncItem.WtsDone > 0)
+                // [WF-C2 2026-10-17] Workflow ON + NC đã có WTS: SL giao ≤ OK đã làm − đã giao từ NC này.
+                //   Trước đây so với TỔNG đã làm (không trừ phần đã giao) → giao trùng nhiều lần được.
+                //   Workflow OFF hoặc NC chưa có WTS → giữ nguyên kiểm tra cũ bên dưới.
+                var applyWfNc = await _db.KhPlanDetails
+                    .Where(d => d.KhPlanDetailId == khPlanDetailId)
+                    .Select(d => d.KhPlan.ApplyWorkflow)
+                    .FirstOrDefaultAsync();
+                if (applyWfNc && ncItem.WtsDone > 0)
+                {
+                    var availNc = await GetNcIssueAvailableAsync(khPlanDetailId, fromGroupCode, flow);
+                    var canIssue = availNc.TryGetValue(fromNC, out var av) ? av : 0m;
+                    if (qtyIssued > canIssue)
+                        return (false, $"NC {fromNC}: còn giao được {canIssue:0.##} (= OK đã làm − đã giao từ NC này) — không thể giao {qtyIssued:0.##}.");
+                }
+                else if (qtyIssued > ncItem.WtsDone && ncItem.WtsDone > 0)
 
                     return (false, $"NC {fromNC}: đã làm {ncItem.WtsDone:0.##} — không thể giao {qtyIssued:0.##} lần này.");
 
@@ -1165,6 +1350,10 @@ namespace MES.Web.Services
                 if (qtyIssued > remaining)
 
                     return (false, $"Tổng số lượng giao ({qtyIssued}) vượt quá còn lại tại {fromGroupCode} ({remaining:0.##}).");
+                // [WF-C1 2026-10-17] Giao xuôi từ HTSP/KCS/PKG (Workflow ON): ≤ min SL OK các Mã CV − đã giao xuôi
+                var fwdMax = await GetIssueMaxAsync(khPlanDetailId, fromGroupCode, toGroupCode);
+                if (fwdMax < remaining && qtyIssued > fwdMax)
+                    return (false, $"Workflow: {fromGroupCode} chỉ giao xuôi được {fwdMax:0.##} (= SL OK nhỏ nhất trong các Mã CV đã làm − đã giao xuôi). Không thể giao {qtyIssued:0.##}.");
 
             }
 

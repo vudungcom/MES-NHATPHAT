@@ -338,7 +338,7 @@ else
 
                             @if (!string.IsNullOrEmpty(_issueFromNC) && _ncMaxQty == 0)
                             {
-                                <div class="alert alert-warning py-1 small">NC này chưa có sản lượng hoàn thành.</div>
+                                <div class="alert alert-warning py-1 small">NC này không còn SL để giao (đã làm − đã giao = 0).</div>
                             }
                         }
                     </div>
@@ -354,6 +354,16 @@ else
                         }
                     </select>
                 </div>
+
+                @* [WF-C1 2026-10-17] Cảnh báo giao NGƯỢC lên nhóm trước — vẫn cho giao (trả hàng / làm hộ xong trả về) *@
+                @if (_issueIsBackward && !_issueIsReturnNg)
+                {
+                    <div class="alert alert-warning py-1 px-2 small mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Đang giao <strong>NGƯỢC</strong> lên nhóm trước (<strong>@GetGroupLabel(_issueToGroup)</strong>).
+                        Chỉ dùng khi trả hàng / làm hộ xong trả về — kiểm tra lại nhóm nhận.
+                    </div>
+                }
 
                 @* v0.8: ToNC — chọn NC đích ở nhóm nhận (ẩn khi ReturnNg) *@
                 @if (!_issueIsReturnNg && !string.IsNullOrEmpty(_issueToGroup) && _issueToGroup != "KHO")
@@ -968,9 +978,23 @@ else
 
     string  EffectiveFromGroup => _issueFromGroupOptions.Count == 1
         ? _issueFromGroupOptions[0].Code : _issueFromGroup;
-    decimal IssueMaxQty => _issueFromGroupOptions.Count == 1
+    // [WF-C1 2026-10-17] Đã chọn nhóm nhận → dùng max theo hướng giao (_issueTargetMax); chưa chọn → như cũ
+    decimal IssueMaxQty => _issueTargetMax ?? (_issueFromGroupOptions.Count == 1
         ? _issueFromGroupOptions[0].Remaining
-        : _issueFromGroupOptions.FirstOrDefault(o => o.Code == _issueFromGroup)?.Remaining ?? 0;
+        : _issueFromGroupOptions.FirstOrDefault(o => o.Code == _issueFromGroup)?.Remaining ?? 0);
+    decimal? _issueTargetMax  = null;   // [WF-C1] max khi giao sang nhóm đang chọn
+    bool     _issueIsBackward = false;  // [WF-C1] true = giao ngược lên nhóm trước
+
+    // [WF-C1] Tính lại max + hướng giao khi đổi nhóm giao / nhóm nhận
+    async Task RefreshIssueTargetAsync()
+    {
+        _issueTargetMax  = null;
+        _issueIsBackward = false;
+        var fromG = EffectiveFromGroup;
+        if (_selectedRow == null || string.IsNullOrEmpty(fromG) || string.IsNullOrEmpty(_issueToGroup)) return;
+        _issueIsBackward = !HandoverService.IsForwardIssue(fromG, _issueToGroup);
+        _issueTargetMax  = await HandoverSvc.GetIssueMaxAsync(_selectedRow.KhPlanDetailId, fromG, _issueToGroup);
+    }
 
     string  _receiveToGroup  = "";
     List<HandoverTxPending> _pendingTxs = new();
@@ -1401,6 +1425,8 @@ else
         _selectedRow    = row;
         _issueFromGroup = "";
         _issueToGroup   = "";
+        _issueTargetMax  = null;   // [WF-C1]
+        _issueIsBackward = false;  // [WF-C1]
         _issueOkQty     = 1;         // v1.1
         _issueNotes     = "";
         _issueNgQty     = 0;         // v0.9
@@ -1449,13 +1475,15 @@ else
         if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromGroup))
             _ncOptions = await HandoverSvc.GetNcOptionsAsync(
                 _selectedRow.KhPlanDetailId, _issueFromGroup);
+        await RefreshIssueTargetAsync(); // [WF-C1]
     }
 
     void OnNcSelected()
     {
         if (string.IsNullOrEmpty(_issueFromNC)) { _ncMaxQty = 0; return; }
         var opt = _ncOptions.FirstOrDefault(o => o.NC == _issueFromNC);
-        _ncMaxQty = opt?.QtyDone ?? 0;
+        // [WF-C2 2026-10-17] Max = SL còn giao được (Workflow ON: OK đã làm − đã giao; OFF: = đã làm như cũ)
+        _ncMaxQty = opt?.Available ?? 0;
         _issueOkQty = _ncMaxQty;     // v1.1: max OK = WtsDone NC
     }
 
@@ -1576,6 +1604,7 @@ else
     {
         _issueToNC   = "";
         _toNcOptions = new();
+        await RefreshIssueTargetAsync(); // [WF-C1] max theo hướng giao + cờ giao ngược
         if (_selectedRow == null || string.IsNullOrEmpty(_issueToGroup) || _issueToGroup == "KHO")
             return;
 

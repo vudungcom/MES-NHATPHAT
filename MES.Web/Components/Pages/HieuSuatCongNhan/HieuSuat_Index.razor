@@ -1254,9 +1254,13 @@ else
 
                                     }
 
-                                    @* OK *@
+                                    @* OK  — [FLAT-QTY-ZERO] mã chuẩn bị: không có khối lượng *@
 
                                     <td>
+
+                                        @if (IsPrepNoQty(sub)) { <span class="d-block text-center text-muted" title="Mã chuẩn bị — không có số lượng">—</span> }
+                                        else
+                                        {
 
                                         <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1265,12 +1269,17 @@ else
                                                placeholder="0"
 
                                                @oninput="e => OnSubQtyOkInput(grp, sub, e)" />
+                                        }
 
                                     </td>
 
-                                    @* NG *@
+                                    @* NG  — [FLAT-QTY-ZERO] mã chuẩn bị: không có khối lượng *@
 
                                     <td>
+
+                                        @if (IsPrepNoQty(sub)) { <span class="d-block text-center text-muted" title="Mã chuẩn bị — không có số lượng">—</span> }
+                                        else
+                                        {
 
                                         <input type="number" class="form-control form-control-sm text-center" min="0"
 
@@ -1279,6 +1288,7 @@ else
                                                placeholder="0"
 
                                                @oninput="e => OnSubQtyNgInput(grp, sub, e)" />
+                                        }
 
                                     </td>
 
@@ -2805,7 +2815,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                    @if (!IsPrepCode(taroKey)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
 
                                                 </td>
 
@@ -2925,7 +2935,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                    @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
 
                                                 </td>
 
@@ -3045,7 +3055,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                    @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
 
                                                 </td>
 
@@ -3173,7 +3183,7 @@ else
 
                                             <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span>
+                                                @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span> } @* [FLAT-QTY-ZERO] *@
 
                                             </td>
 
@@ -3299,7 +3309,7 @@ else
 
                                             <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span>
+                                                @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span> } @* [FLAT-QTY-ZERO] *@
 
                                             </td>
 
@@ -5522,6 +5532,8 @@ else
         var item = grp.WtsItems.FirstOrDefault(i => i.NC == code);
 
         sub.WtsName = item?.Name;
+        // [FLAT-QTY-ZERO] Mã chuẩn bị không có khối lượng → xóa SL đã nhập + lỗi SL cũ
+        if (IsPrepNoQty(sub)) { sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null; sub.ErrorMsg = null; }
 
         // [FIX2] Auto-fill T.Chuẩn/pc từ snapshot khi chọn Mã CV (non-GC)
         // Dùng PO của chính sub đang chọn, không propagate sang row khác
@@ -5797,6 +5809,7 @@ else
         sub.ErrorMsg = null;
 
         if (!sub.KhPlanDetailId.HasValue) return;
+        if (IsPrepNoQty(sub)) return;   // [FLAT-QTY-ZERO] mã chuẩn bị: không kiểm tra SL / giao nhận
 
         var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
 
@@ -6303,7 +6316,7 @@ else
 
                 { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return; }
 
-                if (sub.QtyDone <= 0)
+                if (sub.QtyDone <= 0 && !IsQtyOptional(sub))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
 
                 { sub.ErrorMsg = "SL (OK+NG) phải > 0."; grp.ErrorMsg = "Có hàng SL = 0."; return; }
 
@@ -6901,7 +6914,7 @@ var ceilingSave = poQtySave - alreadyDoneS;
         { row.ErrorMsg = "Chọn NC (nếu có PO) hoặc Mã WTS khác"; return; }
 
         // Validate SL > 0 — áp dụng cho TẤT CẢ nhóm (GC, HTSP, KCS, PKG)
-        if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue)
+        if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue && !IsQtyOptional(row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
         { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
 
         // Nếu đang sửa dòng cũ → void record cũ trước
@@ -6979,7 +6992,7 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
             // v0.8b: Không block theo cascade. Chỉ block khi QtyDone > PlanQty.
 
-            if (row.QtyDone <= 0)
+            if (row.QtyDone <= 0 && !IsQtyOptional(row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
 
             { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
 
@@ -7451,7 +7464,19 @@ var ceilingSave = poQtySave - alreadyDoneS;
     }
 
     // [FLAT-CODE] Mã CV tính theo tổng thời gian thực tế (không nhân SL): 1V / 1T / 1K / 1G
-    private static readonly string[] _flatTimeCodes = { "1V", "1T", "1K", "1G" };
+    // [FLAT-QTY-ZERO] Mã CHUẨN BỊ (không có khối lượng): 1V Bavia · 1T Taro · 1R Rửa · 1K KCS · 1D Đóng gói (+ 1G giữ như cũ)
+    // → tính thời gian không nhân SL, KHÔNG bắt nhập OK/NG, KHÔNG hiện huy hiệu SL/PO ở bảng quy trình.
+    private static readonly string[] _flatTimeCodes = { "1V", "1T", "1R", "1K", "1D", "1G" };
+
+    private static bool IsPrepCode(string? code)
+        => !string.IsNullOrEmpty(code) && _flatTimeCodes.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    // Dòng nhập WTS non-GC đang chọn mã chuẩn bị → không có số lượng
+    private bool IsPrepNoQty(WtsRow sub) => !IsGcGroup && IsFlatTimeCode(sub);
+
+    // [TRIAL-QTY-OPTIONAL] Không bắt buộc SL > 0 khi: mã chuẩn bị (non-GC) HOẶC GC đang "Chạy thử"
+    // (chạy thử có bước chuẩn bị, có thể chưa ra sản phẩm). Vẫn cho nhập SL nếu có.
+    private bool IsQtyOptional(WtsRow sub) => IsPrepNoQty(sub) || (IsGcGroup && sub.ProductionMode == "trial");
     private bool IsFlatTimeCode(WtsRow sub)
     {
         var code = !string.IsNullOrEmpty(sub.WtsCode) ? sub.WtsCode : sub.NC;
