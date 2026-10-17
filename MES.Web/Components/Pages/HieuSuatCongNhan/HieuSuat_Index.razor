@@ -4553,6 +4553,7 @@ else
                 WtsName        = null,
 
                 QtyDone        = log.QtyDone,
+                ActualTimePerPc = log.ActualTimePerPc,   // [ACTUAL-PC] giữ T.Thực tế/pc khi Sửa dòng
 
                 QtyOk          = log.QtyOk ?? log.QtyDone,   // fallback cho bản ghi cũ
 
@@ -5557,6 +5558,8 @@ else
                     stdTime = fsnap.Packaging.FirstOrDefault(s => s.NC == code)?.StandardTime;
             }
             sub.StandardTimePerPc = stdTime; // chỉ set cho row này
+            // [STD-ACTUAL-DEFAULT] Mục 29: bật "Tham khảo chuẩn" → T.Thực tế/pc = T.Chuẩn/pc của mã vừa chọn
+            if (grp.UseStdAsDefault) { sub.UseStdAsDefault = true; TryFillStdValues(sub); }
         }
 
         StateHasChanged();
@@ -7170,6 +7173,10 @@ var ceilingSave = poQtySave - alreadyDoneS;
                     PreparationTime_Actual  = row.PreparationTime_Actual,
 
                     TrialRunTime_Actual     = row.TrialRunTime_Actual,
+                    // [ACTUAL-PC] Non-GC: lưu T.Thực tế/pc + đánh dấu có khác chuẩn không (GC: NULL)
+                    ActualTimePerPc         = IsGcGroup ? null : row.ActualTimePerPc,
+                    IsActualManual          = IsGcGroup || !row.ActualTimePerPc.HasValue ? null
+                                              : row.ActualTimePerPc != GetStdTimeForSubRow(row),
 
                     CreatedAt               = DateTime.Now,
 
@@ -8199,6 +8206,14 @@ var ceilingSave = poQtySave - alreadyDoneS;
 
         if (!row.KhPlanDetailId.HasValue) return;
 
+        // [STD-ACTUAL-DEFAULT] Mục 29 — Non-GC (HTSP/KCS/Đóng gói): T.Thực tế/pc mặc định = T.Chuẩn/pc (theo snapshot).
+        // Công nhân chỉ sửa khi thực tế khác chuẩn. Không đổi giờ kết thúc (Dự kiến tự tính từ T.Thực tế).
+        if (!IsGcGroup)
+        {
+            var stdPc = GetStdTimeForSubRow(row);
+            if (stdPc.HasValue) row.ActualTimePerPc = stdPc;
+            return;
+        }
         var std = GetStdTiming(row.KhPlanDetailId.Value, row.NC, row.MachineUsed);
 
         if (std == null) return;
