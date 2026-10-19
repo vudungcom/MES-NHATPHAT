@@ -1937,7 +1937,7 @@ else
                                             @* [FIX-STD-COLOR-V2] Confirmed → bold + green border + green text (giống cột OK); chưa confirmed → xám nhạt *@
                                             <input class="form-control form-control-sm text-center @(stdConfirmed ? "" : "bg-light")"
 
-                                                   style="font-size:11px;color:@(stdConfirmed ? "#198754" : "#6c757d");font-weight:@(stdConfirmed ? "600" : "400");border-color:@(stdConfirmed ? "#198754" : "");"
+                                                   style="@NonGcStdInputStyle(stdConfirmed)"
 
                                                    value="@StdTimeText(sub)"
 
@@ -4564,6 +4564,16 @@ else
                 Notes          = log.Notes,
 
                 MachineUsed    = log.MachineUsed,
+                // [SERIAL-TIME-REQUIRED] Khôi phục chế độ + T.Thực tế khi bấm Sửa dòng.
+                // Trước đây không nạp → dòng Chạy thử mở ra thành Hàng loạt, và bản ghi mới (void + new) mất T.Thực tế.
+                // Bản ghi cũ chưa có cột ProductionMode → suy ra: có T.CB / T.Chạy = trial, còn lại = serial.
+                ProductionMode         = log.ProductionMode
+                                         ?? ((log.PreparationTime_Actual.HasValue || log.TrialRunTime_Actual.HasValue) ? "trial" : "serial"),
+                SetupTime_Actual       = log.SetupTime_Actual,
+                MachiningTime_Actual   = log.MachiningTime_Actual,
+                InspectionTime_Actual  = log.InspectionTime_Actual,
+                PreparationTime_Actual = log.PreparationTime_Actual,
+                TrialRunTime_Actual    = log.TrialRunTime_Actual,
 
                 // ExtraItems load từ WtsExtraItems DB
 
@@ -5028,7 +5038,8 @@ else
 
     // ── Edit / Void saved row (dùng bởi bảng saved rows) ──
 
-    private void EditSavedRow(WtsRow row)
+    // [EDIT-NONGC] async: non-GC cần nạp lại snapshot / Mã CV / nhóm nhỏ khi Sửa dòng
+    private async Task EditSavedRow(WtsRow row)
 
     {
 
@@ -5047,6 +5058,7 @@ else
             ProductionMode= row.ProductionMode,
 
             UseStdAsDefault = _useStdAsDefault,
+            HtspSubGroup  = IsHtspGroup ? (row.HtspSubGroup ?? "") : "",   // [EDIT-NONGC] giữ nhóm nhỏ — trước đây bắt chọn lại
 
         };
 
@@ -5056,6 +5068,26 @@ else
 
         _groups.Add(grp);
 
+
+        // [EDIT-NONGC] Non-GC: nạp lại snapshot + cache + danh sách Mã CV, GIỮ NGUYÊN giá trị đã lưu.
+        // Trước đây: grp thiếu nhóm nhỏ, WtsItems rỗng, row.WtsCode = null → bắt chọn lại nhóm nhỏ / Mã CV.
+        if (!IsGcGroup && row.KhPlanDetailId.HasValue)
+        {
+            var keepCode   = row.NC;                 // log non-GC: Mã CV được nạp vào row.NC
+            var keepActual = row.ActualTimePerPc;
+            grp.UseStdAsDefault = false;             // không để TryFillStdValues ghi đè T.Thực tế đã lưu
+            await OnSubRowKhChanged(grp, row, row.KhPlanDetailId.Value.ToString());
+            grp.UseStdAsDefault = _useStdAsDefault;
+
+            // HTSP: nạp Mã CV theo nhóm nhỏ (hàm này reset WtsCode → khôi phục ngay sau)
+            if (IsHtspGroup && !string.IsNullOrEmpty(grp.HtspSubGroup))
+                OnGroupHtspSubChanged(grp, grp.HtspSubGroup);
+
+            row.WtsCode         = keepCode;
+            row.WtsName         = grp.WtsItems.FirstOrDefault(i => i.NC == keepCode)?.Name;
+            row.ActualTimePerPc = keepActual;
+            StateHasChanged();
+        }
     }
 
     private void ConfirmVoidSavedRow(WtsRow row)
@@ -5358,9 +5390,33 @@ else
 
         {
 
+            // [FIX-PO-CLEAR] PO là ô gốc của dòng → xoá / sửa PO thì xoá theo mọi ô phụ thuộc PO (chỉ khi dòng đang có KH,
+            // để lúc đang gõ dở không reset lặp lại). Giữ: giờ bắt đầu/kết thúc, phát sinh (Mã WTS PS / T.PS / Nội dung PS).
+            var hadKh = sub.KhPlanDetailId.HasValue;
             sub.KhPlanDetailId = null;
-
             sub.PartNo         = null;
+            if (hadKh)
+            {
+                sub.NC = null; sub.MachineUsed = null;
+                sub.WtsCode = null; sub.WtsName = null;
+                sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null;
+                sub.SetupTime_Actual = null; sub.MachiningTime_Actual = null; sub.InspectionTime_Actual = null;
+                sub.PreparationTime_Actual = null; sub.TrialRunTime_Actual = null;
+                sub.ActualTimePerPc = null;
+                sub.AvailableNCs = new();
+                sub.ErrorMsg = null;
+            }
+            // Nhóm không còn dòng nào có KH → xoá luôn các ô cấp nhóm (Part No lọc PO, NC, Máy, nhóm nhỏ, danh sách NC / Mã CV).
+            // Trước đây grp.PartNo giữ PartNo của PO cũ → datalist chỉ còn PO cùng Part, phải F5 mới hiện lại đủ.
+            if (!grp.SubRows.Any(s => s.KhPlanDetailId.HasValue))
+            {
+                grp.PartNo = null;
+                grp.NC = null;
+                grp.MachineUsed = null;
+                grp.HtspSubGroup = "";
+                grp.AvailableNCs = new();
+                grp.WtsItems = new();
+            }
 
         }
 
@@ -6327,6 +6383,11 @@ else
 
                 { sub.ErrorMsg = "SL (OK+NG) phải > 0."; grp.ErrorMsg = "Có hàng SL = 0."; return; }
 
+                // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
+                var _missSerial = GetMissingSerialTimesMsg(sub);
+                if (_missSerial != null)
+                { sub.ErrorMsg = _missSerial; grp.ErrorMsg = IsGcGroup ? $"Có hàng thiếu thời gian — {_missSerial}" : "Có hàng chưa nhập T.Thực tế."; return; }   // [ACTUAL-REQUIRED-NONGC]   // [TRIAL-PREP-REQUIRED] msg chung Hàng loạt / Chạy thử
+
                 if (sub.QtyNg > 0 && string.IsNullOrWhiteSpace(sub.NgReason))
 
                 { sub.ErrorMsg = "Phải nhập lý do NG."; grp.ErrorMsg = "Có hàng thiếu lý do NG."; return; }
@@ -6924,6 +6985,11 @@ var ceilingSave = poQtySave - alreadyDoneS;
         if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue && !IsQtyOptional(row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
         { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
 
+        // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế — kiểm tra TRƯỚC khi void bản ghi cũ
+        var _missSerialRow = GetMissingSerialTimesMsg(row);
+        if (_missSerialRow != null)
+        { row.ErrorMsg = _missSerialRow; return; }
+
         // Nếu đang sửa dòng cũ → void record cũ trước
 
         if (row.IsEditing)
@@ -7177,6 +7243,8 @@ var ceilingSave = poQtySave - alreadyDoneS;
                     PreparationTime_Actual  = row.PreparationTime_Actual,
 
                     TrialRunTime_Actual     = row.TrialRunTime_Actual,
+                    // [SERIAL-TIME-REQUIRED] Lưu chế độ Hàng loạt / Chạy thử (chỉ GC; non-GC = NULL)
+                    ProductionMode          = IsGcGroup ? row.ProductionMode : null,
                     // [ACTUAL-PC] Non-GC: lưu T.Thực tế/pc + đánh dấu có khác chuẩn không (GC: NULL)
                     ActualTimePerPc         = IsGcGroup ? null : row.ActualTimePerPc,
                     IsActualManual          = IsGcGroup || !row.ActualTimePerPc.HasValue ? null
@@ -7488,6 +7556,35 @@ var ceilingSave = poQtySave - alreadyDoneS;
     // [TRIAL-QTY-OPTIONAL] Không bắt buộc SL > 0 khi: mã chuẩn bị (non-GC) HOẶC GC đang "Chạy thử"
     // (chạy thử có bước chuẩn bị, có thể chưa ra sản phẩm). Vẫn cho nhập SL nếu có.
     private bool IsQtyOptional(WtsRow sub) => IsPrepNoQty(sub) || (IsGcGroup && sub.ProductionMode == "trial");
+
+    // [SERIAL-TIME-REQUIRED] GC "Hàng loạt" có số KH → bắt buộc nhập đủ T.Gá, T.GC, T.Ktra (> 0) để tính hiệu suất.
+    // Trả về thông báo lỗi (liệt kê ô thiếu) hoặc null nếu đủ. Chạy thử / non-GC / Mã WTS khác → không kiểm tra.
+    // [ACTUAL-REQUIRED-NONGC] Non-GC (HTSP/KCS/Đóng gói) có số KH → bắt buộc nhập T.Thực tế (> 0).
+    // Mã chuẩn bị (1V/1T/1R/1K/1D/1G): ô T.Thực tế = tổng phút — BẮT BUỘC nhập (chốt 2026-10-19). Đổi false nếu muốn cho để trống.
+    private const bool RequireActualForPrepCodes = true;
+
+    private string? GetMissingSerialTimesMsg(WtsRow r)
+    {
+        // [ACTUAL-REQUIRED-NONGC]
+        if (!IsGcGroup)
+        {
+            if (!r.KhPlanDetailId.HasValue) return null;
+            if (IsPrepNoQty(r) && !RequireActualForPrepCodes) return null;
+            return (r.ActualTimePerPc ?? 0) <= 0
+                ? (IsPrepNoQty(r) ? "Chưa nhập T.Thực tế (tổng phút chuẩn bị)." : "Chưa nhập T.Thực tế.")
+                : null;
+        }
+        if (!r.KhPlanDetailId.HasValue) return null;
+        // [TRIAL-PREP-REQUIRED] Chạy thử: bắt buộc T.CB (thời gian chuẩn bị) > 0; T.Chạy + SL vẫn không bắt buộc (yêu cầu KH 19/10)
+        if (r.ProductionMode == "trial")
+            return (r.PreparationTime_Actual ?? 0) <= 0 ? "Chạy thử: chưa nhập T.CB (thời gian chuẩn bị)." : null;
+        if (r.ProductionMode != "serial") return null;
+        var missing = new List<string>();
+        if ((r.SetupTime_Actual      ?? 0) <= 0) missing.Add("T.Gá");
+        if ((r.MachiningTime_Actual  ?? 0) <= 0) missing.Add("T.GC");
+        if ((r.InspectionTime_Actual ?? 0) <= 0) missing.Add("T.Ktra");
+        return missing.Count == 0 ? null : $"Hàng loạt: chưa nhập {string.Join(", ", missing)}.";
+    }
     private bool IsFlatTimeCode(WtsRow sub)
     {
         var code = !string.IsNullOrEmpty(sub.WtsCode) ? sub.WtsCode : sub.NC;
@@ -7646,8 +7743,16 @@ var ceilingSave = poQtySave - alreadyDoneS;
     }
 
     // ── GC: 5 ô chuẩn (T.Gá, T.GC, T.Ktra, T.CB, T.Chạy) ──
-    private const string StdStyleConfirmed   = "font-size:10px;font-weight:600;color:#198754;text-align:center;margin-bottom:1px;cursor:help";
-    private const string StdStyleUnconfirmed = "font-size:10px;font-weight:400;color:#6c757d;text-align:center;margin-bottom:1px;cursor:help";
+    // [STD-COLOR-V3] Cùng cỡ chữ 12px + cùng khung cho cả 2 trạng thái (không nhảy layout), chỉ khác màu:
+    // Đã xác nhận: chữ đậm xanh đậm, nền xanh nhạt, viền xanh → nổi bật. Chưa xác nhận: chữ xám, không nền, viền trong suốt.
+    private const string StdStyleBase        = "font-size:12px;border-radius:4px;padding:0 5px;display:block;width:fit-content;min-width:26px;margin:0 auto 2px auto;text-align:center;cursor:help;";
+    private const string StdStyleConfirmed   = StdStyleBase + "font-weight:700;color:#0f5132;background:#d1e7dd;border:1px solid #198754;";
+    private const string StdStyleUnconfirmed = StdStyleBase + "font-weight:400;color:#adb5bd;background:transparent;border:1px solid transparent;";
+
+    // [STD-COLOR-V3] Non-GC: ô T.Chuẩn/sp — cùng cỡ 12px với GC; đã xác nhận: đậm, xanh đậm, nền xanh nhạt, viền xanh 2px
+    private static string NonGcStdInputStyle(bool confirmed) => confirmed
+        ? "font-size:12px;font-weight:700;color:#0f5132;background:#d1e7dd;border:2px solid #198754;"
+        : "font-size:12px;font-weight:400;color:#adb5bd;border:2px solid #dee2e6;";
 
     private bool IsGcStdConfirmed(WtsRow sub, TimingStd? std, string field)
         => std != null && GetSnapConfirm(sub.KhPlanDetailId, std.SrcTable, std.SrcRowId, field)?.IsConfirmed == true;

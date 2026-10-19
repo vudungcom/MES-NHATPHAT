@@ -59,6 +59,9 @@ public class WtsProductionLog
     [Column(TypeName = "decimal(10,2)")] public decimal? PreparationTime_Actual { get; set; }
     [Column(TypeName = "decimal(10,2)")] public decimal? TrialRunTime_Actual { get; set; }
 
+    /// <summary>[SERIAL-TIME-REQUIRED] Chế độ GC: "serial" = Hàng loạt, "trial" = Chạy thử. NULL = non-GC.</summary>
+    [MaxLength(10)] public string? ProductionMode { get; set; }
+
     // [ACTUAL-PC] Non-GC (HTSP/KCS/Đóng gói): T.Thực tế / sản phẩm (phút) công nhân nhập.
     // Mã chuẩn bị (1V/1T/1R/1K/1D) = tổng phút. GC: NULL (dùng các cột *_Actual ở trên).
     [Column(TypeName = "decimal(10,2)")] public decimal? ActualTimePerPc { get; set; }
