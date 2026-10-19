@@ -2,7 +2,9 @@
 
 @attribute [Authorize]
 
-@rendermode InteractiveServer
+@* [FIX-CA-FIRST-CLICK] Tắt prerender: trước đây trang hiện HTML tĩnh trước khi kết nối SignalR → bấm Ca lần đầu bị mất,
+   trang "nháy" (render lại khi kết nối xong) và phải bấm lần 2. Không có code nào phụ thuộc prerender (JS chỉ gọi trong event). *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 @using System.Security.Claims
 
