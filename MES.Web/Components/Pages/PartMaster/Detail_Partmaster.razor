@@ -2205,19 +2205,21 @@ else
     private void AddTimingRow(MachiningEdit edit)
     {
         var nextOrder = edit.TimingRows.Count == 0 ? 1 : edit.TimingRows.Max(t => t.DisplayOrder) + 1;
-        // Copy đồ gá, loại dao, thời gian từ row cuối (cùng NC) để user chỉnh nhanh thay vì điền lại từ đầu
-        var lastRow = edit.TimingRows.Where(t => t.State != EditState.Deleted).OrderBy(t => t.DisplayOrder).LastOrDefault();
+        // [TIMING-COPY-MAIN] Mọi dòng máy đồng dạng mới đều copy đồ gá, loại dao, 5 thời gian chuẩn
+        // từ DÒNG CHÍNH (máy đăng ký của NC) — KHÔNG copy từ dòng đồng dạng trước nữa (yêu cầu khách 20/10).
+        // Trước đây copy từ row cuối → dòng đầu tiên luôn trống, các dòng sau trống theo.
+        // Không copy SoMay (user tự chọn máy) và không copy trạng thái tích xác nhận.
         edit.TimingRows.Add(new TimingRowEdit
         {
             State = EditState.New,
             DisplayOrder = nextOrder,
-            FixtureType = lastRow?.FixtureType,
-            ToolType = lastRow?.ToolType,
-            SetupTime = lastRow?.SetupTime,
-            MachiningTime = lastRow?.MachiningTime,
-            InspectionTime = lastRow?.InspectionTime,
-            PreparationTime = lastRow?.PreparationTime,
-            TrialRunTime = lastRow?.TrialRunTime
+            FixtureType = edit.FixtureType,
+            ToolType = edit.ToolType,
+            SetupTime = edit.SetupTime,
+            MachiningTime = edit.MachiningTime,
+            InspectionTime = edit.InspectionTime,
+            PreparationTime = edit.PreparationTime,
+            TrialRunTime = edit.TrialRunTime
         });
         MarkAsModified(edit);
     }
