@@ -5900,64 +5900,128 @@ else
 
         }
 
-        // [WORKFLOW] Realtime: ceiling = min(prevDone, SL_PO) - da lam tai NC nay
-
-        if (grp != null && IsGcGroup && !string.IsNullOrEmpty(grp.NC))
-
+        // [WF-QTY-PER-PO] [WF-CEIL-MIN] Realtime: chỉ cộng SL các dòng CÙNG PO (KhPlanDetailId) với dòng đang nhập
+        // (trước: cộng mọi dòng trong nhóm → PO khác bị cộng vào, báo vượt sai — Excel dòng 27).
+        // Trần lấy từ GetWfNcCeiling — dùng chung với lúc Lưu và nhãn dropdown NC.
+        if (grp != null && IsGcGroup && !string.IsNullOrEmpty(grp.NC) && sub.KhPlanDetailId.HasValue)
         {
-
-            var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId);
-
-            if (wfRow?.ApplyWorkflow == true)
-
+            var wf = GetWfNcCeiling(grp, sub.KhPlanDetailId, grp.NC);
+            if (wf != null)
             {
-
-                var ncIdx       = grp.AvailableNCs.FindIndex(n => n.NC == grp.NC);
-
-                var thisFlow    = GetFlowItem(sub.KhPlanDetailId, grp.NC);
-
-                var alreadyDone = thisFlow?.WtsDone ?? 0m;
-
-                var totalQty    = grp.SubRows.Sum(s => s.QtyOk);
-
-                decimal ceiling;
-
-                string ceilLabel;
-
-                if (ncIdx > 0)
-
+                var totalQty = grp.SubRows
+                    .Where(s => s.KhPlanDetailId == sub.KhPlanDetailId)
+                    .Sum(s => s.QtyOk);
+                if (wf.Ceiling >= 0 && totalQty > wf.Ceiling)
                 {
-
-                    var prevNc   = grp.AvailableNCs[ncIdx - 1];
-
-                    var prevFlow = GetFlowItem(sub.KhPlanDetailId, prevNc.NC);
-
-                    var prevDone = prevFlow?.WtsDone ?? 0m;
-
-                    ceiling   = Math.Min(prevDone, poQty) - alreadyDone;
-
-                    ceilLabel = $"NC trước {prevNc.NC}={prevDone:0.##}, PO={poQty:0.##}, đã làm={alreadyDone:0.##}";
-
+                    sub.ErrorMsg = $"⚠️ Workflow: SL nhập {grp.NC} ({totalQty:0.##}) vượt mức cho phép ({wf.Ceiling:0.##}). ({wf.Label})";
                 }
-
-                else
-
-                {
-
-                    ceiling   = poQty - alreadyDone;
-
-                    ceilLabel = $"SL PO={poQty:0.##}, đã làm={alreadyDone:0.##}";
-
-                }
-
-                if (ceiling >= 0 && totalQty > ceiling)
-
-                    sub.ErrorMsg = $"⚠️ Workflow: SL nhập {grp.NC} ({totalQty:0.##}) vượt mức cho phép ({ceiling:0.##}). ({ceilLabel})";
-
             }
-
         }
 
+    }
+
+    // [MACHINE-OVERLAP] Kiểm tra máy trùng giờ khi lưu nhóm GC.
+    // 1) Các dòng trong cùng form với nhau (cùng máy của nhóm).
+    // 2) Với log đã lưu (chưa void) của MỌI công nhân trên cùng máy — bỏ qua log cũ của dòng đang sửa (sẽ bị void).
+    // So theo DateTime đầy đủ (ngày + giờ). Trả thông báo lỗi hoặc null nếu không trùng.
+    private async Task<string?> CheckMachineOverlapAsync(WtsGroup grp)
+    {
+        var machine = grp.MachineUsed!;
+        var subs = grp.SubRows.Where(s => s.EndTime > s.StartTime).ToList();
+        if (!subs.Any()) return null;
+
+        // 1) Trong cùng form
+        for (int i = 0; i < subs.Count; i++)
+        {
+            for (int j = i + 1; j < subs.Count; j++)
+            {
+                var a = subs[i];
+                var b = subs[j];
+                if (a.StartTime < b.EndTime && b.StartTime < a.EndTime)
+                {
+                    b.ErrorMsg = $"Máy {machine}: trùng giờ với dòng {a.StartTime:HH:mm}–{a.EndTime:HH:mm} trong form.";
+                    return $"Máy {machine} trùng giờ giữa các dòng đang nhập ({a.StartTime:HH:mm}–{a.EndTime:HH:mm} và {b.StartTime:HH:mm}–{b.EndTime:HH:mm}).";
+                }
+            }
+        }
+
+        // 2) Với log đã lưu trong DB
+        var minStart  = subs.Min(s => s.StartTime);
+        var maxEnd    = subs.Max(s => s.EndTime);
+        var skipIds   = subs.Where(s => s.IsEditing && s.WtsLogId.HasValue)
+                            .Select(s => s.WtsLogId!.Value).ToList();
+        var savedLogs = await Db.WtsProductionLogs
+            .AsNoTracking()
+            .Include(l => l.Worker)
+            .Where(l => !l.IsVoided
+                     && l.MachineUsed == machine
+                     && l.StartTime < maxEnd
+                     && l.EndTime   > minStart
+                     && !skipIds.Contains(l.WtsLogId))
+            .ToListAsync();
+        if (!savedLogs.Any()) return null;
+
+        foreach (var sub in subs)
+        {
+            var hit = savedLogs
+                .Where(l => l.StartTime < sub.EndTime && sub.StartTime < l.EndTime)
+                .OrderBy(l => l.StartTime)
+                .FirstOrDefault();
+            if (hit == null) continue;
+
+            var ovStart = hit.StartTime > sub.StartTime ? hit.StartTime : sub.StartTime;
+            var ovEnd   = hit.EndTime   < sub.EndTime   ? hit.EndTime   : sub.EndTime;
+            var po      = _allRows.FirstOrDefault(r => r.KhPlanDetailId == hit.KhPlanDetailId)?.PurchaseOrder
+                          ?? $"KH#{hit.KhPlanDetailId}";
+            var worker  = hit.Worker?.FullName ?? $"#{hit.WorkerId}";
+            var fmt     = hit.StartTime.Date == sub.StartTime.Date ? "HH:mm" : "dd/MM HH:mm";
+            var msg     = $"Máy {machine} đã có log {hit.StartTime.ToString(fmt)}–{hit.EndTime.ToString(fmt)} "
+                        + $"(PO {po}, NC {hit.NC}, {worker}) — trùng {ovStart:HH:mm}–{ovEnd:HH:mm}. Không cho lưu.";
+            sub.ErrorMsg = msg;
+            return msg;
+        }
+        return null;
+    }
+
+    // [WF-CEIL-MIN] Trần SL của 1 NC cho 1 PO khi Workflow ON — dùng chung cho realtime + Lưu.
+    // Chỉ chỉnh LUỒNG CHÍNH: giữ nguyên cách chọn NC trước như code cũ (NC liền trên trong
+    // AvailableNCs); các trường hợp loại trừ / backup KHÔNG đổi gì so với trước.
+    //  - NC đầu tiên → trần = PO − đã làm
+    //  - NC sau      → trần = min(WtsDone NC trước, PO) − đã làm
+    // Trả null nếu Workflow OFF.
+    private sealed class WfCeilInfo
+    {
+        public decimal  Ceiling  { get; set; }
+        public string   Label    { get; set; } = "";
+        public string?  PrevNc   { get; set; }   // null = NC đầu tiên
+        public decimal  PrevDone { get; set; }
+    }
+
+    private WfCeilInfo? GetWfNcCeiling(WtsGroup grp, int? detailId, string nc)
+    {
+        if (!detailId.HasValue) return null;
+        var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == detailId);
+        if (wfRow?.ApplyWorkflow != true) return null;
+        var poQty       = wfRow.Quantity;
+        var ncIdx       = grp.AvailableNCs.FindIndex(n => n.NC == nc);
+        var alreadyDone = GetFlowItem(detailId, nc)?.WtsDone ?? 0m;
+        if (ncIdx > 0)
+        {
+            var prevNc   = grp.AvailableNCs[ncIdx - 1];
+            var prevDone = GetFlowItem(detailId, prevNc.NC)?.WtsDone ?? 0m;
+            return new WfCeilInfo
+            {
+                Ceiling  = Math.Min(prevDone, poQty) - alreadyDone,
+                Label    = $"NC trước {prevNc.NC}={prevDone:0.##}, PO={poQty:0.##}, đã làm={alreadyDone:0.##}",
+                PrevNc   = prevNc.NC,
+                PrevDone = prevDone
+            };
+        }
+        return new WfCeilInfo
+        {
+            Ceiling = poQty - alreadyDone,
+            Label   = $"SL PO={poQty:0.##}, đã làm={alreadyDone:0.##}"
+        };
     }
 
     // OnSubExtraMinInput — replaced by OnExtraItemMinutes (ExtraMinutes now computed)
@@ -6404,93 +6468,43 @@ else
 
             }
 
-            // [WORKFLOW] Validate SL NC theo thứ tự nếu ApplyWorkflow = true
-
-            if (IsGcGroup && !string.IsNullOrEmpty(grp.NC))
-
+            // [MACHINE-OVERLAP] Mục 19: 1 máy không được chạy 2 việc trùng giờ (mọi công nhân, cả Hàng loạt + Chạy thử).
+            // Trùng = Bắt đầu A < Kết thúc B và Bắt đầu B < Kết thúc A (chạm mép 08:15→08:15 không tính). Trùng → chặn lưu.
+            if (IsGcGroup && !string.IsNullOrEmpty(grp.MachineUsed))
             {
+                var _overlapMsg = await CheckMachineOverlapAsync(grp);
+                if (_overlapMsg != null) { grp.ErrorMsg = _overlapMsg; return; }
+            }
 
-                var firstSub = grp.SubRows.FirstOrDefault(s => s.KhPlanDetailId.HasValue);
-
-                if (firstSub != null)
-
+            // [WF-QTY-PER-PO] [WF-CEIL-MIN] Validate SL NC theo Workflow — kiểm tra TỪNG PO trong nhóm
+            // (trước: chỉ lấy PO của dòng đầu, cộng SL mọi PO, trần = PO − đã làm).
+            // Giờ: mỗi PO tính tổng + trần riêng, trần = min(NC trước, PO) − đã làm (GetWfNcCeiling).
+            if (IsGcGroup && !string.IsNullOrEmpty(grp.NC))
+            {
+                var wfDetailIds = grp.SubRows
+                    .Where(s => s.KhPlanDetailId.HasValue)
+                    .Select(s => s.KhPlanDetailId)
+                    .Distinct()
+                    .ToList();
+                foreach (var wfDetId in wfDetailIds)
                 {
-
-                    var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId);
-
-                    if (wfRow?.ApplyWorkflow == true)
-
+                    var wf = GetWfNcCeiling(grp, wfDetId, grp.NC);
+                    if (wf == null) continue; // Workflow OFF → không chặn
+                    var wfPo        = _allRows.FirstOrDefault(r => r.KhPlanDetailId == wfDetId)?.PurchaseOrder ?? "";
+                    var totalNewQty = grp.SubRows
+                        .Where(s => s.KhPlanDetailId == wfDetId)
+                        .Sum(s => s.QtyOk);
+                    if (wf.PrevNc != null && wf.PrevDone <= 0)
                     {
-
-                        var ncList      = grp.AvailableNCs;
-
-                        var ncIdx       = ncList.FindIndex(n => n.NC == grp.NC);
-
-                        var thisFlowS   = GetFlowItem(firstSub.KhPlanDetailId, grp.NC);
-
-                        var alreadyDoneS = thisFlowS?.WtsDone ?? 0m;
-
-                        var totalNewQty = grp.SubRows.Sum(s => s.QtyOk);
-
-                        var poQtySave   = _allRows.FirstOrDefault(r => r.KhPlanDetailId == firstSub.KhPlanDetailId)?.Quantity ?? 0m;
-
-                        if (ncIdx > 0)
-
-                        {
-
-                            var prevNc   = ncList[ncIdx - 1];
-
-                            var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevNc.NC);
-
-                            var prevDone = prevFlow?.WtsDone ?? 0m;
-
-                            if (prevDone <= 0)
-
-                            {
-
-                                grp.ErrorMsg = $"Workflow: NC trước ({prevNc.NC}) chưa có SL — chưa được làm {grp.NC}.";
-
-                                return;
-
-                            }
-
-                            // Ceiling = PO — NC này chạy đến PO, NC trước chỉ dùng để unlock
-var ceilingSave = poQtySave - alreadyDoneS;
-
-                            if (totalNewQty > ceilingSave)
-
-                            {
-
-                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt mức cho phép ({ceilingSave:0.##} = min(NC trước={prevDone:0.##}, PO={poQtySave:0.##}) − đã làm={alreadyDoneS:0.##}).";
-
-                                return;
-
-                            }
-
-                        }
-
-                        else
-
-                        {
-
-                            var ceilingSave = poQtySave - alreadyDoneS;
-
-                            if (totalNewQty > ceilingSave)
-
-                            {
-
-                                grp.ErrorMsg = $"Workflow: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt SL còn được phép ({ceilingSave:0.##} = PO {poQtySave:0.##} − đã làm {alreadyDoneS:0.##}).";
-
-                                return;
-
-                            }
-
-                        }
-
+                        grp.ErrorMsg = $"Workflow PO {wfPo}: NC trước ({wf.PrevNc}) chưa có SL — chưa được làm {grp.NC}.";
+                        return;
                     }
-
+                    if (totalNewQty > wf.Ceiling)
+                    {
+                        grp.ErrorMsg = $"Workflow PO {wfPo}: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt mức cho phép ({wf.Ceiling:0.##}). ({wf.Label})";
+                        return;
+                    }
                 }
-
             }
 
             // Lưu từng sub-row
@@ -6806,11 +6820,12 @@ var ceilingSave = poQtySave - alreadyDoneS;
         }
         else
         {
-            // NC trước bình thường → chỉ check WtsDone(prev) > 0 để unlock
-            // Ceiling luôn = PO — NC này chạy độc lập đến PO
+            // NC trước bình thường → mở khoá khi WtsDone(prev) > 0, trần = min(WtsDone(prev), PO)
             var prevDoneL = prevFlowL?.WtsDone ?? 0m;
             if (prevDoneL <= 0) return $"🔒 {nc} — chờ {prevMainL.NC} có SL";
-            ceiling = planQty;
+            // [WF-CEIL-MIN] Thống nhất trần theo min(NC trước, PO) — Workflow ON quản lý chặt đầu vào
+            // (trước: ceiling = planQty — NC trước chỉ để mở khoá)
+            ceiling = Math.Min(prevDoneL, planQty);
         }
         // Format: NC — còn lại: X/đã làm/PO
         var remL = ceiling - doneL;
