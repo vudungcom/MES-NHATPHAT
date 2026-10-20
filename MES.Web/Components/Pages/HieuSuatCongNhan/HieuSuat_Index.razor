@@ -2191,6 +2191,16 @@ else
 
                                 }
 
+                                @* [MACHINE-OVERLAP-LIVE] Cảnh báo máy trùng giờ ngay lúc nhập *@
+                                @if (!string.IsNullOrEmpty(sub.OverlapMsg))
+                                {
+                                    <tr class="table-danger">
+                                        <td colspan="12" class="small text-danger py-1 ps-2">
+                                            <i class="bi bi-exclamation-octagon me-1"></i>@sub.OverlapMsg
+                                        </td>
+                                    </tr>
+                                }
+
                             }
 
                             @* Hàng tổng *@
@@ -5134,7 +5144,7 @@ else
 
     private static string SubRowCls(WtsRow sub)
 
-        => sub.ErrorMsg != null ? "table-danger" : "";
+        => (sub.ErrorMsg != null || sub.OverlapMsg != null) ? "table-danger" : "";   // [MACHINE-OVERLAP-LIVE] thêm OverlapMsg
 
     // ── Helpers button class cho nhóm ──
 
@@ -5300,19 +5310,14 @@ else
 
     }
 
-    private void OnGroupMachineChanged(WtsGroup grp, string? machine)
-
+    private async Task OnGroupMachineChanged(WtsGroup grp, string? machine)   // [MACHINE-OVERLAP-LIVE] void → async Task
     {
-
         grp.MachineUsed = machine;
-
         foreach (var sub in grp.SubRows) { sub.MachineUsed = machine; }
-
         // Fill std values cho tất cả sub-rows
-
         if (grp.UseStdAsDefault)
-
             foreach (var sub in grp.SubRows) TryFillStdValues(sub);
+        await CheckMachineOverlapLiveAsync(grp);   // [MACHINE-OVERLAP-LIVE]
 
     }
 
@@ -5920,6 +5925,117 @@ else
 
     }
 
+    // [MACHINE-LOCK] Khoá ứng dụng theo máy trên SQL Server (sp_getapplock, LockOwner = Session).
+    // Giữ kết nối mở từ lúc khoá đến lúc nhả để mọi lệnh lưu chạy trên cùng kết nối. Chờ tối đa 10 giây.
+    private async Task<bool> AcquireMachineLockAsync(string machine)
+    {
+        await Db.Database.OpenConnectionAsync();
+        var conn = Db.Database.GetDbConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "sp_getapplock";
+        cmd.CommandType = System.Data.CommandType.StoredProcedure;
+        AddLockParam(cmd, "@Resource",    "WTS_MACHINE_" + machine);
+        AddLockParam(cmd, "@LockMode",    "Exclusive");
+        AddLockParam(cmd, "@LockOwner",   "Session");
+        AddLockParam(cmd, "@LockTimeout", 10000);
+        var ret = cmd.CreateParameter();
+        ret.ParameterName = "@RETURN_VALUE";
+        ret.DbType        = System.Data.DbType.Int32;
+        ret.Direction     = System.Data.ParameterDirection.ReturnValue;
+        cmd.Parameters.Add(ret);
+        await cmd.ExecuteNonQueryAsync();
+        return ret.Value is int r && r >= 0;   // 0/1 = đã khoá; âm = hết giờ chờ / lỗi
+    }
+
+    private async Task ReleaseMachineLockAsync(string machine)
+    {
+        try
+        {
+            var conn = Db.Database.GetDbConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "sp_releaseapplock";
+            cmd.CommandType = System.Data.CommandType.StoredProcedure;
+            AddLockParam(cmd, "@Resource",  "WTS_MACHINE_" + machine);
+            AddLockParam(cmd, "@LockOwner", "Session");
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch { /* chưa giữ khoá (khoá thất bại) → bỏ qua */ }
+        finally
+        {
+            await Db.Database.CloseConnectionAsync();
+        }
+    }
+
+    private static void AddLockParam(System.Data.Common.DbCommand cmd, string name, object value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value         = value;
+        cmd.Parameters.Add(p);
+    }
+
+    // [MACHINE-OVERLAP-LIVE] Báo trùng máy NGAY LÚC NHẬP (đổi máy / giờ bắt đầu / giờ kết thúc).
+    // Chỉ báo đỏ (OverlapMsg), KHÔNG chặn — chặn thật vẫn ở lúc Lưu (CheckMachineOverlapAsync + khoá máy).
+    // Chỉ thấy được log ĐÃ LƯU; dữ liệu người khác đang nhập chưa lưu thì không thấy được.
+    private async Task CheckMachineOverlapLiveAsync(WtsGroup grp)
+    {
+        foreach (var s in grp.SubRows) s.OverlapMsg = null;
+        if (!IsGcGroup || string.IsNullOrEmpty(grp.MachineUsed)) return;
+        var machine = grp.MachineUsed;
+        var subs = grp.SubRows.Where(s => s.EndTime > s.StartTime).ToList();
+        if (!subs.Any()) return;
+
+        // 1) Trong cùng form
+        for (int i = 0; i < subs.Count; i++)
+            for (int j = i + 1; j < subs.Count; j++)
+            {
+                var a = subs[i];
+                var b = subs[j];
+                if (a.StartTime < b.EndTime && b.StartTime < a.EndTime && b.OverlapMsg == null)
+                    b.OverlapMsg = $"Máy {machine}: trùng giờ với dòng {a.StartTime:HH:mm}–{a.EndTime:HH:mm} trong form.";
+            }
+
+        // 2) Với log đã lưu (mọi công nhân, chưa void) — bỏ qua log cũ của dòng đang sửa
+        try
+        {
+            var minStart  = subs.Min(s => s.StartTime);
+            var maxEnd    = subs.Max(s => s.EndTime);
+            var skipIds   = subs.Where(s => s.IsEditing && s.WtsLogId.HasValue)
+                                .Select(s => s.WtsLogId!.Value).ToList();
+            var savedLogs = await Db.WtsProductionLogs
+                .AsNoTracking()
+                .Include(l => l.Worker)
+                .Where(l => !l.IsVoided
+                         && l.MachineUsed == machine
+                         && l.StartTime < maxEnd
+                         && l.EndTime   > minStart
+                         && !skipIds.Contains(l.WtsLogId))
+                .ToListAsync();
+
+            foreach (var sub in subs)
+            {
+                if (sub.OverlapMsg != null) continue;
+                var hit = savedLogs
+                    .Where(l => l.StartTime < sub.EndTime && sub.StartTime < l.EndTime)
+                    .OrderBy(l => l.StartTime)
+                    .FirstOrDefault();
+                if (hit == null) continue;
+                var ovStart = hit.StartTime > sub.StartTime ? hit.StartTime : sub.StartTime;
+                var ovEnd   = hit.EndTime   < sub.EndTime   ? hit.EndTime   : sub.EndTime;
+                var po      = _allRows.FirstOrDefault(r => r.KhPlanDetailId == hit.KhPlanDetailId)?.PurchaseOrder
+                              ?? $"KH#{hit.KhPlanDetailId}";
+                var worker  = hit.Worker?.FullName ?? $"#{hit.WorkerId}";
+                var fmt     = hit.StartTime.Date == sub.StartTime.Date ? "HH:mm" : "dd/MM HH:mm";
+                sub.OverlapMsg = $"Máy {machine} đã có log {hit.StartTime.ToString(fmt)}–{hit.EndTime.ToString(fmt)} "
+                               + $"(PO {po}, NC {hit.NC}, {worker}) — trùng {ovStart:HH:mm}–{ovEnd:HH:mm}. Sẽ không lưu được.";
+            }
+        }
+        catch
+        {
+            // Lỗi tra cứu lúc nhập không được làm hỏng form — lúc Lưu vẫn kiểm tra lại.
+        }
+    }
+
     // [MACHINE-OVERLAP] Kiểm tra máy trùng giờ khi lưu nhóm GC.
     // 1) Các dòng trong cùng form với nhau (cùng máy của nhóm).
     // 2) Với log đã lưu (chưa void) của MỌI công nhân trên cùng máy — bỏ qua log cũ của dòng đang sửa (sẽ bị void).
@@ -6168,34 +6284,24 @@ else
 
     // ── Start/End time input ──
 
-    private void OnSubStartTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)
-
+    private async Task OnSubStartTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)   // [MACHINE-OVERLAP-LIVE] void → async Task
     {
-
         if (!TryParseHHmm(timeStr, out var h, out var m)) return;
-
         sub.StartTime = _workDate.Date.AddHours(h).AddMinutes(m);
-
         CheckCaTimeWarning(grp, sub);
-
         RecalcGroupTimeline(grp);
-
+        await CheckMachineOverlapLiveAsync(grp);   // [MACHINE-OVERLAP-LIVE]
         StateHasChanged();
 
     }
 
-    private void OnSubEndTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)
-
+    private async Task OnSubEndTimeChanged(WtsGroup grp, WtsRow sub, string? timeStr)   // [MACHINE-OVERLAP-LIVE] void → async Task
     {
-
         if (!TryParseHHmm(timeStr, out var h, out var m)) return;
-
         sub.EndTime = _workDate.Date.AddHours(h).AddMinutes(m);
-
         CheckCaTimeWarning(grp, sub);
-
         RecalcGroupTimeline(grp);
-
+        await CheckMachineOverlapLiveAsync(grp);   // [MACHINE-OVERLAP-LIVE]
         StateHasChanged();
 
     }
@@ -6393,15 +6499,11 @@ else
     // ── Lưu toàn bộ nhóm ─────────────────────────────────────────────────
 
     private async Task SaveGroupAsync(WtsGroup grp)
-
     {
-
         grp.ErrorMsg = null;
-
         grp.IsSaving = true;
-
         StateHasChanged();
-
+        string? _lockedMachine = null;   // [MACHINE-LOCK] máy đang giữ khoá — nhả trong finally
         try
 
         {
@@ -6472,6 +6574,15 @@ else
             // Trùng = Bắt đầu A < Kết thúc B và Bắt đầu B < Kết thúc A (chạm mép 08:15→08:15 không tính). Trùng → chặn lưu.
             if (IsGcGroup && !string.IsNullOrEmpty(grp.MachineUsed))
             {
+                // [MACHINE-LOCK] Khoá theo máy (sp_getapplock) trước khi kiểm tra trùng → giữ đến khi ghi xong.
+                // 2 người cùng lưu 1 máy: người sau phải chờ người trước ghi xong rồi mới kiểm tra → thấy log mới → bị chặn.
+                // Máy khác nhau không chờ nhau. Logic lưu bên dưới giữ nguyên.
+                _lockedMachine = grp.MachineUsed;
+                if (!await AcquireMachineLockAsync(_lockedMachine))
+                {
+                    grp.ErrorMsg = $"Máy {grp.MachineUsed} đang có người khác lưu WTS. Vui lòng bấm Lưu lại sau vài giây.";
+                    return;
+                }
                 var _overlapMsg = await CheckMachineOverlapAsync(grp);
                 if (_overlapMsg != null) { grp.ErrorMsg = _overlapMsg; return; }
             }
@@ -6534,19 +6645,13 @@ else
             await LoadSavedRowsAsync();
 
             _groups.AddRange(unsavedGroups);
-
         }
-
         finally
-
         {
-
+            if (_lockedMachine != null) await ReleaseMachineLockAsync(_lockedMachine);   // [MACHINE-LOCK]
             grp.IsSaving = false;
-
             StateHasChanged();
-
         }
-
     }
 
     // Helper: class button toggle mode — tránh nested quote trong Razor markup
@@ -8086,6 +8191,9 @@ else
         public bool    IsEditing  { get; set; }
 
         public string? ErrorMsg   { get; set; }
+
+        // [MACHINE-OVERLAP-LIVE] Cảnh báo máy trùng giờ lúc đang nhập — tách riêng ErrorMsg để không xoá nhầm lỗi khác
+        public string? OverlapMsg { get; set; }
 
         public bool    HasWarning { get; set; }
 
