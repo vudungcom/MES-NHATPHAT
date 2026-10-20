@@ -8200,11 +8200,19 @@ else
             // Hàng loạt: dùng actual khi đã nhập, fallback về std
             // (T.Gá + max(T.GC, T.Ktra)) × SL
 
-            var setup   = sub.SetupTime_Actual      ?? std?.SetupTime      ?? 0m;
+            // [SERIAL-EST-ACTUAL] Cùng quy tắc với Chạy thử [TRIAL-EST-ACTUAL]: chuẩn chỉ để tham khảo, KHÔNG trộn vào số thực tế.
+            // Đã nhập ít nhất 1 ô (T.Gá / T.GC / T.Ktra) → chỉ tính bằng ô thực tế, ô trống = 0.
+            // Cả 3 ô đều trống → Dự kiến hiện theo chuẩn để công nhân có mốc ước lượng (chốt với anh Hùng 20/10).
+            // Trước: mỗi ô trống tự lấy chuẩn riêng → Dự kiến trộn thực tế + chuẩn.
+            var _serialHasActual = sub.SetupTime_Actual.HasValue
+                                || sub.MachiningTime_Actual.HasValue
+                                || sub.InspectionTime_Actual.HasValue;
 
-            var machine = sub.MachiningTime_Actual  ?? std?.MachiningTime  ?? 0m;
+            var setup   = _serialHasActual ? (sub.SetupTime_Actual      ?? 0m) : (std?.SetupTime      ?? 0m);
 
-            var inspect = sub.InspectionTime_Actual ?? std?.InspectionTime ?? 0m;
+            var machine = _serialHasActual ? (sub.MachiningTime_Actual  ?? 0m) : (std?.MachiningTime  ?? 0m);
+
+            var inspect = _serialHasActual ? (sub.InspectionTime_Actual ?? 0m) : (std?.InspectionTime ?? 0m);
 
             var cycle   = setup + Math.Max(machine, inspect);
 
@@ -8219,10 +8227,14 @@ else
         {
 
             // Chạy thử: dùng actual khi đã nhập, fallback về std — 1 lần, KHÔNG nhân SL
+            // [TRIAL-EST-ACTUAL] Mục 25: khi công nhân đã nhập T.CB hoặc T.Chạy → ô còn lại để trống = 0
+            // (VD 08:40 + T.CB 10, T.Chạy trống → Dự kiến 08:50). Chỉ khi CẢ HAI ô đều trống mới lấy chuẩn.
+            // Trước: mỗi ô trống tự lấy chuẩn riêng → T.Chạy trống bị cộng T.Chạy chuẩn (20) → 09:10.
+            var _trialHasActual = sub.PreparationTime_Actual.HasValue || sub.TrialRunTime_Actual.HasValue;
 
-            var prep  = sub.PreparationTime_Actual ?? std?.PreparationTime ?? 0m;
+            var prep  = _trialHasActual ? (sub.PreparationTime_Actual ?? 0m) : (std?.PreparationTime ?? 0m);
 
-            var trial = sub.TrialRunTime_Actual    ?? std?.TrialRunTime    ?? 0m;
+            var trial = _trialHasActual ? (sub.TrialRunTime_Actual    ?? 0m) : (std?.TrialRunTime    ?? 0m);
 
             if (prep + trial <= 0) return null;
 
