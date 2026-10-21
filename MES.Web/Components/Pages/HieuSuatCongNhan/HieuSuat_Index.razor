@@ -5623,8 +5623,8 @@ else
             sub.StandardTimePerPc = stdTime; // chỉ set cho row này
             // [STD-ACTUAL-DEFAULT] Mục 29: bật "Tham khảo chuẩn" → T.Thực tế/pc = T.Chuẩn/pc của mã vừa chọn
             if (grp.UseStdAsDefault) { sub.UseStdAsDefault = true; TryFillStdValues(sub); }
+            RecalcGroupTimeline(grp);   // [NONGC-ALLOC-WEIGHT] Mã CV đổi → khối lượng đổi → chia lại
         }
-
         StateHasChanged();
 
     }
@@ -5636,6 +5636,7 @@ else
             System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var v)
             ? (decimal?)v : null;
+        RecalcGroupTimeline(grp);   // [NONGC-ALLOC-WEIGHT] T.Thực tế đổi → chia lại thời gian
         StateHasChanged();
     }
 
@@ -6400,6 +6401,14 @@ else
 
     // Các hàng trung gian: Start = End hàng trước, End = Start + (SL_i / SL_tổng) × tổng_thời_gian
 
+    // [NONGC-ALLOC-WEIGHT] Khối lượng 1 dòng non-GC để chia thời gian; null nếu chưa có T.Thực tế
+    private double? GetNonGcAllocWeight(WtsRow sub)
+    {
+        if (!sub.ActualTimePerPc.HasValue || sub.ActualTimePerPc.Value <= 0) return null;
+        var mult = IsPrepNoQty(sub) ? 1m : sub.QtyDone;   // mã không có SL → nhân 1
+        return (double)(sub.ActualTimePerPc.Value * mult);
+    }
+
     private void RecalcGroupTimeline(WtsGroup grp)
 
     {
@@ -6419,8 +6428,19 @@ else
         if (grp.SubRows.Count <= 1) return;
 
         var totalSl = grp.SubRows.Sum(s => s.QtyDone);
-
-        if (totalSl <= 0) return;
+        // [NONGC-ALLOC-WEIGHT] Mục 23 — HTSP/KCS/Đóng gói: chia thời gian theo KHỐI LƯỢNG từng dòng
+        // = SL (OK+NG) × T.Thực tế/pc; mã CV không có SL (1V/1T/1R/1K/1D/1G) → × 1 (= T.Thực tế tổng phút).
+        // Lấy từ ô T.Thực tế (Tham khảo chuẩn chỉ điền sẵn). Trước: chia theo tỉ lệ SL → mã nhanh/chậm chia như nhau.
+        // An toàn: dòng nào chưa có T.Thực tế → giữ cách chia theo SL như cũ. GC giữ nguyên cách cũ.
+        List<double>? allocWeights = null;
+        if (!IsGcGroup)
+        {
+            var ws = grp.SubRows.Select(GetNonGcAllocWeight).ToList();
+            if (ws.All(w => w.HasValue) && ws.Sum(w => w!.Value) > 0)
+                allocWeights = ws.Select(w => w!.Value).ToList();
+        }
+        var totalWeight = allocWeights?.Sum() ?? 0d;
+        if (allocWeights == null && totalSl <= 0) return;
 
         var first = grp.SubRows.First();
 
@@ -6462,7 +6482,10 @@ else
 
             else cursor = first.StartTime; // cursor bắt đầu từ start hàng đầu
 
-            var fraction   = totalSl > 0 ? (double)sub.QtyDone / (double)totalSl : 0;
+            // [NONGC-ALLOC-WEIGHT] non-GC: tỉ lệ khối lượng; GC / chưa đủ T.Thực tế: tỉ lệ SL như cũ
+            var fraction   = allocWeights != null
+                ? allocWeights[i] / totalWeight
+                : (totalSl > 0 ? (double)sub.QtyDone / (double)totalSl : 0);
 
             var subPureMin = totalProdMin * fraction;  // phần sản xuất thuần hàng này
 
