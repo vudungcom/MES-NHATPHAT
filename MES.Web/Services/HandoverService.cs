@@ -138,6 +138,11 @@ namespace MES.Web.Services
 
         public string? NgReason          { get; set; }
 
+        /// <summary>[GN-LEDGER 2026-10-22] Loại phiếu (NULL = phiếu cũ)</summary>
+        public string? Purpose           { get; set; }
+
+        public bool    IsReturnNg        { get; set; }
+
     }
 
     public class HandoverLogItem
@@ -171,6 +176,13 @@ namespace MES.Web.Services
         public bool    IsVoided      { get; set; }
 
         public string? VoidReason    { get; set; }
+
+        /// <summary>[GN-LEDGER 2026-10-22] Loại phiếu (NULL = phiếu cũ)</summary>
+        public string? Purpose       { get; set; }
+
+        public bool    IsReturnNg    { get; set; }
+
+        public string? ToNC          { get; set; }
 
         public List<HandoverReceiveItem> Receives { get; set; } = new();
 
@@ -770,6 +782,9 @@ namespace MES.Web.Services
                 IsVoided      = t.IsVoided,
 
                 VoidReason    = t.VoidReason,
+                Purpose       = t.Purpose,     // [GN-LEDGER]
+                IsReturnNg    = t.IsReturnNg,  // [GN-LEDGER]
+                ToNC          = t.ToNC,        // [GN-LEDGER]
 
                 Receives      = t.Receives.OrderBy(r => r.ReceivedAt).Select(r => new HandoverReceiveItem
 
@@ -854,6 +869,8 @@ namespace MES.Web.Services
                     NgQty            = t.NgQty,     // v0.9
 
                     NgReason         = t.NgReason,  // v0.9
+                    Purpose          = t.Purpose,     // [GN-LEDGER]
+                    IsReturnNg       = t.IsReturnNg,  // [GN-LEDGER]
 
                 };
 
@@ -1247,9 +1264,15 @@ namespace MES.Web.Services
 
             string? ngReason    = null,
 
-            bool isReturnNg     = false)   // v1.0 — phiếu trả hàng NG ngược chiều
+            bool isReturnNg     = false,   // v1.0 — phiếu trả hàng NG ngược chiều
+            string? purpose     = null)    // [GN-LEDGER 2026-10-22] loại phiếu mới — có thì dùng trần của sổ giao nhận
 
         {
+            // [GN-LEDGER 2026-10-22] Trang Giao nhận mới luôn gửi purpose → kiểm theo hàm tính chung, bỏ qua nhánh cũ
+            if (!string.IsNullOrEmpty(purpose))
+                return await IssueWithPurposeAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
+                    issuedByUserId, purpose, fromNC, toNC, notes, ngReason);
+
 
             if (qtyIssued <= 0)
 
@@ -1403,6 +1426,68 @@ namespace MES.Web.Services
 
             return (true, string.Empty);
 
+        }
+
+        // ----------------------------------------------------------------
+        // [GN-LEDGER 2026-10-22] WRITE: Giao hàng theo loại phiếu (trang Giao nhận mới)
+        //   Trần lấy từ HandoverLedgerService.IssueCap — cùng một hàm với số hiển thị trên trang.
+        //   K8: kiểm trần + ghi phiếu trong 1 giao dịch Serializable → 2 người giao cùng lúc không vượt trần.
+        // ----------------------------------------------------------------
+        private async Task<(bool Ok, string Error)> IssueWithPurposeAsync(
+            int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued,
+            int issuedByUserId, string purpose, string? fromNC, string? toNC, string? notes, string? reason)
+        {
+            if (qtyIssued <= 0) return (false, "Số lượng giao phải lớn hơn 0.");
+            var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
+            if (!validGroups.Contains(fromGroupCode) || !validGroups.Contains(toGroupCode))
+                return (false, "Mã nhóm không hợp lệ.");
+            if (!HandoverPurpose.All.Contains(purpose)) return (false, "Loại phiếu không hợp lệ.");
+            var routeErr = HandoverLedgerService.CheckRoute(fromGroupCode, toGroupCode, purpose);
+            if (routeErr != null) return (false, routeErr);
+            bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend;
+            if (isNg && string.IsNullOrWhiteSpace(reason))
+                return (false, "Bắt buộc ghi lỗi cụ thể khi giao hàng lỗi.");
+            if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
+                return (false, "Gửi làm hộ: bắt buộc chọn NC nguồn.");
+            if (purpose == HandoverPurpose.HelpSend && string.IsNullOrWhiteSpace(notes))
+                return (false, "Gửi làm hộ: bắt buộc ghi chú (N4).");
+
+            using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            var ledger = new HandoverLedgerService(_db);
+            var row = await ledger.GetLedgerForDetailAsync(khPlanDetailId);
+            if (row == null) return (false, "Không tìm thấy PO.");
+
+            // K3: hàng làm hộ trả về Gia công phải chọn NC nhận khi PO có snapshot NC
+            bool gcHasNc = row.G("GC").Steps.Any();
+            if (toGroupCode == "GC" && gcHasNc && string.IsNullOrEmpty(toNC) && purpose == HandoverPurpose.HelpReturn)
+                return (false, "Trả làm hộ về Gia công: bắt buộc chọn NC nhận vào (K3).");
+
+            var (max, ex) = HandoverLedgerService.IssueCap(row, fromGroupCode, purpose, fromNC);
+            if (qtyIssued > max)
+                return (false, $"{HandoverPurpose.Label(purpose)}: tối đa {max:0.##} ({ex.Title}: {ex.Arithmetic}). Không thể giao {qtyIssued:0.##}.");
+
+            _db.HandoverTransactions.Add(new HandoverTransaction
+            {
+                KhPlanDetailId = khPlanDetailId,
+                FromGroupCode  = fromGroupCode,
+                ToGroupCode    = toGroupCode,
+                QtyIssued      = qtyIssued,
+                FromNC         = purpose == HandoverPurpose.HelpSend ? fromNC : null,
+                ToNC           = toGroupCode == "KHO" || string.IsNullOrEmpty(toNC) ? null : toNC,
+                NgQty          = isNg ? qtyIssued : 0,
+                NgReason       = isNg ? reason?.Trim() : null,
+                IsReturnNg     = purpose == HandoverPurpose.NgReturn,   // giữ cờ cũ cho các trang còn đọc IsReturnNg
+                Purpose        = purpose,
+                Status         = "PENDING",
+                IssuedBy       = issuedByUserId,
+                IssuedAt       = DateTime.Now,
+                Notes          = notes,
+                CreatedAt      = DateTime.Now,
+            });
+            await _db.SaveChangesAsync();
+            await trx.CommitAsync();
+            _db.ChangeTracker.Clear();
+            return (true, string.Empty);
         }
 
         // ----------------------------------------------------------------

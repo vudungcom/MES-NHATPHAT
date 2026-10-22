@@ -42,6 +42,12 @@ namespace MES.Web.Data.Entities
         /// </summary>
         public bool IsReturnNg { get; set; }
 
+        /// <summary>
+        /// [GN-LEDGER 2026-10-22] Loại phiếu theo Excel xưởng: NEW | NG_RETURN | REPAIR_SEND | REPAIR_RETURN | HELP_SEND | HELP_RETURN.
+        /// NULL = phiếu tạo trước ngày này → HandoverLedgerService.Classify suy ra từ IsReturnNg / FromNC / hướng giao.
+        /// </summary>
+        public string? Purpose { get; set; }
+
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
 

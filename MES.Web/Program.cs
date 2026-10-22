@@ -50,6 +50,7 @@ builder.Services.AddScoped<PartPackagingService>();
 builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<WtsReportService>();
 builder.Services.AddScoped<HandoverService>();
+builder.Services.AddScoped<HandoverLedgerService>(); // [GN-LEDGER 2026-10-22] hàm tính chung Giao nhận
 // Đăng ký tiến trình chạy ngầm duy trì bản quyền
 builder.Services.AddHostedService<MES.Web.Services.LicenseBackgroundWorker>();
 // Luot 6B - Part Master process step services

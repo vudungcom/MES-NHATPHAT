@@ -571,6 +571,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<HandoverTransaction>().Property(x => x.NgReason).HasMaxLength(500);
         // v1.0 — IsReturnNg: phiếu trả hàng NG ngược chiều (GC→KHO, HTSP→GC...)
         mb.Entity<HandoverTransaction>().Property(x => x.IsReturnNg).HasDefaultValue(false);
+        // [GN-LEDGER 2026-10-22] Loại phiếu (Hàng mới / Trả lỗi / Gửi sửa / Trả sửa / Làm hộ)
+        mb.Entity<HandoverTransaction>().Property(x => x.Purpose).HasMaxLength(20);
         mb.Entity<HandoverTransaction>()
             .HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
         mb.Entity<HandoverTransaction>()
