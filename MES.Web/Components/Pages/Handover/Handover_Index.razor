@@ -175,7 +175,7 @@ else
                     {
                         <th colspan="@ColsFor(g).Count" class="text-center gn-gl" style="background:@GroupBg(g)">@HandoverLedgerService.GroupLabel(g)</th>
                     }
-                    <th rowspan="@HeadRows" class="text-center gn-gl" style="width:60px" title="Phôi = Σ Tồn + Đang giao + Thành phẩm nhập kho">Cân PO</th>
+                    <th rowspan="@HeadRows" class="text-center gn-gl" style="width:60px" title="Phôi = Σ Tồn + Đang giao + Thành phẩm nhập kho + Đã huỷ + Đã trả khách">Cân PO</th>
                     <th rowspan="@HeadRows" class="text-center" style="width:100px">Thao tác</th>
                 </tr>
                 @if (_showFullCols)
@@ -461,6 +461,16 @@ else
                         </div>
                     }
 
+                    @if (HandoverPurpose.IsOut(_issuePurpose))
+                    {
+                        @* [GN-NG-OUT] Huỷ / Trả khách: hàng ra khỏi PO, không có nhóm nhận, không cần bên nhận xác nhận *@
+                        <div class="mb-3 mt-2 p-2 border rounded" style="background:#fff7ed;font-size:12px">
+                            <strong>Ra khỏi PO → @HandoverLedgerService.GroupLabel(_issueTo)</strong>
+                            <div class="text-muted">Phiếu ghi xong là hàng rời khỏi ô "Hàng lỗi đang giữ" của nhóm giao. Cân PO tính vào cột Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
+                        </div>
+                    }
+                    else
+                    {
                     <div class="mb-3 mt-2">
                         <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
                         <select class="form-select form-select-sm" @onchange="OnIssueToChanged">
@@ -475,6 +485,7 @@ else
                             <div class="small text-danger mt-1"><i class="bi bi-x-circle me-1"></i>@RouteError</div>
                         }
                     </div>
+                    }
 
                     @if (_issueTo == "GC" && _selectedRow.G("GC").Steps.Any())
                     {
@@ -717,7 +728,8 @@ else
                             <span class="small text-muted">@tx.IssuedAt.ToString("dd/MM/yyyy HH:mm")</span>
                             <span class="small text-muted">by @tx.IssuedByName</span>
                             @if (tx.IsVoided) { <span class="badge bg-secondary">ĐÃ HUỶ</span> }
-                            @if (!tx.IsVoided && tx.Status == "PENDING" && !tx.Receives.Any()
+                            @* [GN-NG-OUT] phiếu Huỷ / Trả khách (COMPLETED ngay khi lập) cũng huỷ được nếu ghi nhầm *@
+                            @if (!tx.IsVoided && (tx.Status == "PENDING" || HandoverPurpose.IsOut(tx.Purpose)) && !tx.Receives.Any()
                                  && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
                             {
                                 <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px"
@@ -759,6 +771,10 @@ else
                                     }
                                 </tbody>
                             </table>
+                        }
+                        else if (HandoverPurpose.IsOut(tx.Purpose))
+                        {
+                            <div class="small text-muted fst-italic">Hàng đã ra khỏi PO — phiếu này không có bên nhận.</div>
                         }
                         else
                         {
@@ -975,7 +991,7 @@ else
         new("NhanLamHo", "Làm hộ",            "Hàng làm hộ (máy loại trừ) — thêm so với Excel", "", g => g.NhanLamHo, true, false, true, ""),
         // Đủ cột Excel — Giao
         new("GiaoMoi",   "Hàng mới",          "Phiếu Hàng mới đã lập", "", g => g.GiaoMoi, true, true, true, ""),
-        new("GiaoLoi",   "Hàng lỗi",          "Trả hàng lỗi về nơi gây lỗi + gửi hàng lỗi đi sửa", "", g => g.GiaoLoi, true, true, true, ""),
+        new("GiaoLoi",   "Hàng lỗi",          "Trả hàng lỗi về nơi gây lỗi + gửi hàng lỗi đi sửa + huỷ + trả khách", "", g => g.GiaoLoi, true, true, true, ""),
         new("GiaoSua",   "Hàng Sửa",          "Trả hàng đã sửa về nơi phát hiện", "", g => g.GiaoSua, true, true, true, ""),
         new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Có trong Excel, chưa tình huống nào dùng — chờ xưởng xác nhận", "", g => g.GiaoLoiXl, true, true, true, ""),
         new("GiaoLamHo", "Làm hộ",            "Gửi làm hộ / trả hàng làm hộ — thêm so với Excel", "", g => g.GiaoLamHo, true, false, true, ""),
@@ -1115,6 +1131,8 @@ else
                     <span class="@(_showFormula ? "gn-click" : "")" @onclick="() => OpenBalance(row)">
                         <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") =
                         Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##")
+                        @* [GN-NG-OUT] hàng lỗi đã ra khỏi PO *@
+                        + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
                         @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }
                     </span>
                     @if (!row.ApplyWorkflow)
@@ -1409,10 +1427,16 @@ else
         if (from != "GC")
             list.Add(new(HandoverPurpose.HelpReturn, "Trả làm hộ — về Gia công",
                 "Làm hộ xong, trả về Gia công. Chọn NC nhận vào."));
+        // [GN-NG-OUT] L5: hàng lỗi đang giữ ra khỏi PO — mọi nhóm, lấy từ "Hàng lỗi / sửa đang giữ"
+        list.Add(new(HandoverPurpose.Scrap, "Huỷ hàng lỗi — không sửa được",
+            "Hàng lỗi đang giữ không sửa được: huỷ, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
+        list.Add(new(HandoverPurpose.CustReturn, "Trả khách hàng lỗi",
+            from == "KHO" ? "Phôi lỗi đang giữ ở Kho: trả lại khách, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."
+                          : "Hàng lỗi đang giữ trả lại khách (khách đồng ý nhận lại), ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
         return list;
     }
 
-    static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend;
+    static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.Scrap or HandoverPurpose.CustReturn; // [GN-NG-OUT]
 
     string? RouteError => string.IsNullOrEmpty(_issueFrom) || string.IsNullOrEmpty(_issueTo) || string.IsNullOrEmpty(_issuePurpose)
         ? null : HandoverLedgerService.CheckRoute(_issueFrom, _issueTo, _issuePurpose);
@@ -1450,6 +1474,8 @@ else
             _issueTo = _issueFrom switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
         else if (code == HandoverPurpose.HelpReturn)
             _issueTo = "GC";
+        else if (HandoverPurpose.IsOut(code))
+            _issueTo = HandoverPurpose.OutTarget(code)!;   // [GN-NG-OUT]
         else
             _issueTo = "";
         if (_selectedRow != null)
@@ -1553,6 +1579,8 @@ else
         HandoverPurpose.NgReturn     => "bg-danger",
         HandoverPurpose.RepairSend   => "bg-warning text-dark",
         HandoverPurpose.RepairReturn => "bg-success",
+        HandoverPurpose.Scrap        => "bg-dark",                 // [GN-NG-OUT]
+        HandoverPurpose.CustReturn   => "bg-secondary",            // [GN-NG-OUT]
         _                            => "bg-info text-dark"
     };
 

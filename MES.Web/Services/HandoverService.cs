@@ -1439,12 +1439,14 @@ namespace MES.Web.Services
         {
             if (qtyIssued <= 0) return (false, "Số lượng giao phải lớn hơn 0.");
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
-            if (!validGroups.Contains(fromGroupCode) || !validGroups.Contains(toGroupCode))
+            bool isOut = HandoverPurpose.IsOut(purpose);   // [GN-NG-OUT] Huỷ / Trả khách: không có nhóm nhận
+            if (isOut) toGroupCode = HandoverPurpose.OutTarget(purpose)!;
+            if (!validGroups.Contains(fromGroupCode) || (!isOut && !validGroups.Contains(toGroupCode)))
                 return (false, "Mã nhóm không hợp lệ.");
             if (!HandoverPurpose.All.Contains(purpose)) return (false, "Loại phiếu không hợp lệ.");
             var routeErr = HandoverLedgerService.CheckRoute(fromGroupCode, toGroupCode, purpose);
             if (routeErr != null) return (false, routeErr);
-            bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend;
+            bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend || isOut;   // [GN-NG-OUT] huỷ / trả khách bắt buộc ghi lỗi
             if (isNg && string.IsNullOrWhiteSpace(reason))
                 return (false, "Bắt buộc ghi lỗi cụ thể khi giao hàng lỗi.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
@@ -1453,6 +1455,8 @@ namespace MES.Web.Services
                 return (false, "Gửi làm hộ: bắt buộc ghi chú (N4).");
 
             using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8] khoá chung với trang WTS
+            if (lockErr != null) return (false, lockErr);
             var ledger = new HandoverLedgerService(_db);
             var row = await ledger.GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
@@ -1473,21 +1477,58 @@ namespace MES.Web.Services
                 ToGroupCode    = toGroupCode,
                 QtyIssued      = qtyIssued,
                 FromNC         = purpose == HandoverPurpose.HelpSend ? fromNC : null,
-                ToNC           = toGroupCode == "KHO" || string.IsNullOrEmpty(toNC) ? null : toNC,
+                ToNC           = isOut || toGroupCode == "KHO" || string.IsNullOrEmpty(toNC) ? null : toNC,
                 NgQty          = isNg ? qtyIssued : 0,
                 NgReason       = isNg ? reason?.Trim() : null,
                 IsReturnNg     = purpose == HandoverPurpose.NgReturn,   // giữ cờ cũ cho các trang còn đọc IsReturnNg
                 Purpose        = purpose,
-                Status         = "PENDING",
+                Status         = isOut ? "COMPLETED" : "PENDING",   // [GN-NG-OUT] ra khỏi PO ngay, không chờ nhận
                 IssuedBy       = issuedByUserId,
                 IssuedAt       = DateTime.Now,
                 Notes          = notes,
                 CreatedAt      = DateTime.Now,
             });
             await _db.SaveChangesAsync();
+            // [GN-K8] Tính lại sổ trong cùng giao dịch — ô nào mới âm thì không lưu
+            var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);
+            if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
             await trx.CommitAsync();
             _db.ChangeTracker.Clear();
             return (true, string.Empty);
+        }
+
+        // ----------------------------------------------------------------
+        // [GN-K8] Khoá theo PO + kiểm "lưu xong không ô nào mới âm" — dùng chung cho mọi thao tác ghi giao nhận.
+        //   Khoá "MES_PO_<id>" trùng tên với khoá trang WTS (HieuSuat_Index) → WTS và Giao nhận của cùng 1 PO
+        //   không ghi chen nhau. LockOwner = Transaction: tự nhả khi Commit / Rollback.
+        // ----------------------------------------------------------------
+        private async Task<string?> LockPoAsync(int khPlanDetailId)
+        {
+            try
+            {
+                await _db.Database.ExecuteSqlRawAsync(
+                    "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
+                    "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
+                    "MES_PO_" + khPlanDetailId);
+                return null;
+            }
+            catch (Exception ex) when (ex.Message.Contains("PO đang có người khác lưu"))
+            {
+                // Chỉ bắt đúng lỗi hết giờ chờ khoá (THROW 50001 ở trên); lỗi SQL khác để nổi lên như cũ
+                return "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.";
+            }
+        }
+
+        /// <summary>[GN-K8][K5] So sổ trước / sau (sau = đọc lại trong cùng giao dịch). Trả lời báo nếu có ô mới âm (chỉ Workflow ON — N7).</summary>
+        private async Task<string?> CheckNoNewNegativeAsync(int khPlanDetailId, LedgerRow before)
+        {
+            if (!before.ApplyWorkflow) return null;
+            var after = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+            if (after == null) return null;
+            var bad = HandoverLedgerService.NewNegatives(before, after);
+            return bad.Any()
+                ? $"Không lưu: làm xong sẽ sai số ở {string.Join("; ", bad)}. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8)."
+                : null;
         }
 
         // ----------------------------------------------------------------
@@ -1524,6 +1565,17 @@ namespace MES.Web.Services
 
                 return (false, "Bắt buộc nhập lý do khi có hàng NG.");
 
+            var txHead = await _db.HandoverTransactions.AsNoTracking()
+                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId }).FirstOrDefaultAsync();
+            if (txHead == null)
+                return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-K8] Khoá PO + giao dịch: nhận xong tính lại sổ, ô nào mới âm thì không lưu
+            using var trx = await _db.Database.BeginTransactionAsync();
+            var lockErr = await LockPoAsync(txHead.KhPlanDetailId);
+            if (lockErr != null) return (false, lockErr);
+            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(txHead.KhPlanDetailId);
+
             var tx = await _db.HandoverTransactions
 
                 .Include(t => t.Receives)
@@ -1533,6 +1585,9 @@ namespace MES.Web.Services
             if (tx == null)
 
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+
+            if (HandoverPurpose.IsOut(tx.Purpose))
+                return (false, "Phiếu Huỷ / Trả khách không có bên nhận.");   // [GN-NG-OUT]
 
             if (tx.Status == "COMPLETED")
 
@@ -1574,6 +1629,13 @@ namespace MES.Web.Services
 
             await _db.SaveChangesAsync();
 
+            if (before != null)
+            {
+                var k8 = await CheckNoNewNegativeAsync(txHead.KhPlanDetailId, before);   // [GN-K8]
+                if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }
+            }
+            await trx.CommitAsync();
+
             _db.ChangeTracker.Clear();
 
             return (true, string.Empty);
@@ -1599,6 +1661,17 @@ namespace MES.Web.Services
             if (string.IsNullOrWhiteSpace(voidReason) || voidReason.Trim().Length < 3)
 
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
+
+            var head = await _db.HandoverReceives.AsNoTracking().Where(r => r.ReceiveId == receiveId)
+                .Select(r => new { r.Transaction.KhPlanDetailId }).FirstOrDefaultAsync();
+            if (head == null)
+                return (false, "Bản ghi nhận không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-K8][K5] Huỷ lần nhận mà bên nhận đã làm / đã giao tiếp số đó → chặn (huỷ từ cuối dòng ngược lên)
+            using var trx = await _db.Database.BeginTransactionAsync();
+            var lockErr = await LockPoAsync(head.KhPlanDetailId);
+            if (lockErr != null) return (false, lockErr);
+            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
 
             var receive = await _db.HandoverReceives
 
@@ -1634,6 +1707,13 @@ namespace MES.Web.Services
 
             await _db.SaveChangesAsync();
 
+            if (before != null)
+            {
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
+            }
+            await trx.CommitAsync();
+
             _db.ChangeTracker.Clear();
 
             return (true, string.Empty);
@@ -1660,6 +1740,17 @@ namespace MES.Web.Services
 
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
 
+            var head = await _db.HandoverTransactions.AsNoTracking().Where(t => t.HandoverTxId == handoverTxId)
+                .Select(t => new { t.KhPlanDetailId }).FirstOrDefaultAsync();
+            if (head == null)
+                return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-K8][K5] Huỷ phiếu xong mà ô nào mới âm → chặn
+            using var trx = await _db.Database.BeginTransactionAsync();
+            var lockErr = await LockPoAsync(head.KhPlanDetailId);
+            if (lockErr != null) return (false, lockErr);
+            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+
             var tx = await _db.HandoverTransactions
 
                 .Include(t => t.Receives)
@@ -1683,6 +1774,13 @@ namespace MES.Web.Services
             tx.VoidedAt   = DateTime.Now;
 
             await _db.SaveChangesAsync();
+
+            if (before != null)
+            {
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
+            }
+            await trx.CommitAsync();
 
             _db.ChangeTracker.Clear();
 

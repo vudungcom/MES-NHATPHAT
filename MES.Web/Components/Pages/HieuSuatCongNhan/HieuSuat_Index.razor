@@ -28,6 +28,8 @@
 @inject UserService UserSvc
 
 @inject HandoverService HandoverSvc
+@* [GN-WTS-CAP] Trần nhập WTS lấy từ hàm tính chung của Giao nhận — cùng số với trang Giao nhận *@
+@inject HandoverLedgerService LedgerSvc
 
 @inject ThietBiService ThietBiSvc
 
@@ -73,7 +75,7 @@
 
                 </h5>
 
-                <button class="btn-close" @onclick="() => _voidConfirmRow = null"></button>
+                <button class="btn-close" @onclick="CloseVoidModal"></button>
 
             </div>
 
@@ -86,6 +88,9 @@
                     Thao tác này <strong>không thể hoàn tác</strong>.
 
                 </div>
+
+                @* [GN-WTS-CAP][K5] Lời báo khi xoá làm sai số giao nhận *@
+                <div class="alert alert-warning py-2 small" style="@VoidBlockStyle">@_voidBlockMsg</div>
 
                 <table class="table table-sm table-bordered small mb-0">
 
@@ -103,9 +108,10 @@
 
             <div class="mes-modal-footer d-flex gap-2 justify-content-end">
 
-                <button class="btn btn-sm btn-secondary" @onclick="() => _voidConfirmRow = null">Hủy</button>
+                <button class="btn btn-sm btn-secondary" @onclick="CloseVoidModal">Hủy</button>
 
-                <button class="btn btn-sm btn-danger" @onclick="async () => { await VoidSavedRow(vr); _voidConfirmRow = null; }">
+                @* [GN-WTS-CAP] Gọi hàm theo tên (luật Razor: không lambda nhiều lệnh); bị chặn K5 thì modal giữ nguyên *@
+                <button class="btn btn-sm btn-danger" @onclick="OnConfirmVoidAsync" disabled="@_voidBusy">
 
                     <i class="bi bi-trash me-1"></i>Xóa WTS này
 
@@ -961,7 +967,10 @@ else
 
                                         <datalist id="@dlId">
 
-                                            @foreach (var det in _allRows.Where(r =>
+                                            @* [GN-WTS-CAP] Danh sách PO đi qua PriorityRows (Gate 1 snapshot + Gate 2 đã nhận hàng SX của nhóm,
+                                               xếp Gấp → STD → PO). Trước: đọc thẳng _allRows nên 2 ô tích "Hiện phiếu chưa có quy trình /
+                                               chưa nhận hàng" hiện trên màn hình nhưng không có tác dụng. *@
+                                            @foreach (var det in PriorityRows.Where(r =>
 
                                                 (string.IsNullOrEmpty(grp.PartNo) || r.PartNo == grp.PartNo) &&
 
@@ -3957,11 +3966,7 @@ else
 
     private Dictionary<string, decimal> _qtySummaryCache = new(); // "detailId|NC" → qty done
 
-    // Cache: KhPlanDetailId → SL đã nhận vào nhóm này (từ HandoverReceives)
-
-    // Dùng để giới hạn SL tối đa trong CheckQtyWarning (giữ lại cho backward-compat)
-
-    private Dictionary<int, decimal> _receivedOkCache = new();
+    // [GN-WTS-CAP] Đã bỏ _receivedOkCache (SL nhận gộp mọi loại phiếu) — thay bằng _ledgerCache (sổ giao nhận).
 
     // v0.8: Flow per NC theo nhóm handover của công nhân — nguồn "sự thật" duy nhất
 
@@ -3979,6 +3984,47 @@ else
 
         _ncFlowCache[khPlanDetailId] = flow;
 
+        // [GN-WTS-CAP] Nạp lại sổ giao nhận cùng lúc với flow — mọi chỗ đang reload flow đều có số trần mới
+        await ReloadLedgerAsync(khPlanDetailId);
+
+    }
+
+    // ── [GN-WTS-CAP] Trần nhập WTS từ hàm chung (HandoverLedgerService) ──────────
+    // Nguồn DUY NHẤT cho: kiểm realtime, nhãn dropdown NC, khoá NC, kiểm lúc Lưu.
+    // Thay cho: _receivedOkCache (số nhận gộp mọi loại phiếu), GetNonGcGroupWtsDone (cộng OK cả Taro+Bavia+Rửa),
+    // công thức cũ min(NC trước, PO) − đã làm. Luật: L3, N1, N2, N3, N5 — Sổ luật Giao nhận MES.
+    private Dictionary<int, LedgerRow> _ledgerCache = new();
+
+    private async Task ReloadLedgerAsync(int khPlanDetailId)
+    {
+        var row = await LedgerSvc.GetLedgerForDetailAsync(khPlanDetailId, EditingLogIds(khPlanDetailId));
+        if (row != null) _ledgerCache[khPlanDetailId] = row;
+        else _ledgerCache.Remove(khPlanDetailId);
+    }
+
+    // Dòng WTS đang mở sửa (sẽ void khi lưu) → bỏ khỏi phép tính trần, để không bị tính 2 lần.
+    private List<long> EditingLogIds(int khPlanDetailId)
+        => _groups.SelectMany(g => g.SubRows).Concat(_rows)
+                  .Where(s => s.IsEditing && s.WtsLogId.HasValue && s.KhPlanDetailId == khPlanDetailId)
+                  .Select(s => s.WtsLogId!.Value).Distinct().ToList();
+
+    // ProcessGroup ghi trên WTS theo nhóm công nhân (khớp SaveRowAsync)
+    private string CurrentPg(WtsGroup? grp)
+    {
+        if (IsGcGroup) return "GC";
+        if (IsHtspGroup)
+            return (grp?.HtspSubGroup) switch { "Taro" => "TARO", "Bavia" => "BAVIA", "Rua" => "WASHING", _ => "" };
+        return HandoverGroupCode == "KCS" ? "KCS" : "PKG";
+    }
+
+    private bool IsWorkflowOn(int? khPlanDetailId)
+        => khPlanDetailId.HasValue && _allRows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.ApplyWorkflow == true;
+
+    private HandoverLedgerService.WtsCapInfo? GetWtsCap(int? khPlanDetailId, string pg, string? code)
+    {
+        if (!khPlanDetailId.HasValue || string.IsNullOrEmpty(pg) || string.IsNullOrEmpty(code)) return null;
+        if (!_ledgerCache.TryGetValue(khPlanDetailId.Value, out var lr)) return null;
+        return HandoverLedgerService.WtsCap(lr, pg, code);
     }
 
     private NcFlowItem? GetFlowItem(int? detailId, string? nc)
@@ -4479,7 +4525,14 @@ else
 
         var receivedIds = await HandoverSvc.GetDetailIdsWithReceivedAsync(detailIds, groupCode);
 
-        _hasReceivedForGroup = receivedIds;
+        // [GN-WTS-CAP] Chỉ tính hàng vào SẢN XUẤT của nhóm (Nhận Hàng mới + Hàng lỗi đã xử lý + Làm hộ trả về).
+        // Trước: nhận bất kỳ phiếu nào (cả hàng gửi sửa hộ / làm hộ / hàng lỗi bị trả về) là PO hiện ra cho nhóm nhập WTS.
+        // Lọc thô bằng truy vấn cũ trước cho nhẹ, rồi mới tính sổ cho các PO đó.
+        var ledgers = await LedgerSvc.GetLedgerForDetailsAsync(receivedIds);
+        _hasReceivedForGroup = ledgers.Values
+            .Where(l => l.G(groupCode).NhanSanXuat > 0)
+            .Select(l => l.KhPlanDetailId)
+            .ToHashSet();
 
     }
 
@@ -4988,23 +5041,8 @@ else
 
         }
 
-        // Load SL đã nhận vào nhóm này từ giao nhận
-
-        if (!_receivedOkCache.ContainsKey(detail.KhPlanDetailId))
-
-        {
-
-            var groupCode = HandoverGroupCode;
-
-            var receivedOk = await HandoverSvc.GetReceivedOkAsync(detail.KhPlanDetailId, groupCode);
-
-            // [BUG1 FIX] Chỉ fallback về PlanQty khi workflow OFF.
-            // Workflow ON + receivedOk=0 → lưu 0 thật → Phase3 sẽ block đúng (chưa nhận = không làm được).
-            _receivedOkCache[detail.KhPlanDetailId] = (!detail.ApplyWorkflow && receivedOk <= 0)
-                ? detail.Quantity
-                : receivedOk;
-
-        }
+        // [GN-WTS-CAP] Bỏ nạp "SL đã nhận vào nhóm" (_receivedOkCache) — trần nhập WTS lấy từ sổ giao nhận,
+        // nạp cùng ReloadFlowAsync bên dưới.
 
         // v0.8: Load NC flow
 
@@ -5080,6 +5118,10 @@ else
 
         _groups.Add(grp);
 
+        // [GN-WTS-CAP] GC: nạp lại sổ giao nhận, bỏ dòng đang sửa khỏi phép tính trần (để không bị tính 2 lần).
+        // Non-GC: OnSubRowKhChanged bên dưới đã gọi ReloadFlowAsync → nạp sổ.
+        if (IsGcGroup && row.KhPlanDetailId.HasValue) await ReloadFlowAsync(row.KhPlanDetailId.Value);
+
 
         // [EDIT-NONGC] Non-GC: nạp lại snapshot + cache + danh sách Mã CV, GIỮ NGUYÊN giá trị đã lưu.
         // Trước đây: grp thiếu nhóm nhỏ, WtsItems rỗng, row.WtsCode = null → bắt chọn lại nhóm nhỏ / Mã CV.
@@ -5107,10 +5149,72 @@ else
     {
 
         _voidConfirmRow = row; // hiện modal confirm
+        _voidBlockMsg   = null; // [GN-WTS-CAP]
 
     }
 
-    private async Task VoidSavedRow(WtsRow row)
+    // [GN-WTS-CAP][K5] Lời báo khi không cho xoá (modal giữ nguyên để người dùng đọc)
+    private string? _voidBlockMsg;
+    private string VoidBlockStyle => _voidBlockMsg != null ? "display:block" : "display:none";
+
+    private bool _voidBusy;   // chặn bấm 2 lần trong lúc chờ khoá PO
+    private async Task OnConfirmVoidAsync()
+    {
+        if (_voidConfirmRow == null || _voidBusy) return;
+        _voidBusy = true;
+        try
+        {
+            if (await VoidSavedRow(_voidConfirmRow)) { _voidConfirmRow = null; _voidBlockMsg = null; }
+        }
+        finally { _voidBusy = false; }
+    }
+
+    private void CloseVoidModal() { _voidConfirmRow = null; _voidBlockMsg = null; }
+
+    // [GN-WTS-CAP] Trả true = đã xoá; false = bị chặn (lời báo ở _voidBlockMsg).
+    private async Task<bool> VoidSavedRow(WtsRow row)
+
+    {
+
+        // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
+        // (vd xoá WTS NC1 khi NC2 / nhóm sau đã làm từ số đó). Trước: xoá luôn, không kiểm.
+        if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue && IsWorkflowOn(row.KhPlanDetailId))
+        {
+            var locks = new List<string>();
+            try
+            {
+                if (!await AcquirePoLockAsync(row.KhPlanDetailId.Value, locks))
+                { _voidBlockMsg = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây."; return false; }
+                var before = await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value);
+                var after  = await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value, new List<long> { row.WtsLogId.Value });
+                if (before != null && after != null)
+                {
+                    var bad = HandoverLedgerService.NewNegatives(before, after);
+                    if (bad.Any())
+                    {
+                        _voidBlockMsg = $"Không xoá được: xoá xong sẽ làm sai số ở {string.Join("; ", bad)}. "
+                                      + "Số của dòng này đã được dùng ở NC sau / nhóm sau hoặc đã giao đi — phải xoá / sửa từ cuối dòng ngược lên (K5).";
+                        return false;
+                    }
+                }
+                await VoidWtsLogRawAsync(row);
+            }
+            finally
+            {
+                await ReleasePoLocksAsync(locks, closeConnection: true);
+            }
+            await LoadSavedRowsAsync();
+            return true;
+        }
+
+        await VoidWtsLogRawAsync(row);
+
+        await LoadSavedRowsAsync();
+        return true;
+
+    }
+
+    private async Task VoidWtsLogRawAsync(WtsRow row)
 
     {
 
@@ -5129,8 +5233,6 @@ else
                 "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
 
                 _currentUserId, DateTime.Now, row.ActivityLogId.Value);
-
-        await LoadSavedRowsAsync();
 
     }
 
@@ -5510,16 +5612,7 @@ else
 
         }
 
-        // [BUG4 FIX] Load _receivedOkCache cho Non-GC trong chế độ Chạy thử.
-        // OnPOChanged (Hàng loạt/GC) đã load cache, nhưng OnSubRowKhChanged thì không.
-        // Thiếu load này → ValidateSubQty đọc rcvOk=0 → báo "Chưa có giao nhận" sai.
-        if (!IsGcGroup && !_receivedOkCache.ContainsKey(det.KhPlanDetailId))
-        {
-            var receivedOk4 = await HandoverSvc.GetReceivedOkAsync(det.KhPlanDetailId, HandoverGroupCode);
-            _receivedOkCache[det.KhPlanDetailId] = (!det.ApplyWorkflow && receivedOk4 <= 0)
-                ? det.Quantity
-                : receivedOk4;
-        }
+        // [GN-WTS-CAP] Bỏ nạp _receivedOkCache ([BUG4 FIX] cũ) — sổ giao nhận đã nạp trong ReloadFlowAsync ở trên.
 
         // [FIX-STD-COLOR-GROUP] Populate _poStdConfirmed để markup gcStdColor / stdConfirmed
         // hiển thị đúng màu xanh khi Part Master đã xác nhận OK.
@@ -5884,46 +5977,39 @@ else
 
         var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
 
-        // [BUG3 FIX] Non-GC + workflow ON: ceiling = receivedOk thực tế (không dùng SL PO).
-        var wfRowVal = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId);
-        var isNonGcWfOn = !IsGcGroup && wfRowVal?.ApplyWorkflow == true;
-        if (isNonGcWfOn && sub.KhPlanDetailId.HasValue)
+        // [GN-WTS-CAP] Workflow OFF (N7): chỉ chặn mỗi dòng ≤ SL PO — giữ như cũ.
+        if (!IsWorkflowOn(sub.KhPlanDetailId))
         {
-            var rcvOk = _receivedOkCache.TryGetValue(sub.KhPlanDetailId.Value, out var _rcv2) ? _rcv2 : 0m;
-            var wtsGrpDone = GetNonGcGroupWtsDone(sub.KhPlanDetailId.Value, sub.PO);
-            if (rcvOk <= 0)
-            { sub.ErrorMsg = "⚠️ Chưa có giao nhận về nhóm này. Không thể nhập số lượng."; return; }
-            if (sub.QtyDone > 0 && wtsGrpDone + sub.QtyDone > rcvOk)
-            { sub.ErrorMsg = $"⚠️ Tổng đã làm ({wtsGrpDone:0.##}) + lần này ({sub.QtyDone:0.##}) = {wtsGrpDone + sub.QtyDone:0.##} — vượt SL nhận ({rcvOk:0.##})."; return; }
-        }
-        else if (poQty > 0 && sub.QtyDone > poQty)
-
-        {
-
-            sub.ErrorMsg = $"SL nhập ({sub.QtyDone}) vượt SL PO ({poQty}). Kiểm tra lại.";
-
+            if (poQty > 0 && sub.QtyDone > poQty)
+                sub.ErrorMsg = $"SL nhập ({sub.QtyDone}) vượt SL PO ({poQty}). Kiểm tra lại.";
             return;
-
         }
 
-        // [WF-QTY-PER-PO] [WF-CEIL-MIN] Realtime: chỉ cộng SL các dòng CÙNG PO (KhPlanDetailId) với dòng đang nhập
-        // (trước: cộng mọi dòng trong nhóm → PO khác bị cộng vào, báo vượt sai — Excel dòng 27).
-        // Trần lấy từ GetWfNcCeiling — dùng chung với lúc Lưu và nhãn dropdown NC.
-        if (grp != null && IsGcGroup && !string.IsNullOrEmpty(grp.NC) && sub.KhPlanDetailId.HasValue)
-        {
-            var wf = GetWfNcCeiling(grp, sub.KhPlanDetailId, grp.NC);
-            if (wf != null)
-            {
-                var totalQty = grp.SubRows
-                    .Where(s => s.KhPlanDetailId == sub.KhPlanDetailId)
-                    .Sum(s => s.QtyOk);
-                if (wf.Ceiling >= 0 && totalQty > wf.Ceiling)
-                {
-                    sub.ErrorMsg = $"⚠️ Workflow: SL nhập {grp.NC} ({totalQty:0.##}) vượt mức cho phép ({wf.Ceiling:0.##}). ({wf.Label})";
-                }
-            }
-        }
+        // [GN-WTS-CAP] Workflow ON: trần = Còn chờ làm của NC (GC) / mã CV (HTSP/KCS/PKG) theo sổ giao nhận (L3).
+        // So OK + NG (trước: chỉ so OK). Cộng các dòng CÙNG PO + CÙNG NC/mã CV đang nhập trong form.
+        // Trước: GC trần = min(NC trước, PO) − đã làm; non-GC trần = SL nhận gộp mọi phiếu − OK cả nhóm.
+        if (grp == null) return;
+        var wf = GetWfNcCeiling(grp, sub.KhPlanDetailId, IsGcGroup ? grp.NC : sub.WtsCode);
+        if (wf == null || wf.Unlimited) return;
+        var totalQty = SumFormQty(grp, sub.KhPlanDetailId, IsGcGroup ? grp.NC : sub.WtsCode);
+        if (totalQty <= 0) return;
+        if (wf.Locked)
+            sub.ErrorMsg = $"⚠️ {wf.Label}: chưa có hàng vào — chưa nhập số lượng được. ({wf.Detail})";
+        else if (totalQty > wf.Ceiling)
+            sub.ErrorMsg = $"⚠️ {wf.Label}: nhập {totalQty:0.##} (OK + NG) vượt Còn chờ làm {wf.Ceiling:0.##}. ({wf.Detail})";
 
+    }
+
+    // [GN-WTS-CAP] Tổng OK + NG trong form của 1 PO + 1 NC / mã CV (máy đồng dạng / mã dự phòng gộp về mã chính).
+    private decimal SumFormQty(WtsGroup grp, int? khPlanDetailId, string? code)
+    {
+        if (!khPlanDetailId.HasValue || string.IsNullOrEmpty(code)) return 0m;
+        var pg = CurrentPg(grp);
+        var main = GetWtsCap(khPlanDetailId, pg, code)?.Code ?? code;
+        return grp.SubRows
+            .Where(s => s.KhPlanDetailId == khPlanDetailId)
+            .Where(s => string.Equals(GetWtsCap(khPlanDetailId, pg, IsGcGroup ? grp.NC : s.WtsCode)?.Code ?? (IsGcGroup ? grp.NC : s.WtsCode), main, StringComparison.OrdinalIgnoreCase))
+            .Sum(s => s.QtyDone);
     }
 
     // [MACHINE-LOCK] Khoá ứng dụng theo máy trên SQL Server (sp_getapplock, LockOwner = Session).
@@ -6100,44 +6186,47 @@ else
         return null;
     }
 
-    // [WF-CEIL-MIN] Trần SL của 1 NC cho 1 PO khi Workflow ON — dùng chung cho realtime + Lưu.
-    // Chỉ chỉnh LUỒNG CHÍNH: giữ nguyên cách chọn NC trước như code cũ (NC liền trên trong
-    // AvailableNCs); các trường hợp loại trừ / backup KHÔNG đổi gì so với trước.
-    //  - NC đầu tiên → trần = PO − đã làm
-    //  - NC sau      → trần = min(WtsDone NC trước, PO) − đã làm
-    // Trả null nếu Workflow OFF.
+    // [WF-CEIL-MIN] → [GN-WTS-CAP] Trần SL của 1 NC (GC) / 1 mã CV (HTSP/KCS/PKG) cho 1 PO khi Workflow ON —
+    // dùng chung cho realtime + Lưu + nhãn dropdown NC.
+    // Nay lấy từ hàm chung HandoverLedgerService.WtsCap (cùng số với trang Giao nhận):
+    //   trần = Còn chờ làm = Hàng vào NC/mã − OK đã làm − NG đã làm (L3, N1, N2, N3, N5).
+    // Trước: NC đầu = PO − đã làm (không xét hàng đã nhận); NC sau = min(NC trước OK+NG, PO) − đã làm.
+    // Trả null nếu Workflow OFF hoặc chưa có sổ.
     private sealed class WfCeilInfo
     {
-        public decimal  Ceiling  { get; set; }
-        public string   Label    { get; set; } = "";
-        public string?  PrevNc   { get; set; }   // null = NC đầu tiên
-        public decimal  PrevDone { get; set; }
+        public decimal  Ceiling   { get; set; }
+        public bool     Unlimited { get; set; }   // mã chuẩn bị: không chặn số lượng
+        public bool     Locked    { get; set; }   // chưa từng có hàng vào NC / mã này
+        public string   Label     { get; set; } = "";   // "PO X · NC Y"
+        public string   Detail    { get; set; } = "";   // phép tính: "Hàng vào 100 − OK 50 − NG 5 = 45"
     }
 
-    private WfCeilInfo? GetWfNcCeiling(WtsGroup grp, int? detailId, string nc)
+    // [GN-WTS-CAP] Phép tính có tên từng số hạng: "Hàng vào 60 − OK đã làm 0 − NG đã làm 0 = 60 · <cách tính hàng vào>"
+    private static string CapDetail(HandoverLedgerService.WtsCapInfo cap)
     {
-        if (!detailId.HasValue) return null;
-        var wfRow = _allRows.FirstOrDefault(r => r.KhPlanDetailId == detailId);
-        if (wfRow?.ApplyWorkflow != true) return null;
-        var poQty       = wfRow.Quantity;
-        var ncIdx       = grp.AvailableNCs.FindIndex(n => n.NC == nc);
-        var alreadyDone = GetFlowItem(detailId, nc)?.WtsDone ?? 0m;
-        if (ncIdx > 0)
-        {
-            var prevNc   = grp.AvailableNCs[ncIdx - 1];
-            var prevDone = GetFlowItem(detailId, prevNc.NC)?.WtsDone ?? 0m;
-            return new WfCeilInfo
-            {
-                Ceiling  = Math.Min(prevDone, poQty) - alreadyDone,
-                Label    = $"NC trước {prevNc.NC}={prevDone:0.##}, PO={poQty:0.##}, đã làm={alreadyDone:0.##}",
-                PrevNc   = prevNc.NC,
-                PrevDone = prevDone
-            };
-        }
+        var e = cap.Explain;
+        var detail = e.Terms.Count > 0
+            ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = {e.Result:0.##}"
+            : $"{e.Result:0.##}";
+        if (!string.IsNullOrEmpty(e.Note)) detail += " · " + e.Note;
+        return detail;
+    }
+
+    private WfCeilInfo? GetWfNcCeiling(WtsGroup grp, int? detailId, string? code)
+    {
+        if (!detailId.HasValue || string.IsNullOrEmpty(code)) return null;
+        if (!IsWorkflowOn(detailId)) return null;
+        var cap = GetWtsCap(detailId, CurrentPg(grp), code);
+        if (cap == null) return null;
+        var po = _allRows.FirstOrDefault(r => r.KhPlanDetailId == detailId)?.PurchaseOrder ?? "";
+        var detail = CapDetail(cap);
         return new WfCeilInfo
         {
-            Ceiling = poQty - alreadyDone,
-            Label   = $"SL PO={poQty:0.##}, đã làm={alreadyDone:0.##}"
+            Ceiling   = cap.Max ?? 0m,
+            Unlimited = cap.Max == null,
+            Locked    = cap.Locked,
+            Label     = $"PO {po} · {(IsGcGroup ? "NC" : "mã")} {cap.Code}",
+            Detail    = detail
         };
     }
 
@@ -6527,6 +6616,7 @@ else
         grp.IsSaving = true;
         StateHasChanged();
         string? _lockedMachine = null;   // [MACHINE-LOCK] máy đang giữ khoá — nhả trong finally
+        var _poLocks = new List<string>(); // [GN-WTS-CAP] khoá theo PO đang giữ — nhả trong finally
         try
 
         {
@@ -6610,36 +6700,11 @@ else
                 if (_overlapMsg != null) { grp.ErrorMsg = _overlapMsg; return; }
             }
 
-            // [WF-QTY-PER-PO] [WF-CEIL-MIN] Validate SL NC theo Workflow — kiểm tra TỪNG PO trong nhóm
-            // (trước: chỉ lấy PO của dòng đầu, cộng SL mọi PO, trần = PO − đã làm).
-            // Giờ: mỗi PO tính tổng + trần riêng, trần = min(NC trước, PO) − đã làm (GetWfNcCeiling).
-            if (IsGcGroup && !string.IsNullOrEmpty(grp.NC))
-            {
-                var wfDetailIds = grp.SubRows
-                    .Where(s => s.KhPlanDetailId.HasValue)
-                    .Select(s => s.KhPlanDetailId)
-                    .Distinct()
-                    .ToList();
-                foreach (var wfDetId in wfDetailIds)
-                {
-                    var wf = GetWfNcCeiling(grp, wfDetId, grp.NC);
-                    if (wf == null) continue; // Workflow OFF → không chặn
-                    var wfPo        = _allRows.FirstOrDefault(r => r.KhPlanDetailId == wfDetId)?.PurchaseOrder ?? "";
-                    var totalNewQty = grp.SubRows
-                        .Where(s => s.KhPlanDetailId == wfDetId)
-                        .Sum(s => s.QtyOk);
-                    if (wf.PrevNc != null && wf.PrevDone <= 0)
-                    {
-                        grp.ErrorMsg = $"Workflow PO {wfPo}: NC trước ({wf.PrevNc}) chưa có SL — chưa được làm {grp.NC}.";
-                        return;
-                    }
-                    if (totalNewQty > wf.Ceiling)
-                    {
-                        grp.ErrorMsg = $"Workflow PO {wfPo}: SL nhập {grp.NC} ({totalNewQty:0.##}) vượt mức cho phép ({wf.Ceiling:0.##}). ({wf.Label})";
-                        return;
-                    }
-                }
-            }
+            // [GN-WTS-CAP] Kiểm SL theo sổ giao nhận — MỌI nhóm (GC / HTSP / KCS / Đóng gói), từng PO,
+            // TRƯỚC khi void dòng cũ hay lưu dòng nào (trước: non-GC kiểm trong SaveRowAsync SAU khi đã void dòng cũ
+            // → kiểm không qua là mất dòng cũ). Thay khối [WF-QTY-PER-PO] [WF-CEIL-MIN] cũ (chỉ GC, so OK, trần theo PO).
+            var _capErr = await CheckGroupQtyAsync(grp, _poLocks);
+            if (_capErr != null) { grp.ErrorMsg = _capErr; return; }
 
             // Lưu từng sub-row
 
@@ -6671,9 +6736,146 @@ else
         }
         finally
         {
+            await ReleasePoLocksAsync(_poLocks, closeConnection: _lockedMachine == null);   // [GN-WTS-CAP] nhả khoá PO trước
             if (_lockedMachine != null) await ReleaseMachineLockAsync(_lockedMachine);   // [MACHINE-LOCK]
             grp.IsSaving = false;
             StateHasChanged();
+        }
+    }
+
+    // ── [GN-WTS-CAP] Kiểm SL 1 nhóm WTS theo sổ giao nhận, từng PO ─────────────────────
+    // Workflow OFF (N7): chỉ chặn mỗi dòng ≤ SL PO (giữ như cũ).
+    // Workflow ON:
+    //   1) Khoá theo PO (sp_getapplock "MES_PO_<id>") đến khi lưu xong — 2 người lưu cùng PO thì người sau chờ,
+    //      rồi kiểm lại trên số mới (K8).
+    //   2) Trần L3: tổng OK + NG trong form của mỗi NC / mã CV ≤ Còn chờ làm (sổ đọc MỚI từ DB, bỏ dòng đang sửa).
+    //   3) K5/K8: thử "lưu xong" (bỏ dòng đang sửa + thêm dòng mới) — ô nào mới âm thì chặn
+    //      (vd sửa giảm OK NC1 khi NC2 / nhóm sau đã dùng số đó).
+    // Trả null = qua; khác null = lời báo, chưa có gì bị void / lưu.
+    private async Task<string?> CheckGroupQtyAsync(WtsGroup grp, List<string> poLocks)
+    {
+        var pg = CurrentPg(grp);
+        string? CodeOf(WtsRow s) => IsGcGroup ? grp.NC : (s.WtsCode ?? s.NC);
+
+        // Dòng đang sửa: lấy PO gốc của log cũ từ DB (người dùng có thể đã đổi PO trên dòng)
+        var editIdsAll = grp.SubRows.Where(s => s.IsEditing && s.WtsLogId.HasValue).Select(s => s.WtsLogId!.Value).ToList();
+        var editLogs = editIdsAll.Any()
+            ? await Db.WtsProductionLogs.AsNoTracking().Where(l => editIdsAll.Contains(l.WtsLogId))
+                      .Select(l => new { l.WtsLogId, l.KhPlanDetailId }).ToListAsync()
+            : new();
+
+        var detIds = grp.SubRows.Where(s => s.KhPlanDetailId.HasValue).Select(s => s.KhPlanDetailId!.Value)
+                        .Concat(editLogs.Select(l => l.KhPlanDetailId))
+                        .Distinct().OrderBy(x => x).ToList();   // thứ tự cố định → khoá không chéo nhau
+
+        foreach (var id in detIds)
+        {
+            var det  = _allRows.FirstOrDefault(r => r.KhPlanDetailId == id);
+            var po   = det?.PurchaseOrder ?? $"KH#{id}";
+            var subs = grp.SubRows.Where(s => s.KhPlanDetailId == id && s.QtyDone > 0 && !IsPrepNoQty(s)).ToList();
+
+            if (det?.ApplyWorkflow != true)
+            {
+                var over = subs.FirstOrDefault(s => det != null && s.QtyDone > det.Quantity);
+                if (over != null)
+                {
+                    over.ErrorMsg = $"Tổng OK+NG ({over.QtyDone:0.##}) vượt KH ({det!.Quantity:0.##} {det.Unit}).";
+                    return $"PO {po}: dòng {over.QtyDone:0.##} vượt SL PO {det.Quantity:0.##} (Workflow OFF chỉ chặn mỗi dòng ≤ PO).";
+                }
+                continue;
+            }
+
+            if (!await AcquirePoLockAsync(id, poLocks))
+                return $"PO {po} đang có người khác lưu WTS / giao nhận. Bấm Lưu lại sau vài giây.";
+
+            var editIds = editLogs.Where(l => l.KhPlanDetailId == id).Select(l => l.WtsLogId).ToList();
+            var before  = await LedgerSvc.GetLedgerForDetailAsync(id);
+            var basis   = editIds.Any() ? await LedgerSvc.GetLedgerForDetailAsync(id, editIds) : before;
+            if (before == null || basis == null) continue;
+
+            // 2) Trần từng NC / mã CV
+            foreach (var g in subs.GroupBy(s => HandoverLedgerService.WtsCap(basis, pg, CodeOf(s)).Code, StringComparer.OrdinalIgnoreCase))
+            {
+                var cap = HandoverLedgerService.WtsCap(basis, pg, CodeOf(g.First()));
+                if (cap.Max == null) continue;   // mã chuẩn bị
+                var tot = g.Sum(s => s.QtyDone);
+                var what = IsGcGroup ? $"NC {cap.Code}" : $"mã {cap.Code}";
+                if (cap.Locked || tot > cap.Max.Value)
+                {
+                    var msg = cap.Locked
+                        ? $"PO {po} · {what}: chưa có hàng vào — chưa nhập số lượng được."
+                        : $"PO {po} · {what}: nhập {tot:0.##} (OK + NG) vượt Còn chờ làm {cap.Max.Value:0.##}.";
+                    msg += $" ({CapDetail(cap)})";
+                    foreach (var s in g) s.ErrorMsg = msg;
+                    return msg;
+                }
+            }
+
+            // 3) Thử lưu xong — ô nào mới âm thì chặn (K5, K8)
+            var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, IsGcGroup ? grp.NC : null, IsGcGroup ? null : CodeOf(s), s.QtyOk, s.QtyNg, null)).ToList();
+            var after = await LedgerSvc.GetLedgerForDetailAsync(id, editIds, extra);
+            if (after == null) continue;
+            var bad = HandoverLedgerService.NewNegatives(before, after);
+            if (bad.Any())
+                return $"PO {po}: lưu xong sẽ làm sai số ở {string.Join("; ", bad)}. Kiểm lại số lượng (nhóm sau / NC sau có thể đã dùng số này — K5).";
+        }
+        return null;
+    }
+
+    // [GN-WTS-CAP] Khoá theo PO (sp_getapplock, LockOwner = Session) — cùng kiểu [MACHINE-LOCK].
+    // Tên khoá "MES_PO_<KhPlanDetailId>" dùng chung cho WTS và Giao nhận. Chờ tối đa 10 giây.
+    private async Task<bool> AcquirePoLockAsync(int khPlanDetailId, List<string> held)
+    {
+        var res = "MES_PO_" + khPlanDetailId;
+        if (held.Contains(res)) return true;
+        var conn = Db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) { await Db.Database.OpenConnectionAsync(); _poConnOpened = true; }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "sp_getapplock";
+        cmd.CommandType = System.Data.CommandType.StoredProcedure;
+        AddLockParam(cmd, "@Resource",    res);
+        AddLockParam(cmd, "@LockMode",    "Exclusive");
+        AddLockParam(cmd, "@LockOwner",   "Session");
+        AddLockParam(cmd, "@LockTimeout", 10000);
+        var ret = cmd.CreateParameter();
+        ret.ParameterName = "@RETURN_VALUE";
+        ret.DbType        = System.Data.DbType.Int32;
+        ret.Direction     = System.Data.ParameterDirection.ReturnValue;
+        cmd.Parameters.Add(ret);
+        await cmd.ExecuteNonQueryAsync();
+        var ok = ret.Value is int r && r >= 0;
+        if (ok) held.Add(res);
+        return ok;
+    }
+
+    // Kết nối do khoá PO tự mở (không có khoá máy) → phải tự đóng, kể cả khi lấy khoá thất bại.
+    private bool _poConnOpened;
+
+    private async Task ReleasePoLocksAsync(List<string> held, bool closeConnection)
+    {
+        if (!held.Any())
+        {
+            if (closeConnection && _poConnOpened) { _poConnOpened = false; await Db.Database.CloseConnectionAsync(); }
+            return;
+        }
+        try
+        {
+            var conn = Db.Database.GetDbConnection();
+            foreach (var res in held)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "sp_releaseapplock";
+                cmd.CommandType = System.Data.CommandType.StoredProcedure;
+                AddLockParam(cmd, "@Resource",  res);
+                AddLockParam(cmd, "@LockOwner", "Session");
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+        catch { /* khoá đã mất theo kết nối → bỏ qua */ }
+        finally
+        {
+            held.Clear();
+            if (closeConnection && _poConnOpened) { _poConnOpened = false; await Db.Database.CloseConnectionAsync(); }
         }
     }
 
@@ -6815,43 +7017,8 @@ else
 
     }
 
-    // [WORKFLOW Phase3] Tổng QtyOk toàn nhóm non-GC đã ghi WTS cho 1 KhPlanDetail
-
-    // Filter theo đúng processGroups của nhóm công nhân hiện tại
-
-    private decimal GetNonGcGroupWtsDone(int khPlanDetailId, string? po)
-
-    {
-
-        if (string.IsNullOrEmpty(po)) return 0m;
-
-        if (!_wtsLogsCache.TryGetValue(po, out var logs)) return 0m;
-
-        // Xác định processGroups thuộc nhóm hiện tại
-
-        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (_perms.TryGetValue(SystemPermissions.WtsHtsp, out var h) && h.CanView)
-
-        { groups.Add("TARO"); groups.Add("BAVIA"); groups.Add("WASHING"); }
-
-        else if (_perms.TryGetValue(SystemPermissions.WtsKcs, out var k) && k.CanView)
-
-        { groups.Add("KCS"); }
-
-        else if (_perms.TryGetValue(SystemPermissions.WtsDongGoi, out var d) && d.CanView)
-
-        { groups.Add("PKG"); }
-
-        if (groups.Count == 0) return 0m;
-
-        return logs
-
-            .Where(l => !l.IsVoided && groups.Contains(l.ProcessGroup))
-
-            .Sum(l => l.QtyOk ?? 0m);
-
-    }
+    // [GN-WTS-CAP] Đã bỏ GetNonGcGroupWtsDone (cộng OK của cả Taro + Bavia + Rửa rồi so với SL nhận — sai N5).
+    // Trần non-GC nay tính theo từng mã CV trong HandoverLedgerService.WtsCap.
 
     // [WORKFLOW Phase2] Helper: NC có bị lock không
 
@@ -6877,26 +7044,15 @@ else
 
         if (wfRow?.ApplyWorkflow != true) return false;
 
-        // NC loại trừ → disabled riêng, không tham gia chain lock
+        // NC loại trừ → disabled riêng (IsNcExcluded), không tham gia khoá ở đây
         var thisFlow = GetFlowItem(firstSub.KhPlanDetailId, nc);
-        if (thisFlow?.IsExcluded == true || thisFlow?.IsBackup == true) return false;
+        if (thisFlow?.IsExcluded == true) return false;
 
-        // Tìm NC chính liền trước, bỏ qua backup và loại trừ
-        var curStep = grp.AvailableNCs.FirstOrDefault(n => n.NC == nc);
-        if (curStep == null) return false;
-        var prevMain = grp.AvailableNCs
-            .Where(n => !n.IsBackup && n.StepOrder < curStep.StepOrder)
-            .OrderByDescending(n => n.StepOrder).FirstOrDefault();
-        if (prevMain == null) return false;
-
-        var prevFlow = GetFlowItem(firstSub.KhPlanDetailId, prevMain.NC);
-
-        if (prevFlow?.IsExcluded == true)
-            // NC trước loại trừ → cần HandoverIn (nhận về từ ngoài)
-            return (thisFlow?.HandoverIn ?? 0m) <= 0;
-
-        // NC trước bình thường → cần WtsDone > 0
-        return (prevFlow?.WtsDone ?? 0m) <= 0;
+        // [GN-WTS-CAP] Khoá khi NC (máy đồng dạng theo NC chính — N2) CHƯA TỪNG có hàng vào, theo sổ giao nhận.
+        // Trước: NC sau mở khi NC trước có WtsDone (OK + NG) > 0; NC sau NC loại trừ mở khi có HandoverIn;
+        // máy đồng dạng không bao giờ khoá. NC đầu không bao giờ khoá dù chưa nhận hàng.
+        var cap = GetWtsCap(firstSub.KhPlanDetailId, "GC", nc);
+        return cap != null && cap.Locked;
 
     }
 
@@ -6914,51 +7070,19 @@ else
 
         if (wfRow?.ApplyWorkflow != true) return nc;
 
-        var planQty = wfRow.Quantity; // SL theo PO
         var thisFlowL = GetFlowItem(firstSub.KhPlanDetailId, nc);
 
         // NC loại trừ → label đặc biệt
         if (thisFlowL?.IsExcluded == true) return $"{nc} ↗ giao ngoài";
 
-        // Tìm NC chính liền trước, bỏ qua backup và loại trừ
-        var curL = grp.AvailableNCs.FirstOrDefault(n => n.NC == nc);
-        if (curL == null) return nc;
-        var prevMainL = grp.AvailableNCs
-            .Where(n => !n.IsBackup && n.StepOrder < curL.StepOrder)
-            .OrderByDescending(n => n.StepOrder).FirstOrDefault();
-
-        var doneL = thisFlowL?.WtsDone ?? 0m;
-
-        if (prevMainL == null)
-        {
-            // NC đầu tiên — ceiling = PO qty
-            var remFirst = planQty - doneL;
-            if (remFirst <= 0) return $"{nc} — đã đủ SL ({doneL:0.##}/{planQty:0.##})";
-            return $"{nc} — còn lại: {remFirst:0.##}/{doneL:0.##}/{planQty:0.##}";
-        }
-
-        var prevFlowL = GetFlowItem(firstSub.KhPlanDetailId, prevMainL.NC);
-
-        decimal ceiling;
-        if (prevFlowL?.IsExcluded == true)
-        {
-            // NC trước loại trừ → ceiling = HandoverIn (nhận về từ ngoài)
-            ceiling = thisFlowL?.HandoverIn ?? 0m;
-            if (ceiling <= 0) return $"🔒 {nc} — chờ nhận về từ ngoài";
-        }
-        else
-        {
-            // NC trước bình thường → mở khoá khi WtsDone(prev) > 0, trần = min(WtsDone(prev), PO)
-            var prevDoneL = prevFlowL?.WtsDone ?? 0m;
-            if (prevDoneL <= 0) return $"🔒 {nc} — chờ {prevMainL.NC} có SL";
-            // [WF-CEIL-MIN] Thống nhất trần theo min(NC trước, PO) — Workflow ON quản lý chặt đầu vào
-            // (trước: ceiling = planQty — NC trước chỉ để mở khoá)
-            ceiling = Math.Min(prevDoneL, planQty);
-        }
-        // Format: NC — còn lại: X/đã làm/PO
-        var remL = ceiling - doneL;
-        if (remL <= 0) return $"{nc} — đã đủ SL ({doneL:0.##}/{planQty:0.##})";
-        return $"{nc} — còn lại: {remL:0.##}/{doneL:0.##}/{planQty:0.##}";
+        // [GN-WTS-CAP] Nhãn đọc từ sổ giao nhận — cùng số với trần lúc nhập / lúc Lưu.
+        // Trước: "còn lại: X/đã làm/PO" với X = min(NC trước, PO) − đã làm.
+        var cap = GetWtsCap(firstSub.KhPlanDetailId, "GC", nc);
+        if (cap == null || cap.Max == null) return nc;
+        var inL = cap.Explain.Terms.FirstOrDefault()?.Value ?? 0m;
+        if (cap.Locked) return $"🔒 {nc} — chưa có hàng vào";
+        if (cap.Max.Value <= 0) return $"{nc} — hết hàng chờ (vào {inL:0.##})";
+        return $"{nc} — còn chờ làm: {cap.Max.Value:0.##} / vào {inL:0.##}";
 
     }
 
@@ -7218,42 +7342,10 @@ else
 
             { row.ErrorMsg = "Phải nhập lý do NG khi có số lượng NG."; return; }
 
-            var detForSave = _allRows.FirstOrDefault(r => r.KhPlanDetailId == row.KhPlanDetailId);
-
-            // [BUG2 FIX] Workflow ON + Non-GC: ceiling = receivedOk (Phase3 bên dưới xử lý).
-            // Workflow OFF hoặc GC: giữ check cứng theo PlanQty.
-            var isNonGcWorkflowOn = !IsGcGroup && detForSave?.ApplyWorkflow == true;
-            if (!isNonGcWorkflowOn && detForSave != null && row.QtyDone > detForSave.Quantity)
-
-            { row.ErrorMsg = $"Tổng OK+NG ({row.QtyDone}) vượt KH ({detForSave.Quantity} {detForSave.Unit}). Không được phép."; return; }
-
-            // [WORKFLOW Phase 3] Non-GC: tổng WTS toàn nhóm + lần này ≤ ReceivedOk
-
-            if (!IsGcGroup && detForSave?.ApplyWorkflow == true && row.KhPlanDetailId.HasValue)
-
-            {
-
-                var receivedOk = _receivedOkCache.TryGetValue(row.KhPlanDetailId.Value, out var _rv) ? _rv : 0m;
-
-                if (receivedOk > 0)
-
-                {
-
-                    var wtsDoneGroup = GetNonGcGroupWtsDone(row.KhPlanDetailId.Value, row.PO);
-
-                    if (wtsDoneGroup + row.QtyOk > receivedOk)
-
-                    {
-
-                        row.ErrorMsg = $"Workflow: Tổng đã làm ({wtsDoneGroup:0.##}) + lần này ({row.QtyOk:0.##}) = {wtsDoneGroup + row.QtyOk:0.##} — vượt SL nhận ({receivedOk:0.##}). Chờ thêm hàng từ nhóm trước.";
-
-                        return;
-
-                    }
-
-                }
-
-            }
+            // [GN-WTS-CAP] Đã bỏ 2 khối kiểm SL ở đây ([BUG2 FIX] dòng ≤ PO, [WORKFLOW Phase 3] non-GC ≤ SL nhận):
+            // chúng chạy SAU khi dòng cũ đã bị void (sửa dòng) → kiểm không qua là mất dòng cũ.
+            // Nay kiểm 1 lần trong SaveGroupAsync → CheckGroupQtyAsync, trước khi void / lưu bất kỳ dòng nào
+            // (Workflow OFF vẫn chặn dòng ≤ PO; Workflow ON chặn theo Còn chờ làm của sổ giao nhận).
 
             // Warn thêm nếu NC loại trừ (không block)
 
@@ -7601,21 +7693,8 @@ else
 
         }
 
-        // Reload receivedOk cache cho PO vừa lưu
-
-        if (row.KhPlanDetailId.HasValue)
-
-        {
-
-            var grp = HandoverGroupCode;
-
-            var ro  = await HandoverSvc.GetReceivedOkAsync(row.KhPlanDetailId.Value, grp);
-
-            var det = _allRows.FirstOrDefault(d => d.KhPlanDetailId == row.KhPlanDetailId.Value);
-
-            _receivedOkCache[row.KhPlanDetailId.Value] = ro > 0 ? ro : (det?.Quantity ?? ro);
-
-        }
+        // [GN-WTS-CAP] Bỏ reload _receivedOkCache (cũ: số nhận = 0 thì lấy số PO kể cả Workflow ON — sai BUG1 FIX).
+        // Sổ giao nhận đã reload cùng ReloadFlowAsync ở trên.
 
         // Reload snapshot cache cho các PO đang dùng
 
