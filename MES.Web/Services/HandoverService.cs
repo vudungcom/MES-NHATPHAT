@@ -1491,9 +1491,9 @@ namespace MES.Web.Services
             if (fromCell != null && HandoverCell.IssueCellOf(purpose, fromCell) != fromCell)
                 return (false, $"Ô {HandoverCell.Label(fromCell)} không giao được theo kiểu {HandoverPurpose.Label(purpose)}.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
-                return (false, "Gửi làm hộ: bắt buộc chọn NC nguồn.");
+                return (false, "Giao theo NC: bắt buộc chọn NC nguồn.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrWhiteSpace(notes))
-                return (false, "Gửi làm hộ: bắt buộc ghi chú (N4).");
+                return (false, "Giao theo NC: bắt buộc ghi chú (N4).");
 
             using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
             var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8] khoá chung với trang WTS
@@ -1505,7 +1505,7 @@ namespace MES.Web.Services
             // K3: hàng làm hộ trả về Gia công phải chọn NC nhận khi PO có snapshot NC
             bool gcHasNc = row.G("GC").Steps.Any();
             if (toGroupCode == "GC" && gcHasNc && string.IsNullOrEmpty(toNC) && purpose == HandoverPurpose.HelpReturn)
-                return (false, "Trả làm hộ về Gia công: bắt buộc chọn NC nhận vào (K3).");
+                return (false, "Trả về Gia công: bắt buộc chọn NC nhận vào (K3).");
 
             var (max, ex) = HandoverLedgerService.IssueCap(row, fromGroupCode, purpose, fromNC, fromCell);   // [GN-CELL] trần theo ô
             if (qtyIssued > max)

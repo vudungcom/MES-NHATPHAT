@@ -5994,9 +5994,9 @@ else
         var totalQty = SumFormQty(grp, sub.KhPlanDetailId, IsGcGroup ? grp.NC : sub.WtsCode);
         if (totalQty <= 0) return;
         if (wf.Locked)
-            sub.ErrorMsg = $"⚠️ {wf.Label}: chưa có hàng vào — chưa nhập số lượng được. ({wf.Detail})";
+            sub.ErrorMsg = $"⚠️ {wf.Label}: chưa nhận hàng — chưa nhập số lượng được. ({wf.Detail})";   // [GN-TEXT] trước: "chưa có hàng vào"
         else if (totalQty > wf.Ceiling)
-            sub.ErrorMsg = $"⚠️ {wf.Label}: nhập {totalQty:0.##} (OK + NG) vượt Còn chờ làm {wf.Ceiling:0.##}. ({wf.Detail})";
+            sub.ErrorMsg = $"⚠️ {wf.Label}: nhập {totalQty:0.##} (OK + NG) vượt Chưa làm {wf.Ceiling:0.##}. ({wf.Detail})";   // [GN-TEXT] trước: "Còn chờ làm"
 
     }
 
@@ -6208,7 +6208,7 @@ else
         var detail = e.Terms.Count > 0
             ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = {e.Result:0.##}"
             : $"{e.Result:0.##}";
-        if (!string.IsNullOrEmpty(e.Note)) detail += " · " + e.Note;
+        // [GN-TEXT] bỏ phần ghi chú công thức (chữ kỹ thuật) — xem đủ ở trang Giao nhận, nút Hiện công thức
         return detail;
     }
 
@@ -6803,8 +6803,8 @@ else
                 if (cap.Locked || tot > cap.Max.Value)
                 {
                     var msg = cap.Locked
-                        ? $"PO {po} · {what}: chưa có hàng vào — chưa nhập số lượng được."
-                        : $"PO {po} · {what}: nhập {tot:0.##} (OK + NG) vượt Còn chờ làm {cap.Max.Value:0.##}.";
+                        ? $"PO {po} · {what}: chưa nhận hàng — chưa nhập số lượng được."   // [GN-TEXT]
+                        : $"PO {po} · {what}: nhập {tot:0.##} (OK + NG) vượt Chưa làm {cap.Max.Value:0.##}.";   // [GN-TEXT]
                     msg += $" ({CapDetail(cap)})";
                     foreach (var s in g) s.ErrorMsg = msg;
                     return msg;
@@ -7080,9 +7080,9 @@ else
         var cap = GetWtsCap(firstSub.KhPlanDetailId, "GC", nc);
         if (cap == null || cap.Max == null) return nc;
         var inL = cap.Explain.Terms.FirstOrDefault()?.Value ?? 0m;
-        if (cap.Locked) return $"🔒 {nc} — chưa có hàng vào";
-        if (cap.Max.Value <= 0) return $"{nc} — hết hàng chờ (vào {inL:0.##})";
-        return $"{nc} — còn chờ làm: {cap.Max.Value:0.##} / vào {inL:0.##}";
+        if (cap.Locked) return $"🔒 {nc} — chưa nhận hàng";   // [GN-TEXT] chữ Excel / trang cũ
+        if (cap.Max.Value <= 0) return $"{nc} — chưa làm: 0 / nhận {inL:0.##}";   // [GN-TEXT]
+        return $"{nc} — chưa làm: {cap.Max.Value:0.##} / nhận {inL:0.##}";   // [GN-TEXT] trước: "còn chờ làm: X / vào Y"
 
     }
 

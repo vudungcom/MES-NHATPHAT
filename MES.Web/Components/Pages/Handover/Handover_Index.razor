@@ -23,7 +23,10 @@
    - Form Giao = form cũ (nhóm giao → nhóm nhận → OK/NG → ghi chú) + chọn Ô GIAO theo Excel
      (Hàng mới / Hàng lỗi / Hàng sửa) + ô tích "Hàng lỗi công đoạn trước" (= "Trả hàng NG ngược" cũ).
      Phần mềm tự suy loại phiếu, ô bên nhận và trần. Không còn "loại phiếu" tự đặt.
-   - Form đặc biệt giữ: Gửi / Trả làm hộ (máy loại trừ), Huỷ hàng lỗi, Trả khách — trong mục "Khác".
+   - Form đặc biệt giữ: Giao theo NC (máy loại trừ) / Trả về Gia công — nhận vào NC, Huỷ hàng lỗi, Trả khách — trong mục "Khác".
+   - [GN-TEXT 2026-10-23] Chữ hiện cho xưởng chỉ dùng chữ của file Excel khách hoặc trang cũ (7a9e508).
+     Bảng chi tiết (tồn từng loại, từng NC, từng mã CV) chỉ hiện khi bật "Hiện công thức".
+     Ô Excel mà quy trình không bao giờ ghi vào (Giao · Hàng lỗi đã xử lý; Kho · Hàng Sửa) tô xám, có ghi chú.
    - Mọi số lấy từ HandoverLedgerService (hàm tính chung duy nhất). Nút "Hiện công thức" giữ.
    - Giữ từ trang cũ: tìm kiếm, lọc khách/tháng/năm, lọc cột kiểu Excel, quyền HANDOVER_*,
      badge phiếu chờ, tự làm mới 60s, Nhận, Lịch sử, Huỷ phiếu.
@@ -56,7 +59,8 @@
     .gn-calc { color: #1d4ed8; font-weight: 600; }
     .gn-ton { font-weight: 700; background: #fafafa; }
     .gn-gl { border-left: 2px solid #8a94a3 !important; }
-    .gn-chg { background: #fde3cf !important; }                 /* ô vừa đổi ở bước này — giống Excel xưởng tô */
+    .gn-chg { background: #fde3cf !important; }
+    .gn-dead { background: repeating-linear-gradient(135deg, #f3f4f6 0 4px, #e5e7eb 4px 8px) !important; }   /* [GN-TEXT] ô quy trình không ghi vào */                 /* ô vừa đổi ở bước này — giống Excel xưởng tô */
     .gn-step td { font-size: 10.5px; color: #333; background: #fffdf7; }
     .gn-step td.gn-lbl { font-weight: 700; color: #1d4ed8; text-align: center; }
     .gn-step td.gn-txt { white-space: normal; min-width: 300px; max-width: 420px; line-height: 1.2; text-align: left; }
@@ -116,7 +120,7 @@ else
                 <div class="col-auto">
                     <div class="form-check form-switch mb-0 small">
                         <input class="form-check-input" type="checkbox" id="onlyWarn" @bind="_onlyWarn" />
-                        <label class="form-check-label" for="onlyWarn">Chỉ PO có số âm / đang giữ hàng lỗi, hàng sửa</label>
+                        <label class="form-check-label" for="onlyWarn">Chỉ PO có số âm / có tồn hàng lỗi, hàng sửa</label>
                     </div>
                 </div>
             </div>
@@ -162,8 +166,8 @@ else
             <i class="bi bi-info-circle me-1"></i>
             Đang hiện công thức: bấm vào số bất kỳ để xem phép tính với số thật và từng chứng từ.
             <strong>Tồn = Σ Nhận − Σ Giao</strong> ·
-            <strong>Chưa làm = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý − Đã làm − NG làm hỏng − Giao Hàng lỗi có tích "công đoạn trước"</strong>
-            (khác Excel: không trừ hàng lỗi đang giữ chuyển đi sửa / tự sửa trả, và trừ cả NG làm hỏng).
+            <strong>Chưa làm = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý − Đã làm − NG (WTS) − Giao Hàng lỗi có tích "công đoạn trước"</strong>
+            (khác Excel: không trừ tồn hàng lỗi chuyển đi sửa / tự sửa trả, và trừ cả NG trên WTS).
         </div>
     }
 
@@ -333,7 +337,23 @@ else
                         }
                         <tr class="table-light">
                             <td colspan="70" class="p-3" @ondblclick:stopPropagation>
-                                @RenderDetail(row)
+                                @if (_showFormula)
+                                {
+                                    @RenderDetail(row)
+                                }
+                                else
+                                {
+                                    @* [GN-TEXT] Mặc định chỉ hiện như Excel (các dòng B) + dòng cân bằng; chi tiết để kiểm số khi bật Hiện công thức *@
+                                    <div class="small d-flex flex-wrap gap-3 align-items-center">
+                                        <span><strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") = Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##") + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
+                                            @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }</span>
+                                        <span class="text-muted">Bật <strong>Hiện công thức</strong> để xem chi tiết từng NC / mã CV.</span>
+                                    </div>
+                                    @if (row.Warnings.Any())
+                                    {
+                                        <div class="small text-danger mt-1">@foreach (var w in row.Warnings) { <div>• @w</div> }</div>
+                                    }
+                                }
                             </td>
                         </tr>
                     }
@@ -349,7 +369,8 @@ else
         <span><strong>Tồn</strong> = Σ Nhận − Σ Giao</span>
         <span><span class="gn-chg px-2 border">&nbsp;</span> ô vừa đổi ở bước đó</span>
         <span><span class="badge bg-danger">■</span> có số âm (nhập sai)</span>
-        <span><span class="badge bg-warning text-dark">■</span> đang giữ hàng lỗi / hàng sửa</span>
+        <span><span class="badge bg-warning text-dark">■</span> có tồn hàng lỗi / hàng sửa</span>
+        <span><span class="gn-dead px-2 border">&nbsp;</span> ô quy trình không ghi vào</span>
         <span><span class="badge bg-primary gn-badge">⬆N</span> phiếu nhóm đó giao chờ nhận</span>
         <span><span class="badge bg-success gn-badge">⬇N</span> phiếu chờ nhóm đó nhận</span>
     </div>
@@ -470,7 +491,7 @@ else
                                         title="@CellTitle(c)">
                                     <div class="fw-semibold">@HandoverCell.Label(c)</div>
                                     <div class="small @(have > 0 ? "text-success" : "text-muted")">
-                                        @(c == HandoverCell.Moi ? (_issueFrom == "KHO" ? "phôi còn" : "đã làm, chưa giao") : "đang giữ") @have.ToString("0.##")
+                                        @(c == HandoverCell.Moi ? (_issueFrom == "KHO" ? "phôi còn" : "đã làm, chưa giao") : "tồn") @have.ToString("0.##")
                                     </div>
                                     @if (c == HandoverCell.Loi && _issueFrom != "KHO")
                                     {
@@ -494,7 +515,7 @@ else
                                 </div>
                                 @if (_issueFrom == "KHO")
                                 {
-                                    <div class="small text-muted">Kho không có công đoạn trước. Phôi lỗi đang giữ: gửi nhờ sửa, hoặc Huỷ / Trả khách (mục Khác).</div>
+                                    <div class="small text-muted">Kho không có công đoạn trước. Phôi lỗi tồn ở Kho: gửi nhờ sửa, hoặc Huỷ / Trả khách (mục Khác).</div>
                                 }
                                 else if (!_issuePrev)
                                 {
@@ -551,7 +572,7 @@ else
 
                     <div class="text-end mb-2">
                         <button type="button" class="btn btn-link btn-sm p-0" style="font-size:11.5px" @onclick="ToggleSpecial">
-                            @(_issueSpecialMode ? "← Quay lại giao theo ô (Hàng mới / Hàng lỗi / Hàng sửa)" : "Khác: làm hộ · huỷ hàng lỗi · trả khách →")
+                            @(_issueSpecialMode ? "← Quay lại giao theo ô (Hàng mới / Hàng lỗi / Hàng sửa)" : "Khác: giao theo NC (máy loại trừ) · huỷ hàng lỗi · trả khách →")
                         </button>
                     </div>
 
@@ -561,7 +582,7 @@ else
                         {
                             <div class="mb-3 p-2 border rounded" style="background:#fff7ed;font-size:12px">
                                 <strong>Ra khỏi PO → @HandoverLedgerService.GroupLabel(_issueTo)</strong>
-                                <div class="text-muted">Lấy từ ô Hàng lỗi đang giữ của nhóm. Cân PO tính vào Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
+                                <div class="text-muted">Lấy từ tồn hàng lỗi của nhóm. Cân PO tính vào Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
                             </div>
                         }
                         else
@@ -604,7 +625,7 @@ else
                                             <option value="@s.Code" selected="@(_issueToNC == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
                                         }
                                     </select>
-                                    <div class="small text-muted mt-1">Hàng làm hộ trả về: chọn NC ngay sau NC máy loại trừ. Hàng đã sửa trả về: chọn NC sẽ làm tiếp.</div>
+                                    <div class="small text-muted mt-1">Hàng trả về sau máy loại trừ: chọn NC ngay sau NC đó. Hàng lỗi đã xử lý: chọn NC sẽ làm tiếp.</div>
                                 </div>
                             }
 
@@ -615,7 +636,7 @@ else
                                 <div class="mb-2 p-2 border rounded" style="background:#f0fdf4;font-size:12px">
                                     <i class="bi bi-arrow-return-right me-1"></i>
                                     <strong>@HandoverLedgerService.GroupLabel(_issueTo)</strong> sẽ nhận vào ô
-                                    <strong>@(rc != null ? HandoverCell.Label(rc) : "Làm hộ")</strong>
+                                    <strong>@(rc != null ? HandoverCell.Label(rc) : "theo NC (ngoài 8 ô Excel)")</strong>
                                     @if (purpose == HandoverPurpose.RepairReturn) { <span class="text-muted"> — phần mềm nhận diện là SP đã OK, nhân viên nhập WTS tiếp được.</span> }
                                     @if (purpose == HandoverPurpose.RepairSend) { <span class="text-muted"> — hàng nhờ sửa, không tính vào số sản xuất của nhóm sửa.</span> }
                                     @if (purpose == HandoverPurpose.NgReturn) { <span class="text-muted"> — nơi gây lỗi giữ lại để gửi sửa / tự sửa / huỷ.</span> }
@@ -749,7 +770,7 @@ else
                                         </div>
                                         <div style="font-size:11px;color:#666;margin-top:2px">
                                             <i class="bi bi-person me-1"></i>@p.IssuedByName
-                                            <span class="ms-2 text-success"><i class="bi bi-arrow-return-right me-1"></i>ghi vào ô <strong>@(recvCell != null ? HandoverCell.Label(recvCell) : "Làm hộ")</strong></span>
+                                            <span class="ms-2 text-success"><i class="bi bi-arrow-return-right me-1"></i>ghi vào ô <strong>@(recvCell != null ? HandoverCell.Label(recvCell) : "theo NC (ngoài 8 ô Excel)")</strong></span>
                                             @if (p.QtyReceivedSoFar > 0)
                                             {
                                                 <span class="text-success ms-2"><i class="bi bi-check me-1"></i>Đã nhận @p.QtyReceivedSoFar.ToString("0.##") / @p.QtyIssued.ToString("0.##")</span>
@@ -1104,7 +1125,7 @@ else
         new("GiaoLoi",   "Hàng lỗi",          "Giao", "Giao từ ô Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""),
         new("GiaoSua",   "Hàng Sửa",          "Giao", "Sửa hộ xong, trả về nơi phát hiện", "", g => g.GiaoSua, ""),
         new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Có trong Excel nhưng cả 3 tình huống không ghi vào đây (hàng đã xử lý chỉ nhận về rồi làm tiếp)", "", g => g.GiaoLoiXl, ""),
-        new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG hỏng − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
+        new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG (WTS) − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
         new("DaLam",     "Đã làm",   "", "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, ""),
         new("Ton",       "Tồn",      "", "Hàng đang thật sự nằm ở nhóm", "Σ Nhận − Σ Giao", g => g.Ton, "gn-ton"),
     };
@@ -1130,15 +1151,16 @@ else
         var changed = prev != null ? c.Get(prev) != v : false;
         var isActive = prev == null && _explain != null && _explainKey == $"{row.KhPlanDetailId}|{g.Code}|{c.Key}";
         var first = c.Key is "NhanMoi" or "GiaoMoi" or "ChuaLam" || (g.IsKho && c.Key == "Ton");
-        var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(isNeg ? "gn-neg" : "")} {(changed ? "gn-chg" : "")} {(_showFormula && prev == null ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
-        <td class="@cls" @onclick:stopPropagation @onclick="() => { if (prev == null) OpenExplain(row, g, c.Key); }">
+        var dead = IsDeadCell(g.Code, c.Key) && v == 0;   // [GN-TEXT] ô quy trình không bao giờ ghi vào (có số thì vẫn hiện để lộ ra)
+        var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(isNeg ? "gn-neg" : "")} {(changed ? "gn-chg" : "")} {(dead ? "gn-dead" : "")} {(_showFormula && prev == null ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
+        <td class="@cls" title="@(dead ? DeadCellTip(g.Code, c.Key) : null)" @onclick:stopPropagation @onclick="() => { if (prev == null) OpenExplain(row, g, c.Key); }">
             @(v == 0 ? (c.Band == "" ? "0" : "") : v.ToString("0.##"))
             @if (c.Key == "Ton" && prev == null)
             {
                 <div class="d-flex gap-1 justify-content-center flex-wrap">
                     @if (g.NhanLamHo > 0 || g.GiaoLamHo > 0)
                     {
-                        <span class="badge bg-secondary gn-badge" title="Làm hộ (máy loại trừ) — ngoài 8 ô Excel: nhận @g.NhanLamHo.ToString("0.##") · giao @g.GiaoLamHo.ToString("0.##") · đang giữ @g.LamHoGiu.ToString("0.##")">làm hộ</span>
+                        <span class="badge bg-secondary gn-badge" title="Giao theo NC (máy loại trừ) — ngoài 8 ô Excel: nhận @g.NhanLamHo.ToString("0.##") · giao @g.GiaoLamHo.ToString("0.##") · tồn @g.LamHoGiu.ToString("0.##")">theo NC</span>
                     }
                     @if (g.PendingToIssue > 0)
                     {
@@ -1152,6 +1174,14 @@ else
             }
         </td>
     };
+
+    /// <summary>[GN-TEXT] Ô Excel mà theo đúng các bước trong file Excel khách, quy trình không bao giờ ghi vào (bộ thử ngẫu nhiên xác nhận).</summary>
+    static bool IsDeadCell(string grp, string key)
+        => key == "GiaoLoiXl" || (grp == "KHO" && key is "NhanSua" or "GiaoSua");
+
+    static string DeadCellTip(string grp, string key) => key == "GiaoLoiXl"
+        ? "Excel có cột này nhưng cả 3 tình huống không ghi vào: hàng lỗi đã xử lý chỉ NHẬN về nơi phát hiện rồi làm tiếp (WTS), không giao đi từ ô này."
+        : "Kho không sửa hàng nên không nhận / giao Hàng Sửa. Phôi lỗi ở Kho đi bằng ô Hàng lỗi (gửi nhờ sửa, huỷ, trả khách).";
 
     static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", _ => k };
     static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", _ => "bg-secondary" };
@@ -1186,9 +1216,9 @@ else
             }
             <div class="d-flex flex-wrap gap-3">
                 <div class="border rounded p-2 bg-white" style="min-width:360px">
-                    <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Đang giữ theo ô (trần khi lập phiếu)</div>
+                    <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Tồn theo loại hàng (trần khi lập phiếu)</div>
                     <table class="table table-sm mb-0" style="font-size:10.5px">
-                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng mới còn giao được">Còn giao</th><th class="text-end">Ô Hàng lỗi</th><th class="text-end">Ô Hàng sửa</th><th class="text-end">Làm hộ</th><th class="text-end text-danger">NG làm hỏng</th></tr></thead>
+                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th></tr></thead>
                         <tbody>
                             @foreach (var code in HandoverLedgerService.GroupCodes)
                             {
@@ -1229,12 +1259,12 @@ else
                     <thead class="table-light">
                         <tr>
                             <th>NC</th><th>Máy</th>
-                            <th class="text-end" title="Hàng vào NC này">Vào</th>
-                            <th class="text-end">OK</th>
+                            <th class="text-end" title="Số nhận vào NC này (trang cũ: Nhận vào)">Nhận vào</th>
+                            <th class="text-end" title="OK trên WTS">Đã GC</th>
                             <th class="text-end text-danger">NG</th>
-                            <th class="text-end" title="Vào − OK − NG">Chờ làm</th>
-                            <th class="text-end" title="Đã gửi làm hộ từ NC này">Gửi làm hộ</th>
-                            <th>Ghi chú</th>
+                            <th class="text-end" title="Nhận vào − Đã GC − NG = trần nhập WTS">Chưa GC</th>
+                            <th class="text-end" title="Đã giao theo NC cụ thể từ NC này (trang cũ: Giao đi)">Giao đi</th>
+                            <th>Cách tính nhận vào</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1274,7 +1304,7 @@ else
             else
             {
                 <table class="table table-sm mb-0" style="font-size:10.5px">
-                    <thead class="table-light"><tr><th>Nhóm</th><th>Mã</th><th class="text-end">OK</th><th class="text-end text-danger">NG</th><th class="text-end" title="Còn chờ làm (trần WTS mã này)">Chờ</th><th>Ghi chú</th></tr></thead>
+                    <thead class="table-light"><tr><th>Nhóm</th><th>Mã</th><th class="text-end">OK</th><th class="text-end text-danger">NG</th><th class="text-end" title="Trần nhập WTS của mã này">Chưa làm</th><th>Ghi chú</th></tr></thead>
                     <tbody>
                         @foreach (var s in g.Steps)
                         {
@@ -1482,16 +1512,16 @@ else
     {
         var list = new List<SpecialOpt>();
         if (from == "GC")
-            list.Add(new(HandoverPurpose.HelpSend, "Gửi làm hộ — NC máy loại trừ",
-                "Gia công gửi hàng giữa chừng cho nhóm khác làm hộ. Chọn NC nguồn, ghi chú bắt buộc. Không nằm trong 8 ô Excel."));
+            list.Add(new(HandoverPurpose.HelpSend, "Giao theo NC cụ thể — NC dùng máy loại trừ",
+                "Gia công giao hàng đã làm xong ở NC nguồn sang nhóm khác làm tiếp (máy loại trừ). Chọn NC nguồn, ghi chú bắt buộc."));
         if (from != "GC" && from != "KHO")
-            list.Add(new(HandoverPurpose.HelpReturn, "Trả làm hộ — về Gia công",
-                "Làm hộ xong, trả về Gia công. Chọn NC nhận vào."));
+            list.Add(new(HandoverPurpose.HelpReturn, "Trả về Gia công — nhận vào NC",
+                "Hàng Gia công giao theo NC, làm xong trả về Gia công. Chọn NC nhận vào."));
         list.Add(new(HandoverPurpose.Scrap, "Huỷ hàng lỗi — không sửa được",
-            "Lấy từ ô Hàng lỗi đang giữ, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
+            "Lấy từ tồn hàng lỗi, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
         list.Add(new(HandoverPurpose.CustReturn, "Trả khách hàng lỗi",
-            from == "KHO" ? "Phôi lỗi đang giữ ở Kho: trả lại khách, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."
-                          : "Hàng lỗi đang giữ trả lại khách (khách đồng ý nhận lại), ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
+            from == "KHO" ? "Phôi lỗi tồn ở Kho: trả lại khách, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."
+                          : "Tồn hàng lỗi trả lại khách (khách đồng ý nhận lại), ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
         return list;
     }
 
@@ -1521,7 +1551,7 @@ else
     string CellTitle(string cell) => cell switch
     {
         HandoverCell.Moi => _issueFrom == "KHO" ? "Phôi tốt cấp cho Gia công (Kho ghi Giao · Hàng Mới)." : "Hàng OK đã nhập WTS, giao xuôi cho nhóm sau (ghi Giao · Hàng Mới).",
-        HandoverCell.Loi => "Ghi Giao · Hàng lỗi. Tích 'Hàng lỗi công đoạn trước' = trả nơi gây lỗi (lấy từ hàng chưa làm). Không tích = hàng lỗi mình đang giữ: gửi nhờ sửa, hoặc đã tự sửa xong trả về nơi phát hiện.",
+        HandoverCell.Loi => "Ghi Giao · Hàng lỗi. Tích 'Hàng lỗi công đoạn trước' = trả nơi gây lỗi (lấy từ hàng chưa làm). Không tích = tồn hàng lỗi của mình: gửi nhờ sửa, hoặc đã tự sửa xong trả về nơi phát hiện.",
         HandoverCell.Sua => "Hàng nhóm khác gửi nhờ sửa, sửa xong trả về nơi phát hiện (ghi Giao · Hàng Sửa; bên nhận ghi Hàng lỗi đã xử lý).",
         _ => ""
     };
@@ -1535,8 +1565,8 @@ else
         HandoverPurpose.NgReturn     => "Chỉ trả về nhóm đứng trước (nơi gây lỗi).",
         HandoverPurpose.RepairSend   => "Nhóm có khả năng sửa (Kho không sửa hàng).",
         HandoverPurpose.RepairReturn => "Trả thẳng về nơi phát hiện lỗi (không qua nơi gây lỗi).",
-        HandoverPurpose.HelpSend     => "Nhóm làm hộ NC máy loại trừ.",
-        HandoverPurpose.HelpReturn   => "Hàng làm hộ chỉ trả về Gia công.",
+        HandoverPurpose.HelpSend     => "Nhóm làm NC dùng máy loại trừ.",
+        HandoverPurpose.HelpReturn   => "Chỉ trả về Gia công.",
         _ => ""
     };
 
