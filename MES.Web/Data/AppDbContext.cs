@@ -573,6 +573,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<HandoverTransaction>().Property(x => x.IsReturnNg).HasDefaultValue(false);
         // [GN-LEDGER 2026-10-22] Loại phiếu (Hàng mới / Trả lỗi / Gửi sửa / Trả sửa / Làm hộ)
         mb.Entity<HandoverTransaction>().Property(x => x.Purpose).HasMaxLength(20);
+        // [GN-CELL 2026-10-23] Ô bên giao chọn (MOI / LOI / SUA) — đúng cột Excel xưởng
+        mb.Entity<HandoverTransaction>().Property(x => x.FromCell).HasMaxLength(10);
         mb.Entity<HandoverTransaction>()
             .HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
         mb.Entity<HandoverTransaction>()

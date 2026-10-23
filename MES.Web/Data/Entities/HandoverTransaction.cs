@@ -48,6 +48,13 @@ namespace MES.Web.Data.Entities
         /// </summary>
         public string? Purpose { get; set; }
 
+        /// <summary>
+        /// [GN-CELL 2026-10-23] Ô bên giao chọn trên form — đúng cột Excel xưởng: MOI (Hàng mới) | LOI (Hàng lỗi) | SUA (Hàng sửa).
+        /// NULL = phiếu cũ → HandoverLedgerService suy ra từ Purpose. Dùng để ghi đúng cột Giao của bên giao
+        /// (VD TH2: nhóm gây lỗi tự sửa xong trả về = Giao · Hàng lỗi, không phải Giao · Hàng sửa).
+        /// </summary>
+        public string? FromCell { get; set; }
+
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
 

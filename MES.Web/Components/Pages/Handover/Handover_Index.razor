@@ -15,14 +15,18 @@
 @rendermode InteractiveServer
 
 @* =====================================================================
-   [GN-LEDGER 2026-10-22] TRANG GIAO NHẬN — VIẾT LẠI THEO EXCEL XƯỞNG
-   - Mọi số lấy từ HandoverLedgerService (hàm tính chung duy nhất).
-   - Cột theo Excel xưởng: Nhận / Giao (Hàng mới · Hàng lỗi · Hàng Sửa ·
-     Hàng lỗi đã xử lý · Làm hộ), Chưa làm, Đã làm, NG làm hỏng, Tồn.
-   - Nút "Hiện công thức": bấm vào số bất kỳ → khung bên phải hiện công thức,
-     phép tính với số thật và từng chứng từ (phiếu / lần nhận / WTS / phôi).
-   - Giữ từ trang cũ: tìm kiếm, lọc khách/tháng/năm, lọc cột kiểu Excel,
-     quyền HANDOVER_*, badge phiếu chờ, tự làm mới 60s, Nhận, Lịch sử, Huỷ phiếu.
+   [GN-CELL 2026-10-23] TRANG GIAO NHẬN — ĐÚNG BỐ CỤC EXCEL XƯỞNG
+   - Bảng chính = đúng Excel: mỗi nhóm có Nhận [Hàng Mới · Hàng lỗi · Hàng Sửa · Hàng lỗi đã xử lý],
+     Giao [4 ô như vậy], Chưa / Đã (nhóm sản xuất), Tồn. Không cột nào khác chen vào.
+   - Mở 1 PO: các dòng B1, B2, B3… = trạng thái SAU từng chứng từ (phôi / phiếu giao / lần nhận / WTS),
+     ô vừa đổi được tô màu — giống cách xưởng tô trên Excel.
+   - Form Giao = form cũ (nhóm giao → nhóm nhận → OK/NG → ghi chú) + chọn Ô GIAO theo Excel
+     (Hàng mới / Hàng lỗi / Hàng sửa) + ô tích "Hàng lỗi công đoạn trước" (= "Trả hàng NG ngược" cũ).
+     Phần mềm tự suy loại phiếu, ô bên nhận và trần. Không còn "loại phiếu" tự đặt.
+   - Form đặc biệt giữ: Gửi / Trả làm hộ (máy loại trừ), Huỷ hàng lỗi, Trả khách — trong mục "Khác".
+   - Mọi số lấy từ HandoverLedgerService (hàm tính chung duy nhất). Nút "Hiện công thức" giữ.
+   - Giữ từ trang cũ: tìm kiếm, lọc khách/tháng/năm, lọc cột kiểu Excel, quyền HANDOVER_*,
+     badge phiếu chờ, tự làm mới 60s, Nhận, Lịch sử, Huỷ phiếu.
    ===================================================================== *@
 
 <PageTitle>Giao nhận hàng</PageTitle>
@@ -44,13 +48,18 @@
     .col-filter-dropdown .value-list label { display: block; font-size: 0.8rem; cursor: pointer; padding: 1px 0; }
     .col-filter-dropdown .footer { padding: 6px 10px; display: flex; gap: 6px; justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px; }
 
-    .gn-table th, .gn-table td { white-space: nowrap; }
-    .gn-num { text-align: right; font-variant-numeric: tabular-nums; }
-    .gn-zero { color: #b6bcc4; }
+    .gn-table th, .gn-table td { white-space: nowrap; border: 1px solid #c8ced6 !important; }
+    .gn-table thead th { text-align: center; vertical-align: middle; font-weight: 600; }
+    .gn-table th.gn-cell { font-size: 10px; font-weight: 500; white-space: normal; line-height: 1.15; min-width: 44px; max-width: 64px; padding: 2px 3px; background: #f3f5f8; }
+    .gn-num { text-align: center; font-variant-numeric: tabular-nums; min-width: 44px; }
     .gn-neg { background: #fee2e2 !important; color: #991b1b; font-weight: 700; }
     .gn-calc { color: #1d4ed8; font-weight: 600; }
-    .gn-ton { font-weight: 700; }
-    .gn-gl { border-left: 2px solid #c9d1da !important; }
+    .gn-ton { font-weight: 700; background: #fafafa; }
+    .gn-gl { border-left: 2px solid #8a94a3 !important; }
+    .gn-chg { background: #fde3cf !important; }                 /* ô vừa đổi ở bước này — giống Excel xưởng tô */
+    .gn-step td { font-size: 10.5px; color: #333; background: #fffdf7; }
+    .gn-step td.gn-lbl { font-weight: 700; color: #1d4ed8; text-align: center; }
+    .gn-step td.gn-txt { white-space: normal; min-width: 300px; max-width: 420px; line-height: 1.2; text-align: left; }
     .gn-click { cursor: pointer; text-decoration: underline dotted #93a3b8; text-underline-offset: 3px; }
     .gn-click:hover { background: #eef4ff; }
     .gn-active { outline: 2px solid #1d4ed8; outline-offset: -2px; }
@@ -60,9 +69,10 @@
     .gn-explain .bd { padding: 12px 14px; overflow-y: auto; flex: 1; font-size: 12.5px; }
     .gn-arith { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; background: #f1f5f9; border-radius: 6px; padding: 6px 10px; margin: 6px 0 10px; }
     .gn-doc { font-size: 11.5px; color: #374151; padding: 2px 0 2px 14px; border-left: 2px solid #e5e7eb; margin-left: 4px; }
-    .gn-purpose { display: block; text-align: left; border: 1px solid #d5dbe2; border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; background: #fff; width: 100%; font-size: 12.5px; }
-    .gn-purpose.on { border-color: #1d4ed8; background: #eef4ff; }
-    .gn-purpose:disabled { opacity: .5; }
+    .gn-cellbtn { text-align: left; border: 1px solid #d5dbe2; border-radius: 6px; padding: 6px 10px; background: #fff; font-size: 12.5px; flex: 1; }
+    .gn-cellbtn.on { border-color: #1d4ed8; background: #eef4ff; }
+    .gn-cellbtn:disabled { opacity: .5; }
+    .gn-badge { font-size: 9px; padding: 1px 4px; }
 </style>
 
 @if (!_loaded)
@@ -75,16 +85,11 @@ else if (!_canView)
 }
 else
 {
-    @* [GN-LEDGER] khung công thức mở → bảng lùi sang trái, không bị che *@
     <div style="@(_explain != null ? "margin-right:485px" : "")">
     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
         <h5 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Giao nhận hàng</h5>
         @if (!_canEditAny) { <span class="badge bg-secondary">Chỉ xem</span> }
         <div class="ms-auto d-flex gap-2">
-            <button class="btn btn-sm @(_showFullCols ? "btn-secondary" : "btn-outline-secondary")" @onclick="ToggleFullCols"
-                    title="Hiện đủ cột theo Excel xưởng: Hàng mới · Hàng lỗi · Hàng Sửa · Hàng lỗi đã xử lý · Làm hộ">
-                <i class="bi bi-layout-three-columns me-1"></i>@(_showFullCols ? "Thu gọn cột" : "Hiện đủ cột Excel")
-            </button>
             <button class="btn btn-sm @(_showFormula ? "btn-primary" : "btn-outline-primary")" @onclick="ToggleFormula"
                     title="Bật lên: bấm vào số bất kỳ để xem công thức và chứng từ tạo ra số đó">
                 <i class="bi bi-calculator me-1"></i>@(_showFormula ? "Ẩn công thức" : "Hiện công thức")
@@ -111,7 +116,7 @@ else
                 <div class="col-auto">
                     <div class="form-check form-switch mb-0 small">
                         <input class="form-check-input" type="checkbox" id="onlyWarn" @bind="_onlyWarn" />
-                        <label class="form-check-label" for="onlyWarn">Chỉ PO có số âm / hàng lỗi đang giữ</label>
+                        <label class="form-check-label" for="onlyWarn">Chỉ PO có số âm / đang giữ hàng lỗi, hàng sửa</label>
                     </div>
                 </div>
             </div>
@@ -155,81 +160,57 @@ else
     {
         <div class="alert alert-info py-2 small mb-2">
             <i class="bi bi-info-circle me-1"></i>
-            Đang hiện công thức: dưới tên cột là cách tính; bấm vào số bất kỳ để xem phép tính với số thật và từng chứng từ.
-            <strong>Tồn = Tổng Nhận − Tổng Giao</strong> ·
-            <strong>Chưa làm = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý + Làm hộ trả về − Đã làm − NG làm hỏng − Trả hàng lỗi − Gửi làm hộ</strong> ·
-            <strong>Còn giao = Đã làm − Giao Hàng mới</strong>
+            Đang hiện công thức: bấm vào số bất kỳ để xem phép tính với số thật và từng chứng từ.
+            <strong>Tồn = Σ Nhận − Σ Giao</strong> ·
+            <strong>Chưa làm = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý − Đã làm − NG làm hỏng − Giao Hàng lỗi có tích "công đoạn trước"</strong>
+            (khác Excel: không trừ hàng lỗi đang giữ chuyển đi sửa / tự sửa trả, và trừ cả NG làm hỏng).
         </div>
     }
 
     <div class="table-responsive border rounded" @onclick="CloseColFilter">
         <table class="table table-sm table-hover mb-0 align-middle gn-table" style="font-size:11px">
-            <thead class="table-light">
+            <thead>
                 <tr>
-                    <th rowspan="@HeadRows" class="text-center border-end" style="width:26px" title="Xem chi tiết theo Excel + từng NC"></th>
-                    <th rowspan="@HeadRows" class="border-end" style="width:85px">@HdvColHeader("PlanNo", "Mã PO")</th>
-                    <th rowspan="@HeadRows" class="border-end" style="width:80px">@HdvColHeader("PurchaseOrder", "PO KH")</th>
-                    <th rowspan="@HeadRows" class="border-end" style="width:100px">@HdvColHeader("PartNo", "Part No")</th>
-                    <th rowspan="@HeadRows" class="text-center border-end" style="width:42px">SL PO</th>
+                    <th rowspan="3" style="width:26px;background:#f3f5f8" title="Mở các bước B1, B2, B3… của PO"></th>
+                    <th rowspan="3" style="width:85px;background:#f3f5f8">@HdvColHeader("PlanNo", "Mã PO")</th>
+                    <th rowspan="3" style="width:80px;background:#f3f5f8">@HdvColHeader("PurchaseOrder", "PO KH")</th>
+                    <th rowspan="3" style="width:100px;background:#f3f5f8">@HdvColHeader("PartNo", "Part No")</th>
+                    <th rowspan="3" style="width:42px;background:#f3f5f8">SL PO</th>
                     @foreach (var g in HandoverLedgerService.GroupCodes)
                     {
-                        <th colspan="@ColsFor(g).Count" class="text-center gn-gl" style="background:@GroupBg(g)">@HandoverLedgerService.GroupLabel(g)</th>
+                        <th colspan="@ColsFor(g).Count" class="gn-gl" style="background:@GroupBg(g);font-size:12px">@HandoverLedgerService.GroupLabel(g)</th>
                     }
-                    <th rowspan="@HeadRows" class="text-center gn-gl" style="width:60px" title="Phôi = Σ Tồn + Đang giao + Thành phẩm nhập kho + Đã huỷ + Đã trả khách">Cân PO</th>
-                    <th rowspan="@HeadRows" class="text-center" style="width:100px">Thao tác</th>
+                    <th rowspan="3" class="gn-gl" style="width:60px;background:#f3f5f8" title="Phôi = Σ Tồn + Đang giao + Thành phẩm nhập kho + Đã huỷ + Đã trả khách">Cân PO</th>
+                    <th rowspan="3" style="width:100px;background:#f3f5f8">Thao tác</th>
                 </tr>
-                @if (_showFullCols)
-                {
-                    @* Đủ cột: tầng 2 = Nhận / Giao (như Excel), cột tính ghép 2 tầng *@
-                    <tr style="font-size:10px;color:#555">
-                        @foreach (var g in HandoverLedgerService.GroupCodes)
+                <tr>
+                    @foreach (var g in HandoverLedgerService.GroupCodes)
+                    {
+                        <th colspan="4" class="gn-gl" style="background:@GroupBg(g)">Nhận</th>
+                        <th colspan="4" class="gn-gl" style="background:@GroupBg(g)">Giao</th>
+                        @foreach (var c in ColsFor(g).Where(c => c.Band == ""))
                         {
-                            var cols = ColsFor(g);
-                            var nN = cols.Count(c => c.Band == "Nhận");
-                            var nG = cols.Count(c => c.Band == "Giao");
-                            <th colspan="@nN" class="text-center gn-gl">Nhận</th>
-                            <th colspan="@nG" class="text-center gn-gl">Giao</th>
-                            var firstCalc = true;
-                            @foreach (var c in cols.Where(c => c.Band == ""))
-                            {
-                                @HeadCell(c, firstCalc, 2)
-                                firstCalc = false;
-                            }
+                            <th rowspan="2" class="gn-cell @(c.Key == "ChuaLam" || (g == "KHO" && c.Key == "Ton") ? "gn-gl" : "")" title="@c.Tip" style="background:@GroupBg(g)">
+                                @(c.Key is "ChuaLam" or "DaLam" ? (g == "GC" ? c.Header.Replace("làm", "GC") : c.Header) : c.Header)
+                                @if (_showFormula && !string.IsNullOrEmpty(c.Formula)) { <span class="gn-fhint">@c.Formula</span> }
+                            </th>
                         }
-                    </tr>
-                    <tr style="font-size:10px;color:#555">
-                        @foreach (var g in HandoverLedgerService.GroupCodes)
+                    }
+                </tr>
+                <tr>
+                    @foreach (var g in HandoverLedgerService.GroupCodes)
+                    {
+                        @foreach (var c in ColsFor(g).Where(c => c.Band != ""))
                         {
-                            var cols = ColsFor(g);
-                            var firstN = true;
-                            @foreach (var c in cols.Where(c => c.Band != ""))
-                            {
-                                var isStart = firstN || c.Key == cols.First(x => x.Band == "Giao").Key;
-                                @HeadCell(c, isStart, 1)
-                                firstN = false;
-                            }
+                            <th class="gn-cell @(c.Key is "NhanMoi" or "GiaoMoi" ? "gn-gl" : "")" title="@c.Tip">@c.Header</th>
                         }
-                    </tr>
-                }
-                else
-                {
-                    <tr style="font-size:10px;color:#555">
-                        @foreach (var g in HandoverLedgerService.GroupCodes)
-                        {
-                            var first = true;
-                            @foreach (var c in ColsFor(g))
-                            {
-                                @HeadCell(c, first, 1)
-                                first = false;
-                            }
-                        }
-                    </tr>
-                }
+                    }
+                </tr>
             </thead>
             <tbody>
                 @if (!_rows.Any())
                 {
-                    <tr><td colspan="40" class="text-center text-muted py-4">
+                    <tr><td colspan="70" class="text-center text-muted py-4">
                         <i class="bi bi-inbox me-2"></i>Không có dữ liệu
                     </td></tr>
                 }
@@ -237,36 +218,40 @@ else
                 {
                     var isExpanded = _expandedDetailId == row.KhPlanDetailId;
                     <tr class="@(row.HasWarning ? "table-danger" : row.HasLoiGiu ? "table-warning" : "")"
-                        style="cursor:pointer" title="Double-click để xem lịch sử"
+                        style="cursor:pointer" title="Double-click để xem lịch sử phiếu"
                         @ondblclick="() => ShowLogAsync(row.KhPlanDetailId)">
-                        <td class="text-center border-end p-0" @onclick:stopPropagation @ondblclick:stopPropagation>
+                        <td class="text-center p-0" @onclick:stopPropagation @ondblclick:stopPropagation>
                             <button class="btn btn-xs btn-link p-0" style="font-size:12px;line-height:1"
-                                    @onclick="() => ToggleExpandDetail(row.KhPlanDetailId)"
-                                    title="@(isExpanded ? "Thu gọn" : "Xem chi tiết")">
+                                    @onclick="() => ToggleExpandDetailAsync(row.KhPlanDetailId)"
+                                    title="@(isExpanded ? "Thu gọn" : "Xem từng bước B1, B2, B3…")">
                                 <i class="bi @(isExpanded ? "bi-caret-down-fill text-primary" : "bi-caret-right-fill text-muted")"></i>
                             </button>
                         </td>
-                        <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
-                        <td class="border-end"><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
-                        <td class="border-end fw-semibold">@row.PartNo</td>
-                        <td class="text-center border-end">@row.PlanQty.ToString("0.##")</td>
+                        <td><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
+                        <td><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
+                        <td class="fw-semibold">@row.PartNo</td>
+                        <td class="text-center">@row.PlanQty.ToString("0.##")</td>
                         @foreach (var g in HandoverLedgerService.GroupCodes)
                         {
                             var grp = row.G(g);
-                            var first = true;
                             @foreach (var c in ColsFor(g))
                             {
-                                @NumCell(row, grp, c, first)
-                                first = false;
+                                @NumCell(row, grp, c, null)
                             }
                         }
                         <td class="text-center gn-gl @(_showFormula ? "gn-click" : "")" @onclick:stopPropagation
                             @onclick="() => OpenBalance(row)">
                             @if (row.Balanced) { <span class="text-success fw-semibold">cân</span> }
                             else { <span class="text-danger fw-bold">lệch</span> }
+                            @if (row.DaHuy > 0 || row.TraKhach > 0)
+                            {
+                                <div class="text-muted" style="font-size:9px" title="Hàng lỗi đã ra khỏi PO">
+                                    @(row.DaHuy > 0 ? $"huỷ {row.DaHuy:0.##}" : "")@(row.DaHuy > 0 && row.TraKhach > 0 ? " · " : "")@(row.TraKhach > 0 ? $"trả KH {row.TraKhach:0.##}" : "")
+                                </div>
+                            }
                             @if (row.Warnings.Count > 0)
                             {
-                                <div><span class="badge bg-danger" style="font-size:9px" title="@string.Join("\n", row.Warnings)">@row.Warnings.Count lỗi</span></div>
+                                <div><span class="badge bg-danger gn-badge" title="@string.Join("\n", row.Warnings)">@row.Warnings.Count lỗi</span></div>
                             }
                         </td>
                         <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
@@ -300,7 +285,7 @@ else
                                     </button>
                                 }
                                 <button class="btn btn-xs btn-outline-secondary"
-                                        style="font-size:10px;padding:1px 6px"
+                                        style="font-size:10px;padding:1px 6px" title="Lịch sử phiếu"
                                         @onclick="() => ShowLogAsync(row.KhPlanDetailId)">
                                     <i class="bi bi-clock-history"></i>
                                 </button>
@@ -309,8 +294,45 @@ else
                     </tr>
                     @if (isExpanded)
                     {
+                        @* [GN-CELL] Các dòng B1, B2, B3… đúng kiểu Excel: trạng thái sau từng chứng từ, ô vừa đổi tô màu *@
+                        if (_stepsLoading)
+                        {
+                            <tr class="gn-step"><td colspan="70" class="text-center py-2"><span class="spinner-border spinner-border-sm me-1"></span>Đang tính từng bước…</td></tr>
+                        }
+                        else if (_steps.Count == 0)
+                        {
+                            <tr class="gn-step"><td colspan="70" class="text-muted py-2 ps-4">PO chưa có chứng từ nào (phôi, phiếu giao, WTS).</td></tr>
+                        }
+                        else
+                        {
+                            LedgerRow? prev = null;
+                            foreach (var st in _steps)
+                            {
+                                var sr = st.Row;
+                                <tr class="gn-step" title="@st.Text">
+                                    <td></td>
+                                    <td class="gn-lbl">B@(st.Index)</td>
+                                    <td colspan="3" class="gn-txt">
+                                        <span class="text-muted me-1">@(st.At.HasValue ? st.At.Value.ToString("dd/MM HH:mm") : "")</span>
+                                        <span class="badge @StepBadge(st.Kind) gn-badge me-1">@StepKind(st.Kind)</span>@st.Text
+                                    </td>
+                                    @foreach (var g in HandoverLedgerService.GroupCodes)
+                                    {
+                                        var grp = sr.G(g);
+                                        var pg = prev?.G(g);
+                                        @foreach (var c in ColsFor(g))
+                                        {
+                                            @NumCell(sr, grp, c, pg)
+                                        }
+                                    }
+                                    <td class="text-center gn-gl">@(sr.Balanced ? "cân" : "lệch")</td>
+                                    <td></td>
+                                </tr>
+                                prev = sr;
+                            }
+                        }
                         <tr class="table-light">
-                            <td colspan="40" class="p-3" @ondblclick:stopPropagation>
+                            <td colspan="70" class="p-3" @ondblclick:stopPropagation>
                                 @RenderDetail(row)
                             </td>
                         </tr>
@@ -321,14 +343,15 @@ else
     </div>
 
     <div class="mt-2 d-flex gap-4 flex-wrap" style="font-size:11px;color:#777">
-        <span><strong>Nhận</strong> = số bên nhận đã đếm (có thể lớn hơn PO khi hàng quay vòng)</span>
+        <span><strong>Nhận</strong> = số bên nhận đã đếm (hàng quay vòng cũng tính, nên có thể lớn hơn PO)</span>
         <span><strong>Giao</strong> = tính cả phiếu bên nhận chưa nhận</span>
         <span><strong class="text-primary">Chưa làm</strong> = trần nhập WTS</span>
-        <span><strong>Tồn</strong> = Tổng Nhận − Tổng Giao</span>
-        <span><span class="badge bg-danger">■</span> Có số âm (nhập sai)</span>
-        <span><span class="badge bg-warning text-dark">■</span> Có hàng lỗi đang giữ</span>
-        <span><span class="badge bg-primary" style="font-size:9px">⬆N</span> phiếu nhóm đó giao chờ nhận</span>
-        <span><span class="badge bg-success" style="font-size:9px">⬇N</span> phiếu chờ nhóm đó nhận</span>
+        <span><strong>Tồn</strong> = Σ Nhận − Σ Giao</span>
+        <span><span class="gn-chg px-2 border">&nbsp;</span> ô vừa đổi ở bước đó</span>
+        <span><span class="badge bg-danger">■</span> có số âm (nhập sai)</span>
+        <span><span class="badge bg-warning text-dark">■</span> đang giữ hàng lỗi / hàng sửa</span>
+        <span><span class="badge bg-primary gn-badge">⬆N</span> phiếu nhóm đó giao chờ nhận</span>
+        <span><span class="badge bg-success gn-badge">⬇N</span> phiếu chờ nhóm đó nhận</span>
     </div>
     </div>
 }
@@ -390,11 +413,13 @@ else
     </div>
 }
 
-@* ── MODAL GIAO HÀNG (theo loại phiếu) ── *@
+@* ── MODAL GIAO HÀNG — form cũ + chọn Ô GIAO theo Excel ── *@
 @if (_showIssueModal && _selectedRow != null)
 {
+    var G = string.IsNullOrEmpty(_issueFrom) ? null : _selectedRow.G(_issueFrom);
+    var purpose = EffectivePurpose;
     <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:500px;max-height:90vh;overflow-y:auto">
+        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:90vh;overflow-y:auto">
             <div class="mes-modal-header">
                 <h6 class="mb-0"><i class="bi bi-box-arrow-right me-2"></i>Giao hàng</h6>
                 <button class="btn-close btn-sm" @onclick="CloseModals"></button>
@@ -429,84 +454,176 @@ else
                     }
                 </div>
 
-                @if (!string.IsNullOrEmpty(_issueFrom))
+                @if (G != null)
                 {
-                    <label class="form-label form-label-sm fw-semibold">Loại phiếu</label>
-                    @foreach (var p in PurposeOptions(_issueFrom))
+                    @if (!_issueSpecialMode)
                     {
-                        var cap = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, p.Code, p.Code == HandoverPurpose.HelpSend ? _issueFromNC : null).Max;
-                        <button type="button" class="gn-purpose @(_issuePurpose == p.Code ? "on" : "")" @onclick="() => SelectPurpose(p.Code)">
-                            <div class="d-flex justify-content-between">
-                                <strong>@p.Label</strong>
-                                @if (p.Code != HandoverPurpose.HelpSend)
+                        @* ── Ô GIAO (đúng 3 ô Excel bên giao dùng) ── *@
+                        <label class="form-label form-label-sm fw-semibold mb-1">Giao từ ô <span class="text-muted fw-normal">(cột Giao trên bảng)</span></label>
+                        <div class="d-flex gap-2 mb-2">
+                            @foreach (var c in HandoverCell.IssueCells)
+                            {
+                                var have = CellHave(G, c);
+                                var canPrev = c == HandoverCell.Loi && _issueFrom != "KHO" && G.ChuaLam > 0;
+                                var dis = have <= 0 && !canPrev;
+                                <button type="button" class="gn-cellbtn @(_issueCell == c ? "on" : "")" disabled="@dis" @onclick="() => SelectCell(c)"
+                                        title="@CellTitle(c)">
+                                    <div class="fw-semibold">@HandoverCell.Label(c)</div>
+                                    <div class="small @(have > 0 ? "text-success" : "text-muted")">
+                                        @(c == HandoverCell.Moi ? (_issueFrom == "KHO" ? "phôi còn" : "đã làm, chưa giao") : "đang giữ") @have.ToString("0.##")
+                                    </div>
+                                    @if (c == HandoverCell.Loi && _issueFrom != "KHO")
+                                    {
+                                        <div class="small text-muted">chưa làm @G.ChuaLam.ToString("0.##")</div>
+                                    }
+                                </button>
+                            }
+                        </div>
+
+                        @if (_issueCell == HandoverCell.Loi)
+                        {
+                            <div class="mb-2 p-2 border rounded @(_issuePrev ? "border-danger bg-danger bg-opacity-10" : "bg-light")">
+                                <div class="form-check mb-1">
+                                    <input class="form-check-input" type="checkbox" id="prevNg" checked="@_issuePrev" disabled="@(_issueFrom == "KHO")"
+                                           @onchange="e => OnPrevChanged((bool)(e.Value ?? false))" />
+                                    <label class="form-check-label fw-semibold @(_issuePrev ? "text-danger" : "")" for="prevNg">
+                                        Hàng lỗi công đoạn trước
+                                        <i class="bi bi-info-circle text-muted fw-normal ms-1"
+                                           title="Tích khi phát hiện lỗi do nhóm trước gây ra, chiếc đó chưa làm. Trả về nhóm trước, lấy từ hàng chưa làm. (Trước đây gọi là 'Trả hàng NG ngược'.)"></i>
+                                    </label>
+                                </div>
+                                @if (_issueFrom == "KHO")
                                 {
-                                    <span class="small @(cap > 0 ? "text-success" : "text-muted")">tối đa @cap.ToString("0.##")</span>
+                                    <div class="small text-muted">Kho không có công đoạn trước. Phôi lỗi đang giữ: gửi nhờ sửa, hoặc Huỷ / Trả khách (mục Khác).</div>
+                                }
+                                else if (!_issuePrev)
+                                {
+                                    <div class="d-flex gap-3 mt-1" style="font-size:12px">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="rep" id="rep0" checked="@(!_issueRepaired)" @onchange="() => OnRepairedChanged(false)" />
+                                            <label class="form-check-label" for="rep0">Chưa sửa — gửi nhờ nhóm khác sửa</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="rep" id="rep1" checked="@_issueRepaired" @onchange="() => OnRepairedChanged(true)" />
+                                            <label class="form-check-label" for="rep1">Đã tự sửa xong — trả về nơi phát hiện</label>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Toàn bộ số giao là hàng lỗi, trừ khỏi Chưa làm của nhóm. Bên nhận vẫn phải xác nhận.</div>
                                 }
                             </div>
-                            <div class="small text-muted">@p.Hint</div>
-                        </button>
-                    }
-
-                    @if (_issuePurpose == HandoverPurpose.HelpSend)
-                    {
-                        <div class="mb-3 mt-2">
-                            <label class="form-label form-label-sm fw-semibold">NC nguồn <span class="text-danger">*</span></label>
-                            <select class="form-select form-select-sm" @onchange="OnFromNcChanged">
-                                <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC đã làm xong --</option>
-                                @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !x.IsLast))
-                                {
-                                    <option value="@s.Code" selected="@(_issueFromNC == s.Code)">NC @s.Code (OK @s.Ok.ToString("0.##"))</option>
-                                }
-                            </select>
-                        </div>
-                    }
-
-                    @if (HandoverPurpose.IsOut(_issuePurpose))
-                    {
-                        @* [GN-NG-OUT] Huỷ / Trả khách: hàng ra khỏi PO, không có nhóm nhận, không cần bên nhận xác nhận *@
-                        <div class="mb-3 mt-2 p-2 border rounded" style="background:#fff7ed;font-size:12px">
-                            <strong>Ra khỏi PO → @HandoverLedgerService.GroupLabel(_issueTo)</strong>
-                            <div class="text-muted">Phiếu ghi xong là hàng rời khỏi ô "Hàng lỗi đang giữ" của nhóm giao. Cân PO tính vào cột Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
-                        </div>
+                        }
                     }
                     else
                     {
-                    <div class="mb-3 mt-2">
-                        <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
-                        <select class="form-select form-select-sm" @onchange="OnIssueToChanged">
-                            <option value="" selected="@(string.IsNullOrEmpty(_issueTo))">-- Chọn nhóm nhận --</option>
-                            @foreach (var g in HandoverLedgerService.GroupCodes.Where(x => x != _issueFrom))
-                            {
-                                <option value="@g" selected="@(_issueTo == g)">@HandoverLedgerService.GroupLabel(g)</option>
-                            }
-                        </select>
-                        @if (RouteError != null)
+                        @* ── Form đặc biệt (ngoài 4 ô Excel): Làm hộ / Huỷ / Trả khách ── *@
+                        <label class="form-label form-label-sm fw-semibold mb-1">Phiếu khác</label>
+                        @foreach (var p in SpecialOptions(_issueFrom))
                         {
-                            <div class="small text-danger mt-1"><i class="bi bi-x-circle me-1"></i>@RouteError</div>
+                            var cap = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, p.Code, p.Code == HandoverPurpose.HelpSend ? _issueFromNC : null, HandoverCell.Loi).Max;
+                            <button type="button" class="gn-cellbtn w-100 mb-1 @(_issueSpecial == p.Code ? "on" : "")" @onclick="() => SelectSpecial(p.Code)">
+                                <div class="d-flex justify-content-between">
+                                    <strong>@p.Label</strong>
+                                    @if (p.Code != HandoverPurpose.HelpSend)
+                                    {
+                                        <span class="small @(cap > 0 ? "text-success" : "text-muted")">tối đa @cap.ToString("0.##")</span>
+                                    }
+                                </div>
+                                <div class="small text-muted">@p.Hint</div>
+                            </button>
                         }
+                        @if (_issueSpecial == HandoverPurpose.HelpSend)
+                        {
+                            <div class="mb-2 mt-2">
+                                <label class="form-label form-label-sm fw-semibold">NC nguồn <span class="text-danger">*</span></label>
+                                <select class="form-select form-select-sm" @onchange="OnFromNcChanged">
+                                    <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC đã làm xong --</option>
+                                    @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !x.IsLast))
+                                    {
+                                        <option value="@s.Code" selected="@(_issueFromNC == s.Code)">NC @s.Code (OK @s.Ok.ToString("0.##"))</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                    }
+
+                    <div class="text-end mb-2">
+                        <button type="button" class="btn btn-link btn-sm p-0" style="font-size:11.5px" @onclick="ToggleSpecial">
+                            @(_issueSpecialMode ? "← Quay lại giao theo ô (Hàng mới / Hàng lỗi / Hàng sửa)" : "Khác: làm hộ · huỷ hàng lỗi · trả khách →")
+                        </button>
                     </div>
-                    }
 
-                    @if (_issueTo == "GC" && _selectedRow.G("GC").Steps.Any())
+                    @if (purpose != null)
                     {
-                        <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
-                            <label class="form-label form-label-sm fw-semibold mb-1">
-                                Nhận vào NC @(_issuePurpose == HandoverPurpose.HelpReturn ? "*" : "(tuỳ chọn)")
-                            </label>
-                            <select class="form-select form-select-sm" @onchange="OnToNcChanged">
-                                <option value="" selected="@(string.IsNullOrEmpty(_issueToNC))">-- NC đầu (mặc định) --</option>
-                                @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded))
+                        @if (HandoverPurpose.IsOut(purpose))
+                        {
+                            <div class="mb-3 p-2 border rounded" style="background:#fff7ed;font-size:12px">
+                                <strong>Ra khỏi PO → @HandoverLedgerService.GroupLabel(_issueTo)</strong>
+                                <div class="text-muted">Lấy từ ô Hàng lỗi đang giữ của nhóm. Cân PO tính vào Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
+                            </div>
+                        }
+                        else
+                        {
+                            var targets = TargetOptions(purpose);
+                            <div class="mb-3">
+                                <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
+                                @if (targets.Count == 1)
                                 {
-                                    <option value="@s.Code" selected="@(_issueToNC == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
+                                    <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(targets[0])</strong>
+                                        <span class="text-muted small ms-2">@TargetHint(purpose)</span></div>
                                 }
-                            </select>
-                            <div class="small text-muted mt-1">Hàng làm hộ trả về: chọn NC ngay sau NC máy loại trừ. Hàng đã sửa trả về: chọn NC sẽ làm tiếp.</div>
-                        </div>
-                    }
+                                else
+                                {
+                                    <select class="form-select form-select-sm" @onchange="OnIssueToChanged">
+                                        <option value="" selected="@(string.IsNullOrEmpty(_issueTo))">-- Chọn nhóm nhận --</option>
+                                        @foreach (var g in targets)
+                                        {
+                                            <option value="@g" selected="@(_issueTo == g)">@HandoverLedgerService.GroupLabel(g)</option>
+                                        }
+                                    </select>
+                                    <div class="small text-muted mt-1">@TargetHint(purpose)</div>
+                                }
+                                @if (RouteError != null)
+                                {
+                                    <div class="small text-danger mt-1"><i class="bi bi-x-circle me-1"></i>@RouteError</div>
+                                }
+                            </div>
 
-                    @if (!string.IsNullOrEmpty(_issuePurpose))
-                    {
-                        var capEx = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, _issuePurpose, _issueFromNC);
+                            @if (_issueTo == "GC" && _selectedRow.G("GC").Steps.Any() && purpose is HandoverPurpose.New or HandoverPurpose.RepairReturn or HandoverPurpose.HelpReturn)
+                            {
+                                <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
+                                    <label class="form-label form-label-sm fw-semibold mb-1">
+                                        Nhận vào NC @(purpose == HandoverPurpose.HelpReturn ? "*" : "(tuỳ chọn)")
+                                    </label>
+                                    <select class="form-select form-select-sm" @onchange="OnToNcChanged">
+                                        <option value="" selected="@(string.IsNullOrEmpty(_issueToNC))">-- NC đầu (mặc định) --</option>
+                                        @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded))
+                                        {
+                                            <option value="@s.Code" selected="@(_issueToNC == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
+                                        }
+                                    </select>
+                                    <div class="small text-muted mt-1">Hàng làm hộ trả về: chọn NC ngay sau NC máy loại trừ. Hàng đã sửa trả về: chọn NC sẽ làm tiếp.</div>
+                                </div>
+                            }
+
+                            @* Bên nhận sẽ ghi vào ô nào — phần mềm quyết, 2 bên không lệch ô *@
+                            var rc = HandoverCell.ReceiveCellOf(purpose);
+                            @if (!string.IsNullOrEmpty(_issueTo))
+                            {
+                                <div class="mb-2 p-2 border rounded" style="background:#f0fdf4;font-size:12px">
+                                    <i class="bi bi-arrow-return-right me-1"></i>
+                                    <strong>@HandoverLedgerService.GroupLabel(_issueTo)</strong> sẽ nhận vào ô
+                                    <strong>@(rc != null ? HandoverCell.Label(rc) : "Làm hộ")</strong>
+                                    @if (purpose == HandoverPurpose.RepairReturn) { <span class="text-muted"> — phần mềm nhận diện là SP đã OK, nhân viên nhập WTS tiếp được.</span> }
+                                    @if (purpose == HandoverPurpose.RepairSend) { <span class="text-muted"> — hàng nhờ sửa, không tính vào số sản xuất của nhóm sửa.</span> }
+                                    @if (purpose == HandoverPurpose.NgReturn) { <span class="text-muted"> — nơi gây lỗi giữ lại để gửi sửa / tự sửa / huỷ.</span> }
+                                </div>
+                            }
+                        }
+
+                        var capEx = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell);
                         <div class="mb-3 p-2 border rounded" style="font-size:12px">
                             <div class="d-flex justify-content-between">
                                 <span>@capEx.Explain.Title</span>
@@ -532,7 +649,7 @@ else
                                 <div class="small text-danger">Vượt tối đa @capEx.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
                             }
                         </div>
-                        @if (IsNgPurpose(_issuePurpose))
+                        @if (IsNgPurpose(purpose))
                         {
                             <div class="mb-2">
                                 <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể <span class="text-danger">*</span></label>
@@ -541,8 +658,8 @@ else
                             </div>
                         }
                         <div class="mb-2">
-                            <label class="form-label form-label-sm @(_issuePurpose == HandoverPurpose.HelpSend ? "fw-semibold text-danger" : "")">
-                                Ghi chú @(_issuePurpose == HandoverPurpose.HelpSend ? "*" : "(tuỳ chọn)")
+                            <label class="form-label form-label-sm @(purpose == HandoverPurpose.HelpSend ? "fw-semibold text-danger" : "")">
+                                Ghi chú @(purpose == HandoverPurpose.HelpSend ? "*" : "(tuỳ chọn)")
                             </label>
                             <input type="text" class="form-control form-control-sm" @bind="_issueNotes" />
                         </div>
@@ -556,7 +673,7 @@ else
             </div>
             <div class="mes-modal-footer">
                 <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
-                <button class="btn btn-sm btn-primary" @onclick="ConfirmIssueAsync" disabled="@(_saving || string.IsNullOrEmpty(_issuePurpose))">
+                <button class="btn btn-sm btn-primary" @onclick="ConfirmIssueAsync" disabled="@(_saving || purpose == null)">
                     @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     Xác nhận giao
                 </button>
@@ -565,11 +682,11 @@ else
     </div>
 }
 
-@* ── MODAL NHẬN HÀNG (giữ như cũ, thêm nhãn loại phiếu) ── *@
+@* ── MODAL NHẬN HÀNG (như cũ — thêm dòng "ghi vào ô …" do phần mềm điền) ── *@
 @if (_showReceiveModal && _selectedRow != null)
 {
     <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:85vh;display:flex;flex-direction:column">
+        <div class="mes-modal" @onclick:stopPropagation style="width:540px;max-height:85vh;display:flex;flex-direction:column">
             <div class="mes-modal-header">
                 <div>
                     <h6 class="mb-0"><i class="bi bi-box-arrow-in-left me-2"></i>Nhận hàng</h6>
@@ -611,6 +728,9 @@ else
                         @foreach (var p in _pendingTxs)
                         {
                             var isExpanded = _expandedTxId == p.HandoverTxId;
+                            var pp = PendingPurpose(p);
+                            var sendCell = HandoverCell.IssueCellOf(pp, p.FromCell);
+                            var recvCell = HandoverCell.ReceiveCellOf(pp);
                             <div class="border-bottom">
                                 <div class="d-flex align-items-center gap-2 px-3 py-2"
                                      style="cursor:pointer;background:@(isExpanded ? "#f0f7ff" : "white")"
@@ -619,7 +739,7 @@ else
                                     <div style="flex:1">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @HandoverLedgerService.GroupLabel(p.FromGroupCode)</span>
-                                            <span class="badge @PurposeBadge(PendingPurpose(p))" style="font-size:10px">@HandoverPurpose.Label(PendingPurpose(p))</span>
+                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell)</span>
                                             @if (p.NgQty > 0)
                                             {
                                                 <span class="badge bg-danger" style="font-size:10px" title="@p.NgReason">Lỗi: @p.NgReason</span>
@@ -629,6 +749,7 @@ else
                                         </div>
                                         <div style="font-size:11px;color:#666;margin-top:2px">
                                             <i class="bi bi-person me-1"></i>@p.IssuedByName
+                                            <span class="ms-2 text-success"><i class="bi bi-arrow-return-right me-1"></i>ghi vào ô <strong>@(recvCell != null ? HandoverCell.Label(recvCell) : "Làm hộ")</strong></span>
                                             @if (p.QtyReceivedSoFar > 0)
                                             {
                                                 <span class="text-success ms-2"><i class="bi bi-check me-1"></i>Đã nhận @p.QtyReceivedSoFar.ToString("0.##") / @p.QtyIssued.ToString("0.##")</span>
@@ -661,7 +782,7 @@ else
                                             <div class="mb-2">
                                                 <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể *</label>
                                                 <input type="text" class="form-control form-control-sm border-danger" @bind="_receiveNgReason" />
-                                                <div class="small text-muted mt-1">Số NG này được ghi là Giao Hàng lỗi của nhóm mình và Nhận Hàng lỗi của bên giao.</div>
+                                                <div class="small text-muted mt-1">Số NG này ghi là Giao · Hàng lỗi của nhóm mình và Nhận · Hàng lỗi của bên giao.</div>
                                             </div>
                                         }
                                         <div class="mb-2">
@@ -703,7 +824,7 @@ else
     <div class="mes-modal-backdrop">
         <div class="mes-modal" @onclick:stopPropagation style="width:760px;max-height:82vh;overflow-y:auto">
             <div class="mes-modal-header">
-                <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Lịch sử giao nhận — @_logPartNo</h6>
+                <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Lịch sử phiếu — @_logPartNo</h6>
                 <button class="btn-close btn-sm" @onclick="CloseModals"></button>
             </div>
             <div class="mes-modal-body p-0">
@@ -713,22 +834,28 @@ else
                 }
                 @foreach (var tx in _logItems)
                 {
+                    var lp = LogPurpose(tx);
+                    var sc = HandoverCell.IssueCellOf(lp, tx.FromCell);
+                    var rcl = HandoverCell.ReceiveCellOf(lp);
                     <div class="border-bottom p-3 @(tx.IsVoided ? "bg-light" : "")">
                         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                             <span class="small text-muted">#@tx.HandoverTxId</span>
                             <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
                                 @HandoverLedgerService.GroupLabel(tx.FromGroupCode) → @HandoverLedgerService.GroupLabel(tx.ToGroupCode)
                             </span>
-                            <span class="badge @PurposeBadge(LogPurpose(tx))">@HandoverPurpose.Label(LogPurpose(tx))</span>
+                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc)</span>
+                            @if (rcl != null && !HandoverPurpose.IsOut(lp))
+                            {
+                                <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
+                            }
                             @if (string.IsNullOrEmpty(tx.Purpose))
                             {
-                                <span class="small text-muted fst-italic" title="Phiếu tạo trước khi có loại phiếu — phần mềm tự suy ra">(phiếu cũ)</span>
+                                <span class="small text-muted fst-italic" title="Phiếu tạo trước khi có ô giao — phần mềm tự suy ra">(phiếu cũ)</span>
                             }
                             <span class="badge @GetStatusBadge(tx.Status)">@tx.Status</span>
                             <span class="small text-muted">@tx.IssuedAt.ToString("dd/MM/yyyy HH:mm")</span>
                             <span class="small text-muted">by @tx.IssuedByName</span>
                             @if (tx.IsVoided) { <span class="badge bg-secondary">ĐÃ HUỶ</span> }
-                            @* [GN-NG-OUT] phiếu Huỷ / Trả khách (COMPLETED ngay khi lập) cũng huỷ được nếu ghi nhầm *@
                             @if (!tx.IsVoided && (tx.Status == "PENDING" || HandoverPurpose.IsOut(tx.Purpose)) && !tx.Receives.Any()
                                  && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
                             {
@@ -852,7 +979,7 @@ else
             <div class="mes-modal-body">
                 <div class="alert alert-warning py-2 small">
                     <i class="bi bi-exclamation-triangle me-1"></i>
-                    Chỉ huỷ được phiếu <strong>PENDING</strong> chưa có ai xác nhận nhận. Sau khi huỷ, số lượng trả về nhóm giao.
+                    Chỉ huỷ được phiếu <strong>PENDING</strong> chưa có ai xác nhận nhận (và phiếu Huỷ / Trả khách). Sau khi huỷ, số lượng trả về ô của nhóm giao.
                 </div>
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold text-danger">Lý do huỷ *</label>
@@ -902,10 +1029,12 @@ else
     LedgerRow? _selectedRow;
     int? _expandedDetailId;
     bool _onlyWarn;
+    // [GN-CELL] các bước B1..Bn của PO đang mở
+    List<LedgerStepRow> _steps = new();
+    bool _stepsLoading;
 
     // ── Hiển thị ──────────────────────────────────────────────────────
-    bool _showFormula;      // [GN-LEDGER] nút Ẩn/Hiện công thức — mặc định ẩn
-    bool _showFullCols;     // [GN-LEDGER] hiện đủ cột Excel (Nhận / Giao theo loại hàng)
+    bool _showFormula;      // nút Ẩn/Hiện công thức — mặc định ẩn
     LedgerExplain? _explain;
     string _explainPo = "";
     string _explainKey = "";
@@ -920,7 +1049,12 @@ else
     List<string> _issueGroups = new();
     string  _issueFrom    = "";
     string  _issueTo      = "";
-    string  _issuePurpose = "";
+    // [GN-CELL] form Giao theo ô
+    string  _issueCell     = "";      // MOI | LOI | SUA
+    bool    _issuePrev;               // tích "Hàng lỗi công đoạn trước"
+    bool    _issueRepaired;           // ô Hàng lỗi không tích: false = gửi nhờ sửa, true = tự sửa xong trả về
+    bool    _issueSpecialMode;        // mục "Khác": làm hộ / huỷ / trả khách
+    string  _issueSpecial  = "";      // HELP_SEND | HELP_RETURN | SCRAP | CUST_RETURN
     string  _issueFromNC  = "";
     string  _issueToNC    = "";
     decimal _issueQty;
@@ -956,203 +1090,121 @@ else
     private bool    _sortAscHdv = true;
 
     // =================================================================
-    // Định nghĩa cột (theo Excel xưởng). Key = khoá diễn giải trong LedgerGroup.Explains
+    // [GN-CELL] Cột đúng Excel xưởng. Key = khoá diễn giải trong LedgerGroup.Explains
     // =================================================================
-    record ColDef(string Key, string Header, string Tip, string Formula, Func<LedgerGroup, decimal> Get,
-                  bool Full, bool Kho, bool Prod, string Css)
-    {
-        /// <summary>Tầng tiêu đề ở chế độ đủ cột: "Nhận" | "Giao" | "" (cột tính)</summary>
-        public string Band => Key.StartsWith("Nhan") && Key != "NhanTong" ? "Nhận" : Key.StartsWith("Giao") && Key != "GiaoTong" ? "Giao" : "";
-    }
+    record ColDef(string Key, string Header, string Band, string Tip, string Formula, Func<LedgerGroup, decimal> Get, string Css);
 
-    int HeadRows => _showFullCols ? 3 : 2;
-
-    RenderFragment HeadCell(ColDef c, bool first, int rowspan) => __builder =>
+    static readonly List<ColDef> ExcelCols = new()
     {
-        <th rowspan="@rowspan" class="text-center @(first ? "gn-gl" : "")" title="@c.Tip" style="white-space:normal;min-width:44px;max-width:90px">
-            @c.Header
-            @if (_showFormula && !string.IsNullOrEmpty(c.Formula))
-            {
-                <span class="gn-fhint">@c.Formula</span>
-            }
-        </th>
+        new("NhanMoi",   "Hàng Mới",          "Nhận", "Phiếu Hàng mới đã nhận (Kho: phôi nhận thực tế)", "", g => g.NhanMoi, ""),
+        new("NhanLoi",   "Hàng lỗi",          "Nhận", "Hàng lỗi công đoạn trước bị trả về (lỗi do mình / phôi lỗi về Kho)", "", g => g.NhanLoi, ""),
+        new("NhanSua",   "Hàng Sửa",          "Nhận", "Hàng nhóm khác gửi nhờ sửa — không tính vào số sản xuất", "", g => g.NhanSua, ""),
+        new("NhanLoiXl", "Hàng lỗi đã xử lý", "Nhận", "Hàng sửa xong trả về nơi phát hiện — SP đã OK, nhập WTS tiếp được", "", g => g.NhanLoiXl, ""),
+        new("GiaoMoi",   "Hàng Mới",          "Giao", "Phiếu Hàng mới đã lập (tính cả phiếu chờ nhận)", "", g => g.GiaoMoi, ""),
+        new("GiaoLoi",   "Hàng lỗi",          "Giao", "Giao từ ô Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""),
+        new("GiaoSua",   "Hàng Sửa",          "Giao", "Sửa hộ xong, trả về nơi phát hiện", "", g => g.GiaoSua, ""),
+        new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Có trong Excel nhưng cả 3 tình huống không ghi vào đây (hàng đã xử lý chỉ nhận về rồi làm tiếp)", "", g => g.GiaoLoiXl, ""),
+        new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG hỏng − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
+        new("DaLam",     "Đã làm",   "", "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, ""),
+        new("Ton",       "Tồn",      "", "Hàng đang thật sự nằm ở nhóm", "Σ Nhận − Σ Giao", g => g.Ton, "gn-ton"),
     };
 
-    static readonly List<ColDef> AllCols = new()
-    {
-        // Gọn
-        new("NhanTong",  "Nhận",            "Tổng số bên nhận đã đếm (mọi loại hàng)", "Σ phiếu đã nhận", g => g.NhanTong, false, true, true, ""),
-        new("GiaoTong",  "Giao",            "Tổng đã giao (tính cả phiếu chờ nhận)",  "Σ phiếu đã lập",  g => g.GiaoTong, false, true, true, ""),
-        // Đủ cột Excel — Nhận
-        new("NhanMoi",   "Hàng mới",          "Phiếu Hàng mới đã nhận (Kho: phôi nhận thực tế)", "", g => g.NhanMoi, true, true, true, ""),
-        new("NhanLoi",   "Hàng lỗi",          "Hàng lỗi bị trả về (lỗi do mình, hoặc phôi lỗi về Kho)", "", g => g.NhanLoi, true, true, true, ""),
-        new("NhanSua",   "Hàng Sửa",          "Hàng nhóm khác gửi nhờ sửa", "", g => g.NhanSua, true, true, true, ""),
-        new("NhanLoiXl", "Hàng lỗi đã xử lý", "Hàng đã sửa xong trả về để làm tiếp", "", g => g.NhanLoiXl, true, true, true, ""),
-        new("NhanLamHo", "Làm hộ",            "Hàng làm hộ (máy loại trừ) — thêm so với Excel", "", g => g.NhanLamHo, true, false, true, ""),
-        // Đủ cột Excel — Giao
-        new("GiaoMoi",   "Hàng mới",          "Phiếu Hàng mới đã lập", "", g => g.GiaoMoi, true, true, true, ""),
-        new("GiaoLoi",   "Hàng lỗi",          "Trả hàng lỗi về nơi gây lỗi + gửi hàng lỗi đi sửa + huỷ + trả khách", "", g => g.GiaoLoi, true, true, true, ""),
-        new("GiaoSua",   "Hàng Sửa",          "Trả hàng đã sửa về nơi phát hiện", "", g => g.GiaoSua, true, true, true, ""),
-        new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Có trong Excel, chưa tình huống nào dùng — chờ xưởng xác nhận", "", g => g.GiaoLoiXl, true, true, true, ""),
-        new("GiaoLamHo", "Làm hộ",            "Gửi làm hộ / trả hàng làm hộ — thêm so với Excel", "", g => g.GiaoLamHo, true, false, true, ""),
-        // Số tính
-        new("ChuaLam",   "Chưa làm",    "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG hỏng − Trả lỗi", g => g.ChuaLam, false, false, true, "gn-calc"),
-        new("DaLam",     "Đã làm",      "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, false, false, true, ""),
-        new("NgCuoi",    "NG làm hỏng", "NG trên WTS của nhóm (NG cuối)", "WTS NG", g => g.NgCuoi, true, false, true, ""),
-        new("ConGiao",   "Còn giao",    "Trần lập phiếu Hàng mới (L4)", "Đã làm − Giao mới", g => g.ConGiao, true, false, true, "gn-calc"),
-        new("KhoCon",    "Phôi còn",    "Phôi tốt còn giao được", "Phôi + Phôi sửa về − Giao mới", g => g.ConGiao, true, true, false, "gn-calc"),
-        new("Ton",       "Tồn",         "Hàng đang thật sự nằm ở nhóm", "Nhận − Giao", g => g.Ton, false, true, true, "gn-ton"),
-    };
-
-    List<ColDef> ColsFor(string group)
-    {
-        bool kho = group == "KHO";
-        return AllCols.Where(c => (kho ? c.Kho : c.Prod)
-                               && (_showFullCols ? c.Key is not ("NhanTong" or "GiaoTong") : !c.Full)).ToList();
-    }
-
-    static string ExplainKey(string key) => key == "KhoCon" ? "ConGiao" : key;
+    static List<ColDef> ColsFor(string group)
+        => group == "KHO" ? ExcelCols.Where(c => c.Key is not ("ChuaLam" or "DaLam")).ToList() : ExcelCols;
 
     static string GroupBg(string grp) => grp switch
     {
-        "KHO"  => "#e1f5ee",
-        "GC"   => "#e6f1fb",
-        "HTSP" => "#faeeda",
-        "KCS"  => "#eaf3de",
-        "PKG"  => "#fbeaf0",
+        "KHO"  => "#fff176",   // vàng — như Excel xưởng
+        "GC"   => "#a8d88a",   // xanh lá
+        "HTSP" => "#8fcbf2",   // xanh dương
+        "KCS"  => "#f8c88a",   // cam
+        "PKG"  => "#d7b9f0",   // tím nhạt
         _      => "#f8f9fa"
     };
 
-    RenderFragment NumCell(LedgerRow row, LedgerGroup g, ColDef c, bool first) => __builder =>
+    /// <summary>1 ô số. prev = nhóm ở bước trước (dòng B) để tô ô vừa đổi; null = dòng PO.</summary>
+    RenderFragment NumCell(LedgerRow row, LedgerGroup g, ColDef c, LedgerGroup? prev) => __builder =>
     {
         var v = c.Get(g);
         var isNeg = v < 0;
-        var isActive = _explain != null && _explainKey == $"{row.KhPlanDetailId}|{g.Code}|{c.Key}";
-        var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(v == 0 ? "gn-zero" : "")} {(isNeg ? "gn-neg" : "")} {(_showFormula ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
-        <td class="@cls" @onclick:stopPropagation @onclick="() => OpenExplain(row, g, c.Key)">
-            @(v == 0 ? "—" : v.ToString("0.##"))
-            @if (c.Key == "Ton" && (g.PendingToIssue > 0 || g.PendingToReceive > 0))
+        var changed = prev != null ? c.Get(prev) != v : false;
+        var isActive = prev == null && _explain != null && _explainKey == $"{row.KhPlanDetailId}|{g.Code}|{c.Key}";
+        var first = c.Key is "NhanMoi" or "GiaoMoi" or "ChuaLam" || (g.IsKho && c.Key == "Ton");
+        var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(isNeg ? "gn-neg" : "")} {(changed ? "gn-chg" : "")} {(_showFormula && prev == null ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
+        <td class="@cls" @onclick:stopPropagation @onclick="() => { if (prev == null) OpenExplain(row, g, c.Key); }">
+            @(v == 0 ? (c.Band == "" ? "0" : "") : v.ToString("0.##"))
+            @if (c.Key == "Ton" && prev == null)
             {
-                <div class="d-flex gap-1 justify-content-end">
+                <div class="d-flex gap-1 justify-content-center flex-wrap">
+                    @if (g.NhanLamHo > 0 || g.GiaoLamHo > 0)
+                    {
+                        <span class="badge bg-secondary gn-badge" title="Làm hộ (máy loại trừ) — ngoài 8 ô Excel: nhận @g.NhanLamHo.ToString("0.##") · giao @g.GiaoLamHo.ToString("0.##") · đang giữ @g.LamHoGiu.ToString("0.##")">làm hộ</span>
+                    }
                     @if (g.PendingToIssue > 0)
                     {
-                        <span class="badge bg-primary" style="font-size:9px;padding:1px 4px" title="@g.PendingToIssue phiếu nhóm này giao chưa được nhận">⬆@g.PendingToIssue</span>
+                        <span class="badge bg-primary gn-badge" title="@g.PendingToIssue phiếu nhóm này giao chưa được nhận">⬆@g.PendingToIssue</span>
                     }
                     @if (g.PendingToReceive > 0)
                     {
-                        <span class="badge bg-success" style="font-size:9px;padding:1px 4px" title="@g.PendingToReceive phiếu đang chờ nhóm này nhận">⬇@g.PendingToReceive</span>
+                        <span class="badge bg-success gn-badge" title="@g.PendingToReceive phiếu đang chờ nhóm này nhận">⬇@g.PendingToReceive</span>
                     }
                 </div>
             }
         </td>
     };
 
+    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", _ => k };
+    static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", _ => "bg-secondary" };
+
     // =================================================================
-    // Chi tiết 1 PO: bảng đúng bố cục Excel (mỗi nhóm 1 dòng) + NC + cân bằng
+    // Chi tiết 1 PO (dưới các dòng B): ô đang giữ, làm hộ, NC, mã CV, cân bằng, cảnh báo
     // =================================================================
-    static readonly (string Key, string Header)[] DetailCols =
-    {
-        ("NhanMoi", "Hàng mới"), ("NhanLoi", "Hàng lỗi"), ("NhanSua", "Hàng Sửa"), ("NhanLoiXl", "Hàng lỗi đã xử lý"), ("NhanLamHo", "Làm hộ"),
-        ("GiaoMoi", "Hàng mới"), ("GiaoLoi", "Hàng lỗi"), ("GiaoSua", "Hàng Sửa"), ("GiaoLoiXl", "Hàng lỗi đã xử lý"), ("GiaoLamHo", "Làm hộ"),
-        ("ChuaLam", "Chưa làm"), ("DaLam", "Đã làm"), ("NgCuoi", "NG làm hỏng"), ("ConGiao", "Còn giao"),
-        ("LoiGiu", "Lỗi / sửa đang giữ"), ("LamHoGiu", "Làm hộ đang giữ"), ("Ton", "Tồn"),
-    };
-
-    static decimal DetailVal(LedgerGroup g, string key) => key switch
-    {
-        "NhanMoi" => g.NhanMoi, "NhanLoi" => g.NhanLoi, "NhanSua" => g.NhanSua, "NhanLoiXl" => g.NhanLoiXl, "NhanLamHo" => g.NhanLamHo,
-        "GiaoMoi" => g.GiaoMoi, "GiaoLoi" => g.GiaoLoi, "GiaoSua" => g.GiaoSua, "GiaoLoiXl" => g.GiaoLoiXl, "GiaoLamHo" => g.GiaoLamHo,
-        "ChuaLam" => g.ChuaLam, "DaLam" => g.DaLam, "NgCuoi" => g.NgCuoi, "ConGiao" => g.ConGiao,
-        "LoiGiu" => g.LoiGiu, "LamHoGiu" => g.LamHoGiu, "Ton" => g.Ton, _ => 0
-    };
-
-    static bool DetailNA(LedgerGroup g, string key)
-        => g.IsKho && key is "ChuaLam" or "DaLam" or "NgCuoi" or "LamHoGiu" or "NhanLamHo" or "GiaoLamHo";
-
     RenderFragment RenderDetail(LedgerRow row) => __builder =>
     {
-        <div class="d-flex flex-column gap-3">
-            <div class="border rounded bg-white">
-                <div class="px-2 py-1 fw-semibold small border-bottom d-flex align-items-center gap-2">
-                    <i class="bi bi-table"></i>Bảng theo Excel xưởng — @row.PlanNo · @row.PartNo
-                    <span class="text-muted fw-normal">(bật "Hiện công thức" rồi bấm vào số để xem cách tính)</span>
+        <div class="d-flex flex-column gap-2">
+            <div class="d-flex flex-wrap gap-3 align-items-center small">
+                <span class="@(_showFormula ? "gn-click" : "")" @onclick="() => OpenBalance(row)">
+                    <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") =
+                    Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##")
+                    + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
+                    @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }
+                </span>
+                @if (!row.ApplyWorkflow)
+                {
+                    <span class="badge bg-secondary" title="N7: Workflow OFF — vẫn tính đủ số, chỉ cảnh báo">Workflow OFF</span>
+                }
+            </div>
+            @if (row.Warnings.Any())
+            {
+                <div class="px-2 py-1 border rounded" style="background:#fef2f2">
+                    <div class="small fw-semibold text-danger">Số âm — dữ liệu đang nhập sai, cần xem lại chứng từ:</div>
+                    @foreach (var w in row.Warnings)
+                    {
+                        <div class="small text-danger">• @w</div>
+                    }
                 </div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered mb-0 gn-table" style="font-size:11px">
-                        <thead class="table-light">
-                            <tr>
-                                <th rowspan="2">Bộ phận</th>
-                                <th colspan="5" class="text-center gn-gl">Nhận</th>
-                                <th colspan="5" class="text-center gn-gl">Giao</th>
-                                <th colspan="7" class="text-center gn-gl">Số tính</th>
-                            </tr>
-                            <tr style="font-size:10px">
-                                @for (int i = 0; i < DetailCols.Length; i++)
-                                {
-                                    var dc = DetailCols[i];
-                                    var ex = row.G("GC").Explains.TryGetValue(dc.Key, out var e0) ? e0.Formula : "";
-                                    <th class="text-center @(i is 0 or 5 or 10 ? "gn-gl" : "")" style="max-width:110px;white-space:normal">
-                                        @dc.Header
-                                        @if (_showFormula && i >= 10 && !string.IsNullOrEmpty(ex))
-                                        {
-                                            <span class="gn-fhint">@ex</span>
-                                        }
-                                    </th>
-                                }
-                            </tr>
-                        </thead>
+            }
+            <div class="d-flex flex-wrap gap-3">
+                <div class="border rounded p-2 bg-white" style="min-width:360px">
+                    <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Đang giữ theo ô (trần khi lập phiếu)</div>
+                    <table class="table table-sm mb-0" style="font-size:10.5px">
+                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng mới còn giao được">Còn giao</th><th class="text-end">Ô Hàng lỗi</th><th class="text-end">Ô Hàng sửa</th><th class="text-end">Làm hộ</th><th class="text-end text-danger">NG làm hỏng</th></tr></thead>
                         <tbody>
                             @foreach (var code in HandoverLedgerService.GroupCodes)
                             {
                                 var g = row.G(code);
                                 <tr>
                                     <td class="fw-semibold" style="background:@GroupBg(code)">@g.Label</td>
-                                    @for (int i = 0; i < DetailCols.Length; i++)
-                                    {
-                                        var key = DetailCols[i].Key;
-                                        if (DetailNA(g, key))
-                                        {
-                                            <td class="gn-num gn-zero @(i is 0 or 5 or 10 ? "gn-gl" : "")">·</td>
-                                            continue;
-                                        }
-                                        var v = DetailVal(g, key);
-                                        var isActive = _explain != null && _explainKey == $"{row.KhPlanDetailId}|{code}|{key}";
-                                        <td class="gn-num @(i is 0 or 5 or 10 ? "gn-gl" : "") @(v == 0 ? "gn-zero" : "") @(v < 0 ? "gn-neg" : "") @(key is "ChuaLam" or "ConGiao" ? "gn-calc" : "") @(key == "Ton" ? "gn-ton" : "") @(_showFormula ? "gn-click" : "") @(isActive ? "gn-active" : "")"
-                                            @onclick="() => OpenExplain(row, g, key)">
-                                            @(v == 0 ? "—" : v.ToString("0.##"))
-                                        </td>
-                                    }
+                                    <td class="text-end @(_showFormula ? "gn-click" : "") @(g.ConGiao < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "ConGiao")'>@g.ConGiao.ToString("0.##")</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "") @(g.LoiGiu < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "LoiGiu")'>@g.LoiGiu.ToString("0.##")</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "") @(g.SuaGiu < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "SuaGiu")'>@g.SuaGiu.ToString("0.##")</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "") @(g.LamHoGiu < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "LamHoGiu")'>@(g.IsKho ? "·" : g.LamHoGiu.ToString("0.##"))</td>
+                                    <td class="text-end text-danger @(_showFormula ? "gn-click" : "")" @onclick='() => OpenExplain(row, g, "NgCuoi")'>@(g.IsKho ? "·" : g.NgCuoi.ToString("0.##"))</td>
                                 </tr>
                             }
                         </tbody>
                     </table>
                 </div>
-                <div class="px-2 py-1 small border-top d-flex flex-wrap gap-3 align-items-center">
-                    <span class="@(_showFormula ? "gn-click" : "")" @onclick="() => OpenBalance(row)">
-                        <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") =
-                        Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##")
-                        @* [GN-NG-OUT] hàng lỗi đã ra khỏi PO *@
-                        + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
-                        @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }
-                    </span>
-                    @if (!row.ApplyWorkflow)
-                    {
-                        <span class="badge bg-secondary" title="N7: Workflow OFF — vẫn tính đủ số, chỉ cảnh báo">Workflow OFF</span>
-                    }
-                </div>
-                @if (row.Warnings.Any())
-                {
-                    <div class="px-2 py-1 border-top" style="background:#fef2f2">
-                        <div class="small fw-semibold text-danger">Số âm — dữ liệu đang nhập sai, cần xem lại chứng từ:</div>
-                        @foreach (var w in row.Warnings)
-                        {
-                            <div class="small text-danger">• @w</div>
-                        }
-                    </div>
-                }
-            </div>
-
-            <div class="d-flex flex-wrap gap-3">
                 @RenderGcSteps(row)
                 @foreach (var code in new[] { "HTSP", "KCS", "PKG" })
                 {
@@ -1205,7 +1257,7 @@ else
                         }
                     </tbody>
                 </table>
-                <div class="small text-muted mt-1">Đã làm của Gia công = OK của NC cuối. Máy đồng dạng gộp vào NC chính.</div>
+                <div class="small text-muted mt-1">Đã GC = OK của NC cuối. Máy đồng dạng gộp vào NC chính.</div>
             }
         </div>
     };
@@ -1222,7 +1274,7 @@ else
             else
             {
                 <table class="table table-sm mb-0" style="font-size:10.5px">
-                    <thead class="table-light"><tr><th>Nhóm</th><th>Mã</th><th class="text-end">OK</th><th class="text-end text-danger">NG</th><th>Ghi chú</th></tr></thead>
+                    <thead class="table-light"><tr><th>Nhóm</th><th>Mã</th><th class="text-end">OK</th><th class="text-end text-danger">NG</th><th class="text-end" title="Còn chờ làm (trần WTS mã này)">Chờ</th><th>Ghi chú</th></tr></thead>
                     <tbody>
                         @foreach (var s in g.Steps)
                         {
@@ -1231,6 +1283,7 @@ else
                                 <td><code>@s.Code</code></td>
                                 <td class="text-end">@s.Ok.ToString("0.##")</td>
                                 <td class="text-end">@(s.Ng == 0 ? "—" : s.Ng.ToString("0.##"))</td>
+                                <td class="text-end">@(s.Waiting.HasValue ? s.Waiting.Value.ToString("0.##") : "·")</td>
                                 <td style="white-space:normal;max-width:200px">@(s.IsLast ? "→ quyết định Đã làm (nhỏ nhất)" : s.Note)</td>
                             </tr>
                         }
@@ -1298,6 +1351,7 @@ else
         BuildColFilters();
         await LoadBadgesAsync();
         if (_explain != null) RefreshExplain();
+        if (_expandedDetailId != null) await LoadStepsAsync(_expandedDetailId.Value);
         StateHasChanged();
     }
 
@@ -1317,6 +1371,24 @@ else
         if (_selectedRow != null && _selectedRow.KhPlanDetailId == detailId && fresh != null) _selectedRow = fresh;
         await LoadBadgesAsync();
         if (_explain != null) RefreshExplain();
+        if (_expandedDetailId == detailId) await LoadStepsAsync(detailId);
+    }
+
+    // [GN-CELL] các dòng B1..Bn
+    async Task LoadStepsAsync(int detailId)
+    {
+        _stepsLoading = true;
+        try { _steps = await LedgerSvc.GetStepsForDetailAsync(detailId); }
+        finally { _stepsLoading = false; }
+    }
+
+    async Task ToggleExpandDetailAsync(int detailId)
+    {
+        if (_expandedDetailId == detailId) { _expandedDetailId = null; _steps = new(); return; }
+        _expandedDetailId = detailId;
+        _steps = new();
+        StateHasChanged();
+        await LoadStepsAsync(detailId);
     }
 
     int GetPendingCount(int id) => _pendingCountPerDetail.TryGetValue(id, out var c) ? c : 0;
@@ -1368,16 +1440,13 @@ else
         _showFormula = !_showFormula;
         if (!_showFormula) CloseExplain();
     }
-    void ToggleFullCols() => _showFullCols = !_showFullCols;
-    void ToggleExpandDetail(int detailId) => _expandedDetailId = _expandedDetailId == detailId ? null : detailId;
     void ClearSearch() => _search = string.Empty;
 
     // ── Khung công thức ───────────────────────────────────────────────
     void OpenExplain(LedgerRow row, LedgerGroup g, string colKey)
     {
         if (!_showFormula) return;
-        var key = ExplainKey(colKey);
-        if (!g.Explains.TryGetValue(key, out var e)) return;
+        if (!g.Explains.TryGetValue(colKey, out var e)) return;
         _explain    = e;
         _explainPo  = $"{row.PlanNo} · {row.PurchaseOrder} · {row.PartNo}";
         _explainKey = $"{row.KhPlanDetailId}|{g.Code}|{colKey}";
@@ -1399,94 +1468,153 @@ else
         if (row == null) { CloseExplain(); return; }
         if (parts[1] == "PO") { _explain = row.BalanceExplain; return; }
         var g = row.G(parts[1]);
-        _explain = g.Explains.TryGetValue(ExplainKey(parts[2]), out var e) ? e : null;
+        _explain = g.Explains.TryGetValue(parts[2], out var e) ? e : null;
     }
 
     void CloseExplain() { _explain = null; _explainKey = ""; }
 
-    // ── Modal Giao ────────────────────────────────────────────────────
-    record PurposeOpt(string Code, string Label, string Hint);
+    // =================================================================
+    // [GN-CELL] Modal Giao — theo ô Excel
+    // =================================================================
+    record SpecialOpt(string Code, string Label, string Hint);
 
-    static List<PurposeOpt> PurposeOptions(string from)
+    static List<SpecialOpt> SpecialOptions(string from)
     {
-        var list = new List<PurposeOpt>
-        {
-            new(HandoverPurpose.New, from == "KHO" ? "Hàng mới — cấp phôi" : from == "PKG" ? "Hàng mới — nhập kho thành phẩm" : "Hàng mới — giao xuôi hàng đã làm xong",
-                from == "KHO" ? "Phôi tốt cho Gia công." : "Hàng OK đã nhập WTS. Hàng lỗi không đi phiếu này."),
-        };
-        if (from != "KHO")
-            list.Add(new(HandoverPurpose.NgReturn, "Trả hàng lỗi — về nơi gây lỗi",
-                "Phát hiện lỗi do khâu trước, chưa làm chiếc đó. Lấy từ hàng chưa làm."));
-        list.Add(new(HandoverPurpose.RepairSend, "Gửi sửa — chuyển hàng lỗi đang giữ cho nhóm sửa",
-            "Nơi gây lỗi chuyển hàng lỗi mình đang giữ sang nhóm có khả năng sửa."));
-        list.Add(new(HandoverPurpose.RepairReturn, "Trả hàng đã sửa — về nơi phát hiện",
-            "Sửa xong (hàng nhờ sửa, hoặc lỗi của chính mình), trả về nơi phát hiện để làm tiếp."));
+        var list = new List<SpecialOpt>();
         if (from == "GC")
             list.Add(new(HandoverPurpose.HelpSend, "Gửi làm hộ — NC máy loại trừ",
-                "Gia công gửi hàng giữa chừng cho nhóm khác làm hộ. Chọn NC nguồn, ghi chú bắt buộc."));
-        if (from != "GC")
+                "Gia công gửi hàng giữa chừng cho nhóm khác làm hộ. Chọn NC nguồn, ghi chú bắt buộc. Không nằm trong 8 ô Excel."));
+        if (from != "GC" && from != "KHO")
             list.Add(new(HandoverPurpose.HelpReturn, "Trả làm hộ — về Gia công",
                 "Làm hộ xong, trả về Gia công. Chọn NC nhận vào."));
-        // [GN-NG-OUT] L5: hàng lỗi đang giữ ra khỏi PO — mọi nhóm, lấy từ "Hàng lỗi / sửa đang giữ"
         list.Add(new(HandoverPurpose.Scrap, "Huỷ hàng lỗi — không sửa được",
-            "Hàng lỗi đang giữ không sửa được: huỷ, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
+            "Lấy từ ô Hàng lỗi đang giữ, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
         list.Add(new(HandoverPurpose.CustReturn, "Trả khách hàng lỗi",
             from == "KHO" ? "Phôi lỗi đang giữ ở Kho: trả lại khách, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."
                           : "Hàng lỗi đang giữ trả lại khách (khách đồng ý nhận lại), ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
         return list;
     }
 
-    static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.Scrap or HandoverPurpose.CustReturn; // [GN-NG-OUT]
+    static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.Scrap or HandoverPurpose.CustReturn;
 
-    string? RouteError => string.IsNullOrEmpty(_issueFrom) || string.IsNullOrEmpty(_issueTo) || string.IsNullOrEmpty(_issuePurpose)
-        ? null : HandoverLedgerService.CheckRoute(_issueFrom, _issueTo, _issuePurpose);
+    /// <summary>Loại phiếu suy từ ô + tích + lựa chọn (hoặc mục Khác). null = chưa chọn xong.</summary>
+    string? EffectivePurpose
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(_issueFrom)) return null;
+            if (_issueSpecialMode) return string.IsNullOrEmpty(_issueSpecial) ? null : _issueSpecial;
+            if (string.IsNullOrEmpty(_issueCell)) return null;
+            return HandoverCell.Resolve(_issueCell, _issuePrev, _issueRepaired).Purpose;
+        }
+    }
+
+    /// <summary>Số đang có trong ô để giao (hiện trên nút chọn ô).</summary>
+    static decimal CellHave(LedgerGroup g, string cell) => cell switch
+    {
+        HandoverCell.Moi => Math.Max(0, g.ConGiao),
+        HandoverCell.Loi => Math.Max(0, g.LoiGiu),
+        HandoverCell.Sua => Math.Max(0, g.SuaGiu),
+        _ => 0
+    };
+
+    string CellTitle(string cell) => cell switch
+    {
+        HandoverCell.Moi => _issueFrom == "KHO" ? "Phôi tốt cấp cho Gia công (Kho ghi Giao · Hàng Mới)." : "Hàng OK đã nhập WTS, giao xuôi cho nhóm sau (ghi Giao · Hàng Mới).",
+        HandoverCell.Loi => "Ghi Giao · Hàng lỗi. Tích 'Hàng lỗi công đoạn trước' = trả nơi gây lỗi (lấy từ hàng chưa làm). Không tích = hàng lỗi mình đang giữ: gửi nhờ sửa, hoặc đã tự sửa xong trả về nơi phát hiện.",
+        HandoverCell.Sua => "Hàng nhóm khác gửi nhờ sửa, sửa xong trả về nơi phát hiện (ghi Giao · Hàng Sửa; bên nhận ghi Hàng lỗi đã xử lý).",
+        _ => ""
+    };
+
+    List<string> TargetOptions(string purpose)
+        => HandoverLedgerService.GroupCodes.Where(x => x != _issueFrom && HandoverLedgerService.CheckRoute(_issueFrom, x, purpose) == null).ToList();
+
+    static string TargetHint(string purpose) => purpose switch
+    {
+        HandoverPurpose.New          => "Hàng mới chỉ giao xuôi (Đóng gói → Kho = nhập thành phẩm).",
+        HandoverPurpose.NgReturn     => "Chỉ trả về nhóm đứng trước (nơi gây lỗi).",
+        HandoverPurpose.RepairSend   => "Nhóm có khả năng sửa (Kho không sửa hàng).",
+        HandoverPurpose.RepairReturn => "Trả thẳng về nơi phát hiện lỗi (không qua nơi gây lỗi).",
+        HandoverPurpose.HelpSend     => "Nhóm làm hộ NC máy loại trừ.",
+        HandoverPurpose.HelpReturn   => "Hàng làm hộ chỉ trả về Gia công.",
+        _ => ""
+    };
+
+    string? RouteError => string.IsNullOrEmpty(_issueFrom) || string.IsNullOrEmpty(_issueTo) || EffectivePurpose == null
+        ? null : HandoverLedgerService.CheckRoute(_issueFrom, _issueTo, EffectivePurpose);
 
     void OpenIssueModal(LedgerRow row)
     {
         _selectedRow  = row;
         _issueGroups  = _myEditGroups.ToList();
         _issueFrom    = _issueGroups.Count == 1 ? _issueGroups[0] : "";
-        _issueTo      = "";
-        _issuePurpose = "";
-        _issueFromNC  = "";
-        _issueToNC    = "";
-        _issueQty     = 0;
-        _issueReason  = "";
-        _issueNotes   = "";
+        ResetIssueInputs();
         _modalError   = "";
         _showIssueModal = true;
+    }
+
+    void ResetIssueInputs()
+    {
+        _issueTo = ""; _issueCell = ""; _issuePrev = false; _issueRepaired = false;
+        _issueSpecialMode = false; _issueSpecial = "";
+        _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _issueReason = ""; _issueNotes = "";
     }
 
     void OnIssueFromChanged(ChangeEventArgs e)
     {
         _issueFrom = e.Value?.ToString() ?? "";
-        _issuePurpose = ""; _issueTo = ""; _issueFromNC = ""; _issueToNC = ""; _issueQty = 0;
+        ResetIssueInputs();
     }
 
-    void SelectPurpose(string code)
+    void SelectCell(string cell)
     {
-        _issuePurpose = code;
-        _issueFromNC  = "";
-        _issueToNC    = "";
-        _modalError   = "";
-        // Gợi ý nhóm nhận mặc định cho Hàng mới: nhóm kế tiếp
-        if (code == HandoverPurpose.New)
-            _issueTo = _issueFrom switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
-        else if (code == HandoverPurpose.HelpReturn)
-            _issueTo = "GC";
-        else if (HandoverPurpose.IsOut(code))
-            _issueTo = HandoverPurpose.OutTarget(code)!;   // [GN-NG-OUT]
+        _issueCell = cell; _issuePrev = false; _issueRepaired = false; _issueToNC = ""; _modalError = "";
+        // Hàng lỗi ở nhóm sản xuất: mặc định tích "công đoạn trước" khi ô Hàng lỗi đang giữ trống (TH1/TH2/TH3 B1)
+        if (cell == HandoverCell.Loi && _issueFrom != "KHO" && _selectedRow != null && _selectedRow.G(_issueFrom).LoiGiu <= 0)
+            _issuePrev = true;
+        AfterPurposeChanged();
+    }
+
+    void OnPrevChanged(bool v) { _issuePrev = v; AfterPurposeChanged(); }
+    void OnRepairedChanged(bool v) { _issueRepaired = v; AfterPurposeChanged(); }
+
+    void ToggleSpecial()
+    {
+        _issueSpecialMode = !_issueSpecialMode;
+        _issueCell = ""; _issueSpecial = ""; _issueTo = ""; _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _modalError = "";
+    }
+
+    void SelectSpecial(string code)
+    {
+        _issueSpecial = code; _issueFromNC = ""; _issueToNC = ""; _modalError = "";
+        AfterPurposeChanged();
+    }
+
+    /// <summary>Sau khi loại phiếu đổi: tự điền nhóm nhận khi chỉ có 1 lựa chọn / là hàng mới, và điền số tối đa.</summary>
+    void AfterPurposeChanged()
+    {
+        var purpose = EffectivePurpose;
+        _issueTo = "";
+        if (purpose == null || _selectedRow == null) { _issueQty = 0; return; }
+        if (HandoverPurpose.IsOut(purpose)) _issueTo = HandoverPurpose.OutTarget(purpose)!;
         else
-            _issueTo = "";
-        if (_selectedRow != null)
-            _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, code, null).Max;
+        {
+            var targets = TargetOptions(purpose);
+            if (purpose == HandoverPurpose.New)
+            {
+                var next = _issueFrom switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
+                _issueTo = targets.Contains(next) ? next : (targets.Count == 1 ? targets[0] : "");
+            }
+            else if (targets.Count == 1) _issueTo = targets[0];
+        }
+        _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell).Max;
     }
 
     void OnFromNcChanged(ChangeEventArgs e)
     {
         _issueFromNC = e.Value?.ToString() ?? "";
-        if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromNC))
-            _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, _issuePurpose, _issueFromNC).Max;
+        if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromNC) && EffectivePurpose != null)
+            _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, EffectivePurpose, _issueFromNC).Max;
     }
 
     void OnIssueToChanged(ChangeEventArgs e) { _issueTo = e.Value?.ToString() ?? ""; _issueToNC = ""; }
@@ -1496,20 +1624,23 @@ else
     {
         if (_selectedRow == null) return;
         _modalError = "";
-        if (string.IsNullOrEmpty(_issueFrom))    { _modalError = "Chọn nhóm giao."; return; }
-        if (string.IsNullOrEmpty(_issuePurpose)) { _modalError = "Chọn loại phiếu."; return; }
-        if (string.IsNullOrEmpty(_issueTo))      { _modalError = "Chọn nhóm nhận."; return; }
-        if (RouteError != null)                  { _modalError = RouteError; return; }
-        if (_issueQty <= 0)                      { _modalError = "Số lượng phải lớn hơn 0."; return; }
+        var purpose = EffectivePurpose;
+        if (string.IsNullOrEmpty(_issueFrom)) { _modalError = "Chọn nhóm giao."; return; }
+        if (purpose == null)                  { _modalError = _issueSpecialMode ? "Chọn loại phiếu." : "Chọn ô giao (Hàng mới / Hàng lỗi / Hàng sửa)."; return; }
+        if (string.IsNullOrEmpty(_issueTo))   { _modalError = "Chọn nhóm nhận."; return; }
+        if (RouteError != null)               { _modalError = RouteError; return; }
+        if (_issueQty <= 0)                   { _modalError = "Số lượng phải lớn hơn 0."; return; }
         _saving = true;
         var detailId = _selectedRow.KhPlanDetailId;
-        (bool ok, string err) = await HandoverSvc.IssueAsync(
-            detailId, _issueFrom, _issueTo, _issueQty, _currentUserId,
-            fromNC:   string.IsNullOrEmpty(_issueFromNC) ? null : _issueFromNC,
-            notes:    _issueNotes,
-            toNC:     string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-            ngReason: _issueReason,
-            purpose:  _issuePurpose);
+        (bool ok, string err) = _issueSpecialMode
+            ? await HandoverSvc.IssueSpecialAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId, purpose,
+                fromNC: string.IsNullOrEmpty(_issueFromNC) ? null : _issueFromNC,
+                toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
+                notes:  _issueNotes, reason: _issueReason)
+            : await HandoverSvc.IssueByCellAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId,
+                _issueCell, _issuePrev, _issueRepaired,
+                toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
+                notes:  _issueNotes, reason: _issueReason);
         _saving = false;
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
@@ -1573,14 +1704,28 @@ else
     static string LogPurpose(HandoverLogItem t)
         => t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);
 
+    /// <summary>Nhãn theo ô Excel: "Giao · Hàng lỗi ☑ công đoạn trước", "Giao · Hàng Sửa", "Gửi làm hộ"…</summary>
+    static string CellFlow(string purpose, string? sendCell)
+    {
+        var c = sendCell ?? HandoverCell.IssueCellOf(purpose, null);
+        return purpose switch
+        {
+            HandoverPurpose.NgReturn     => "Giao · Hàng lỗi ☑ công đoạn trước",
+            HandoverPurpose.RepairSend   => "Giao · Hàng lỗi (gửi nhờ sửa)",
+            HandoverPurpose.RepairReturn => c == HandoverCell.Loi ? "Giao · Hàng lỗi (tự sửa xong)" : "Giao · Hàng Sửa (sửa hộ xong)",
+            HandoverPurpose.New          => "Giao · Hàng Mới",
+            _ => HandoverPurpose.Label(purpose)
+        };
+    }
+
     static string PurposeBadge(string p) => p switch
     {
         HandoverPurpose.New          => "bg-light text-dark border",
         HandoverPurpose.NgReturn     => "bg-danger",
         HandoverPurpose.RepairSend   => "bg-warning text-dark",
         HandoverPurpose.RepairReturn => "bg-success",
-        HandoverPurpose.Scrap        => "bg-dark",                 // [GN-NG-OUT]
-        HandoverPurpose.CustReturn   => "bg-secondary",            // [GN-NG-OUT]
+        HandoverPurpose.Scrap        => "bg-dark",
+        HandoverPurpose.CustReturn   => "bg-secondary",
         _                            => "bg-info text-dark"
     };
 
