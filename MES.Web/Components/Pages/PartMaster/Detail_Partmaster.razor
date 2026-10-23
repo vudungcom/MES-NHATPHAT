@@ -259,6 +259,11 @@ else
                                             @foreach (var m in _thietBiList)
                                             { <option value="@m.SoMay">@m.SoMay - @m.TenMay</option> }
                                         </datalist>
+                                        @if (MainMachineDup(edit) is string dupMain)
+                                        {
+                                            @* [PM-DUP] máy đăng ký trùng máy của dòng đồng dạng trong cùng NC *@
+                                            <div class="small text-danger fw-semibold" style="font-size:0.72rem;">Trùng máy đồng dạng: @dupMain</div>
+                                        }
                                     </td>
 
                                     @* Máy đồng dạng — chỉ hiện nút chọn, sub-rows bên dưới hiện từng máy *@
@@ -1088,7 +1093,8 @@ else
                                     <span class="badge bg-light text-secondary border">@m.BoPhan</span>
                                     @if (isUsedElsewhere)
                                     {
-                                        <span class="badge bg-warning text-dark" style="font-size:0.7rem;">Đã chọn ở dòng khác</span>
+                                        @* [PM-DUP] ghi rõ lý do: máy đăng ký của NC, hay đã chọn ở dòng đồng dạng khác *@
+                                        <span class="badge bg-warning text-dark" style="font-size:0.7rem;">@(_usedAltReason.TryGetValue(m.SoMay, out var why) ? why : "Đã chọn ở dòng khác")</span>
                                     }
                                 </div>
                                 <span class="small text-muted">@m.LoaiMay</span>
@@ -2082,6 +2088,48 @@ else
     private MachiningEdit? _currentEditingAltMachining;
     private HashSet<string> _selectedAltMachines = new();
     private HashSet<string> _usedAltMachines = new(); // máy đã dùng ở row khác trong cùng NC — bị disabled trong modal
+    private Dictionary<string, string> _usedAltReason = new(StringComparer.OrdinalIgnoreCase); // [PM-DUP] lý do bị khoá (hiện trên nhãn)
+
+    // =====================================================================
+    // [PM-DUP 2026-10-23] Chặn trùng máy trong cùng 1 NC (Master list mục 9)
+    // Trước (từ 22/9, bdc00b7): chỉ khoá máy của các dòng đồng dạng KHÁC khi mở từ nút của dòng đồng dạng;
+    //   máy đăng ký (dòng chính) không bao giờ bị khoá, mở từ nút dòng chính thì không khoá gì, Lưu không kiểm trùng
+    //   → chọn được máy đăng ký làm máy đồng dạng (23/10 khách báo: NC 5 máy T03).
+    // Nay: 1 hàm chung cho cả 3 nút + ô máy đăng ký báo đỏ + kiểm trùng khi Lưu.
+    // =====================================================================
+    private static IEnumerable<string> SplitMay(string? s)
+        => (s ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>[PM-DUP] Máy đã dùng trong NC: máy đăng ký + máy của các dòng đồng dạng còn hiệu lực (trừ dòng except). Key = số máy, value = lý do.</summary>
+    private static Dictionary<string, string> UsedMachinesInNc(MachiningEdit edit, TimingRowEdit? except, bool includeTimingRows)
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(edit.MachineRegistered))
+            d[edit.MachineRegistered.Trim()] = "Máy đăng ký của NC này";
+        if (includeTimingRows)
+            foreach (var t in edit.TimingRows.Where(t => t != except && t.State != EditState.Deleted))
+                foreach (var m in SplitMay(t.SoMay))
+                    d.TryAdd(m, "Đã chọn ở dòng khác");
+        return d;
+    }
+
+    /// <summary>[PM-DUP] Máy đăng ký trùng máy dòng đồng dạng nào (null = không trùng).</summary>
+    private static string? MainMachineDup(MachiningEdit edit)
+    {
+        var main = edit.MachineRegistered?.Trim();
+        if (string.IsNullOrEmpty(main)) return null;
+        return edit.TimingRows.Any(t => t.State != EditState.Deleted && SplitMay(t.SoMay).Contains(main, StringComparer.OrdinalIgnoreCase)) ? main : null;
+    }
+
+    /// <summary>[PM-DUP] Liệt kê máy trùng trong NC (máy đăng ký + các dòng đồng dạng còn hiệu lực).</summary>
+    private static List<string> DuplicateMachinesInNc(MachiningEdit edit)
+    {
+        var all = new List<string>();
+        if (!string.IsNullOrWhiteSpace(edit.MachineRegistered)) all.Add(edit.MachineRegistered.Trim());
+        foreach (var t in edit.TimingRows.Where(t => t.State != EditState.Deleted))
+            all.AddRange(SplitMay(t.SoMay));
+        return all.GroupBy(x => x, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+    }
     private string _altMachineSearch = string.Empty;
 
     private bool _showAltDoGaModal = false;
@@ -2934,7 +2982,10 @@ else
             .Where(t => t.State != EditState.Deleted && !string.IsNullOrEmpty(t.SoMay))
             .Select(t => t.SoMay!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _usedAltMachines = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // mở từ dòng chính — không có row khác
+        // [PM-DUP] Trước: khoá rỗng ("mở từ dòng chính — không có row khác") → chọn được cả máy đăng ký.
+        // Nút này thay toàn bộ dòng đồng dạng bằng 1 dòng → chỉ cần khoá máy đăng ký.
+        _usedAltReason = UsedMachinesInNc(edit, null, includeTimingRows: false);
+        _usedAltMachines = _usedAltReason.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         _altMachineSearch = string.Empty;
         _showAltMachineModal = true;
     }
@@ -3053,11 +3104,10 @@ else
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : tr.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        // Máy đã dùng ở các row KHÁC trong cùng NC — sẽ bị disabled trong modal
-        _usedAltMachines = edit.TimingRows
-            .Where(t => t != tr && t.State != EditState.Deleted && !string.IsNullOrEmpty(t.SoMay))
-            .SelectMany(t => t.SoMay!.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // [PM-DUP] Máy đã dùng trong NC — máy đăng ký + các dòng đồng dạng KHÁC — bị disabled trong modal.
+        // Trước: chỉ khoá các dòng đồng dạng khác, quên máy đăng ký (T03 chọn được).
+        _usedAltReason = UsedMachinesInNc(edit, tr, includeTimingRows: true);
+        _usedAltMachines = _usedAltReason.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         _altMachineSearch = string.Empty;
         _showAltMachineModal = true;
     }
@@ -3424,6 +3474,15 @@ else
                     if (!_thietBiList.Any(m => m.SoMay == tm))
                         validationErrors.Add($"NC {e.NC}: Máy bấm giờ '{tm}' không có trong danh sách thiết bị.");
             }
+        }
+        // [PM-DUP] Chốt chặn cuối: máy trùng trong 1 NC (máy đăng ký / các dòng đồng dạng) thì không lưu.
+        // Chỉ kiểm NC đang sửa (NC hoặc dòng đồng dạng mới / sửa) — NC cũ không đụng tới thì không chặn oan.
+        foreach (var e in _machiningEdits.Where(e => e.State != EditState.Deleted
+                    && (e.State is EditState.New or EditState.Modified || e.TimingRows.Any(t => t.State is EditState.New or EditState.Modified))))
+        {
+            var dups = DuplicateMachinesInNc(e);
+            if (dups.Any())
+                validationErrors.Add($"NC {e.NC}: máy {string.Join(", ", dups)} bị trùng ở 2 dòng (máy đăng ký / máy đồng dạng) — mỗi máy chỉ ở 1 dòng.");
         }
         if (validationErrors.Count > 0)
         {
