@@ -860,26 +860,32 @@ else
                                            giữ bố cục form, ô "Số lượng nhận đạt" khoá xám, nhập số nhận ở ô Hàng lỗi, lỗi lấy theo phiếu *@
                                         <div class="row g-2 mb-2">
                                             <div class="col-6">
-                                                <label class="@OkLabelCss(RecvLoi(p))">Số lượng nhận đạt</label>
+                                                <label class="@OkLabelCss(RecvLoi(p))">@(RecvSua(p) ? "Số lượng nhận" : "Số lượng nhận đạt")</label>   @* [GN-RECV-SUA] ô Hàng sửa: chỉ đếm số chiếc *@
                                                 <input type="number" class="form-control form-control-sm border-success" @bind="_receiveQtyOk" min="0" disabled="@RecvLoi(p)" />
-                                                <div class="text-muted" style="font-size:10px;margin-top:2px">@OkHint(RecvLoi(p), p.QtyRemaining)</div>
+                                                <div class="text-muted" style="font-size:10px;margin-top:2px">@(RecvSua(p) ? $"Vào ô Nhận · Hàng sửa — tối đa {p.QtyRemaining:0.##} chiếc" : OkHint(RecvLoi(p), p.QtyRemaining))</div>
                                             </div>
                                             <div class="col-6">
-                                                <label class="form-label form-label-sm fw-semibold text-danger">
-                                                    @NgLabel(RecvLoi(p)) <small class="fw-normal">@NgSub(RecvLoi(p), p.QtyRemaining)</small> @* [GN-RECV-NG] trước: NG đếm thấy (trả ngay bên giao) *@
+                                                <label class="form-label form-label-sm fw-semibold @(RecvSua(p) ? "text-muted" : "text-danger")">
+                                                    @NgLabel(RecvLoi(p)) <small class="fw-normal">@(RecvSua(p) ? "(không dùng khi nhận hàng gửi sửa)" : NgSub(RecvLoi(p), p.QtyRemaining))</small> @* [GN-RECV-NG] trước: NG đếm thấy (trả ngay bên giao) *@
                                                 </label>
-                                                <input type="number" class="form-control form-control-sm border-danger" @bind="_receiveQtyNg" min="0" />
+                                                <input type="number" class="form-control form-control-sm border-danger" @bind="_receiveQtyNg" min="0" disabled="@RecvSua(p)" />   @* [GN-RECV-SUA] ô Hàng sửa: khoá xám, giữ bố cục *@
                                             </div>
                                         </div>
                                         @if (RecvLoi(p))
                                         {
                                             <div class="small text-muted mb-2">Vào ô Nhận · Hàng lỗi của nhóm mình, rồi xử lý tiếp (gửi sửa / tự sửa trả / huỷ / trả khách).@(string.IsNullOrEmpty(p.NgReason) ? "" : " Lỗi theo phiếu: ")<strong>@p.NgReason</strong></div>
                                         }
-                                        @if (_receiveQtyNg > 0 && !RecvLoi(p))
+                                        @if (RecvSua(p))
+                                        {
+                                            @* [GN-RECV-SUA] hàng gửi sửa: không hỏi lỗi (lấy theo phiếu bên giao), không tự lập phiếu trả *@
+                                            <div class="small text-muted mb-2">Hàng gửi sửa vốn là hàng lỗi: chỉ đếm số chiếc tới nơi, không trả lại lúc nhận. Nhận rồi thấy không sửa được thì giao trả lại bên gửi.@(string.IsNullOrEmpty(p.NgReason) ? "" : " Lỗi theo phiếu: ")<strong>@p.NgReason</strong></div>
+                                        }
+                                        @if (_receiveQtyNg > 0 && !RecvLoi(p) && !RecvSua(p))
                                         {
                                             <div class="mb-2">
-                                                <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể *</label>
-                                                <input type="text" class="form-control form-control-sm border-danger" @bind="_receiveNgReason" />
+                                                @* [GN-RECV-SUA] khách thấy "bắt ghi lỗi" là lạ vì họ không làm ra lỗi → đổi chữ: ghi lỗi của hàng nhận về (trước: "Lỗi cụ thể *") *@
+                                                <label class="form-label form-label-sm fw-semibold text-danger">Lỗi phát hiện (bạn thấy gì) *</label>
+                                                <input type="text" class="form-control form-control-sm border-danger" @bind="_receiveNgReason" placeholder="VD: móp, thiếu ren… — lỗi của hàng nhận về, không phải lỗi của nhóm bạn" />
                                                 @* [GN-RECV-NG] mục 38 *@
                                                 <div class="small text-muted mt-1">Số NG này ghi ngay là Giao · Hàng lỗi của nhóm mình. Phần mềm tự lập phiếu trả về @HandoverLedgerService.GroupLabel(p.FromGroupCode); bên đó bấm Nhận thì mới vào Nhận · Hàng lỗi của họ (trong lúc chờ: Tồn của họ, chờ nhận).</div>
                                             </div>
@@ -1979,7 +1985,8 @@ else
         if (pend != null && cell != null && cell != pend.ToCell && string.IsNullOrWhiteSpace(_receiveCellReason))
         { _modalError = "Đổi phân loại khác bên giao chỉ định: bắt buộc ghi lý do."; _saving = false; return; }
         if (pend != null && pend.IsAutoReturn) cell = null;
-        (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, _receiveQtyNg, _receiveNgReason, _currentUserId, _receiveNotes,
+        // [GN-RECV-SUA] ô Hàng sửa không gửi NG (ô NG khoá xám)
+        (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, cell == HandoverCell.Sua ? 0 : _receiveQtyNg, _receiveNgReason, _currentUserId, _receiveNotes,
             toCell: cell, toCellReason: cell != null && pend != null && cell != pend.ToCell ? _receiveCellReason : null);
         _saving = false;
         if (!ok) { _modalError = err; return; }
@@ -2000,10 +2007,12 @@ else
     string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn ? HandoverCell.Loi
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : p.ToCell;
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
+    bool RecvSua(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Sua;   // [GN-RECV-SUA] nhận hàng gửi sửa: chỉ 1 ô số lượng
     void SelectRecvCell(string c)
     {
         _receiveCell = c; _modalError = "";
         if (c == HandoverCell.Loi) { _receiveQtyNg += _receiveQtyOk; _receiveQtyOk = 0; }   // ô Hàng lỗi: dồn số sang ô Hàng lỗi
+        if (c == HandoverCell.Sua) { _receiveQtyOk += _receiveQtyNg; _receiveQtyNg = 0; }   // [GN-RECV-SUA] ô Hàng sửa: dồn số sang ô Số lượng nhận
     }
     static string OkLabelCss(bool loi) => loi ? "form-label form-label-sm fw-semibold text-muted" : "form-label form-label-sm fw-semibold";
     static string OkHint(bool loi, decimal max) => loi ? "Nhận vào ô Hàng lỗi — không có hàng đạt" : $"Tối đa: {max:0.##} chiếc";

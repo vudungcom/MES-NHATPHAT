@@ -1684,6 +1684,11 @@ namespace MES.Web.Services
             var isNgRet = effCell == HandoverCell.Loi;
             if (isNgRet && qtyOk > 0)
                 return (false, "Phiếu hàng lỗi: không có hàng đạt — nhập số nhận lại ở ô Hàng lỗi.");
+            // [GN-RECV-SUA 2026-10-24] Nhận vào ô Hàng sửa = nhận hàng lỗi về để sửa: không có "đạt / NG đếm thấy", chỉ đếm số chiếc tới nơi
+            //   (ghi ở QtyOk → Nhận · Hàng sửa). Không tự lập phiếu trả. Khách báo: HTSP nhận hàng Kho gửi sửa gõ NG 1 → phần mềm trả ngược về Kho (sai).
+            //   Nhận rồi thấy không sửa được → giao lại bên gửi bằng phiếu riêng (có chứng từ).
+            if (effCell == HandoverCell.Sua && qtyNg > 0)
+                return (false, "Nhận vào ô Hàng sửa: chỉ nhập số chiếc nhận, không có NG lúc nhận (hàng gửi sửa vốn là hàng lỗi). Không sửa được thì giao trả lại bên gửi.");
             if (isNgRet && string.IsNullOrWhiteSpace(ngReason))
                 ngReason = !string.IsNullOrWhiteSpace(txHead.NgReason) ? txHead.NgReason
                          : cellChanged && !string.IsNullOrWhiteSpace(toCellReason) ? toCellReason!.Trim()   // [GN-CELL2] bên nhận đổi sang ô Hàng lỗi: lỗi = lý do đổi
