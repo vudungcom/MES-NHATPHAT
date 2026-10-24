@@ -165,7 +165,7 @@ else
         <div class="alert alert-info py-2 small mb-2">
             <i class="bi bi-info-circle me-1"></i>
             Đang hiện công thức: bấm vào số bất kỳ để xem phép tính với số thật và từng chứng từ.
-            <strong>Tồn = Σ Nhận − Σ Giao</strong> ·
+            <strong>Tồn = Σ Nhận − Σ Giao + Chờ nhận</strong> @* [GN-RECV-NG] mục 37 *@ ·
             <strong>Chưa làm = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý − Đã làm − NG (WTS) − Giao Hàng lỗi có tích "công đoạn trước"</strong>
             (khác Excel: không trừ tồn hàng lỗi chuyển đi sửa / tự sửa trả, và trừ cả NG trên WTS).
         </div>
@@ -345,7 +345,7 @@ else
                                 {
                                     @* [GN-TEXT] Mặc định chỉ hiện như Excel (các dòng B) + dòng cân bằng; chi tiết để kiểm số khi bật Hiện công thức *@
                                     <div class="small d-flex flex-wrap gap-3 align-items-center">
-                                        <span><strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") = Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##") + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
+                                        <span><strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") = Σ Tồn @row.TonTong.ToString("0.##") + thành phẩm chờ Kho nhận @row.DangGiao.ToString("0.##") @* [GN-RECV-NG] trước: đang giao *@ + thành phẩm nhập kho @row.TpNhap.ToString("0.##") + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
                                             @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }</span>
                                         <span class="text-muted">Bật <strong>Hiện công thức</strong> để xem chi tiết từng NC / mã CV.</span>
                                     </div>
@@ -366,7 +366,7 @@ else
         <span><strong>Nhận</strong> = số bên nhận đã đếm (hàng quay vòng cũng tính, nên có thể lớn hơn PO)</span>
         <span><strong>Giao</strong> = tính cả phiếu bên nhận chưa nhận</span>
         <span><strong class="text-primary">Chưa làm</strong> = trần nhập WTS</span>
-        <span><strong>Tồn</strong> = Σ Nhận − Σ Giao</span>
+        <span><strong>Tồn</strong> = Σ Nhận − Σ Giao + Chờ nhận <span class="text-warning-emphasis">(đã giao tới, chưa bấm Nhận — chưa nhập WTS được)</span></span> @* [GN-RECV-NG] mục 37 *@
         <span><span class="gn-chg px-2 border">&nbsp;</span> ô vừa đổi ở bước đó</span>
         <span><span class="badge bg-danger">■</span> có số âm (nhập sai)</span>
         <span><span class="badge bg-warning text-dark">■</span> có tồn hàng lỗi / hàng sửa</span>
@@ -480,7 +480,8 @@ else
                     @if (!_issueSpecialMode)
                     {
                         @* ── Ô GIAO (đúng 3 ô Excel bên giao dùng) ── *@
-                        <label class="form-label form-label-sm fw-semibold mb-1">Giao từ ô <span class="text-muted fw-normal">(cột Giao trên bảng)</span></label>
+                        @* [GN-PLH] mục 36: trước "Giao từ ô" *@
+                        <label class="form-label form-label-sm fw-semibold mb-1">Phân loại hàng <span class="text-muted fw-normal">(cột Giao trên bảng)</span></label>
                         <div class="d-flex gap-2 mb-2">
                             @foreach (var c in HandoverCell.IssueCells)
                             {
@@ -761,6 +762,11 @@ else
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @HandoverLedgerService.GroupLabel(p.FromGroupCode)</span>
                                             <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell)</span>
+                                            @if (p.IsAutoReturn)
+                                            {
+                                                @* [GN-RECV-NG] mục 38: phiếu trả tự lập khi bên kia đếm NG lúc nhận *@
+                                                <span class="badge bg-warning text-dark" style="font-size:10px" title="Phần mềm tự lập khi @HandoverLedgerService.GroupLabel(p.FromGroupCode) nhận hàng và đếm thấy NG">NG lúc nhận @(p.SourceTxId != null ? "phiếu #" + p.SourceTxId : "")</span>
+                                            }
                                             @if (p.NgQty > 0)
                                             {
                                                 <span class="badge bg-danger" style="font-size:10px" title="@p.NgReason">Lỗi: @p.NgReason</span>
@@ -785,25 +791,32 @@ else
                                 @if (isExpanded)
                                 {
                                     <div class="px-3 pb-3 pt-2" style="background:#f0f7ff">
+                                        @* [GN-RECV-NG2] Phiếu Hàng lỗi công đoạn trước (lập tay hoặc tự lập): toàn bộ là hàng lỗi →
+                                           giữ bố cục form, ô "Số lượng nhận đạt" khoá xám, nhập số nhận lại ở ô Hàng lỗi, lỗi lấy theo phiếu *@
                                         <div class="row g-2 mb-2">
                                             <div class="col-6">
-                                                <label class="form-label form-label-sm fw-semibold">Số lượng nhận đạt</label>
-                                                <input type="number" class="form-control form-control-sm border-success" @bind="_receiveQtyOk" min="0" />
-                                                <div class="text-muted" style="font-size:10px;margin-top:2px">Tối đa: @p.QtyRemaining.ToString("0.##") chiếc</div>
+                                                <label class="@OkLabelCss(pp)">Số lượng nhận đạt</label>
+                                                <input type="number" class="form-control form-control-sm border-success" @bind="_receiveQtyOk" min="0" disabled="@IsNgRet(pp)" />
+                                                <div class="text-muted" style="font-size:10px;margin-top:2px">@OkHint(pp, p.QtyRemaining)</div>
                                             </div>
                                             <div class="col-6">
                                                 <label class="form-label form-label-sm fw-semibold text-danger">
-                                                    NG đếm thấy <small class="fw-normal">(trả ngay bên giao)</small>
+                                                    @NgLabel(pp) <small class="fw-normal">@NgSub(pp, p.QtyRemaining)</small> @* [GN-RECV-NG] trước: NG đếm thấy (trả ngay bên giao) *@
                                                 </label>
                                                 <input type="number" class="form-control form-control-sm border-danger" @bind="_receiveQtyNg" min="0" />
                                             </div>
                                         </div>
-                                        @if (_receiveQtyNg > 0)
+                                        @if (IsNgRet(pp))
+                                        {
+                                            <div class="small text-muted mb-2">Vào ô Nhận · Hàng lỗi của nhóm mình, rồi xử lý tiếp (gửi sửa / tự sửa trả / huỷ / trả khách). Lỗi theo phiếu: <strong>@p.NgReason</strong></div>
+                                        }
+                                        @if (_receiveQtyNg > 0 && !IsNgRet(pp))
                                         {
                                             <div class="mb-2">
                                                 <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể *</label>
                                                 <input type="text" class="form-control form-control-sm border-danger" @bind="_receiveNgReason" />
-                                                <div class="small text-muted mt-1">Số NG này ghi là Giao · Hàng lỗi của nhóm mình và Nhận · Hàng lỗi của bên giao.</div>
+                                                @* [GN-RECV-NG] mục 38 *@
+                                                <div class="small text-muted mt-1">Số NG này ghi ngay là Giao · Hàng lỗi của nhóm mình. Phần mềm tự lập phiếu trả về @HandoverLedgerService.GroupLabel(p.FromGroupCode); bên đó bấm Nhận thì mới vào Nhận · Hàng lỗi của họ (trong lúc chờ: Tồn của họ, chờ nhận).</div>
                                             </div>
                                         }
                                         <div class="mb-2">
@@ -871,13 +884,19 @@ else
                             }
                             @if (string.IsNullOrEmpty(tx.Purpose))
                             {
-                                <span class="small text-muted fst-italic" title="Phiếu tạo trước khi có ô giao — phần mềm tự suy ra">(phiếu cũ)</span>
+                                <span class="small text-muted fst-italic" title="Phiếu tạo trước khi có phân loại hàng — phần mềm tự suy ra">(phiếu cũ)</span>
                             }
                             <span class="badge @GetStatusBadge(tx.Status)">@tx.Status</span>
                             <span class="small text-muted">@tx.IssuedAt.ToString("dd/MM/yyyy HH:mm")</span>
                             <span class="small text-muted">by @tx.IssuedByName</span>
                             @if (tx.IsVoided) { <span class="badge bg-secondary">ĐÃ HUỶ</span> }
+                            @if (tx.SourceReceiveId != null)
+                            {
+                                @* [GN-RECV-NG] mục 38 *@
+                                <span class="badge bg-warning text-dark" title="Phần mềm tự lập khi bên nhận đếm NG lúc nhận. Không huỷ riêng — huỷ lần nhận gốc thì phiếu này huỷ theo.">tự lập · NG lúc nhận</span>
+                            }
                             @if (!tx.IsVoided && (tx.Status == "PENDING" || HandoverPurpose.IsOut(tx.Purpose)) && !tx.Receives.Any()
+                                 && tx.SourceReceiveId == null
                                  && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
                             {
                                 <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px"
@@ -1122,12 +1141,12 @@ else
         new("NhanSua",   "Hàng Sửa",          "Nhận", "Hàng nhóm khác gửi nhờ sửa — không tính vào số sản xuất", "", g => g.NhanSua, ""),
         new("NhanLoiXl", "Hàng lỗi đã xử lý", "Nhận", "Hàng sửa xong trả về nơi phát hiện — SP đã OK, nhập WTS tiếp được", "", g => g.NhanLoiXl, ""),
         new("GiaoMoi",   "Hàng Mới",          "Giao", "Phiếu Hàng mới đã lập (tính cả phiếu chờ nhận)", "", g => g.GiaoMoi, ""),
-        new("GiaoLoi",   "Hàng lỗi",          "Giao", "Giao từ ô Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""),
+        new("GiaoLoi",   "Hàng lỗi",          "Giao", "Phân loại Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""), // [GN-PLH] mục 36
         new("GiaoSua",   "Hàng Sửa",          "Giao", "Sửa hộ xong, trả về nơi phát hiện", "", g => g.GiaoSua, ""),
         new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Có trong Excel nhưng cả 3 tình huống không ghi vào đây (hàng đã xử lý chỉ nhận về rồi làm tiếp)", "", g => g.GiaoLoiXl, ""),
         new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG (WTS) − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
         new("DaLam",     "Đã làm",   "", "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, ""),
-        new("Ton",       "Tồn",      "", "Hàng đang thật sự nằm ở nhóm", "Σ Nhận − Σ Giao", g => g.Ton, "gn-ton"),
+        new("Ton",       "Tồn",      "", "Hàng thuộc nhóm, gồm cả hàng đã giao tới mà nhóm chưa bấm Nhận (chờ nhận)", "Σ Nhận − Σ Giao + Chờ nhận", g => g.Ton, "gn-ton"), // [GN-RECV-NG] mục 37
     };
 
     static List<ColDef> ColsFor(string group)
@@ -1155,6 +1174,11 @@ else
         var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(isNeg ? "gn-neg" : "")} {(changed ? "gn-chg" : "")} {(dead ? "gn-dead" : "")} {(_showFormula && prev == null ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
         <td class="@cls" title="@(dead ? DeadCellTip(g.Code, c.Key) : null)" @onclick:stopPropagation @onclick="() => { if (prev == null) OpenExplain(row, g, c.Key); }">
             @(v == 0 ? (c.Band == "" ? "0" : "") : v.ToString("0.##"))
+            @* [GN-RECV-NG] mục 37: phần Tồn là hàng đã giao tới nhưng nhóm chưa bấm Nhận *@
+            @if (c.Key == "Ton" && g.ChoNhan > 0)
+            {
+                <span class="d-block text-nowrap" style="font-size:9.5px;color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận: tính vào Tồn nhưng chưa nhập WTS được">chờ nhận @g.ChoNhan.ToString("0.##")</span>
+            }
             @if (c.Key == "Ton" && prev == null)
             {
                 <div class="d-flex gap-1 justify-content-center flex-wrap">
@@ -1195,7 +1219,7 @@ else
             <div class="d-flex flex-wrap gap-3 align-items-center small">
                 <span class="@(_showFormula ? "gn-click" : "")" @onclick="() => OpenBalance(row)">
                     <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") =
-                    Σ Tồn @row.TonTong.ToString("0.##") + đang giao @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##")
+                    Σ Tồn @row.TonTong.ToString("0.##") + thành phẩm chờ Kho nhận @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##") @* [GN-RECV-NG] trước: đang giao *@
                     + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
                     @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }
                 </span>
@@ -1218,7 +1242,7 @@ else
                 <div class="border rounded p-2 bg-white" style="min-width:360px">
                     <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Tồn theo loại hàng (trần khi lập phiếu)</div>
                     <table class="table table-sm mb-0" style="font-size:10.5px">
-                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th></tr></thead>
+                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th><th class="text-end" style="color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận — tính vào Tồn, chưa nhập WTS được">Chờ nhận</th></tr></thead> @* [GN-RECV-NG] mục 37: + cột Chờ nhận *@
                         <tbody>
                             @foreach (var code in HandoverLedgerService.GroupCodes)
                             {
@@ -1230,6 +1254,7 @@ else
                                     <td class="text-end @(_showFormula ? "gn-click" : "") @(g.SuaGiu < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "SuaGiu")'>@g.SuaGiu.ToString("0.##")</td>
                                     <td class="text-end @(_showFormula ? "gn-click" : "") @(g.LamHoGiu < 0 ? "gn-neg" : "")" @onclick='() => OpenExplain(row, g, "LamHoGiu")'>@(g.IsKho ? "·" : g.LamHoGiu.ToString("0.##"))</td>
                                     <td class="text-end text-danger @(_showFormula ? "gn-click" : "")" @onclick='() => OpenExplain(row, g, "NgCuoi")'>@(g.IsKho ? "·" : g.NgCuoi.ToString("0.##"))</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "")" style="color:#b45309" @onclick='() => OpenExplain(row, g, "ChoNhan")'>@g.ChoNhan.ToString("0.##")</td>
                                 </tr>
                             }
                         </tbody>
@@ -1656,7 +1681,7 @@ else
         _modalError = "";
         var purpose = EffectivePurpose;
         if (string.IsNullOrEmpty(_issueFrom)) { _modalError = "Chọn nhóm giao."; return; }
-        if (purpose == null)                  { _modalError = _issueSpecialMode ? "Chọn loại phiếu." : "Chọn ô giao (Hàng mới / Hàng lỗi / Hàng sửa)."; return; }
+        if (purpose == null)                  { _modalError = _issueSpecialMode ? "Chọn loại phiếu." : "Chọn phân loại hàng (Hàng mới / Hàng lỗi / Hàng sửa)." /* [GN-PLH] mục 36 */; return; }
         if (string.IsNullOrEmpty(_issueTo))   { _modalError = "Chọn nhóm nhận."; return; }
         if (RouteError != null)               { _modalError = RouteError; return; }
         if (_issueQty <= 0)                   { _modalError = "Số lượng phải lớn hơn 0."; return; }
@@ -1730,6 +1755,13 @@ else
 
     static string PendingPurpose(HandoverTxPending p)
         => p.Purpose ?? (p.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);
+
+    // [GN-RECV-NG2] Form Nhận phiếu Hàng lỗi công đoạn trước: ô "đạt" khoá xám, chỉ nhập ô Hàng lỗi nhận lại
+    static bool   IsNgRet(string pp) => pp == HandoverPurpose.NgReturn;
+    static string OkLabelCss(string pp) => IsNgRet(pp) ? "form-label form-label-sm fw-semibold text-muted" : "form-label form-label-sm fw-semibold";
+    static string OkHint(string pp, decimal max) => IsNgRet(pp) ? "Phiếu hàng lỗi — không có hàng đạt" : $"Tối đa: {max:0.##} chiếc";
+    static string NgLabel(string pp) => IsNgRet(pp) ? "Hàng lỗi nhận lại" : "NG đếm thấy";
+    static string NgSub(string pp, decimal max) => IsNgRet(pp) ? $"(tối đa {max:0.##})" : "(tự lập phiếu trả bên giao)";
 
     static string LogPurpose(HandoverLogItem t)
         => t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);

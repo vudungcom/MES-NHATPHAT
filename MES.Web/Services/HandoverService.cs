@@ -145,6 +145,11 @@ namespace MES.Web.Services
         /// <summary>[GN-CELL] Ô bên giao chọn (MOI/LOI/SUA, NULL = phiếu cũ)</summary>
         public string? FromCell          { get; set; }
 
+        /// <summary>[GN-RECV-NG] mục 38: phiếu trả hàng lỗi tự lập khi bên nhận đếm NG — Id lần nhận gốc / phiếu gốc. Null = phiếu người dùng lập.</summary>
+        public long?   SourceReceiveId   { get; set; }
+        public long?   SourceTxId        { get; set; }
+        public bool    IsAutoReturn      => SourceReceiveId != null;
+
     }
 
     public class HandoverLogItem
@@ -185,6 +190,9 @@ namespace MES.Web.Services
         public bool    IsReturnNg    { get; set; }
         /// <summary>[GN-CELL] Ô bên giao chọn (MOI/LOI/SUA, NULL = phiếu cũ)</summary>
         public string? FromCell      { get; set; }
+
+        /// <summary>[GN-RECV-NG] mục 38: phiếu trả tự lập (Id lần nhận gốc). Không huỷ riêng được.</summary>
+        public long?   SourceReceiveId { get; set; }
 
         public string? ToNC          { get; set; }
 
@@ -789,6 +797,7 @@ namespace MES.Web.Services
                 Purpose       = t.Purpose,     // [GN-LEDGER]
                 IsReturnNg    = t.IsReturnNg,  // [GN-LEDGER]
                 FromCell      = t.FromCell,    // [GN-CELL]
+                SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                 ToNC          = t.ToNC,        // [GN-LEDGER]
 
                 Receives      = t.Receives.OrderBy(r => r.ReceivedAt).Select(r => new HandoverReceiveItem
@@ -849,6 +858,12 @@ namespace MES.Web.Services
 
                 .ToListAsync();
 
+            // [GN-RECV-NG] Phiếu trả tự lập: tra phiếu gốc để hiện "trả NG lúc nhận phiếu #…"
+            var srcIds = txs.Where(t => t.SourceReceiveId != null).Select(t => t.SourceReceiveId!.Value).ToList();
+            var srcTx  = srcIds.Count == 0 ? new Dictionary<long, long>()
+                       : await _db.HandoverReceives.AsNoTracking().Where(r => srcIds.Contains(r.ReceiveId))
+                             .ToDictionaryAsync(r => r.ReceiveId, r => r.HandoverTxId);
+
             return txs.Select(t =>
 
             {
@@ -877,6 +892,8 @@ namespace MES.Web.Services
                     Purpose          = t.Purpose,     // [GN-LEDGER]
                     IsReturnNg       = t.IsReturnNg,  // [GN-LEDGER]
                     FromCell         = t.FromCell,    // [GN-CELL]
+                    SourceReceiveId  = t.SourceReceiveId,   // [GN-RECV-NG]
+                    SourceTxId       = t.SourceReceiveId != null && srcTx.TryGetValue(t.SourceReceiveId.Value, out var stx) ? stx : null,
 
                 };
 
@@ -1450,7 +1467,7 @@ namespace MES.Web.Services
             string? fromNC = null, string? toNC = null, string? notes = null, string? reason = null)
         {
             var (purpose, err) = HandoverCell.Resolve(cell, prevStageNg, repaired);
-            if (purpose == null) return (false, err ?? "Ô giao không hợp lệ.");
+            if (purpose == null) return (false, err ?? "Phân loại hàng không hợp lệ."); // [GN-PLH] mục 36
             return await IssueWithPurposeAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
                 issuedByUserId, purpose, fromNC, toNC, notes, reason, cell);
         }
@@ -1487,7 +1504,7 @@ namespace MES.Web.Services
                 return (false, "Bắt buộc ghi lỗi cụ thể khi giao hàng lỗi.");
             // [GN-CELL] Ô giao phải khớp loại phiếu (chặn gọi sai từ code)
             if (fromCell != null && !HandoverCell.IssueCells.Contains(fromCell))
-                return (false, "Ô giao không hợp lệ.");
+                return (false, "Phân loại hàng không hợp lệ."); // [GN-PLH] mục 36
             if (fromCell != null && HandoverCell.IssueCellOf(purpose, fromCell) != fromCell)
                 return (false, $"Ô {HandoverCell.Label(fromCell)} không giao được theo kiểu {HandoverPurpose.Label(purpose)}.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
@@ -1603,14 +1620,21 @@ namespace MES.Web.Services
 
                 return (false, "Phải nhập ít nhất 1 chiếc OK hoặc NG.");
 
-            if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
-
-                return (false, "Bắt buộc nhập lý do khi có hàng NG.");
+            // [GN-RECV-NG2] Kiểm lý do NG dời xuống sau khi đọc phiếu: phiếu Hàng lỗi công đoạn trước lấy lỗi theo phiếu
 
             var txHead = await _db.HandoverTransactions.AsNoTracking()
-                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId }).FirstOrDefaultAsync();
+                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason }).FirstOrDefaultAsync(); // [GN-RECV-NG2] + loại phiếu, lỗi
             if (txHead == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+            // [GN-RECV-NG2] Phiếu Hàng lỗi công đoạn trước (lập tay hoặc tự lập): toàn bộ là hàng lỗi → không có số "đạt";
+            // số nhận lại nhập ở ô Hàng lỗi, lỗi lấy theo phiếu nếu không ghi thêm. Sổ tính như cũ (OK + NG đều vào Nhận · Hàng lỗi).
+            var isNgRet = (txHead.Purpose ?? (txHead.IsReturnNg ? HandoverPurpose.NgReturn : null)) == HandoverPurpose.NgReturn;
+            if (isNgRet && qtyOk > 0)
+                return (false, "Phiếu hàng lỗi: không có hàng đạt — nhập số nhận lại ở ô Hàng lỗi.");
+            if (isNgRet && string.IsNullOrWhiteSpace(ngReason))
+                ngReason = string.IsNullOrWhiteSpace(txHead.NgReason) ? "Hàng lỗi trả về" : txHead.NgReason;
+            if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
+                return (false, "Bắt buộc nhập lý do khi có hàng NG.");
 
             // [GN-K8] Khoá PO + giao dịch: nhận xong tính lại sổ, ô nào mới âm thì không lưu
             using var trx = await _db.Database.BeginTransactionAsync();
@@ -1643,7 +1667,9 @@ namespace MES.Web.Services
 
                 return (false, $"Tổng nhận ({qtyOk + qtyNg}) vượt số còn lại của phiếu ({remaining:0.##}).");
 
-            _db.HandoverReceives.Add(new HandoverReceive
+            // [GN-RECV-NG2] (bỏ luật riêng phiếu tự lập "chặn NG" — nay mọi phiếu hàng lỗi nhập ở ô Hàng lỗi, xem đầu hàm)
+
+            var rcv = new HandoverReceive   // [GN-RECV-NG] giữ biến để lấy ReceiveId cho phiếu trả tự lập
 
             {
 
@@ -1663,13 +1689,42 @@ namespace MES.Web.Services
 
                 CreatedAt    = DateTime.Now,
 
-            });
+            };
+            _db.HandoverReceives.Add(rcv);
 
             var newTotal = alreadyReceived + qtyOk + qtyNg;
 
             tx.Status = newTotal >= tx.QtyIssued ? "COMPLETED" : "PARTIAL";
 
             await _db.SaveChangesAsync();
+
+            // [GN-RECV-NG] Master list mục 38: NG đếm lúc nhận → tự lập phiếu TRẢ HÀNG LỖI về bên giao (cùng giao dịch, cùng khoá PO).
+            // Bên giao phải bấm Nhận phiếu này thì hàng lỗi mới vào ô Nhận · Hàng lỗi của họ (L2: giao thì có nhận).
+            // Trong lúc chờ: tính ở ô Chờ nhận → Tồn của bên giao (mục 37). Phiếu Trả hàng lỗi thì không trả lại lần nữa.
+            var srcPurpose = tx.Purpose ?? (tx.IsReturnNg ? HandoverPurpose.NgReturn : null);
+            if (qtyNg > 0 && srcPurpose != HandoverPurpose.NgReturn)
+            {
+                var now = rcv.ReceivedAt;
+                _db.HandoverTransactions.Add(new HandoverTransaction
+                {
+                    KhPlanDetailId  = tx.KhPlanDetailId,
+                    FromGroupCode   = tx.ToGroupCode,
+                    ToGroupCode     = tx.FromGroupCode,
+                    QtyIssued       = qtyNg,
+                    NgQty           = qtyNg,
+                    NgReason        = ngReason,
+                    IsReturnNg      = true,
+                    Purpose         = HandoverPurpose.NgReturn,
+                    FromCell        = HandoverCell.Loi,
+                    SourceReceiveId = rcv.ReceiveId,
+                    Status          = "PENDING",
+                    IssuedBy        = receivedByUserId,
+                    IssuedAt        = now,
+                    CreatedAt       = now,
+                    Notes           = $"Tự lập khi {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} nhận phiếu #{tx.HandoverTxId}: NG đếm lúc nhận",
+                });
+                await _db.SaveChangesAsync();
+            }
 
             if (before != null)
             {
@@ -1724,6 +1779,21 @@ namespace MES.Web.Services
             if (receive == null)
 
                 return (false, "Bản ghi nhận không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-RECV-NG] Lần nhận có NG đã sinh phiếu trả tự lập: huỷ lần nhận thì huỷ luôn phiếu trả,
+            // nhưng nếu bên giao đã nhận lại hàng lỗi thì phải huỷ lần nhận đó trước (K5: huỷ từ cuối dòng ngược lên).
+            var autoBack = await _db.HandoverTransactions.Include(t => t.Receives)
+                .FirstOrDefaultAsync(t => t.SourceReceiveId == receiveId && !t.IsVoided);
+            if (autoBack != null)
+            {
+                if (autoBack.Receives.Any(r => !r.IsVoided))
+                    return (false, $"{HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} đã nhận lại hàng lỗi ở phiếu trả #{autoBack.HandoverTxId}. Huỷ lần nhận đó trước.");
+                autoBack.IsVoided   = true;
+                autoBack.VoidReason = $"Huỷ theo lần nhận #{receiveId}: {voidReason.Trim()}";
+                if (autoBack.VoidReason.Length > 200) autoBack.VoidReason = autoBack.VoidReason[..200];
+                autoBack.VoidedBy   = voidedByUserId;
+                autoBack.VoidedAt   = DateTime.Now;
+            }
 
             receive.IsVoided   = true;
 
@@ -1807,6 +1877,10 @@ namespace MES.Web.Services
 
                 return (false, "Phiếu đã có bên nhận xác nhận. Hãy void từng lần nhận trước.");
 
+            // [GN-RECV-NG] Phiếu trả tự lập không huỷ riêng (huỷ lần nhận gốc thì phiếu này huỷ theo)
+            if (tx.SourceReceiveId != null)
+                return (false, $"Phiếu #{tx.HandoverTxId} do phần mềm tự lập khi nhận hàng có NG. Muốn huỷ thì huỷ lần nhận gốc.");
+
             tx.IsVoided   = true;
 
             tx.VoidReason = voidReason.Trim();
@@ -1850,7 +1924,8 @@ namespace MES.Web.Services
 
                          && t.FromGroupCode == "KHO"
 
-                         && !t.IsVoided)
+                         && !t.IsVoided
+                         && t.SourceReceiveId == null)   // [GN-RECV-NG] phiếu trả thành phẩm NG tự lập (Kho → Đóng gói) không phải phôi Kho giao
 
                 .Include(t => t.Receives)
 
