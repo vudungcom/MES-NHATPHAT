@@ -56,6 +56,12 @@ namespace MES.Web.Data.Entities
         public string? FromCell { get; set; }
 
         /// <summary>
+        /// [GN-CELL2 2026-10-24] Ô bên giao CHỈ ĐỊNH cho bên nhận: MOI | LOI | SUA | XL (Hàng lỗi đã xử lý).
+        /// Bên nhận được chọn lại khi nhận (HandoverReceive.ToCell). NULL = phiếu cũ → suy từ Purpose.
+        /// </summary>
+        public string? ToCell { get; set; }
+
+        /// <summary>
         /// [GN-RECV-NG 2026-10-24] Master list mục 38: phiếu TRẢ HÀNG LỖI do phần mềm tự lập khi bên nhận đếm thấy NG lúc nhận.
         /// = ReceiveId của lần nhận gốc (HandoverReceives). NULL = phiếu người dùng lập.
         /// Bên giao cũ phải bấm Nhận phiếu này thì hàng lỗi mới vào ô Nhận · Hàng lỗi của họ (giao thì có nhận — L2).
