@@ -1460,6 +1460,7 @@ namespace MES.Web.Services
             });
 
             await _db.SaveChangesAsync();
+            HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
 
             _db.ChangeTracker.Clear();
 
@@ -1582,6 +1583,7 @@ namespace MES.Web.Services
             var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);
             if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
             await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
             _db.ChangeTracker.Clear();
             return (true, string.Empty);
         }
@@ -1788,6 +1790,7 @@ namespace MES.Web.Services
                 if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }
             }
             await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(txHead.KhPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
 
             _db.ChangeTracker.Clear();
 
@@ -1881,6 +1884,7 @@ namespace MES.Web.Services
                 if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
             }
             await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(head.KhPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
 
             _db.ChangeTracker.Clear();
 
@@ -1953,6 +1957,7 @@ namespace MES.Web.Services
                 if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
             }
             await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(head.KhPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
 
             _db.ChangeTracker.Clear();
 

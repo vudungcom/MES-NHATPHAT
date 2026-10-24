@@ -4853,6 +4853,7 @@ else
             Db.ChangeTracker.Clear();
 
             await ReloadFlowAsync(row.KhPlanDetailId.Value);
+            MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
 
             // Reload qty summary luôn để nhất quán
 
@@ -5234,6 +5235,7 @@ else
 
                 _currentUserId, DateTime.Now, row.ActivityLogId.Value);
 
+        if (row.KhPlanDetailId.HasValue) MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (huỷ WTS đổi Đã làm/Chưa làm)
     }
 
     private static string ReportNgCls(decimal? qtyNg)
@@ -7548,6 +7550,7 @@ else
                     _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
 
                 await ReloadFlowAsync(row.KhPlanDetailId.Value);
+                MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
 
             }
 

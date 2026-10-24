@@ -198,6 +198,7 @@ public class KhoVatLieuService
                 Reason = reason
             });
             await _db.SaveChangesAsync();
+            HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
             return (true, null);
         }
 
@@ -235,6 +236,7 @@ public class KhoVatLieuService
         existing.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
+        HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
         return (true, null);
     }
 
@@ -381,4 +383,4 @@ public class KhoVatLieuService
         });
         return 1;
     }
-}
+}

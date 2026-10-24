@@ -6,6 +6,7 @@
 @using MES.Web.Constants
 @using System.Security.Claims
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.DependencyInjection @* [GN-LIVE] scope DbContext riêng cho tự cập nhật *@
 @inject HandoverService HandoverSvc
 @inject HandoverLedgerService LedgerSvc
 @inject UserService UserSvc
@@ -52,6 +53,22 @@
     .col-filter-dropdown .footer { padding: 6px 10px; display: flex; gap: 6px; justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px; }
 
     .gn-table th, .gn-table td { white-space: nowrap; border: 1px solid #c8ced6 !important; }
+    /* [GN-FREEZE 2026-10-24] Cố định như Excel: 3 dòng tiêu đề + 5 cột trái (▸, Mã PO, PO KH, Part No, SL PO).
+       Bảng cao vừa màn hình, tự cuộn bên trong → thanh cuộn ngang luôn ở đáy màn hình (trước: phải kéo xuống cuối bảng mới thấy).
+       border-collapse: separate — kiểu collapse làm đường kẻ của ô cố định trôi theo khi cuộn. */
+    .gn-scroll { overflow: auto; max-height: calc(100vh - 230px); min-height: 320px; }
+    .gn-table { border-collapse: separate; border-spacing: 0; }
+    .gn-table th, .gn-table td { border-width: 0 1px 1px 0 !important; }
+    .gn-table thead tr:first-child th { border-top-width: 1px !important; }
+    .gn-table thead { position: sticky; top: 0; z-index: 4; }
+    .gn-fz { position: sticky; z-index: 2; overflow: hidden; text-overflow: ellipsis; }
+    thead .gn-fz { z-index: 5; }
+    .gn-fz1 { left: 0;     width: 26px;  min-width: 26px;  max-width: 26px; }
+    .gn-fz2 { left: 26px;  width: 108px; min-width: 108px; max-width: 108px; }
+    .gn-fz3 { left: 134px; width: 90px;  min-width: 90px;  max-width: 90px; }
+    .gn-fz4 { left: 224px; width: 104px; min-width: 104px; max-width: 104px; }
+    .gn-fz5 { left: 328px; width: 44px;  min-width: 44px;  max-width: 44px; border-right: 2px solid #8a94a3 !important; }
+    .gn-fz35 { left: 134px; width: 238px; min-width: 238px !important; max-width: 238px !important; border-right: 2px solid #8a94a3 !important; }   /* chữ dòng B (gộp cột 3-5) */
     .gn-table thead th { text-align: center; vertical-align: middle; font-weight: 600; }
     .gn-table th.gn-cell { font-size: 10px; font-weight: 500; white-space: normal; line-height: 1.15; min-width: 44px; max-width: 64px; padding: 2px 3px; background: #f3f5f8; }
     .gn-num { text-align: center; font-variant-numeric: tabular-nums; min-width: 44px; }
@@ -171,15 +188,15 @@ else
         </div>
     }
 
-    <div class="table-responsive border rounded" @onclick="CloseColFilter">
+    <div class="gn-scroll border rounded" @onclick="CloseColFilter">   @* [GN-FREEZE] trước: table-responsive (thanh cuộn ngang ở cuối bảng) *@
         <table class="table table-sm table-hover mb-0 align-middle gn-table" style="font-size:11px">
             <thead>
                 <tr>
-                    <th rowspan="3" style="width:26px;background:#f3f5f8" title="Mở các bước B1, B2, B3… của PO"></th>
-                    <th rowspan="3" style="width:85px;background:#f3f5f8">@HdvColHeader("PlanNo", "Mã PO")</th>
-                    <th rowspan="3" style="width:80px;background:#f3f5f8">@HdvColHeader("PurchaseOrder", "PO KH")</th>
-                    <th rowspan="3" style="width:100px;background:#f3f5f8">@HdvColHeader("PartNo", "Part No")</th>
-                    <th rowspan="3" style="width:42px;background:#f3f5f8">SL PO</th>
+                    <th rowspan="3" class="gn-fz gn-fz1" style="background:#f3f5f8" title="Mở các bước B1, B2, B3… của PO"></th>   @* [GN-FREEZE] cột cố định *@
+                    <th rowspan="3" class="gn-fz gn-fz2" style="background:#f3f5f8">@HdvColHeader("PlanNo", "Mã PO")</th>
+                    <th rowspan="3" class="gn-fz gn-fz3" style="background:#f3f5f8">@HdvColHeader("PurchaseOrder", "PO KH")</th>
+                    <th rowspan="3" class="gn-fz gn-fz4" style="background:#f3f5f8">@HdvColHeader("PartNo", "Part No")</th>
+                    <th rowspan="3" class="gn-fz gn-fz5" style="background:#f3f5f8">SL PO</th>
                     @foreach (var g in HandoverLedgerService.GroupCodes)
                     {
                         <th colspan="@ColsFor(g).Count" class="gn-gl" style="background:@GroupBg(g);font-size:12px">@HandoverLedgerService.GroupLabel(g)</th>
@@ -224,17 +241,17 @@ else
                     <tr class="@(row.HasWarning ? "table-danger" : row.HasLoiGiu ? "table-warning" : "")"
                         style="cursor:pointer" title="Double-click để xem lịch sử phiếu"
                         @ondblclick="() => ShowLogAsync(row.KhPlanDetailId)">
-                        <td class="text-center p-0" @onclick:stopPropagation @ondblclick:stopPropagation>
+                        <td class="text-center p-0 gn-fz gn-fz1" @onclick:stopPropagation @ondblclick:stopPropagation>   @* [GN-FREEZE] *@
                             <button class="btn btn-xs btn-link p-0" style="font-size:12px;line-height:1"
                                     @onclick="() => ToggleExpandDetailAsync(row.KhPlanDetailId)"
                                     title="@(isExpanded ? "Thu gọn" : "Xem từng bước B1, B2, B3…")">
                                 <i class="bi @(isExpanded ? "bi-caret-down-fill text-primary" : "bi-caret-right-fill text-muted")"></i>
                             </button>
                         </td>
-                        <td><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
-                        <td><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
-                        <td class="fw-semibold">@row.PartNo</td>
-                        <td class="text-center">@row.PlanQty.ToString("0.##")</td>
+                        <td class="gn-fz gn-fz2"><span class="font-monospace" style="font-size:10px">@row.PlanNo</span></td>
+                        <td class="gn-fz gn-fz3" title="@row.PurchaseOrder"><span class="font-monospace" style="font-size:10px">@row.PurchaseOrder</span></td>
+                        <td class="fw-semibold gn-fz gn-fz4" title="@row.PartNo">@row.PartNo</td>
+                        <td class="text-center gn-fz gn-fz5">@row.PlanQty.ToString("0.##")</td>
                         @foreach (var g in HandoverLedgerService.GroupCodes)
                         {
                             var grp = row.G(g);
@@ -314,9 +331,9 @@ else
                             {
                                 var sr = st.Row;
                                 <tr class="gn-step" title="@st.Text">
-                                    <td></td>
-                                    <td class="gn-lbl">B@(st.Index)</td>
-                                    <td colspan="3" class="gn-txt">
+                                    <td class="gn-fz gn-fz1"></td>   @* [GN-FREEZE] dòng B: số bước + diễn giải đứng yên khi cuộn ngang *@
+                                    <td class="gn-lbl gn-fz gn-fz2">B@(st.Index)</td>
+                                    <td colspan="3" class="gn-txt gn-fz gn-fz35">
                                         <span class="text-muted me-1">@(st.At.HasValue ? st.At.Value.ToString("dd/MM HH:mm") : "")</span>
                                         <span class="badge @StepBadge(st.Kind) gn-badge me-1">@StepKind(st.Kind)</span>@st.Text
                                     </td>
@@ -1176,7 +1193,6 @@ else
     Dictionary<int, int> _pendingCountPerDetail = new();
     Dictionary<int, int> _pendingIssuedCountPerDetail = new();
     private System.Threading.Timer? _refreshTimer;
-    private bool _isRefreshing;
 
     // ── Lọc cột kiểu Excel ────────────────────────────────────────────
     private string _search = string.Empty;
@@ -1442,17 +1458,130 @@ else
         {
             _customers = await Db.Customers.Where(c => c.IsActive).OrderBy(c => c.CustomerName).ToListAsync();
             await LoadDataAsync();
-            _refreshTimer = new System.Threading.Timer(async _ =>
-            {
-                if (_isRefreshing) return;
-                _isRefreshing = true;
-                try { await LoadBadgesAsync(); await InvokeAsync(StateHasChanged); }
-                finally { _isRefreshing = false; }
-            }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+            // [GN-LIVE] Nghe "PO vừa đổi" từ mọi người dùng → tự tính lại đúng dòng đó, không cần F5.
+            HandoverChangeNotifier.Changed += OnHandoverChanged;
+            // [GN-LIVE] Lưới an toàn: 2 phút tính lại cả bảng (phòng lỡ tín hiệu). Trước: 60 giây chỉ cập nhật huy hiệu, bảng vẫn cũ tới khi F5.
+            _refreshTimer = new System.Threading.Timer(_ => QueueLive(null), null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
         }
     }
 
-    public void Dispose() => _refreshTimer?.Dispose();
+    public void Dispose()
+    {
+        HandoverChangeNotifier.Changed -= OnHandoverChanged;   // [GN-LIVE]
+        _refreshTimer?.Dispose();
+        _disposed = true;
+    }
+
+    // =================================================================
+    // [GN-LIVE 2026-10-24] Tự cập nhật khi người khác Giao / Nhận / Huỷ / nhập WTS / nhập phôi
+    //   - Gom tín hiệu ~0,3 giây (nhập WTS nhiều dòng một lúc → 1 lần tính).
+    //   - Tính bằng DbContext RIÊNG (scope mới) để không đụng DbContext của trang đang dùng cho thao tác người dùng
+    //     (Blazor Server: 2 lệnh chạy chồng trên 1 DbContext sẽ lỗi).
+    //   - Chỉ thay số trên màn hình. Form đang nhập dở không bị xoá; lúc lưu máy chủ vẫn kiểm trần / K5 như cũ.
+    // =================================================================
+    [Inject] IServiceScopeFactory ScopeFactory { get; set; } = default!;
+    readonly object _liveLock = new();
+    readonly HashSet<int> _liveIds = new();
+    bool _liveAll, _liveRunning, _disposed;
+
+    void OnHandoverChanged(int? detailId) => QueueLive(detailId);
+
+    void QueueLive(int? detailId)
+    {
+        lock (_liveLock)
+        {
+            if (detailId == null) _liveAll = true; else _liveIds.Add(detailId.Value);
+            if (_liveRunning) return;   // vòng đang chạy sẽ lấy tiếp
+            _liveRunning = true;
+        }
+        _ = Task.Run(LiveLoopAsync);
+    }
+
+    async Task LiveLoopAsync()
+    {
+        try
+        {
+            while (!_disposed)
+            {
+                await Task.Delay(300);
+                bool all; List<int> ids;
+                lock (_liveLock)
+                {
+                    all = _liveAll; ids = _liveIds.ToList();
+                    _liveAll = false; _liveIds.Clear();
+                    if (!all && ids.Count == 0) { _liveRunning = false; return; }
+                }
+                try { await LiveApplyAsync(all, ids); }
+                catch { /* màn hình tự thử lại ở tín hiệu sau / lưới 2 phút; không làm hỏng trang */ }
+            }
+        }
+        finally { lock (_liveLock) { if (_disposed) _liveRunning = false; } }
+    }
+
+    async Task LiveApplyAsync(bool all, List<int> ids)
+    {
+        // Chụp trạng thái trang (đọc trên luồng của trang)
+        int? custId = null, month = null; int year = 0; HashSet<int> shown = new(); int? expanded = null;
+        int? selId = null; bool recvOpen = false; string recvGroup = ""; long recvExpanded = 0;
+        await InvokeAsync(() =>
+        {
+            custId = _filterCustomerId > 0 ? _filterCustomerId : null;
+            month  = _filterMonth > 0 ? _filterMonth : null;
+            year   = _filterYear;
+            shown  = _rows.Select(r => r.KhPlanDetailId).ToHashSet();
+            expanded = _expandedDetailId;
+            selId = _selectedRow?.KhPlanDetailId;
+            recvOpen = _showReceiveModal; recvGroup = _receiveToGroup; recvExpanded = _expandedTxId;
+        });
+        if (!all) ids = ids.Where(shown.Contains).ToList();   // PO ngoài bộ lọc hiện tại: bỏ qua
+        if (!all && ids.Count == 0) return;
+
+        using var scope = ScopeFactory.CreateScope();
+        var db  = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var led = new HandoverLedgerService(db);
+        var svc = new HandoverService(db);
+
+        List<LedgerRow>? fullRows = null;
+        var fresh = new Dictionary<int, LedgerRow>();
+        if (all) fullRows = await led.GetLedgerAsync(customerId: custId, month: month, year: year);
+        else foreach (var id in ids) { var r = await led.GetLedgerForDetailAsync(id); if (r != null) fresh[id] = r; }
+
+        var badgeIds = (fullRows?.Select(r => r.KhPlanDetailId) ?? shown).ToList();
+        Dictionary<int, int>? pc = null, pic = null;
+        if (_myEditGroups.Any() && badgeIds.Any())
+        {
+            pc  = await svc.GetPendingCountPerDetailAsync(badgeIds, _myEditGroups);
+            pic = await svc.GetPendingIssuedCountPerDetailAsync(badgeIds, _myEditGroups);
+        }
+        bool touched(int id) => all || ids.Contains(id);
+        List<LedgerStepRow>? steps = expanded != null && touched(expanded.Value) ? await led.GetStepsForDetailAsync(expanded.Value) : null;
+        // Modal Nhận đang mở ở danh sách (chưa bung phiếu nào để nhập): làm mới danh sách phiếu chờ. Đang nhập dở thì để nguyên.
+        List<HandoverTxPending>? pend = recvOpen && recvExpanded == 0 && selId != null && touched(selId.Value) && !string.IsNullOrEmpty(recvGroup)
+            ? await svc.GetPendingForGroupAsync(selId.Value, recvGroup) : null;
+
+        await InvokeAsync(() =>
+        {
+            if (_disposed) return;
+            if (fullRows != null) { _rows = fullRows; BuildColFilters(); }
+            else
+                foreach (var (id, r) in fresh)
+                {
+                    var idx = _rows.FindIndex(x => x.KhPlanDetailId == id);
+                    if (idx >= 0) _rows[idx] = r;
+                }
+            if (_selectedRow != null)
+            {
+                var sr = _rows.FirstOrDefault(x => x.KhPlanDetailId == _selectedRow.KhPlanDetailId);
+                if (sr != null) _selectedRow = sr;
+            }
+            if (pc != null) _pendingCountPerDetail = pc;
+            if (pic != null) _pendingIssuedCountPerDetail = pic;
+            if (steps != null && _expandedDetailId == expanded) _steps = steps;
+            if (pend != null && _showReceiveModal && _expandedTxId == 0 && _receiveToGroup == recvGroup && _selectedRow?.KhPlanDetailId == selId) _pendingTxs = pend;
+            if (_explain != null) RefreshExplain();
+            StateHasChanged();
+        });
+    }
 
     async Task LoadDataAsync()
     {
