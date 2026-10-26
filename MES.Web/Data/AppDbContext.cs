@@ -560,6 +560,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         // ==== HandoverTransaction ====
         mb.Entity<HandoverTransaction>().HasKey(x => x.HandoverTxId);
         mb.Entity<HandoverTransaction>().Property(x => x.QtyIssued).HasPrecision(10, 2);
+        mb.Entity<HandoverTransaction>().Property(x => x.QtyClosed).HasPrecision(10, 2);    // [GN-VOID-RULE]
+        mb.Entity<HandoverTransaction>().Property(x => x.ClosedReason).HasMaxLength(200);   // [GN-VOID-RULE]
         mb.Entity<HandoverTransaction>().Property(x => x.FromNC).HasMaxLength(20);
         mb.Entity<HandoverTransaction>().Property(x => x.FromGroupCode).HasMaxLength(20).IsRequired();
         mb.Entity<HandoverTransaction>().Property(x => x.ToGroupCode).HasMaxLength(20).IsRequired();

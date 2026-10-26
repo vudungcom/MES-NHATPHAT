@@ -2342,7 +2342,7 @@ else
 
                                 <span class="text-danger small me-2">
 
-                                    <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
+                                    <i class="bi bi-exclamation-triangle me-1"></i>@FirstPart(grp.ErrorMsg)   @* [GN-WHY] dòng đầu; gợi ý đầy đủ ở khung bên dưới *@
 
                                 </span>
 
@@ -2380,7 +2380,7 @@ else
 
                         <div class="px-3 pb-2">
 
-                            <div class="alert alert-danger py-1 small mb-0">
+                            <div class="alert alert-danger py-1 small mb-0" style="white-space:pre-line">   @* [GN-WHY] xuống dòng các bước gợi ý *@
 
                                 <i class="bi bi-exclamation-triangle me-1"></i>@grp.ErrorMsg
 
@@ -5156,7 +5156,11 @@ else
 
     // [GN-WTS-CAP][K5] Lời báo khi không cho xoá (modal giữ nguyên để người dùng đọc)
     private string? _voidBlockMsg;
-    private string VoidBlockStyle => _voidBlockMsg != null ? "display:block" : "display:none";
+    private string VoidBlockStyle => _voidBlockMsg != null ? "display:block;white-space:pre-line" : "display:none";   // [GN-WHY] + xuống dòng các bước gợi ý
+    // [GN-WHY] Dòng báo ngắn (phần trước các bước gợi ý)
+    private static string? FirstPart(string? msg) => msg == null ? null : msg.Split("\n\n")[0];
+    // [GN-WHY] Lưu WTS bị chặn K5: nhớ PO + thao tác thử để tìm gốc rễ SAU khi nhả khoá (SaveGroupAsync finally)
+    private (int DetailId, List<long> RemoveIds, List<InWts> Add)? _pendingWhy;
 
     private bool _voidBusy;   // chặn bấm 2 lần trong lúc chờ khoá PO
     private async Task OnConfirmVoidAsync()
@@ -5182,6 +5186,7 @@ else
         if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue && IsWorkflowOn(row.KhPlanDetailId))
         {
             var locks = new List<string>();
+            bool blocked = false;   // [GN-WHY] bị chặn K5 → tìm gốc rễ sau khi nhả khoá
             try
             {
                 if (!await AcquirePoLockAsync(row.KhPlanDetailId.Value, locks))
@@ -5195,14 +5200,21 @@ else
                     {
                         _voidBlockMsg = $"Không xoá được: xoá xong sẽ làm sai số ở {string.Join("; ", bad)}. "
                                       + "Số của dòng này đã được dùng ở NC sau / nhóm sau hoặc đã giao đi — phải xoá / sửa từ cuối dòng ngược lên (K5).";
-                        return false;
+                        blocked = true;
                     }
                 }
-                await VoidWtsLogRawAsync(row);
+                if (!blocked) await VoidWtsLogRawAsync(row);
             }
             finally
             {
                 await ReleasePoLocksAsync(locks, closeConnection: true);
+            }
+            if (blocked)
+            {
+                // [GN-WHY] chỉ đọc + tính thử, khoá PO đã nhả
+                _voidBlockMsg += await HandoverWhy.ExplainAsync(Db, row.KhPlanDetailId.Value,
+                    HandoverWhy.OpWts(new List<long> { row.WtsLogId.Value }), new HashSet<string> { "W:" + row.WtsLogId.Value });
+                return false;
             }
             await LoadSavedRowsAsync();
             return true;
@@ -6740,6 +6752,13 @@ else
         {
             await ReleasePoLocksAsync(_poLocks, closeConnection: _lockedMachine == null);   // [GN-WTS-CAP] nhả khoá PO trước
             if (_lockedMachine != null) await ReleaseMachineLockAsync(_lockedMachine);   // [MACHINE-LOCK]
+            if (_pendingWhy is { } pw)
+            {
+                // [GN-WHY] Lưu bị chặn K5: chỉ đọc + tính thử sau khi đã nhả khoá
+                _pendingWhy = null;
+                var opDocs = new HashSet<string>(pw.RemoveIds.Select(x => "W:" + x));
+                grp.ErrorMsg += await HandoverWhy.ExplainAsync(Db, pw.DetailId, HandoverWhy.OpWts(pw.RemoveIds, pw.Add), opDocs);
+            }
             grp.IsSaving = false;
             StateHasChanged();
         }
@@ -6819,7 +6838,10 @@ else
             if (after == null) continue;
             var bad = HandoverLedgerService.NewNegatives(before, after);
             if (bad.Any())
+            {
+                _pendingWhy = (id, editIds.ToList(), extra);   // [GN-WHY] tìm gốc rễ sau khi nhả khoá (SaveGroupAsync finally)
                 return $"PO {po}: lưu xong sẽ làm sai số ở {string.Join("; ", bad)}. Kiểm lại số lượng (nhóm sau / NC sau có thể đã dùng số này — K5).";
+            }
         }
         return null;
     }

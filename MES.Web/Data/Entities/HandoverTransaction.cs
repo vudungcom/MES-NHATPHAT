@@ -69,6 +69,16 @@ namespace MES.Web.Data.Entities
         /// </summary>
         public long? SourceReceiveId { get; set; }
 
+        /// <summary>
+        /// [GN-VOID-RULE 2026-10-26] Huỷ phần chưa nhận của phiếu nhận dở (PARTIAL): số chiếc bên giao lấy lại.
+        /// Khi huỷ: QtyIssued giảm xuống bằng số đã nhận, phần chênh cộng vào đây (phiếu gốc = QtyIssued + QtyClosed).
+        /// Giảm thẳng QtyIssued để mọi chỗ tính "còn chờ = QtyIssued − đã nhận" tự đúng; huỷ lần nhận sau đó không mở lại phần đã huỷ.
+        /// </summary>
+        public decimal? QtyClosed { get; set; }
+        public int? ClosedBy { get; set; }
+        public DateTime? ClosedAt { get; set; }
+        public string? ClosedReason { get; set; }
+
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
 

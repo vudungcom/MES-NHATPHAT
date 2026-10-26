@@ -175,6 +175,15 @@ namespace MES.Web.Services
 
         public string  IssuedByName  { get; set; } = string.Empty;
 
+        /// <summary>[GN-VOID-RULE] Id người lập phiếu (luật huỷ: người lập hoặc nhóm giao).</summary>
+        public int     IssuedBy      { get; set; }
+
+        /// <summary>[GN-VOID-RULE] Đã huỷ phần chưa nhận (phiếu gốc = QtyIssued + QtyClosed).</summary>
+        public decimal QtyClosed     { get; set; }
+        public DateTime? ClosedAt    { get; set; }
+        public string? ClosedReason  { get; set; }
+        public string  ClosedByName  { get; set; } = string.Empty;
+
         public string? Notes         { get; set; }
 
         // v0.9 — NG bên giao khai báo
@@ -221,6 +230,9 @@ namespace MES.Web.Services
         public DateTime ReceivedAt    { get; set; }
 
         public string  ReceivedByName { get; set; } = string.Empty;
+
+        /// <summary>[GN-VOID-RULE] Id người bấm Nhận (luật huỷ lần nhận: người nhận hoặc nhóm nhận).</summary>
+        public int     ReceivedBy     { get; set; }
 
         /// <summary>[GN-CELL2] Ô bên nhận thực nhận + lý do nếu đổi khác chỉ định.</summary>
         public string? ToCell         { get; set; }
@@ -775,6 +787,12 @@ namespace MES.Web.Services
 
                 .ToListAsync();
 
+            // [GN-VOID-RULE] tên người huỷ phần chưa nhận (không có navigation cho ClosedBy)
+            var closerIds = txs.Where(t => t.ClosedBy != null).Select(t => t.ClosedBy!.Value).Distinct().ToList();
+            var closers = closerIds.Count == 0 ? new Dictionary<int, string>()
+                : (await _db.Users.Where(u => closerIds.Contains(u.UserId)).AsNoTracking().ToListAsync())
+                    .ToDictionary(u => u.UserId, u => string.IsNullOrEmpty(u.FullName) ? u.Username : u.FullName);
+
             return txs.Select(t => new HandoverLogItem
 
             {
@@ -794,6 +812,11 @@ namespace MES.Web.Services
                 IssuedAt      = t.IssuedAt,
 
                 IssuedByName  = t.IssuedByUser?.FullName ?? t.IssuedByUser?.Username ?? "",
+                IssuedBy      = t.IssuedBy,                                    // [GN-VOID-RULE]
+                QtyClosed     = t.QtyClosed ?? 0,                              // [GN-VOID-RULE]
+                ClosedAt      = t.ClosedAt,
+                ClosedReason  = t.ClosedReason,
+                ClosedByName  = t.ClosedBy != null && closers.TryGetValue(t.ClosedBy.Value, out var cn) ? cn : "",
 
                 Notes         = t.Notes,
 
@@ -826,6 +849,7 @@ namespace MES.Web.Services
                     ReceivedAt     = r.ReceivedAt,
 
                     ReceivedByName = r.ReceivedByUser?.FullName ?? r.ReceivedByUser?.Username ?? "",
+                    ReceivedBy     = r.ReceivedBy,     // [GN-VOID-RULE]
                     ToCell         = r.ToCell,         // [GN-CELL2]
                     ToCellReason   = r.ToCellReason,   // [GN-CELL2]
 
@@ -1815,7 +1839,9 @@ namespace MES.Web.Services
 
             string voidReason,
 
-            int voidedByUserId)
+            int voidedByUserId,
+
+            IReadOnlyCollection<string> editGroups)   // [GN-VOID-RULE] nhóm người huỷ có quyền sửa (Admin: mọi nhóm)
 
         {
 
@@ -1824,9 +1850,13 @@ namespace MES.Web.Services
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
 
             var head = await _db.HandoverReceives.AsNoTracking().Where(r => r.ReceiveId == receiveId)
-                .Select(r => new { r.Transaction.KhPlanDetailId }).FirstOrDefaultAsync();
+                .Select(r => new { r.Transaction.KhPlanDetailId, r.ReceivedBy, r.Transaction.ToGroupCode }).FirstOrDefaultAsync();
             if (head == null)
                 return (false, "Bản ghi nhận không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-VOID-RULE] Chỉ người bấm Nhận hoặc người có quyền sửa nhóm nhận mới huỷ được lần nhận (máy chủ kiểm, không chỉ dựa vào nút)
+            if (!CanVoidReceive(head.ReceivedBy, head.ToGroupCode, voidedByUserId, editGroups))
+                return (false, $"Chỉ người đã bấm Nhận hoặc nhóm {HandoverLedgerService.GroupLabel(head.ToGroupCode)} mới huỷ được lần nhận này.");
 
             // [GN-K8][K5] Huỷ lần nhận mà bên nhận đã làm / đã giao tiếp số đó → chặn (huỷ từ cuối dòng ngược lên)
             using var trx = await _db.Database.BeginTransactionAsync();
@@ -1886,7 +1916,15 @@ namespace MES.Web.Services
             if (before != null)
             {
                 var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
-                if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
+                if (k5 != null)
+                {
+                    // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
+                    _db.ChangeTracker.Clear();
+                    await trx.RollbackAsync();
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId),
+                        new HashSet<string> { "R:" + receiveId });
+                    return (false, k5 + whyTxt);
+                }
             }
             await trx.CommitAsync();
             HandoverChangeNotifier.Notify(head.KhPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
@@ -1909,7 +1947,9 @@ namespace MES.Web.Services
 
             string voidReason,
 
-            int voidedByUserId)
+            int voidedByUserId,
+
+            IReadOnlyCollection<string> editGroups)   // [GN-VOID-RULE] nhóm người huỷ có quyền sửa (Admin: mọi nhóm)
 
         {
 
@@ -1917,10 +1957,20 @@ namespace MES.Web.Services
 
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
 
-            var head = await _db.HandoverTransactions.AsNoTracking().Where(t => t.HandoverTxId == handoverTxId)
-                .Select(t => new { t.KhPlanDetailId }).FirstOrDefaultAsync();
+            var head = await _db.HandoverTransactions.AsNoTracking().Where(t => t.HandoverTxId == handoverTxId && !t.IsVoided)
+                .Select(t => new { t.KhPlanDetailId, t.IssuedBy, t.FromGroupCode, t.SourceReceiveId }).FirstOrDefaultAsync();
             if (head == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+
+            // [GN-VOID-RULE] Luật huỷ (Hùng nhắc lại 26/10): chỉ người lập phiếu hoặc nhóm giao (người có quyền sửa nhóm đó) — máy chủ kiểm
+            if (!CanVoidIssue(head.IssuedBy, head.FromGroupCode, voidedByUserId, editGroups))
+                return (false, $"Chỉ người lập phiếu hoặc nhóm {HandoverLedgerService.GroupLabel(head.FromGroupCode)} mới huỷ được phiếu này.");
+
+            // [GN-VOID-RULE] Phiếu trả hàng lỗi tự lập (NG đếm lúc nhận): huỷ phiếu = huỷ lần nhận gốc (phiếu này huỷ theo).
+            //   Không huỷ riêng phiếu: sổ sẽ coi như bên giao gốc đã nhận lại hàng lỗi ngay — sai số.
+            //   Lần nhận gốc do chính người / nhóm này bấm (IssuedBy = người nhận, FromGroupCode = nhóm nhận) nên cùng luật quyền.
+            if (head.SourceReceiveId != null)
+                return await VoidReceiveAsync(head.SourceReceiveId.Value, voidReason, voidedByUserId, editGroups);
 
             // [GN-K8][K5] Huỷ phiếu xong mà ô nào mới âm → chặn
             using var trx = await _db.Database.BeginTransactionAsync();
@@ -1939,8 +1989,34 @@ namespace MES.Web.Services
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
 
             if (tx.Receives.Any(r => !r.IsVoided))
-
-                return (false, "Phiếu đã có bên nhận xác nhận. Hãy void từng lần nhận trước.");
+            {
+                // [GN-WHY] Phiếu đã có lần nhận: liệt kê đúng các lần nhận phải huỷ trước (mới nhất trước) + chứng từ phía sau đang dùng số đó
+                var recs = tx.Receives.Where(r => !r.IsVoided).OrderByDescending(r => r.ReceivedAt).ThenByDescending(r => r.ReceiveId)
+                    .Select(r => new { r.ReceiveId, Qty = r.QtyOk + r.QtyNg, r.ReceivedAt }).ToList();
+                var recIds = recs.Select(r => (long?)r.ReceiveId).ToList();
+                var backs = await _db.HandoverTransactions.AsNoTracking().Include(t => t.Receives)
+                    .Where(t => recIds.Contains(t.SourceReceiveId) && !t.IsVoided).ToListAsync();
+                _db.ChangeTracker.Clear();
+                await trx.RollbackAsync();   // nhả khoá PO trước khi tìm gốc rễ
+                var tail = new List<string>();
+                var opDocs = new HashSet<string> { "T:" + handoverTxId };
+                foreach (var r in recs)
+                {
+                    opDocs.Add("R:" + r.ReceiveId);
+                    foreach (var b in backs.Where(b => b.SourceReceiveId == r.ReceiveId))
+                    {
+                        opDocs.Add("T:" + b.HandoverTxId);
+                        foreach (var br in b.Receives.Where(x => !x.IsVoided).OrderByDescending(x => x.ReceivedAt))
+                        {
+                            opDocs.Add("R:" + br.ReceiveId);
+                            tail.Add($"Huỷ lần nhận #{br.ReceiveId} của phiếu trả hàng lỗi #{b.HandoverTxId} ({HandoverLedgerService.GroupLabel(b.ToGroupCode)} đã nhận lại {br.QtyOk + br.QtyNg:0.##} lúc {br.ReceivedAt:dd/MM HH:mm})");
+                        }
+                    }
+                    tail.Add($"Huỷ lần nhận #{r.ReceiveId} của phiếu này (nhận {r.Qty:0.##} lúc {r.ReceivedAt:dd/MM HH:mm})");
+                }
+                var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId), opDocs, tail);
+                return (false, "Phiếu đã có bên nhận xác nhận. Huỷ từng lần nhận trước, hoặc dùng Huỷ phần chưa nhận." + whyTxt);   // [GN-VOID-RULE] chỉ đổi chữ
+            }
 
             // [GN-RECV-NG] Phiếu trả tự lập không huỷ riêng (huỷ lần nhận gốc thì phiếu này huỷ theo)
             if (tx.SourceReceiveId != null)
@@ -1959,7 +2035,15 @@ namespace MES.Web.Services
             if (before != null)
             {
                 var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
-                if (k5 != null) { _db.ChangeTracker.Clear(); return (false, k5); }
+                if (k5 != null)
+                {
+                    // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
+                    _db.ChangeTracker.Clear();
+                    await trx.RollbackAsync();
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId),
+                        new HashSet<string> { "T:" + handoverTxId });
+                    return (false, k5 + whyTxt);
+                }
             }
             await trx.CommitAsync();
             HandoverChangeNotifier.Notify(head.KhPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
@@ -1968,6 +2052,90 @@ namespace MES.Web.Services
 
             return (true, string.Empty);
 
+        }
+
+        // ----------------------------------------------------------------
+        // [GN-VOID-RULE 2026-10-26] Luật huỷ dùng chung (trang + service)
+        //   Huỷ phiếu giao / huỷ phần chưa nhận: người lập phiếu, hoặc người có quyền sửa nhóm giao.
+        //   Huỷ lần nhận: người bấm Nhận, hoặc người có quyền sửa nhóm nhận.
+        //   Admin: trang truyền đủ 5 nhóm vào editGroups.
+        // ----------------------------------------------------------------
+        public static bool CanVoidIssue(int issuedBy, string fromGroupCode, int userId, IReadOnlyCollection<string> editGroups)
+            => issuedBy == userId || editGroups.Contains(fromGroupCode);
+
+        public static bool CanVoidReceive(int receivedBy, string toGroupCode, int userId, IReadOnlyCollection<string> editGroups)
+            => receivedBy == userId || editGroups.Contains(toGroupCode);
+
+        // ----------------------------------------------------------------
+        // [GN-VOID-RULE] WRITE: Huỷ phần chưa nhận của phiếu nhận dở (PARTIAL)
+        //   Phiếu còn lại đúng bằng số đã nhận (COMPLETED); phần chưa nhận về lại ô bên giao (sổ: Giao = số đã nhận).
+        //   Ghi lại số đã huỷ / người / lúc / lý do (QtyClosed…) để truy vết; phiếu gốc = QtyIssued + QtyClosed.
+        //   Không áp dụng phiếu trả tự lập (hàng lỗi đó đã rời bên nhận gốc ngay lúc nhận — bớt phiếu là mất hàng).
+        // ----------------------------------------------------------------
+        public async Task<(bool Ok, string Error)> CloseRemainderAsync(
+            long handoverTxId,
+            string reason,
+            int userId,
+            IReadOnlyCollection<string> editGroups)
+        {
+            if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
+                return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
+
+            var head = await _db.HandoverTransactions.AsNoTracking().Where(t => t.HandoverTxId == handoverTxId && !t.IsVoided)
+                .Select(t => new { t.KhPlanDetailId, t.IssuedBy, t.FromGroupCode }).FirstOrDefaultAsync();
+            if (head == null)
+                return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+            if (!CanVoidIssue(head.IssuedBy, head.FromGroupCode, userId, editGroups))
+                return (false, $"Chỉ người lập phiếu hoặc nhóm {HandoverLedgerService.GroupLabel(head.FromGroupCode)} mới huỷ được phần chưa nhận.");
+
+            using var trx = await _db.Database.BeginTransactionAsync();
+            var lockErr = await LockPoAsync(head.KhPlanDetailId);   // [GN-K8] khoá chung với WTS / giao nhận
+            if (lockErr != null) return (false, lockErr);
+            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+
+            var tx = await _db.HandoverTransactions
+                .Include(t => t.Receives)
+                .FirstOrDefaultAsync(t => t.HandoverTxId == handoverTxId && !t.IsVoided);
+            if (tx == null)
+                return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+            if (HandoverPurpose.IsOut(tx.Purpose))
+                return (false, "Phiếu Huỷ / Trả khách không có phần chờ nhận.");
+            if (tx.SourceReceiveId != null)
+                return (false, $"Phiếu #{tx.HandoverTxId} do phần mềm tự lập (NG lúc nhận): không huỷ phần còn lại được. Bên kia nhận nốt, hoặc huỷ lần nhận gốc.");
+            var received = tx.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+            if (received <= 0)
+                return (false, "Phiếu chưa có lần nhận nào: dùng Huỷ phiếu giao.");
+            var closed = tx.QtyIssued - received;
+            if (closed <= 0)
+                return (false, "Phiếu đã nhận đủ, không còn phần chưa nhận.");
+
+            tx.QtyIssued    = received;
+            tx.QtyClosed    = (tx.QtyClosed ?? 0) + closed;
+            tx.ClosedBy     = userId;
+            tx.ClosedAt     = DateTime.Now;
+            var why = string.IsNullOrEmpty(tx.ClosedReason) ? reason.Trim() : tx.ClosedReason + " | " + reason.Trim();
+            tx.ClosedReason = why.Length > 200 ? why[..200] : why;
+            if (tx.NgQty > tx.QtyIssued) tx.NgQty = tx.QtyIssued;   // phiếu hàng lỗi: số NG khai báo theo phiếu còn lại
+            tx.Status       = "COMPLETED";
+            await _db.SaveChangesAsync();
+
+            if (before != null)
+            {
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                if (k5 != null)
+                {
+                    // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
+                    _db.ChangeTracker.Clear();
+                    await trx.RollbackAsync();
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpCloseRemainder(handoverTxId),
+                        new HashSet<string> { "T:" + handoverTxId });
+                    return (false, k5 + whyTxt);
+                }
+            }
+            await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(head.KhPlanDetailId);   // [GN-LIVE]
+            _db.ChangeTracker.Clear();
+            return (true, string.Empty);
         }
 
         // ----------------------------------------------------------------

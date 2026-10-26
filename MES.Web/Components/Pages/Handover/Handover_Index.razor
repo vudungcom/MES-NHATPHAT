@@ -966,13 +966,20 @@ else
                                 @* [GN-RECV-NG] mục 38 *@
                                 <span class="badge bg-warning text-dark" title="Phần mềm tự lập khi bên nhận đếm NG lúc nhận. Không huỷ riêng — huỷ lần nhận gốc thì phiếu này huỷ theo.">tự lập · NG lúc nhận</span>
                             }
-                            @if (!tx.IsVoided && (tx.Status == "PENDING" || HandoverPurpose.IsOut(tx.Purpose)) && !tx.Receives.Any()
-                                 && tx.SourceReceiveId == null
-                                 && _canEditAny && _myEditGroups.Contains(tx.FromGroupCode))
+                            @* [GN-VOID-RULE] Nút huỷ theo 1 luật: người lập phiếu hoặc nhóm giao. Trước: chỉ theo quyền nhóm, ẩn khi phiếu từng có lần nhận đã huỷ,
+                               ẩn hẳn với phiếu trả tự lập. Phiếu tự lập: huỷ = huỷ lần nhận gốc. *@
+                            @if (ShowVoidIssueBtn(tx))
                             {
                                 <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px"
                                         @onclick="() => VoidIssueFromLog(tx.HandoverTxId)">
-                                    <i class="bi bi-trash me-1"></i>Huỷ phiếu giao
+                                    <i class="bi bi-trash me-1"></i>@VoidIssueBtnText(tx)
+                                </button>
+                            }
+                            @if (ShowCloseBtn(tx))
+                            {
+                                <button class="btn btn-xs btn-outline-warning ms-auto" style="font-size:10px;padding:1px 6px"
+                                        @onclick="() => CloseRemainderFromLog(tx.HandoverTxId)">
+                                    <i class="bi bi-scissors me-1"></i>Huỷ phần chưa nhận (@(RemainOf(tx).ToString("0.##")))
                                 </button>
                             }
                         </div>
@@ -986,11 +993,16 @@ else
                         {
                             <div class="small mb-2"><span class="text-danger">Lỗi: @tx.NgReason</span></div>
                         }
+                        @if (tx.QtyClosed > 0)
+                        {
+                            @* [GN-VOID-RULE] *@
+                            <div class="small mb-2 text-warning-emphasis"><i class="bi bi-scissors me-1"></i>@ClosedText(tx)</div>
+                        }
                         @if (tx.Receives.Any())
                         {
                             <table class="table table-bordered mb-0" style="font-size:11px">
                                 <thead class="table-light">
-                                    <tr><th>Thời gian</th><th>Người nhận</th><th>Vào ô</th><th class="text-end text-success">Đạt</th><th class="text-end text-danger">NG</th><th>Lỗi</th><th>TT</th></tr> @* [GN-CELL2] + cột Vào ô *@
+                                    <tr><th>Thời gian</th><th>Người nhận</th><th>Vào ô</th><th class="text-end text-success">Đạt</th><th class="text-end text-danger">NG</th><th>Lỗi</th><th>TT</th><th></th></tr> @* [GN-CELL2] + cột Vào ô; [GN-VOID-RULE] + cột huỷ lần nhận *@
                                 </thead>
                                 <tbody>
                                     @foreach (var r in tx.Receives)
@@ -1011,6 +1023,15 @@ else
                                             <td>
                                                 @if (r.IsVoided) { <span class="badge bg-secondary" title="@r.VoidReason">Đã huỷ</span> }
                                                 else { <span class="badge bg-success">OK</span> }
+                                            </td>
+                                            <td>
+                                                @if (ShowVoidRecvBtn(tx, r))
+                                                {
+                                                    <button class="btn btn-xs btn-outline-danger" style="font-size:10px;padding:0 5px" title="Huỷ lần nhận này"
+                                                            @onclick="() => VoidReceiveFromLog(tx.HandoverTxId, r.ReceiveId)">
+                                                        <i class="bi bi-x-lg"></i>
+                                                    </button>
+                                                }
                                             </td>
                                         </tr>
                                     }
@@ -1089,15 +1110,15 @@ else
 @if (_showVoidConfirm)
 {
     <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:380px">
+        <div class="mes-modal" @onclick:stopPropagation style="width:560px;max-width:95vw">   @* [GN-WHY] rộng hơn: chỗ cho các bước gợi ý (trước 380px) *@
             <div class="mes-modal-header">
-                <h6 class="mb-0 text-danger"><i class="bi bi-trash me-2"></i>Huỷ phiếu giao</h6>
+                <h6 class="mb-0 text-danger"><i class="bi bi-trash me-2"></i>@VoidTitle</h6>   @* [GN-VOID-RULE] 3 kiểu huỷ dùng chung modal *@
                 <button class="btn-close btn-sm" @onclick="CloseVoidConfirm"></button>
             </div>
             <div class="mes-modal-body">
                 <div class="alert alert-warning py-2 small">
                     <i class="bi bi-exclamation-triangle me-1"></i>
-                    Chỉ huỷ được phiếu <strong>PENDING</strong> chưa có ai xác nhận nhận (và phiếu Huỷ / Trả khách). Sau khi huỷ, số lượng trả về ô của nhóm giao.
+                    @VoidNote()
                 </div>
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold text-danger">Lý do huỷ *</label>
@@ -1105,14 +1126,14 @@ else
                 </div>
                 @if (!string.IsNullOrEmpty(_modalError))
                 {
-                    <div class="alert alert-danger py-1 small">@_modalError</div>
+                    <div class="alert alert-danger py-1 small" style="white-space:pre-line;max-height:45vh;overflow-y:auto">@_modalError</div>   @* [GN-WHY] các bước gợi ý xuống dòng *@
                 }
             </div>
             <div class="mes-modal-footer">
                 <button class="btn btn-sm btn-secondary" @onclick="CloseVoidConfirm">Hủy</button>
                 <button class="btn btn-sm btn-danger" @onclick="ConfirmVoidIssueAsync" disabled="@_saving">
                     @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    <i class="bi bi-trash me-1"></i>Xác nhận huỷ phiếu
+                    <i class="bi bi-trash me-1"></i>Xác nhận @VoidTitle.ToLower()
                 </button>
             </div>
         </div>
@@ -1195,6 +1216,8 @@ else
     long   _voidingTxId;
     string _voidReason = "";
     bool   _showVoidConfirm;
+    string _voidMode = "ISSUE";     // [GN-VOID-RULE] ISSUE = huỷ phiếu giao · RECV = huỷ lần nhận · CLOSE = huỷ phần chưa nhận
+    long   _voidingReceiveId;       // [GN-VOID-RULE]
 
     Dictionary<int, int> _pendingCountPerDetail = new();
     Dictionary<int, int> _pendingIssuedCountPerDetail = new();
@@ -1286,7 +1309,7 @@ else
         ? "Excel có cột này nhưng cả 3 tình huống không ghi vào: hàng lỗi đã xử lý chỉ NHẬN về nơi phát hiện rồi làm tiếp (WTS), không giao đi từ ô này."
         : "Theo quy trình Excel Kho không nhận / giao Hàng Sửa (ô có số khi có nhóm gửi Kho sửa). Phôi lỗi ở Kho đi bằng ô Hàng lỗi (gửi nhờ sửa, huỷ, trả khách)."; // [GN-ROUTE-FREE]
 
-    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", _ => k };
+    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", _ => k };   // [GN-VOID-RULE] + DONG
     static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", _ => "bg-secondary" };
 
     // =================================================================
@@ -2058,7 +2081,31 @@ else
 
     void VoidIssueFromLog(long txId)
     {
+        _voidMode        = "ISSUE";   // [GN-VOID-RULE]
         _voidingTxId     = txId;
+        _voidingReceiveId = 0;
+        _voidReason      = "";
+        _modalError      = "";
+        _showVoidConfirm = true;
+    }
+
+    // [GN-VOID-RULE] Huỷ 1 lần nhận (người bấm Nhận / nhóm nhận)
+    void VoidReceiveFromLog(long txId, long receiveId)
+    {
+        _voidMode        = "RECV";
+        _voidingTxId     = txId;
+        _voidingReceiveId = receiveId;
+        _voidReason      = "";
+        _modalError      = "";
+        _showVoidConfirm = true;
+    }
+
+    // [GN-VOID-RULE] Huỷ phần chưa nhận của phiếu nhận dở (người lập / nhóm giao)
+    void CloseRemainderFromLog(long txId)
+    {
+        _voidMode        = "CLOSE";
+        _voidingTxId     = txId;
+        _voidingReceiveId = 0;
         _voidReason      = "";
         _modalError      = "";
         _showVoidConfirm = true;
@@ -2074,11 +2121,20 @@ else
             return;
         }
         _saving = true;
-        (bool ok, string err) = await HandoverSvc.VoidIssueAsync(_voidingTxId, _voidReason.Trim(), _currentUserId);
+        // [GN-VOID-RULE] 3 kiểu huỷ; máy chủ kiểm quyền (người lập/nhận hoặc nhóm) + K5 (huỷ xong ô nào âm, kể cả WTS từng mã CV, thì không lưu)
+        (bool ok, string err) result;
+        if (_voidMode == "RECV")
+            result = await HandoverSvc.VoidReceiveAsync(_voidingReceiveId, _voidReason.Trim(), _currentUserId, _myEditGroups);
+        else if (_voidMode == "CLOSE")
+            result = await HandoverSvc.CloseRemainderAsync(_voidingTxId, _voidReason.Trim(), _currentUserId, _myEditGroups);
+        else
+            result = await HandoverSvc.VoidIssueAsync(_voidingTxId, _voidReason.Trim(), _currentUserId, _myEditGroups);
+        (bool ok, string err) = result;
         _saving = false;
         if (!ok) { _modalError = err; return; }
         _showVoidConfirm = false;
         _voidingTxId     = 0;
+        _voidingReceiveId = 0;
         _modalError      = "";
         _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
         await ReloadRowAsync(_logDetailId);
@@ -2092,6 +2148,50 @@ else
         _expandedTxId   = 0;     _pendingTxs       = new();
         ResetReceiveInputs();
         _voidingTxId    = 0;     _voidReason       = "";
+    }
+
+    // ── [GN-VOID-RULE] Luật huỷ trên Lịch sử phiếu (cùng hàm với máy chủ) ──
+    static decimal ActiveRecv(HandoverLogItem tx) => tx.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+    static decimal RemainOf(HandoverLogItem tx) => tx.QtyIssued - ActiveRecv(tx);
+    bool CanIssueSide(HandoverLogItem tx) => HandoverService.CanVoidIssue(tx.IssuedBy, tx.FromGroupCode, _currentUserId, _myEditGroups);
+    // Huỷ phiếu: chưa có lần nhận nào còn hiệu lực (lần nhận đã huỷ không tính) — phiếu chờ nhận, hoặc phiếu Huỷ / Trả khách
+    bool ShowVoidIssueBtn(HandoverLogItem tx)
+        => !tx.IsVoided && ActiveRecv(tx) <= 0 && (tx.Status == "PENDING" || HandoverPurpose.IsOut(tx.Purpose)) && CanIssueSide(tx);
+    // Huỷ phần chưa nhận: phiếu nhận dở, không phải phiếu tự lập / Huỷ / Trả khách
+    bool ShowCloseBtn(HandoverLogItem tx)
+        => !tx.IsVoided && tx.SourceReceiveId == null && !HandoverPurpose.IsOut(tx.Purpose)
+           && ActiveRecv(tx) > 0 && ActiveRecv(tx) < tx.QtyIssued && CanIssueSide(tx);
+    bool ShowVoidRecvBtn(HandoverLogItem tx, HandoverReceiveItem r)
+        => !tx.IsVoided && !r.IsVoided && HandoverService.CanVoidReceive(r.ReceivedBy, tx.ToGroupCode, _currentUserId, _myEditGroups);
+    static string VoidIssueBtnText(HandoverLogItem tx) => tx.SourceReceiveId != null ? "Huỷ phiếu (huỷ lần nhận gốc)" : "Huỷ phiếu giao";
+    static string ClosedText(HandoverLogItem tx)
+        => $"Đã huỷ phần chưa nhận {tx.QtyClosed:0.##} chiếc (phiếu gốc {tx.QtyIssued + tx.QtyClosed:0.##})"
+           + (string.IsNullOrEmpty(tx.ClosedByName) ? "" : $" · {tx.ClosedByName}")
+           + (tx.ClosedAt != null ? $" · {tx.ClosedAt:dd/MM HH:mm}" : "")
+           + (string.IsNullOrEmpty(tx.ClosedReason) ? "" : $" · {tx.ClosedReason}");
+    string VoidTitle => _voidMode switch { "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", _ => "Huỷ phiếu giao" };
+    string VoidNote()
+    {
+        var tx = _logItems.FirstOrDefault(x => x.HandoverTxId == _voidingTxId);
+        if (tx == null) return "";
+        if (_voidMode == "RECV")
+        {
+            var r = tx.Receives.FirstOrDefault(x => x.ReceiveId == _voidingReceiveId);
+            var what = r == null ? "" : $"lần nhận {r.ReceivedAt:dd/MM HH:mm} (đạt {r.QtyOk:0.##} / NG {r.QtyNg:0.##})";
+            return $"Huỷ {what} của phiếu #{tx.HandoverTxId}: phiếu về lại chờ {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} nhận."
+                 + (r != null && r.QtyNg > 0 ? " Phiếu trả hàng lỗi tự lập từ lần nhận này huỷ theo." : "")
+                 + " Nếu số đã nhận đã được nhập WTS / giao tiếp thì phần mềm chặn — xoá / sửa từ cuối ngược lên.";
+        }
+        if (_voidMode == "CLOSE")
+            return $"Phiếu #{tx.HandoverTxId} giao {tx.QtyIssued:0.##}, đã nhận {ActiveRecv(tx):0.##}: huỷ {RemainOf(tx):0.##} chiếc chưa nhận, số này về lại {HandoverLedgerService.GroupLabel(tx.FromGroupCode)}. Phiếu đóng ở {ActiveRecv(tx):0.##}.";
+        if (tx.SourceReceiveId != null)
+        {
+            var src = _logItems.FirstOrDefault(x => x.Receives.Any(r => r.ReceiveId == tx.SourceReceiveId));
+            var sr = src?.Receives.FirstOrDefault(r => r.ReceiveId == tx.SourceReceiveId);
+            return $"Phiếu #{tx.HandoverTxId} do phần mềm tự lập khi nhận có NG. Huỷ phiếu này = huỷ lần nhận gốc"
+                 + (src != null && sr != null ? $" của phiếu #{src.HandoverTxId} (đạt {sr.QtyOk:0.##} / NG {sr.QtyNg:0.##}) — phiếu #{src.HandoverTxId} về lại chờ nhận." : ".");
+        }
+        return $"Huỷ phiếu #{tx.HandoverTxId} ({tx.QtyIssued:0.##} chiếc): số lượng trả về ô của {HandoverLedgerService.GroupLabel(tx.FromGroupCode)}.";
     }
 
     string GetStatusBadge(string status) => status switch

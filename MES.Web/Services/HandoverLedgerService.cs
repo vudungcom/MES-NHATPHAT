@@ -400,7 +400,12 @@ namespace MES.Web.Services
         public long?   SourceReceiveId { get; set; }
         /// <summary>[GN-CELL2] Ô bên giao chỉ định cho bên nhận. Null = phiếu cũ.</summary>
         public string? ToCell    { get; set; }
+        /// <summary>[GN-VOID-RULE] Phần chưa nhận đã huỷ (Issued đã trừ phần này). Chỉ dùng hiển thị dòng B.</summary>
+        public decimal Closed    { get; set; }
+        public DateTime? ClosedAt { get; set; }
         public List<InRecv> Receives { get; set; } = new();
+        /// <summary>[GN-WHY] Bản sao để tính thử (danh sách lần nhận riêng).</summary>
+        public InTx CloneTx() { var c = (InTx)MemberwiseClone(); c.Receives = new List<InRecv>(Receives); return c; }
     }
     public record InWts(long Id, DateTime At, string ProcessGroup, string? NC, string? WtsCode,
                         decimal Ok, decimal Ng, string? Worker);
@@ -480,6 +485,15 @@ namespace MES.Web.Services
             if (extraWts != null)
                 inp.Wts.AddRange(extraWts);
             return Compute(inp);
+        }
+
+        /// <summary>[GN-WHY] Dữ liệu đầu vào thô của 1 PO (để tính thử "nếu bỏ chứng từ X thì sao" — chỉ đọc).</summary>
+        public async Task<LedgerInput?> GetInputForDetailAsync(int khPlanDetailId)
+        {
+            var details = await _db.KhPlanDetails.Include(d => d.KhPlan).ThenInclude(p => p!.Customer)
+                .Where(d => d.KhPlanDetailId == khPlanDetailId).AsNoTracking().ToListAsync();
+            if (!details.Any()) return null;
+            return (await LoadInputsAsync(details))[0];
         }
 
         /// <summary>[GN-WTS-CAP] Sổ của nhiều PO (dùng cho lọc danh sách PO trên trang WTS).</summary>
@@ -566,6 +580,7 @@ namespace MES.Web.Services
                         FromNC = t.FromNC, ToNC = t.ToNC, At = t.IssuedAt, Notes = t.Notes, NgReason = t.NgReason, // [GN-NG-OUT]
                         SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                         ToCell = t.ToCell, // [GN-CELL2]
+                        Closed = t.QtyClosed ?? 0, ClosedAt = t.ClosedAt, // [GN-VOID-RULE]
                         Receives = t.Receives.Where(r => !r.IsVoided)
                                     .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, r.NgReason, r.ToCell, r.ToCellReason)).ToList()
                     }).ToList(),
@@ -1205,7 +1220,8 @@ namespace MES.Web.Services
                     c = new InTx
                     {
                         Id = t.Id, From = t.From, To = t.To, Purpose = t.Purpose, FromCell = t.FromCell, IsReturnNg = t.IsReturnNg,
-                        Issued = t.Issued, Status = HandoverPurpose.IsOut(t.Purpose) ? t.Status : "PENDING",
+                        Issued = t.Issued + t.Closed,   // [GN-VOID-RULE] lúc lập phiếu: số gốc; bước "huỷ phần chưa nhận" mới trừ
+                        Status = HandoverPurpose.IsOut(t.Purpose) ? t.Status : "PENDING",
                         FromNC = t.FromNC, ToNC = t.ToNC, At = t.At, Notes = t.Notes, NgReason = t.NgReason,
                         SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                         ToCell = t.ToCell, // [GN-CELL2]
@@ -1265,7 +1281,8 @@ namespace MES.Web.Services
                     {
                         var c = Copy(ttx);
                         c.Receives.Add(rr);
-                        if (last) c.Status = ttx.Status;
+                        if (ttx.Closed > 0) c.Status = StepStatus(c);   // [GN-VOID-RULE] phiếu đã huỷ phần chưa nhận: trạng thái theo số gốc tới bước đóng
+                        else if (last) c.Status = ttx.Status;
                         else if (c.Status == "PENDING") c.Status = "PARTIAL";
                         if (back != null) Copy(back);   // [GN-RECV-NG] phiếu trả sinh cùng lúc, chờ bên giao nhận
                     }, new LedgerStepRow
@@ -1283,6 +1300,21 @@ namespace MES.Web.Services
                               + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
                     }));
                 }
+            }
+            // [GN-VOID-RULE] Bước "huỷ phần chưa nhận": số phiếu về bằng số đã nhận, phần còn lại trả về ô bên giao
+            foreach (var t in inp.Txs.Where(x => x.Closed > 0))
+            {
+                var ttx = t;
+                events.Add((t.ClosedAt ?? t.At, 2, t.Id, () =>
+                {
+                    var c = Copy(ttx);
+                    c.Issued = ttx.Issued;
+                    c.Status = StepStatus(c);
+                }, new LedgerStepRow
+                {
+                    Kind = "DONG", Group = t.From, Other = t.To, Cell = HandoverCell.IssueCellOf(Classify(t, gcLastNc), t.FromCell), Qty = -t.Closed, RefId = t.Id,
+                    Text = $"{GroupLabel(t.From)} huỷ phần chưa nhận {t.Closed:0.##} của phiếu #{t.Id} (phiếu còn {t.Issued:0.##}) · hàng về lại {GroupLabel(t.From)}"
+                }));
             }
             foreach (var w in inp.Wts)
             {
@@ -1308,6 +1340,13 @@ namespace MES.Web.Services
                 rows.Add(ev.meta);
             }
             return rows;
+        }
+
+        /// <summary>[GN-VOID-RULE] Trạng thái phiếu theo số đã nhận tới bước đang dựng (dòng B).</summary>
+        static string StepStatus(InTx c)
+        {
+            var rec = c.Receives.Sum(x => x.Ok + x.Ng);
+            return rec <= 0 ? "PENDING" : rec >= c.Issued ? "COMPLETED" : "PARTIAL";
         }
 
         static List<LedgerDoc> AllDocs(Dictionary<(string g, string key), LedgerTerm> acc, string g, params string[] keys)
@@ -1606,11 +1645,40 @@ namespace MES.Web.Services
                 Put(G.Code + "|LoiGiu",   G.LoiGiu,   $"{G.Label}: tồn hàng lỗi");
                 Put(G.Code + "|SuaGiu",   G.SuaGiu,   $"{G.Label}: tồn hàng sửa");   // [GN-CELL]
                 Put(G.Code + "|LamHoGiu", G.LamHoGiu, $"{G.Label}: Tồn hàng giao theo NC");
-                // Ô theo NC (GC) là ô bảo toàn thật (N1). Ô theo mã CV (HTSP/KCS/PKG) chỉ là trần nhập — ô Chưa làm của nhóm canh bảo toàn.
+                // Ô theo NC (GC) là ô bảo toàn thật (N1).
                 foreach (var s in G.Steps.Where(s => s.Pg == "GC" && s.Waiting.HasValue && !s.IsExcluded && !s.IsPrep))
-                    Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, $"{G.Label} {(s.Pg == "GC" ? "NC" : s.SubGroup)} {s.Code}: chưa làm");
+                    Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, $"{G.Label} {NcName(s.Code)}: chưa làm");   // [GN-WHY] chữ: bỏ "NC NC1"
+                // [GN-VOID-RULE] Gia công giao theo NC mà NC sau là máy loại trừ (hoặc không có NC sau): số đã giao từ NC không vượt OK NC đó.
+                //   NC sau thường đã tự canh (nhận vào = OK NC trước − đã giao đi), riêng NC sau là máy loại trừ thì không có ô nào canh.
+                //   Trước: xoá WTS NC nguồn sau khi đã giao theo NC vẫn cho (fuzz 26/10: OK NC1 còn 1, đã giao theo NC 4).
+                if (G.Code == "GC")
+                    for (int i = 0; i < G.Steps.Count; i++)
+                    {
+                        var s = G.Steps[i];
+                        if (s.IsExcluded || s.IsPrep || s.HelpOut <= 0) continue;
+                        var next = i + 1 < G.Steps.Count ? G.Steps[i + 1] : null;
+                        if (next != null && !next.IsExcluded) continue;
+                        Put($"GC|helpOut|{s.Code}", s.Ok - s.HelpOut, $"{G.Label} {NcName(s.Code)}: đã giao theo NC nhiều hơn OK của NC (WTS)");
+                    }
+                // [GN-VOID-RULE] Ô theo mã CV (HTSP/KCS/PKG) cũng canh (K5): huỷ lần nhận / huỷ phiếu mà làm WTS một mã vượt số hàng thật nhận
+                //   → chặn, phải xoá / sửa WTS mã đó trước. Trước: không canh, nhóm vẫn cân (OK nhóm = min các mã) nhưng WTS mã lệch hàng thật.
+                foreach (var s in G.Steps.Where(s => s.Pg != "GC" && s.Waiting.HasValue && !s.IsExcluded && !s.IsPrep))
+                    Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, $"{G.Label}{(s.SubGroup == G.Label || string.IsNullOrEmpty(s.SubGroup) ? "" : " " + s.SubGroup)} mã {s.Code}: WTS đã làm vượt hàng nhận (chưa làm)");   // [GN-WHY] chữ: bỏ "KCS KCS"
             }
             return d;
+        }
+
+        /// <summary>[GN-WHY] Tên NC để hiện: "NC1" giữ nguyên, mã không bắt đầu bằng NC thì thêm chữ "NC ".</summary>
+        public static string NcName(string? code)
+            => string.IsNullOrEmpty(code) ? "NC" : code.StartsWith("NC", StringComparison.OrdinalIgnoreCase) ? code : "NC " + code;
+
+        /// <summary>[GN-WHY] Như NewNegatives nhưng trả khoá ô (để lần ra chứng từ đang trừ vào ô đó).</summary>
+        public static List<string> NewNegativeKeys(LedgerRow before, LedgerRow after)
+        {
+            var b = NegativeCells(before);
+            return NegativeCells(after)
+                .Where(kv => !b.TryGetValue(kv.Key, out var bv) || kv.Value.Value < bv.Value)
+                .Select(kv => kv.Key).ToList();
         }
 
         /// <summary>
@@ -1677,6 +1745,12 @@ namespace MES.Web.Services
                     if (line == null)
                         return (0, new LedgerExplain { Title = "Giao theo NC", Note = $"NC {fromNC} không có trong snapshot (hoặc là NC máy loại trừ)." });
                     var next = G.Steps.SkipWhile(s => s.Code != fromNC).Skip(1).FirstOrDefault();
+                    // [GN-HELP-LAST] NC cuối không giao theo NC: OK của NC cuối đã là "Đã làm chưa giao" của Gia công → giao bằng Hàng mới.
+                    //   Trước: giao theo NC từ NC cuối trừ Chưa GC nhưng không trừ NC nào → Σ chờ các NC > Chưa GC → WTS nhập vượt, Chưa GC âm.
+                    //   (Bản sửa 24/10 commit cục bộ 3823d97 chưa lên master 11e8f78 — đưa lại.)
+                    if (next == null)
+                        return (0, new LedgerExplain { Title = "Giao theo NC", Rule = "N1, N4",
+                            Note = $"NC {fromNC} là NC cuối của Gia công: hàng OK ở đây là Đã làm chưa giao — giao bằng phân loại Hàng mới." });
                     // Hàng OK ở NC nguồn đi tiếp theo 2 đường: NC sau (nếu NC sau không phải máy loại trừ) hoặc gửi làm hộ.
                     var usedNext = next != null && !next.IsExcluded ? next.Ok + next.Ng : 0;
                     var e = new LedgerExplain

@@ -1,0 +1,2 @@
+chcp 65001
+dotnet bin2\GiaoNhanFuzz.dll scen

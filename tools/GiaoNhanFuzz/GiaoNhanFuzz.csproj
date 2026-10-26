@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);NEWAPI</DefineConstants><NoWarn>CS8618;CS8602;CS8600;CS8604;CS8601;CS8603;CS8625;CS0168;CS0219;CS1998;CS8619;CS8620</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../MES.Web/Data/Entities/*.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverService.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverLedgerService.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverChangeNotifier.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverWhy.cs" />
+    <Compile Include="*.cs" />
+  </ItemGroup>
+</Project>
