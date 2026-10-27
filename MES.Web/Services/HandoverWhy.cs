@@ -76,6 +76,15 @@ namespace MES.Web.Services
             if (add != null) s.Wts.AddRange(add);
         };
 
+        /// <summary>[KH-GUARD] Kho sửa SL phôi thực nhận của 1 dòng Kho (khoVatLieuId = 0: dòng Kho mới chưa có).
+        /// Gán danh sách mới (không sửa list cũ — bản sao Clone dùng chung list Phoi).</summary>
+        public static Action<LedgerInput> OpSetPhoi(long khoVatLieuId, decimal qty) => s =>
+        {
+            var list = s.Phoi.Where(p => p.Id != khoVatLieuId || khoVatLieuId == 0).ToList();
+            list.Add(new InPhoi(khoVatLieuId == 0 ? -1 : khoVatLieuId, DateTime.Now, qty, null));
+            s.Phoi = list;
+        };
+
         // ── Bản sao ────────────────────────────────────────────────────────
         static LedgerInput Clone(LedgerInput i) => new()
         {

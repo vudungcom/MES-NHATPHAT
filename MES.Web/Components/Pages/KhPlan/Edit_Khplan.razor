@@ -83,7 +83,7 @@ else
 
     @if (!string.IsNullOrEmpty(_error))
     {
-        <div class="alert alert-danger py-2">@_error</div>
+        <div class="alert alert-danger py-2" style="white-space:pre-line">@_error</div> @* [KH-GUARD] xuống dòng lời báo K7 *@
     }
 
     @if (_refreshSuccess)
@@ -607,6 +607,17 @@ else
             return;
         }
 
+        // [KH-GUARD 2026-10-27] K7: bật Workflow (OFF → ON) mà PO đang có số âm thì báo ngay, không hỏi PIN
+        if (_plan != null && _applyWorkflow && !_plan.ApplyWorkflow)
+        {
+            var k7 = await KhSvc.CheckWorkflowOnAsync(_plan.KhPlanId);
+            if (k7 != null)
+            {
+                _error = k7;
+                return;
+            }
+        }
+
         _pendingDefaultChanges = new List<PinConfirmModal.DefaultChangeInfo>
         {
             new PinConfirmModal.DefaultChangeInfo
@@ -644,7 +655,12 @@ else
                 if (planEntity.Notes != _planNotes)             planEntity.Notes         = _planNotes;
                 if (planEntity.ReceivedDate != _receivedDate)   planEntity.ReceivedDate  = _receivedDate;
                 // [WORKFLOW] Lưu thay đổi ApplyWorkflow vào DB
-                if (planEntity.ApplyWorkflow != _applyWorkflow) planEntity.ApplyWorkflow = _applyWorkflow;
+                // [KH-GUARD 2026-10-27] Qua service: kiểm lại K7 khi bật + ghi lịch sử từng PO (trước đây đổi thẳng, không log)
+                if (planEntity.ApplyWorkflow != _applyWorkflow)
+                {
+                    var wfErr = await KhSvc.SetApplyWorkflowAsync(_plan.KhPlanId, _applyWorkflow, _currentUserId, _reason.Trim());
+                    if (wfErr != null) throw new InvalidOperationException(wfErr);
+                }
             }
 
             var d = _detailForm!;

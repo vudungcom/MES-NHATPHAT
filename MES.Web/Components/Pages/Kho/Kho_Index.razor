@@ -438,7 +438,8 @@ else
 
                     @if (!string.IsNullOrEmpty(_errorMessage))
                     {
-                        <div class="alert alert-danger py-2 small mb-0 mt-3">
+                        @* [KH-GUARD 2026-10-27] pre-line: lời báo K5 khi sửa phôi nhận có nhiều dòng gợi ý *@
+                        <div class="alert alert-danger py-2 small mb-0 mt-3" style="white-space:pre-line">
                             <i class="bi bi-exclamation-triangle-fill"></i> @_errorMessage
                         </div>
                     }

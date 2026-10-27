@@ -157,6 +157,14 @@ public class KhoVatLieuService
         if (planDetail == null)
             return (false, "Không tìm thấy dòng Kế hoạch tương ứng.");
 
+        // [KH-GUARD 2026-10-27] Phôi nhận là đầu vào gốc của cả PO: sửa dưới khoá PO (chung WTS + Giao nhận)
+        //   và lưu xong không được làm ô nào mới âm (K5/K8) — vd đã giao 40 cho GC mà sửa phôi nhận còn 30.
+        //   Không commit = tự rollback khi thoát hàm (using).
+        using var trx = await _db.Database.BeginTransactionAsync();
+        var lockErr = await PoGuard.LockAsync(_db, khPlanDetailId);
+        if (lockErr != null) return (false, lockErr);
+        var ledgerBefore = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+
         var existing = await _db.KhoVatLieus.FirstOrDefaultAsync(k => k.PlanDetailId == khPlanDetailId);
         var now = DateTime.Now;
 
@@ -198,6 +206,8 @@ public class KhoVatLieuService
                 Reason = reason
             });
             await _db.SaveChangesAsync();
+            var guardNew = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, 0, slNhan);   // [KH-GUARD]
+            if (guardNew != null) return (false, guardNew);
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
             return (true, null);
         }
@@ -236,8 +246,34 @@ public class KhoVatLieuService
         existing.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
+        var guardErr = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, existing.KhoVatLieuId, slNhan);   // [KH-GUARD]
+        if (guardErr != null) return (false, guardErr);
         HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
         return (true, null);
+    }
+
+    /// <summary>
+    /// [KH-GUARD 2026-10-27] Kiểm K5 sau khi đã SaveChanges trong giao dịch: ô nào mới âm thì rollback + báo gốc rễ ([GN-WHY]);
+    /// không thì commit. Trả null = đã lưu.
+    /// </summary>
+    private async Task<string?> FinishPhoiGuardAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction trx,
+        LedgerRow? before, int khPlanDetailId, long khoVatLieuId, int? slNhan)
+    {
+        if (before != null)
+        {
+            var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, before);
+            if (k5 != null)
+            {
+                _db.ChangeTracker.Clear();
+                await trx.RollbackAsync();
+                var why = await HandoverWhy.ExplainAsync(_db, khPlanDetailId,
+                    HandoverWhy.OpSetPhoi(khoVatLieuId, slNhan ?? 0), new HashSet<string>());
+                return "Sửa SL phôi nhận: " + k5 + why;
+            }
+        }
+        await trx.CommitAsync();
+        return null;
     }
 
     public async Task<List<KhoVatLieuChangeLogItem>> GetChangeLogsAsync(long khoVatLieuId)
@@ -383,4 +419,4 @@ public class KhoVatLieuService
         });
         return 1;
     }
-}
+}
