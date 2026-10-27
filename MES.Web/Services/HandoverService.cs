@@ -155,6 +155,27 @@ namespace MES.Web.Services
 
     }
 
+    /// <summary>[GN-NG-AFTER] Dòng "Báo hàng lỗi phát hiện sau khi nhận" cho Lịch sử phiếu.</summary>
+    public class HandoverNgReportItem
+    {
+        public long     Id             { get; set; }
+        public string   GroupCode      { get; set; } = string.Empty;
+        public string   SourceCell     { get; set; } = string.Empty;
+        public string?  NC             { get; set; }
+        public decimal  Qty            { get; set; }
+        public string   Origin         { get; set; } = string.Empty;
+        public string?  CauseGroupCode { get; set; }
+        public string   NgReason       { get; set; } = string.Empty;
+        public string?  Notes          { get; set; }
+        public int      CreatedBy      { get; set; }
+        public string   CreatedByName  { get; set; } = string.Empty;
+        public DateTime CreatedAt      { get; set; }
+        public bool     IsVoided       { get; set; }
+        public string?  VoidReason     { get; set; }
+        public string   VoidedByName   { get; set; } = string.Empty;
+        public DateTime? VoidedAt      { get; set; }
+    }
+
     public class HandoverLogItem
 
     {
@@ -2065,6 +2086,131 @@ namespace MES.Web.Services
 
         public static bool CanVoidReceive(int receivedBy, string toGroupCode, int userId, IReadOnlyCollection<string> editGroups)
             => receivedBy == userId || editGroups.Contains(toGroupCode);
+
+        // ================================================================
+        // [GN-NG-AFTER 2026-10-27] Báo hàng lỗi phát hiện SAU khi nhận (chứng từ nội bộ của 1 nhóm)
+        //   Ô hàng tốt của nhóm → Tồn hàng lỗi của nhóm. Không phải phiếu giao (không có bên nhận).
+        //   Trần = số đang có ở ô lấy (NgReportCap); khoá PO chung WTS + Giao nhận; lưu xong ô nào mới âm thì không lưu (K5/K8).
+        //   Chưa cần PIN (Hùng chốt 27/10). Huỷ: người báo hoặc người có quyền sửa nhóm đó; huỷ cũng qua K5.
+        // ================================================================
+
+        /// <summary>Người báo hoặc người có quyền sửa nhóm phát hiện mới huỷ được phiếu báo lỗi.</summary>
+        public static bool CanVoidNgReport(int createdBy, string groupCode, int userId, IReadOnlyCollection<string> editGroups)
+            => createdBy == userId || editGroups.Contains(groupCode);
+
+        public async Task<(bool Ok, string Error)> ReportNgAfterReceiveAsync(
+            int khPlanDetailId, string groupCode, string sourceCell, string? nc, decimal qty,
+            string origin, string? causeGroupCode, string ngReason, string? notes,
+            int userId, IReadOnlyCollection<string> editGroups)
+        {
+            var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
+            if (!validGroups.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
+            if (!editGroups.Contains(groupCode))
+                return (false, $"Bạn không có quyền sửa nhóm {HandoverLedgerService.GroupLabel(groupCode)} — không báo lỗi thay nhóm khác được.");
+            if (qty <= 0) return (false, "Số lượng lỗi phải lớn hơn 0.");
+            if (groupCode == "KHO" ? sourceCell != HandoverNgSource.Phoi : sourceCell is not (HandoverNgSource.Chua or HandoverNgSource.Da))
+                return (false, groupCode == "KHO" ? "Kho báo lỗi từ phôi còn." : "Chọn hàng lỗi đang nằm ở: chưa làm, hay đã làm chưa giao.");
+            if (origin is not (HandoverNgSource.DauVao or HandoverNgSource.DauRa))
+                return (false, "Chọn nguồn lỗi: đầu vào (lỗi có sẵn) hay đầu ra (nhóm mình làm hỏng).");
+            if (origin == HandoverNgSource.DauVao && (string.IsNullOrEmpty(causeGroupCode) || !HandoverNgSource.Causes.Contains(causeGroupCode)))
+                return (false, "Lỗi đầu vào: chọn nơi gây lỗi (phôi khách / nhóm trước).");
+            if (origin == HandoverNgSource.DauVao && causeGroupCode == groupCode)
+                return (false, "Lỗi do chính nhóm mình gây ra là lỗi đầu ra.");
+            if (string.IsNullOrWhiteSpace(ngReason) || ngReason.Trim().Length < 3)
+                return (false, "Bắt buộc ghi lỗi cụ thể (ít nhất 3 ký tự).");
+
+            using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8]
+            if (lockErr != null) return (false, lockErr);
+            var row = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+            if (row == null) return (false, "Không tìm thấy PO.");
+
+            bool gcPin = groupCode == "GC" && sourceCell == HandoverNgSource.Chua && row.G("GC").Steps.Any(s => !s.IsExcluded);
+            if (gcPin && string.IsNullOrEmpty(nc)) return (false, "Gia công: bắt buộc chọn NC đang chứa hàng lỗi.");
+            if (!gcPin) nc = null;
+            var (max, ex) = HandoverLedgerService.NgReportCap(row, groupCode, sourceCell, nc);
+            if (qty > max)
+                return (false, $"Báo lỗi tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể báo {qty:0.##}.");
+
+            _db.HandoverNgReports.Add(new HandoverNgReport
+            {
+                KhPlanDetailId = khPlanDetailId,
+                GroupCode      = groupCode,
+                SourceCell     = sourceCell,
+                NC             = nc,
+                Qty            = qty,
+                Origin         = origin,
+                CauseGroupCode = origin == HandoverNgSource.DauVao ? causeGroupCode : null,
+                NgReason       = ngReason.Trim(),
+                Notes          = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim(),
+                CreatedBy      = userId,
+                CreatedAt      = DateTime.Now,
+            });
+            await _db.SaveChangesAsync();
+            var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);   // [GN-K8][K5]
+            if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
+            await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE]
+            _db.ChangeTracker.Clear();
+            return (true, string.Empty);
+        }
+
+        public async Task<(bool Ok, string Error)> VoidNgReportAsync(long reportId, string voidReason, int userId, IReadOnlyCollection<string> editGroups)
+        {
+            if (string.IsNullOrWhiteSpace(voidReason) || voidReason.Trim().Length < 3)
+                return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
+            var head = await _db.HandoverNgReports.AsNoTracking().Where(b => b.HandoverNgReportId == reportId && !b.IsVoided)
+                .Select(b => new { b.KhPlanDetailId, b.CreatedBy, b.GroupCode }).FirstOrDefaultAsync();
+            if (head == null) return (false, "Phiếu báo lỗi không tồn tại hoặc đã huỷ.");
+            if (!CanVoidNgReport(head.CreatedBy, head.GroupCode, userId, editGroups))
+                return (false, $"Chỉ người đã báo hoặc nhóm {HandoverLedgerService.GroupLabel(head.GroupCode)} mới huỷ được phiếu báo lỗi này.");
+
+            using var trx = await _db.Database.BeginTransactionAsync();
+            var lockErr = await LockPoAsync(head.KhPlanDetailId);
+            if (lockErr != null) return (false, lockErr);
+            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            var rep = await _db.HandoverNgReports.FirstOrDefaultAsync(b => b.HandoverNgReportId == reportId && !b.IsVoided);
+            if (rep == null) return (false, "Phiếu báo lỗi không tồn tại hoặc đã huỷ.");
+            rep.IsVoided   = true;
+            rep.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();
+            rep.VoidedBy   = userId;
+            rep.VoidedAt   = DateTime.Now;
+            await _db.SaveChangesAsync();
+            if (before != null)
+            {
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [K5] hàng lỗi đã chuyển / huỷ / trả khách thì không huỷ được
+                if (k5 != null)
+                {
+                    _db.ChangeTracker.Clear();
+                    await trx.RollbackAsync();
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidNgRep(reportId),
+                        new HashSet<string> { "B:" + reportId }, new[] { $"Huỷ phiếu báo lỗi #{reportId}" });
+                    return (false, k5 + whyTxt);
+                }
+            }
+            await trx.CommitAsync();
+            HandoverChangeNotifier.Notify(head.KhPlanDetailId);
+            _db.ChangeTracker.Clear();
+            return (true, string.Empty);
+        }
+
+        public async Task<List<HandoverNgReportItem>> GetNgReportsAsync(int khPlanDetailId)
+        {
+            return await _db.HandoverNgReports.AsNoTracking()
+                .Where(b => b.KhPlanDetailId == khPlanDetailId)
+                .OrderByDescending(b => b.CreatedAt).ThenByDescending(b => b.HandoverNgReportId)
+                .Select(b => new HandoverNgReportItem
+                {
+                    Id = b.HandoverNgReportId, GroupCode = b.GroupCode, SourceCell = b.SourceCell, NC = b.NC, Qty = b.Qty,
+                    Origin = b.Origin, CauseGroupCode = b.CauseGroupCode, NgReason = b.NgReason, Notes = b.Notes,
+                    CreatedBy = b.CreatedBy,
+                    CreatedByName = b.CreatedByUser != null ? (b.CreatedByUser.FullName ?? b.CreatedByUser.Username) : "",
+                    CreatedAt = b.CreatedAt, IsVoided = b.IsVoided, VoidReason = b.VoidReason,
+                    VoidedByName = b.VoidedByUser != null ? (b.VoidedByUser.FullName ?? b.VoidedByUser.Username) : "",
+                    VoidedAt = b.VoidedAt
+                })
+                .ToListAsync();
+        }
 
         // ----------------------------------------------------------------
         // [GN-VOID-RULE] WRITE: Huỷ phần chưa nhận của phiếu nhận dở (PARTIAL)

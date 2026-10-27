@@ -7,6 +7,7 @@
 @using MES.Web.Data
 @inject KhoVatLieuService KhoSvc
 @inject HandoverService HandoverSvc
+@inject HandoverLedgerService LedgerSvc
 @inject UserService UserSvc
 @inject AppDbContext Db
 @inject IJSRuntime JS
@@ -225,18 +226,23 @@ else
                             }
                             else { <text>—</text> }
                         </td>
-                        @* Còn lại tại Kho = SoLuongThucNhan - SL GC đã xác nhận nhận *@
+                        @* [GN-NG-AFTER][V7] Còn lại tại Kho = phôi TỐT còn giao theo sổ Giao nhận (cùng hàm với trang Giao nhận):
+                           phôi nhận − đã lập phiếu Hàng mới (kể cả chờ nhận) − phôi báo lỗi. Trước: phôi nhận − số GC đã xác nhận → hàng lỗi trả về trông như phôi tốt *@
                         @{
-                            var _confirmed  = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var ioR) ? ioR : 0m;
                             var _pending    = _khoIssuedPending.TryGetValue(row.KhPlanDetailId, out var iop) ? iop : 0m;
-                            var _khoRemain  = (row.SoLuongThucNhan ?? 0) - _confirmed;
+                            var _khoRemain  = KhoCon(row.KhPlanDetailId, row.SoLuongThucNhan ?? 0);
+                            var _khoLoi     = KhoLoi(row.KhPlanDetailId);
                         }
                         <td class="bg-warning bg-opacity-10 fw-bold border-end @(_khoRemain > 0 ? "text-warning" : _khoRemain == 0 && row.SoLuongThucNhan > 0 ? "text-success" : "text-muted")"
                             title="@(_pending > 0 ? $"⚠ Đang có {_pending.ToString("0.##")} chiếc trên phiếu chờ GC xác nhận" : "")">
                             @(row.SoLuongThucNhan.HasValue ? _khoRemain.ToString("0.##") : "—")
                             @if (_pending > 0)
                             {
-                                <span class="badge bg-warning text-dark ms-1" style="font-size:9px" title="Đang chờ GC xác nhận">+@_pending.ToString("0.##")⏳</span>
+                                <span class="badge bg-warning text-dark ms-1" style="font-size:9px" title="Đã lập phiếu, đang chờ bên nhận xác nhận (đã trừ khỏi số còn lại)">⏳@_pending.ToString("0.##")</span>
+                            }
+                            @if (_khoLoi > 0)
+                            {
+                                <span class="badge bg-danger ms-1" style="font-size:9px" title="Tồn hàng lỗi ở Kho (phôi lỗi báo / trả về) — xử lý ở trang Giao nhận: gửi sửa, chuyển, huỷ, trả khách">lỗi @_khoLoi.ToString("0.##")</span>
                             }
                         </td>
 
@@ -261,12 +267,13 @@ else
                             @{
                                 var _issued = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var _ioSt) ? _ioSt : 0m;
                                 var _rcv    = row.SoLuongThucNhan ?? 0;
+                                var _con    = KhoCon(row.KhPlanDetailId, _rcv);   // [GN-NG-AFTER][V7]
                             }
-                            @if (_issued > 0 && _issued >= _rcv && _rcv > 0)
+                            @if (_issued > 0 && _con <= 0 && _rcv > 0)
                             {
                                 <span class="badge bg-success">Đã giao GC</span>
                             }
-                            else if (_issued > 0 && _issued < _rcv)
+                            else if (_issued > 0 && _con > 0)
                             {
                                 <span class="badge bg-info text-dark">Giao một phần</span>
                             }
@@ -572,6 +579,10 @@ else
     // Dữ liệu từ HandoverService
     private Dictionary<int, decimal> _khoIssuedOut = new();     // SL GC đã nhận xác nhận
     private Dictionary<int, decimal> _khoIssuedPending = new(); // SL đang chờ GC xác nhận
+    // [GN-NG-AFTER][V7] Sổ Giao nhận của các PO trong danh sách — phôi còn giao / tồn hàng lỗi đọc từ đây (một hàm tính chung)
+    private Dictionary<int, LedgerRow> _khoLedger = new();
+    private decimal KhoCon(int detailId, decimal fallback) => _khoLedger.TryGetValue(detailId, out var r) ? r.G("KHO").ConGiao : fallback;
+    private decimal KhoLoi(int detailId) => _khoLedger.TryGetValue(detailId, out var r) ? r.G("KHO").LoiGiu : 0m;
     private Dictionary<int, DateTime?> _khoIssuedAt = new();
 
     // ================================================================
@@ -625,6 +636,7 @@ else
         var khoTxs = await HandoverSvc.GetKhoIssueSummaryAsync(detailIds);
 
         _khoIssuedOut     = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.TotalConfirmed);
+        _khoLedger        = await LedgerSvc.GetLedgerForDetailsAsync(detailIds);   // [GN-NG-AFTER][V7]
         _khoIssuedPending = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.TotalPending);
         _khoIssuedAt      = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.FirstIssuedAt);
     }
@@ -747,13 +759,14 @@ else
                     "ChuaNhan" => q.Where(k => !k.NgayNhanPhoi.HasValue),
                     "DaNhan"   => q.Where(k => k.NgayNhanPhoi.HasValue),
                     // DaCap = đã giao hết cho GC (từ HandoverTransactions)
+                    // [GN-NG-AFTER][V7] "hết" = không còn phôi tốt chưa giao theo sổ (phôi lỗi không tính là còn để giao)
                     "DaCap"    => q.Where(k =>
                         _khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io) && io > 0
-                        && io >= (k.SoLuongThucNhan ?? 0)),
+                        && KhoCon(k.KhPlanDetailId, k.SoLuongThucNhan ?? 0) <= 0),
                     // ChuaCap = đã nhận phôi nhưng chưa giao hết
                     "ChuaCap"  => q.Where(k =>
                         k.NgayNhanPhoi.HasValue &&
-                        (!_khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io2) || io2 < (k.SoLuongThucNhan ?? 0))),
+                        (!_khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io2) || io2 <= 0 || KhoCon(k.KhPlanDetailId, k.SoLuongThucNhan ?? 0) > 0)),
                     _ => q
                 };
             }

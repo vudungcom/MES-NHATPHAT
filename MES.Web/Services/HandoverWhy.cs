@@ -16,7 +16,7 @@ namespace MES.Web.Services
     // =====================================================================
     public static class HandoverWhy
     {
-        /// <summary>Một bước gợi ý kiểm tra. Kind: WTS | NHAN | PHIEU.</summary>
+        /// <summary>Một bước gợi ý kiểm tra. Kind: WTS | NHAN | PHIEU | BAOLOI ([GN-NG-AFTER]).</summary>
         public class WhyStep
         {
             public string    Kind  { get; set; } = "";
@@ -85,6 +85,17 @@ namespace MES.Web.Services
             s.Phoi = list;
         };
 
+        /// <summary>[GN-NG-AFTER] Huỷ 1 phiếu báo hàng lỗi phát hiện sau khi nhận.</summary>
+        public static Action<LedgerInput> OpVoidNgRep(long id) => s =>
+        {
+            s.NgReps = s.NgReps.Where(b => b.Id != id).ToList();
+        };
+        /// <summary>[GN-NG-AFTER] Thêm 1 phiếu báo lỗi (Id âm) — dùng khi lưu báo lỗi bị chặn.</summary>
+        public static Action<LedgerInput> OpAddNgRep(InNgRep b) => s =>
+        {
+            s.NgReps = s.NgReps.Concat(new[] { b }).ToList();
+        };
+
         // ── Bản sao ────────────────────────────────────────────────────────
         static LedgerInput Clone(LedgerInput i) => new()
         {
@@ -93,6 +104,7 @@ namespace MES.Web.Services
             Phoi = i.Phoi, GcSteps = i.GcSteps, CodeSteps = i.CodeSteps,
             Txs = i.Txs.Select(t => t.CloneTx()).ToList(),
             Wts = new List<InWts>(i.Wts),
+            NgReps = new List<InNgRep>(i.NgReps),   // [GN-NG-AFTER]
         };
 
         static string GroupOfPg(string pg) => pg switch
@@ -132,9 +144,10 @@ namespace MES.Web.Services
                     if (d == null) return false;
                     var removeD = d.Kind switch
                     {
-                        "WTS"  => OpWts(new[] { d.Id }),
-                        "NHAN" => OpVoidReceive(d.Id),
-                        _      => OpVoidIssue(d.Id),
+                        "WTS"    => OpWts(new[] { d.Id }),
+                        "NHAN"   => OpVoidReceive(d.Id),
+                        "BAOLOI" => OpVoidNgRep(d.Id),   // [GN-NG-AFTER]
+                        _        => OpVoidIssue(d.Id),
                     };
                     var sub = new HashSet<string>(skip) { Key(d) };
                     if (depth >= 8 || !Clear(removeD, sub, depth + 1)) return false;
@@ -159,7 +172,7 @@ namespace MES.Web.Services
             _         => w.ProcessGroup + " " + (w.WtsCode ?? w.NC)
         };
 
-        static string Key(WhyStep d) => (d.Kind == "WTS" ? "W:" : d.Kind == "NHAN" ? "R:" : "T:") + d.Id;
+        static string Key(WhyStep d) => (d.Kind == "WTS" ? "W:" : d.Kind == "NHAN" ? "R:" : d.Kind == "BAOLOI" ? "B:" : "T:") + d.Id;   // [GN-NG-AFTER] + B:
 
         /// <summary>Chứng từ mới nhất đang trừ vào một trong các ô sắp âm (đã quy về việc làm được ngay: phiếu có lần nhận → lần nhận mới nhất trước).</summary>
         static WhyStep? NextCandidate(LedgerInput s, LedgerRow row, List<string> badKeys, HashSet<string> skip)
@@ -173,6 +186,13 @@ namespace MES.Web.Services
                     c.Add(new WhyStep { Kind = "WTS", Id = w.Id, At = w.At,
                         Text = $"WTS #{w.Id} · {WtsWhere(w)} · OK {w.Ok:0.##}"
                              + (w.Ng > 0 ? $" NG {w.Ng:0.##}" : "") + (string.IsNullOrEmpty(w.Worker) ? "" : $" · {w.Worker}") + $" · {w.At:dd/MM HH:mm}" });
+            }
+            void AddRep(Func<InNgRep, bool> f)   // [GN-NG-AFTER]
+            {
+                foreach (var b in s.NgReps.Where(b => b.Id > 0 && f(b)))
+                    c.Add(new WhyStep { Kind = "BAOLOI", Id = b.Id, At = b.At,
+                        Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
+                             + (string.IsNullOrEmpty(b.NC) ? "" : $" NC {b.NC}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" });
             }
             void AddTx(Func<InTx, bool> f)
             {
@@ -193,9 +213,11 @@ namespace MES.Web.Services
                         case "ChuaLam":
                             AddWts(w => GroupOfPg(w.ProcessGroup) == g);
                             AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.NgReturn || t.Purpose == HandoverPurpose.HelpSend));
+                            AddRep(b => b.Group == g && b.Source == HandoverNgSource.Chua);   // [GN-NG-AFTER]
                             break;
                         case "ConGiao":
                             AddTx(t => t.From == g && !HandoverPurpose.IsOut(t.Purpose) && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == HandoverCell.Moi);
+                            AddRep(b => b.Group == g && b.Source != HandoverNgSource.Chua);   // [GN-NG-AFTER] Kho phôi / đã làm chưa giao
                             break;
                         case "LoiGiu":
                             AddTx(t => t.From == g && t.Purpose != HandoverPurpose.NgReturn && t.SourceReceiveId == null
@@ -218,6 +240,7 @@ namespace MES.Web.Services
                     {
                         AddWts(w => w.ProcessGroup == "GC" && string.Equals(Main("GC", w.NC), code, StringComparison.OrdinalIgnoreCase));
                         AddTx(t => t.From == "GC" && t.FromNC == code && t.Purpose == HandoverPurpose.NgReturn);
+                        AddRep(b => b.Group == "GC" && b.Source == HandoverNgSource.Chua && string.Equals(b.NC, code, StringComparison.OrdinalIgnoreCase));   // [GN-NG-AFTER]
                         // Giao theo NC từ NC trước cũng trừ vào "nhận vào" của NC này (N1: nhận vào = OK NC trước − đã giao đi)
                         AddTx(t => t.From == "GC" && t.Purpose == HandoverPurpose.HelpSend);
                     }
@@ -225,6 +248,7 @@ namespace MES.Web.Services
                     {
                         AddWts(w => w.ProcessGroup == pg && string.Equals(Main(pg, w.WtsCode), code, StringComparison.OrdinalIgnoreCase));
                         AddTx(t => t.From == g && t.Purpose == HandoverPurpose.NgReturn);
+                        AddRep(b => b.Group == g && b.Source == HandoverNgSource.Chua);   // [GN-NG-AFTER]
                     }
                 }
             }
@@ -292,6 +316,7 @@ namespace MES.Web.Services
                     {
                         "WTS"  => "nếu nhập sai thì xoá / sửa dòng này ở trang WTS",
                         "NHAN" => "nếu nhận sai thì huỷ lần nhận này ở Lịch sử phiếu",
+                        "BAOLOI" => "nếu báo sai thì huỷ phiếu báo lỗi này ở Lịch sử phiếu",   // [GN-NG-AFTER]
                         _      => "nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu",
                     };
                     lines.Add($"Kiểm tra {st.Text}{who} — {hint}");

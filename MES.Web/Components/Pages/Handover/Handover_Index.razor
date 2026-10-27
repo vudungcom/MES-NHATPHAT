@@ -611,6 +611,12 @@ else
                         <button type="button" class="btn btn-link btn-sm p-0" style="font-size:11.5px" @onclick="ToggleSpecial">
                             @(_issueSpecialMode ? "← Quay lại giao theo ô (Hàng mới / Hàng lỗi / Hàng sửa)" : "Khác: giao theo NC (máy loại trừ) · huỷ hàng lỗi · trả khách →")
                         </button>
+                        @* [GN-NG-AFTER] hàng đã nhận (đang là hàng tốt) mới phát hiện lỗi → báo trước, rồi giao từ ô Hàng lỗi *@
+                        <div>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-danger" style="font-size:11.5px" @onclick="OpenNgFromIssue">
+                                Hàng đã nhận, sau mới phát hiện lỗi? Báo hàng lỗi phát hiện sau khi nhận →
+                            </button>
+                        </div>
                     </div>
 
                     @if (purpose != null)
@@ -742,6 +748,146 @@ else
                 <button class="btn btn-sm btn-primary" @onclick="ConfirmIssueAsync" disabled="@(_saving || purpose == null)">
                     @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     Xác nhận giao
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── [GN-NG-AFTER 2026-10-27] MODAL BÁO HÀNG LỖI PHÁT HIỆN SAU KHI NHẬN (chứng từ nội bộ của 1 nhóm, không phải phiếu giao) ── *@
+@if (_showNgModal && _selectedRow != null)
+{
+    var NG = string.IsNullOrEmpty(_ngGroup) ? null : _selectedRow.G(_ngGroup);
+    var ngCap = NgCapNow;
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:90vh;overflow-y:auto">
+            <div class="mes-modal-header">
+                <h6 class="mb-0 text-danger"><i class="bi bi-exclamation-octagon me-2"></i>Báo hàng lỗi phát hiện sau khi nhận</h6>
+                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
+            </div>
+            <div class="mes-modal-body">
+                <div class="mb-2 p-2 bg-light rounded" style="font-size:12px">
+                    <strong>@_selectedRow.PartNo</strong>
+                    <span class="text-muted ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
+                </div>
+                <div class="mb-3 p-2 border rounded" style="background:#fff7ed;font-size:12px">
+                    Không phải phiếu giao: hàng vẫn ở nhóm, chỉ chuyển từ ô hàng tốt sang <strong>Tồn hàng lỗi</strong> (tồn nhóm không đổi).
+                    Sau đó dùng <strong>Giao · Hàng lỗi</strong> để chuyển cho nơi gây lỗi / gửi nhờ sửa, hoặc mục Khác để huỷ / trả khách.
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label form-label-sm fw-semibold">Nhóm phát hiện</label>
+                    @if (_issueGroups.Count == 1)
+                    {
+                        <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(_issueGroups[0])</strong></div>
+                    }
+                    else
+                    {
+                        <select class="form-select form-select-sm" @onchange="OnNgGroupChanged">
+                            <option value="" selected="@(string.IsNullOrEmpty(_ngGroup))">-- Chọn nhóm --</option>
+                            @foreach (var g in _issueGroups)
+                            {
+                                <option value="@g" selected="@(_ngGroup == g)">@HandoverLedgerService.GroupLabel(g)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                @if (NG != null)
+                {
+                    <label class="form-label form-label-sm fw-semibold mb-1">Hàng lỗi đang nằm ở</label>
+                    <div class="d-flex gap-2 mb-2">
+                        @foreach (var src in NgSources(_ngGroup))
+                        {
+                            var have = NgHave(NG, src.Code);
+                            <button type="button" class="gn-cellbtn @(_ngSource == src.Code ? "on" : "")" disabled="@(have <= 0)" @onclick="() => SelectNgSource(src.Code)">
+                                <div class="fw-semibold">@src.Label</div>
+                                <div class="small @(have > 0 ? "text-success" : "text-muted")">có @have.ToString("0.##")</div>
+                            </button>
+                        }
+                    </div>
+                    @if (_ngGroup == "GC" && _ngSource == HandoverNgSource.Chua && NG.Steps.Any(x => !x.IsExcluded))
+                    {
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm fw-semibold mb-1">Hàng lỗi đang chờ ở NC <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" @onchange="OnNgNcChanged">
+                                <option value="" selected="@(string.IsNullOrEmpty(_ngNc))">-- Chọn NC --</option>
+                                @foreach (var st in NG.Steps.Where(x => !x.IsExcluded))
+                                {
+                                    <option value="@st.Code" selected="@(_ngNc == st.Code)">NC @st.Code (chưa gia công @((st.Waiting ?? 0).ToString("0.##")))</option>
+                                }
+                            </select>
+                        </div>
+                    }
+
+                    <label class="form-label form-label-sm fw-semibold mb-1">Nguồn lỗi</label>
+                    <div class="d-flex gap-2 mb-2">
+                        <button type="button" class="gn-cellbtn @(_ngOrigin == HandoverNgSource.DauVao ? "on" : "")" @onclick="() => SelectNgOrigin(HandoverNgSource.DauVao)"
+                                title="Lỗi có sẵn khi nhận về (phôi khách / nhóm trước làm hỏng) — không tính hiệu suất nhóm mình">
+                            <div class="fw-semibold">Đầu vào</div>
+                            <div class="small text-muted">lỗi có sẵn khi nhận</div>
+                        </button>
+                        <button type="button" class="gn-cellbtn @(_ngOrigin == HandoverNgSource.DauRa ? "on" : "")" @onclick="() => SelectNgOrigin(HandoverNgSource.DauRa)"
+                                title="Nhóm mình làm hỏng">
+                            <div class="fw-semibold">Đầu ra</div>
+                            <div class="small text-muted">nhóm mình làm hỏng</div>
+                        </button>
+                    </div>
+                    @if (_ngOrigin == HandoverNgSource.DauVao)
+                    {
+                        <div class="mb-2">
+                            <label class="form-label form-label-sm fw-semibold mb-1">Nơi gây lỗi <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" @onchange="OnNgCauseChanged">
+                                <option value="" selected="@(string.IsNullOrEmpty(_ngCause))">-- Chọn --</option>
+                                @foreach (var c in NgCauses(_ngGroup))
+                                {
+                                    <option value="@c" selected="@(_ngCause == c)">@HandoverNgSource.CauseLabel(c)</option>
+                                }
+                            </select>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(_ngSource))
+                    {
+                        <div class="mb-3 p-2 border rounded" style="font-size:12px">
+                            <div class="d-flex justify-content-between">
+                                <span>@ngCap.Explain.Title</span>
+                                <strong class="@(ngCap.Max > 0 ? "text-success" : "text-danger")">tối đa @ngCap.Max.ToString("0.##")</strong>
+                            </div>
+                            @if (!string.IsNullOrEmpty(ngCap.Explain.Formula))
+                            {
+                                <div class="text-muted">@ngCap.Explain.Formula</div>
+                            }
+                        </div>
+                    }
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm fw-semibold">Số lượng lỗi</label>
+                        <input type="number" class="form-control form-control-sm @(_ngQty > ngCap.Max ? "border-danger" : "")" @bind="_ngQty" min="0" step="1" />
+                        @if (_ngQty > ngCap.Max && !string.IsNullOrEmpty(_ngSource))
+                        {
+                            <div class="small text-danger">Vượt tối đa @ngCap.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
+                        }
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm border-danger" @bind="_ngReason" placeholder="VD: phôi rỗ khí, ren hỏng, xước bề mặt..." />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
+                        <input type="text" class="form-control form-control-sm" @bind="_ngNotes" />
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(_modalError))
+                {
+                    <div class="alert alert-danger py-1 small" style="white-space:pre-line">@_modalError</div>
+                }
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
+                <button class="btn btn-sm btn-danger" @onclick="ConfirmNgAsync" disabled="@_saving">
+                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Lưu báo lỗi
                 </button>
             </div>
         </div>
@@ -933,9 +1079,37 @@ else
                 <button class="btn-close btn-sm" @onclick="CloseModals"></button>
             </div>
             <div class="mes-modal-body p-0">
-                @if (!_logItems.Any())
+                @if (!_logItems.Any() && !_ngLogs.Any())
                 {
                     <p class="text-muted text-center py-4">Chưa có lịch sử giao nhận.</p>
+                }
+                @* [GN-NG-AFTER] Phiếu báo hàng lỗi phát hiện sau khi nhận *@
+                @foreach (var b in _ngLogs)
+                {
+                    <div class="border-bottom p-3 @(b.IsVoided ? "bg-light" : "")" style="border-left:3px solid #dc3545">
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <span class="small text-muted">Báo lỗi #@b.Id</span>
+                            <span class="badge @(b.IsVoided ? "bg-secondary" : "bg-danger")">@HandoverLedgerService.GroupLabel(b.GroupCode) · báo hàng lỗi sau khi nhận</span>
+                            <span class="small text-muted">@b.CreatedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                            <span class="small text-muted">by @b.CreatedByName</span>
+                            @if (b.IsVoided) { <span class="badge bg-secondary" title="@b.VoidReason">ĐÃ HUỶ</span> }
+                            @if (ShowVoidNgBtn(b))
+                            {
+                                <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px" @onclick="() => VoidNgFromLog(b.Id)">
+                                    <i class="bi bi-trash me-1"></i>Huỷ báo lỗi
+                                </button>
+                            }
+                        </div>
+                        <div class="small">
+                            <strong>@b.Qty.ToString("0.##") chiếc</strong> lấy từ @HandoverNgSource.SourceLabel(b.SourceCell, b.GroupCode)@(string.IsNullOrEmpty(b.NC) ? "" : " NC " + b.NC)
+                            → Tồn hàng lỗi · @HandoverNgSource.OriginLabel(b.Origin, b.CauseGroupCode)
+                        </div>
+                        <div class="small text-danger">Lỗi: @b.NgReason@(string.IsNullOrEmpty(b.Notes) ? "" : " — " + b.Notes)</div>
+                        @if (b.IsVoided)
+                        {
+                            <div class="small text-muted">Huỷ: @b.VoidReason · @b.VoidedByName · @(b.VoidedAt?.ToString("dd/MM HH:mm"))</div>
+                        }
+                    </div>
                 }
                 @foreach (var tx in _logItems)
                 {
@@ -1216,7 +1390,19 @@ else
     long   _voidingTxId;
     string _voidReason = "";
     bool   _showVoidConfirm;
-    string _voidMode = "ISSUE";     // [GN-VOID-RULE] ISSUE = huỷ phiếu giao · RECV = huỷ lần nhận · CLOSE = huỷ phần chưa nhận
+    string _voidMode = "ISSUE";     // [GN-VOID-RULE] ISSUE = huỷ phiếu giao · RECV = huỷ lần nhận · CLOSE = huỷ phần chưa nhận · NG = huỷ báo lỗi ([GN-NG-AFTER])
+    // [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận
+    bool    _showNgModal;
+    string  _ngGroup  = "";
+    string  _ngSource = "";      // PHOI | CHUA | DA
+    string  _ngNc     = "";
+    decimal _ngQty;
+    string  _ngOrigin = "";      // DAU_VAO | DAU_RA
+    string  _ngCause  = "";
+    string  _ngReason = "";
+    string  _ngNotes  = "";
+    long    _voidingNgId;
+    List<HandoverNgReportItem> _ngLogs = new();
     long   _voidingReceiveId;       // [GN-VOID-RULE]
 
     Dictionary<int, int> _pendingCountPerDetail = new();
@@ -1309,8 +1495,8 @@ else
         ? "Excel có cột này nhưng cả 3 tình huống không ghi vào: hàng lỗi đã xử lý chỉ NHẬN về nơi phát hiện rồi làm tiếp (WTS), không giao đi từ ô này."
         : "Theo quy trình Excel Kho không nhận / giao Hàng Sửa (ô có số khi có nhóm gửi Kho sửa). Phôi lỗi ở Kho đi bằng ô Hàng lỗi (gửi nhờ sửa, huỷ, trả khách)."; // [GN-ROUTE-FREE]
 
-    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", _ => k };   // [GN-VOID-RULE] + DONG
-    static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", _ => "bg-secondary" };
+    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", _ => k };   // [GN-VOID-RULE] + DONG; [GN-NG-AFTER] + BAOLOI
+    static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", _ => "bg-secondary" };
 
     // =================================================================
     // Chi tiết 1 PO (dưới các dòng B): ô đang giữ, làm hộ, NC, mã CV, cân bằng, cảnh báo
@@ -1963,6 +2149,100 @@ else
         await ReloadRowAsync(detailId);
     }
 
+    // ── [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận ──────────────
+    void OpenNgFromIssue()
+    {
+        if (_selectedRow == null) return;
+        _ngGroup = !string.IsNullOrEmpty(_issueFrom) ? _issueFrom : (_issueGroups.Count == 1 ? _issueGroups[0] : "");
+        ResetNgInputs();
+        _modalError     = "";
+        _showIssueModal = false;
+        _showNgModal    = true;
+    }
+
+    void ResetNgInputs()
+    {
+        _ngSource = _ngGroup == "KHO" ? HandoverNgSource.Phoi : "";
+        _ngNc = ""; _ngQty = 0; _ngOrigin = ""; _ngCause = ""; _ngReason = ""; _ngNotes = "";
+    }
+
+    void OnNgGroupChanged(ChangeEventArgs e)
+    {
+        _ngGroup = e.Value?.ToString() ?? "";
+        ResetNgInputs();
+    }
+
+    static List<(string Code, string Label)> NgSources(string g) => g == "KHO"
+        ? new List<(string, string)> { (HandoverNgSource.Phoi, "Phôi còn") }
+        : new List<(string, string)> { (HandoverNgSource.Chua, g == "GC" ? "Chưa gia công" : "Chưa làm"), (HandoverNgSource.Da, "Đã làm chưa giao") };
+
+    static decimal NgHave(LedgerGroup G, string src) => src == HandoverNgSource.Chua ? G.ChuaLam : G.ConGiao;
+
+    /// <summary>Nơi gây lỗi đầu vào: phôi khách + các nhóm khác (nhóm đứng trước lên đầu).</summary>
+    static List<string> NgCauses(string g)
+    {
+        var order = HandoverLedgerService.GroupCodes.ToList();
+        var idx = order.IndexOf(g);
+        var before = order.Take(Math.Max(0, idx)).Reverse();
+        var after = order.Skip(idx + 1);
+        return new[] { "KHACH" }.Concat(before).Concat(after).ToList();
+    }
+
+    void SelectNgSource(string src)
+    {
+        _ngSource = src; _ngNc = ""; _ngQty = 0; _modalError = "";
+    }
+
+    void SelectNgOrigin(string o)
+    {
+        _ngOrigin = o;
+        if (o == HandoverNgSource.DauRa) _ngCause = "";
+        else if (string.IsNullOrEmpty(_ngCause)) _ngCause = NgDefaultCause(_ngGroup);
+    }
+
+    static string NgDefaultCause(string g) => g switch { "KHO" => "KHACH", "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => "" };
+
+    void OnNgNcChanged(ChangeEventArgs e) { _ngNc = e.Value?.ToString() ?? ""; _ngQty = 0; }
+    void OnNgCauseChanged(ChangeEventArgs e) { _ngCause = e.Value?.ToString() ?? ""; }
+
+    (decimal Max, LedgerExplain Explain) NgCapNow
+        => _selectedRow == null || string.IsNullOrEmpty(_ngGroup) || string.IsNullOrEmpty(_ngSource)
+            ? (0m, new LedgerExplain())
+            : HandoverLedgerService.NgReportCap(_selectedRow, _ngGroup, _ngSource, string.IsNullOrEmpty(_ngNc) ? null : _ngNc);
+
+    async Task ConfirmNgAsync()
+    {
+        if (_selectedRow == null) return;
+        _modalError = "";
+        if (string.IsNullOrEmpty(_ngGroup))  { _modalError = "Chọn nhóm phát hiện."; return; }
+        if (string.IsNullOrEmpty(_ngSource)) { _modalError = "Chọn hàng lỗi đang nằm ở ô nào."; return; }
+        if (string.IsNullOrEmpty(_ngOrigin)) { _modalError = "Chọn nguồn lỗi (đầu vào / đầu ra)."; return; }
+        if (_ngQty <= 0)                     { _modalError = "Số lượng lỗi phải lớn hơn 0."; return; }
+        _saving = true;
+        var detailId = _selectedRow.KhPlanDetailId;
+        (bool ok, string err) = await HandoverSvc.ReportNgAfterReceiveAsync(detailId, _ngGroup, _ngSource,
+            string.IsNullOrEmpty(_ngNc) ? null : _ngNc, _ngQty, _ngOrigin,
+            string.IsNullOrEmpty(_ngCause) ? null : _ngCause, _ngReason, _ngNotes, _currentUserId, _myEditGroups);
+        _saving = false;
+        if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
+        CloseModals();
+        await ReloadRowAsync(detailId);
+    }
+
+    bool ShowVoidNgBtn(HandoverNgReportItem b)
+        => !b.IsVoided && HandoverService.CanVoidNgReport(b.CreatedBy, b.GroupCode, _currentUserId, _myEditGroups);
+
+    void VoidNgFromLog(long id)
+    {
+        _voidMode        = "NG";
+        _voidingNgId     = id;
+        _voidingTxId     = 0;
+        _voidingReceiveId = 0;
+        _voidReason      = "";
+        _modalError      = "";
+        _showVoidConfirm = true;
+    }
+
     // ── Modal Nhận ────────────────────────────────────────────────────
     void OpenReceiveModal(LedgerRow row)
     {
@@ -2075,6 +2355,7 @@ else
     {
         _logDetailId  = khPlanDetailId;
         _logItems     = await HandoverSvc.GetLogsAsync(khPlanDetailId);
+        _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
         _logPartNo    = _rows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.PartNo ?? "";
         _showLogModal = true;
     }
@@ -2123,7 +2404,9 @@ else
         _saving = true;
         // [GN-VOID-RULE] 3 kiểu huỷ; máy chủ kiểm quyền (người lập/nhận hoặc nhóm) + K5 (huỷ xong ô nào âm, kể cả WTS từng mã CV, thì không lưu)
         (bool ok, string err) result;
-        if (_voidMode == "RECV")
+        if (_voidMode == "NG")   // [GN-NG-AFTER]
+            result = await HandoverSvc.VoidNgReportAsync(_voidingNgId, _voidReason.Trim(), _currentUserId, _myEditGroups);
+        else if (_voidMode == "RECV")
             result = await HandoverSvc.VoidReceiveAsync(_voidingReceiveId, _voidReason.Trim(), _currentUserId, _myEditGroups);
         else if (_voidMode == "CLOSE")
             result = await HandoverSvc.CloseRemainderAsync(_voidingTxId, _voidReason.Trim(), _currentUserId, _myEditGroups);
@@ -2136,7 +2419,9 @@ else
         _voidingTxId     = 0;
         _voidingReceiveId = 0;
         _modalError      = "";
+        _voidingNgId     = 0;   // [GN-NG-AFTER]
         _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
+        _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
         await ReloadRowAsync(_logDetailId);
     }
 
@@ -2144,6 +2429,7 @@ else
     {
         _showIssueModal = false; _showReceiveModal = false;
         _showLogModal   = false; _showVoidConfirm  = false;
+        _showNgModal    = false;   // [GN-NG-AFTER]
         _selectedRow    = null;  _modalError       = "";
         _expandedTxId   = 0;     _pendingTxs       = new();
         ResetReceiveInputs();
@@ -2169,9 +2455,15 @@ else
            + (string.IsNullOrEmpty(tx.ClosedByName) ? "" : $" · {tx.ClosedByName}")
            + (tx.ClosedAt != null ? $" · {tx.ClosedAt:dd/MM HH:mm}" : "")
            + (string.IsNullOrEmpty(tx.ClosedReason) ? "" : $" · {tx.ClosedReason}");
-    string VoidTitle => _voidMode switch { "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", _ => "Huỷ phiếu giao" };
+    string VoidTitle => _voidMode switch { "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", "NG" => "Huỷ báo lỗi", _ => "Huỷ phiếu giao" };   // [GN-NG-AFTER] + NG
     string VoidNote()
     {
+        if (_voidMode == "NG")   // [GN-NG-AFTER]
+        {
+            var b = _ngLogs.FirstOrDefault(x => x.Id == _voidingNgId);
+            return b == null ? "" : $"Huỷ báo lỗi #{b.Id} ({b.Qty:0.##} chiếc, {HandoverLedgerService.GroupLabel(b.GroupCode)}): số này về lại ô {HandoverNgSource.SourceLabel(b.SourceCell, b.GroupCode)}"
+                + (string.IsNullOrEmpty(b.NC) ? "" : $" NC {b.NC}") + ". Nếu hàng lỗi này đã được giao / huỷ / trả khách thì phần mềm chặn — huỷ phiếu đó trước.";
+        }
         var tx = _logItems.FirstOrDefault(x => x.HandoverTxId == _voidingTxId);
         if (tx == null) return "";
         if (_voidMode == "RECV")

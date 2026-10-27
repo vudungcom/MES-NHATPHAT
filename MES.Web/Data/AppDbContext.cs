@@ -88,6 +88,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     // ==== Handover — Giao nhận hàng giữa các nhóm công đoạn ====
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
     public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
+    public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận
 
     // ==== Cài đặt ca làm việc ====
     public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
@@ -615,6 +616,32 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasForeignKey(x => x.ReceivedBy)
             .OnDelete(DeleteBehavior.NoAction);
         mb.Entity<HandoverReceive>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [GN-NG-AFTER 2026-10-27] HandoverNgReport — báo hàng lỗi phát hiện sau khi nhận ====
+        mb.Entity<HandoverNgReport>().ToTable("HandoverNgReports");
+        mb.Entity<HandoverNgReport>().HasKey(x => x.HandoverNgReportId);
+        mb.Entity<HandoverNgReport>().Property(x => x.Qty).HasPrecision(10, 2);
+        mb.Entity<HandoverNgReport>().Property(x => x.GroupCode).HasMaxLength(20).IsRequired();
+        mb.Entity<HandoverNgReport>().Property(x => x.SourceCell).HasMaxLength(10).IsRequired();
+        mb.Entity<HandoverNgReport>().Property(x => x.NC).HasMaxLength(20);
+        mb.Entity<HandoverNgReport>().Property(x => x.Origin).HasMaxLength(10).IsRequired();
+        mb.Entity<HandoverNgReport>().Property(x => x.CauseGroupCode).HasMaxLength(20);
+        mb.Entity<HandoverNgReport>().Property(x => x.NgReason).HasMaxLength(500).IsRequired();
+        mb.Entity<HandoverNgReport>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverNgReport>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverNgReport>().HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
+        mb.Entity<HandoverNgReport>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverNgReport>()
+            .HasOne(x => x.CreatedByUser).WithMany()
+            .HasForeignKey(x => x.CreatedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverNgReport>()
             .HasOne(x => x.VoidedByUser).WithMany()
             .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);
