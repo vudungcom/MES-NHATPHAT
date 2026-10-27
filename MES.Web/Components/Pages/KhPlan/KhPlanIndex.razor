@@ -6,6 +6,7 @@
 @using MES.Web.Services
 @using MES.Web.Data
 @inject KhPlanService KhSvc
+@inject HandoverLedgerService LedgerSvc
 @inject UserService UserSvc
 @inject AppDbContext Db
 @inject NavigationManager Nav
@@ -110,13 +111,12 @@ else
         <div class="col-md-3">
             <select class="form-select form-select-sm" @bind="_statusFilter">
                 <option value="">-- Tất cả trạng thái --</option>
-                <option value="WaitingSupplierOrder">Chờ đặt Order VL</option>
-                <option value="Ordered">Đã đặt Order VL</option>
-                <option value="PartialReceived">Nhập 1 phần</option>
-                <option value="FullyReceived">Nhập đủ</option>
-                <option value="InProduction">Đang SX</option>
-                <option value="Completed">Hoàn thành</option>
-                <option value="Cancelled">Hủy</option>
+                @* [GN-WHERE] Trạng thái tính từ sổ Giao nhận. Trước: cột Status nhập tay luôn "WaitingSupplierOrder" (không chỗ nào đổi) nên lọc không ra *@
+                <option value="CHUA_PHOI">Chưa có phôi</option>
+                <option value="DANG_SX">Đang SX</option>
+                <option value="CO_LOI">Có hàng lỗi đang giữ</option>
+                <option value="DU">Đủ thành phẩm</option>
+                <option value="AM">Số âm — cần kiểm</option>
             </select>
         </div>
         <div class="col-md-4 text-end d-flex justify-content-end align-items-center gap-2">
@@ -162,8 +162,9 @@ else
                         <th style="white-space:nowrap;">Ghi chú Hàng</th>
                         <th style="white-space:nowrap;">Order VL</th>
                         <th style="white-space:nowrap;">Vị trí</th>
-                        @* Cột mới: SL hoàn thành *@
-                        <th class="text-center" style="white-space:nowrap;" title="SL hoàn thành / SL kế hoạch">HT/KH</th>
+                        @* [GN-WHERE] Thành phẩm nhập kho / SL PO — đọc từ sổ Giao nhận (trước: luôn 0) *@
+                        <th class="text-center" style="white-space:nowrap;" title="Thành phẩm đã nhập kho / SL PO (theo sổ Giao nhận)">TP/SL</th>
+                        <th style="white-space:nowrap;" title="Số lượng PO đang nằm ở đâu (theo sổ Giao nhận). Bấm ▸ để xem chi tiết + đường đi">Đang ở đâu</th>
                         @* Cột mới: 4 badge quy trình *@
                         <th class="text-center" style="white-space:nowrap;" title="Số bước Gia công từ snapshot">GC</th>
                         <th class="text-center" style="white-space:nowrap;" title="Số bước HTSP (Taro+Bavia+Rửa)">HTSP</th>
@@ -211,11 +212,16 @@ else
                                 @(string.IsNullOrEmpty(r.KhoViTri) ? "—" : r.KhoViTri)
                             </td>
 
-                            @* SL hoàn thành / SL kế hoạch — tạm 0/SL chờ module SX *@
+                            @* [GN-WHERE] Thành phẩm nhập kho / SL PO + PO đang ở đâu (sổ Giao nhận) *@
                             <td class="text-center text-nowrap">
-                                <span class="text-danger fw-semibold">0</span>
+                                <span class="@TpClass(r)">@TpOf(r).ToString("0.##")</span>
                                 <span class="text-muted">/</span>
                                 <span>@r.Quantity.ToString("0.####")</span>
+                            </td>
+                            <td class="text-nowrap" @onclick:stopPropagation @ondblclick:stopPropagation>
+                                <button class="btn btn-sm btn-link p-0 me-1" style="font-size:0.75rem;text-decoration:none" title="Xem PO đang ở đâu + đường đi"
+                                        @onclick="() => ToggleWhereAsync(r.KhPlanDetailId)">@WhereArrow(r.KhPlanDetailId)</button>
+                                <span class="small" title="@WhereShort(r.KhPlanDetailId)">@WhereShort(r.KhPlanDetailId)</span>
                             </td>
 
                             @* 4 badge quy trình từ snapshot *@
@@ -244,7 +250,7 @@ else
                                 { <span class="route-badge has">@snap.DG</span> }
                             </td>
 
-                            <td><span class="badge bg-@GetStatusColor(r.Status)">@r.Status</span></td>
+                            <td><span class="badge @WhereStatusBadge(r.KhPlanDetailId)">@WhereStatusLabel(r.KhPlanDetailId)</span></td>   @* [GN-WHERE] trước: r.Status nhập tay *@
                             <td @onclick:stopPropagation class="text-nowrap">
                                 @if (_canEdit)
                                 {
@@ -263,6 +269,15 @@ else
                                 </button>
                             </td>
                         </tr>
+                        @if (_whereOpen == r.KhPlanDetailId && _ledger.TryGetValue(r.KhPlanDetailId, out var lr))
+                        {
+                            @* [GN-WHERE] Dòng mở rộng: PO đang ở đâu + đường đi *@
+                            <tr class="bg-light">
+                                <td colspan="24" class="p-2">
+                                    <PoViTri Row="lr" Steps="WhereSteps(r.KhPlanDetailId)" />
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
@@ -480,7 +495,50 @@ else
         {
             var ids = _rows.Select(r => r.KhPlanDetailId).ToList();
             _snapshotSummary = await KhSvc.GetSnapshotSummaryAsync(ids);
+            // [GN-WHERE] Sổ Giao nhận của mọi PO đang hiện (1 lần, cùng hàm với trang Giao nhận)
+            _ledger = await LedgerSvc.GetLedgerForDetailsAsync(ids);
+            _where  = _ledger.ToDictionary(kv => kv.Key, kv => HandoverLedgerService.WhereIs(kv.Value));
+            _whereSteps.Clear();
         }
+    }
+
+    // ── [GN-WHERE 2026-10-27] PO đang ở đâu (đọc từ sổ Giao nhận, không công thức riêng) ──
+    private Dictionary<int, LedgerRow> _ledger = new();
+    private Dictionary<int, HandoverLedgerService.WhereSummary> _where = new();
+    private Dictionary<int, List<LedgerStepRow>> _whereSteps = new();
+    private int? _whereOpen;
+
+    private decimal TpOf(KhPlanDetailRow r) => _where.TryGetValue(r.KhPlanDetailId, out var w) ? w.TpNhap : 0m;
+    private string TpClass(KhPlanDetailRow r)
+    {
+        var tp = TpOf(r);
+        return tp <= 0 ? "text-danger fw-semibold" : tp >= r.Quantity ? "text-success fw-semibold" : "text-warning-emphasis fw-semibold";
+    }
+    private string WhereShort(int id) => _where.TryGetValue(id, out var w) ? w.Short() : "—";
+    private string WhereArrow(int id) => _whereOpen == id ? "▾" : "▸";
+    private string WhereStatusOf(int id) => _where.TryGetValue(id, out var w) ? w.Status : "CHUA_PHOI";
+    private string WhereStatusLabel(int id)
+    {
+        var lbl = HandoverLedgerService.WhereSummary.StatusLabel(WhereStatusOf(id));
+        return _where.TryGetValue(id, out var w) && w.Loi > 0 ? $"{lbl} · lỗi {w.Loi:0.##}" : lbl;
+    }
+    private string WhereStatusBadge(int id) => WhereStatusOf(id) switch
+    {
+        "AM" => "bg-danger", "CHUA_PHOI" => "bg-secondary", "DU" => "bg-success", _ => "bg-primary"
+    };
+    private bool PassStatus(int id)
+    {
+        if (_statusFilter == "CO_LOI") return _where.TryGetValue(id, out var w) && w.Loi > 0;
+        return WhereStatusOf(id) == _statusFilter;
+    }
+    private List<LedgerStepRow>? WhereSteps(int id) => _whereSteps.TryGetValue(id, out var s) ? s : null;
+
+    private async Task ToggleWhereAsync(int id)
+    {
+        if (_whereOpen == id) { _whereOpen = null; return; }
+        _whereOpen = id;
+        if (!_whereSteps.ContainsKey(id))
+            _whereSteps[id] = await LedgerSvc.GetStepsForDetailAsync(id);   // lazy load + cache
     }
 
     private void BuildColDefs()
@@ -598,7 +656,7 @@ else
             }
 
             if (!string.IsNullOrEmpty(_statusFilter))
-                q = q.Where(r => r.Status == _statusFilter);
+                q = q.Where(r => PassStatus(r.KhPlanDetailId));   // [GN-WHERE] trạng thái theo sổ
 
             foreach (var (key, def) in _colDefs)
             {

@@ -32,6 +32,8 @@ namespace Microsoft.EntityFrameworkCore
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
         public void Add(T e) => Added.Add(e);
         public void AddRange(IEnumerable<T> es) => Added.AddRange(es);
+        public void Remove(T e) { List.Remove(e); }
+        public ValueTask<T?> FindAsync(params object?[] k) { var pk = typeof(T).GetProperties().First(p => p.Name.EndsWith("Id")); return ValueTask.FromResult(List.FirstOrDefault(x => Equals(pk.GetValue(x), k[0]))); }
     }
 
     public interface IIncludableQueryable<out TEntity, out TProperty> : IQueryable<TEntity> { }
@@ -96,16 +98,18 @@ namespace Microsoft.EntityFrameworkCore
             ["HandoverReceive"]     = "ReceiveId",
             ["WtsProductionLog"]    = "WtsLogId",
             ["KhoVatLieu"]          = "KhoVatLieuId",
+            ["HandoverNgReport"]    = "HandoverNgReportId",   // [GN-NG-AFTER]
         };
 
         public int SaveChanges() => SaveChangesAsync().GetAwaiter().GetResult();
         public virtual Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
             int n = 0;
-            foreach (var s in _sets.Values)
+            foreach (var s in _sets.Values.ToList())
             {
                 if (s.Pending.Count == 0) continue;
-                var keyName = KeyName.TryGetValue(s.ElementType.Name, out var k) ? k : null;
+                var keyName = KeyName.TryGetValue(s.ElementType.Name, out var k) ? k
+                    : new[] { "SnapshotId", "TimingSnapshotId", "ChangeId", s.ElementType.Name + "Id", "Id" }.FirstOrDefault(n => s.ElementType.GetProperty(n) != null && s.ElementType.GetProperty(n)!.PropertyType != typeof(string));
                 var keyProp = keyName == null ? null : s.ElementType.GetProperty(keyName);
                 foreach (var e in s.Pending)
                 {
@@ -118,6 +122,17 @@ namespace Microsoft.EntityFrameworkCore
                     }
                     s.Items.Add(e);
                     n++;
+                    // giống EF: chèn cả con trong navigation (máy đồng dạng của snapshot GC)
+                    if (e is MES.Web.Data.Entities.KhPlanRouteSnapshotMachining pm)
+                    {
+                        var ts = Set<MES.Web.Data.Entities.KhPlanRouteSnapshotMachiningTiming>();
+                        foreach (var t in pm.TimingRows)
+                        {
+                            if (ts.List.Contains(t)) continue;
+                            if (t.TimingSnapshotId == 0) t.TimingSnapshotId = ts.List.Count == 0 ? 1 : ts.List.Max(x => x.TimingSnapshotId) + 1;
+                            t.MachiningSnapshotId = pm.SnapshotId; ts.List.Add(t);
+                        }
+                    }
                 }
                 s.Pending.Clear();
             }
@@ -180,17 +195,17 @@ namespace Microsoft.EntityFrameworkCore
             Current = new StubTransaction(_c, this, _c.Snapshot());
             return Task.FromResult(Current);
         }
-        public static int RawCalls;
+        public static int RawCalls; public static List<string> RawLog = new();
         public Task<int> ExecuteSqlRawAsync(string sql, params object[] args)
         {
-            RawCalls++;
+            RawCalls++; RawLog.Add(sql);
             if (Current == null && sql.Contains("sp_getapplock") && sql.Contains("'Transaction'"))
                 throw new InvalidOperationException("sp_getapplock LockOwner=Transaction gọi ngoài giao dịch");
             return Task.FromResult(-1);
         }
     }
 
-    public class StubTransaction : IDisposable, IAsyncDisposable
+    public class StubTransaction : Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction
     {
         readonly DbContext _c; readonly DatabaseFacade _f;
         readonly Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> _snap;
@@ -206,4 +221,9 @@ namespace Microsoft.EntityFrameworkCore
         }
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
+}
+
+namespace Microsoft.EntityFrameworkCore.Storage
+{
+    public interface IDbContextTransaction : IDisposable, IAsyncDisposable { Task CommitAsync(CancellationToken ct = default); Task RollbackAsync(CancellationToken ct = default); }
 }

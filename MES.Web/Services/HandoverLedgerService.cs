@@ -1739,6 +1739,103 @@ namespace MES.Web.Services
             return (Math.Max(0, G.ChuaLam), Pick("ChuaLam"));
         }
 
+        // ================================================================
+        // [GN-WHERE 2026-10-27] PO ĐANG Ở ĐÂU — phân bổ số lượng hiện tại của 1 PO theo nơi / trạng thái.
+        //   Chỉ ĐỌC các ô đã tính trong Compute() (không công thức riêng). Tổng mọi dòng = Phôi nhận (L6) — bộ kiểm canh.
+        // ================================================================
+        public class WhereItem
+        {
+            public string  Place { get; set; } = "";   // KHO | GC | HTSP | KCS | PKG | RA (đã ra khỏi PO / thành phẩm)
+            public string  Kind  { get; set; } = "";   // CHO_NHAN | PHOI | CHUA | DA | LOI | SUA | THEO_NC | TP_CHO | TP | HUY | KHACH
+            public string  Label { get; set; } = "";
+            public string? Nc    { get; set; }
+            public decimal Qty   { get; set; }
+            public string  Hint  { get; set; } = "";
+        }
+
+        public class WhereSummary
+        {
+            public List<WhereItem> Items { get; set; } = new();
+            public decimal Phoi       { get; set; }
+            public decimal PlanQty    { get; set; }
+            public decimal Total      => Items.Sum(i => i.Qty);
+            public bool    Balanced   => Total == Phoi;
+            /// <summary>SL PO chưa có phôi (phôi nhận ít hơn SL PO). Không nằm trong tổng.</summary>
+            public decimal ChuaCoPhoi => Math.Max(0, PlanQty - Phoi);
+            public decimal TpNhap     { get; set; }
+            public decimal Loi        { get; set; }   // tồn hàng lỗi + hàng sửa đang giữ ở các nhóm
+            public bool    HasNegative { get; set; }
+            public decimal PlaceTotal(string place) => Items.Where(i => i.Place == place).Sum(i => i.Qty);
+            /// <summary>Trạng thái PO tính từ sổ (thay cột Trạng thái nhập tay không bao giờ đổi).</summary>
+            public string Status => HasNegative ? "AM" : Phoi <= 0 ? "CHUA_PHOI" : (PlanQty > 0 && TpNhap >= PlanQty) ? "DU" : "DANG_SX";
+            public static string StatusLabel(string s) => s switch
+            {
+                "AM" => "Số âm — cần kiểm", "CHUA_PHOI" => "Chưa có phôi", "DU" => "Đủ thành phẩm", "DANG_SX" => "Đang SX", _ => s
+            };
+            /// <summary>Tóm tắt 1 dòng: "Kho 5 · GC 25 · HTSP 10 · TP 0 · lỗi 3".</summary>
+            public string Short()
+            {
+                var parts = new List<string>();
+                foreach (var g in GroupCodes)
+                {
+                    var q = Items.Where(i => i.Place == g && i.Kind != "LOI" && i.Kind != "SUA").Sum(i => i.Qty);
+                    if (q != 0) parts.Add($"{GroupLabel(g)} {q:0.##}");
+                }
+                var tp = Items.Where(i => i.Kind is "TP" or "TP_CHO").Sum(i => i.Qty);
+                if (tp != 0) parts.Add($"TP {tp:0.##}");
+                if (Loi != 0) parts.Add($"lỗi {Loi:0.##}");
+                var ra = Items.Where(i => i.Kind is "HUY" or "KHACH").Sum(i => i.Qty);
+                if (ra != 0) parts.Add($"huỷ/trả {ra:0.##}");
+                return parts.Count == 0 ? "—" : string.Join(" · ", parts);
+            }
+        }
+
+        public static WhereSummary WhereIs(LedgerRow r)
+        {
+            var w = new WhereSummary { Phoi = r.Phoi, PlanQty = r.PlanQty, TpNhap = r.TpNhap, HasNegative = NegativeCells(r).Count > 0 };
+            void Put(string place, string kind, string label, decimal qty, string hint = "", string? nc = null)
+            {
+                if (qty != 0) w.Items.Add(new WhereItem { Place = place, Kind = kind, Label = label, Qty = qty, Hint = hint, Nc = nc });
+            }
+            foreach (var code in GroupCodes)
+            {
+                var G = r.G(code);
+                Put(code, "CHO_NHAN", "chờ nhận", G.ChoNhan, "đã giao tới, nhóm chưa bấm Nhận");
+                if (code == "KHO")
+                {
+                    Put(code, "PHOI", "phôi còn", G.ConGiao, "phôi tốt chưa giao");
+                }
+                else
+                {
+                    if (code == "GC" && G.Steps.Any(s => !s.IsExcluded && s.Waiting != null))
+                    {
+                        decimal sumNc = 0;
+                        foreach (var st in G.Steps.Where(s => !s.IsExcluded && s.Waiting != null))
+                        {
+                            Put(code, "CHUA", "chờ NC " + st.Code, st.Waiting!.Value, "đã nhận, chưa gia công qua NC này", st.Code);
+                            sumNc += st.Waiting!.Value;
+                        }
+                        // Không có NC loại trừ: Chưa GC luôn = Σ chờ các NC (bộ kiểm canh). Có NC loại trừ: phần còn lại là hàng đã qua
+                        // NC trước máy loại trừ, chưa giao nhóm khác làm (N3) — không thuộc NC nào. Ghi đủ để tổng luôn đúng sổ.
+                        bool hasExcl = G.Steps.Any(s => s.IsExcluded);
+                        Put(code, "CHUA", hasExcl ? "chờ giao theo NC (máy loại trừ)" : "chưa GC (lệch NC — báo lại)", G.ChuaLam - sumNc,
+                            hasExcl ? "đã qua NC trước máy loại trừ, chưa giao nhóm khác làm" : "phần chênh giữa Chưa GC và tổng chờ các NC — báo lại để kiểm");
+                    }
+                    else Put(code, "CHUA", code == "GC" ? "chưa GC" : "chưa làm", G.ChuaLam, "đã nhận, chưa làm xong");
+                    Put(code, "DA", "đã làm chưa giao", G.ConGiao, "làm xong, chưa lập phiếu giao");
+                }
+                Put(code, "LOI", "hàng lỗi", G.LoiGiu, "tồn hàng lỗi của nhóm (chờ chuyển / sửa / huỷ / trả khách)");
+                Put(code, "SUA", "hàng nhờ sửa", G.SuaGiu, "nhóm khác gửi nhờ sửa, chưa trả");
+                Put(code, "THEO_NC", "hàng giao theo NC", G.LamHoGiu, "hàng Gia công giao theo NC (máy loại trừ), chưa trả về");
+                w.Loi += G.LoiGiu + G.SuaGiu;
+            }
+            Put("RA", "TP_CHO", "thành phẩm chờ Kho nhận", r.DangGiao);
+            Put("RA", "TP", "thành phẩm nhập kho", r.TpNhap);
+            Put("RA", "HUY", "đã huỷ (hàng lỗi)", r.DaHuy);
+            Put("RA", "KHACH", "đã trả khách (hàng lỗi)", r.TraKhach);
+            return w;
+        }
+
         public static Dictionary<string, (decimal Value, string Text)> NegativeCells(LedgerRow r)
         {
             var d = new Dictionary<string, (decimal Value, string Text)>();

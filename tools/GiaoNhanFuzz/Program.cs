@@ -9,6 +9,7 @@ using MES.Web.Services;
 using Microsoft.EntityFrameworkCore;
 
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
+if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -30,7 +31,8 @@ for (int po = startPo; po < startPo + poCount; po++)
     var rnd = new Random(seed0 * 100000 + po);
     var db = new AppDbContext();
     // ── Dữ liệu gốc 1 PO ──
-    for (int u = 1; u <= 6; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u });
+    var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };
+    for (int u = 1; u <= 6; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : null, GroupId = u == 1 ? 1 : null });
     var cust = new Customer { CustomerId = 1, CustomerName = "KH" };
     db.Customers.List.Add(cust);
     var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-TEST", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
@@ -56,6 +58,7 @@ for (int po = startPo; po < startPo + poCount; po++)
 
     var svc = new HandoverService(db);
     var led = new HandoverLedgerService(db);
+    var kho = new KhoVatLieuService(db, new UserService(null));
     var codeOf = new Dictionary<string, (string pg, string[] codes)>
     {
         ["GC"] = ("GC", ncs), ["HTSP"] = ("", new[] { "TARO|T1", "BAVIA|B1", "WASHING|R1" }),
@@ -65,7 +68,8 @@ for (int po = startPo; po < startPo + poCount; po++)
     for (int op = 0; op < opsPerPo; op++)
     {
         var row = (await led.GetLedgerForDetailAsync(1))!;
-        var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5));
+        var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : 6),
+            ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4));   // [GN-NG-AFTER]
         string desc = kind;
         bool ok = false;
         try
@@ -236,7 +240,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 {
                                     foreach (var b in db.HandoverTransactions.List.Where(b => !b.IsVoided && b.SourceReceiveId == rr).ToList())
                                         foreach (var br in b.Receives.Where(x => !x.IsVoided).OrderByDescending(x => x.ReceivedAt).Select(x => x.ReceiveId).ToList())
-                                            if (!(await svc.VoidReceiveAsync(br, "goi y", 1, All)).Ok) return false;
+                                        { var vr = await svc.VoidReceiveAsync(br, "goi y", 1, All); if (!vr.Ok) { lastErr = "auto-recv #" + br + ": " + vr.Error; if (Environment.GetEnvironmentVariable("WHYDBG") == "1") { foreach (var tt in db.HandoverTransactions.List) Console.WriteLine($"   tx#{tt.HandoverTxId} {tt.FromGroupCode}->{tt.ToGroupCode} {tt.Purpose} {tt.FromCell}->{tt.ToCell} q={tt.QtyIssued} void={tt.IsVoided} src={tt.SourceReceiveId} rec={string.Join(",", tt.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); Console.WriteLine("   phoi=" + db.KhoVatLieus.List.First().SoLuongThucNhan); } return false; } }
                                     var rv = await svc.VoidReceiveAsync(rr, "goi y", 1, All);
                                     if (!rv.Ok) { lastErr = rv.Error; return false; }
                                 }
@@ -247,6 +251,70 @@ for (int po = startPo; po < startPo + poCount; po++)
                             async () => (await svc.VoidIssueAsync(tid, "thu lai", issuer, new List<string>())).Ok, pre, rnd, po, op, desc, res.Error);
                     }
 #endif
+                    break;
+                }
+                case "ngrep":   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận (hàm thật ReportNgAfterReceiveAsync)
+                {
+                    var g = groups[rnd.Next(groups.Length)];
+                    var G = row.G(g);
+                    var srcs = g == "KHO" ? new[] { HandoverNgSource.Phoi } : new[] { HandoverNgSource.Chua, HandoverNgSource.Da };
+                    var src = srcs[rnd.Next(srcs.Length)];
+                    string? nc = null;
+                    if (g == "GC" && src == HandoverNgSource.Chua)
+                    {
+                        var cand = G.Steps.Where(x => !x.IsExcluded && (x.Waiting ?? 0) > 0).ToList();
+                        if (!cand.Any()) { Inc("skip.ngrep"); continue; }
+                        nc = cand[rnd.Next(cand.Count)].Code;
+                    }
+                    var cap = HandoverLedgerService.NgReportCap(row, g, src, nc).Max;
+                    if (cap <= 0) { Inc("skip.ngrep"); continue; }
+                    var over = rnd.NextDouble() < 0.1;
+                    var q = over ? cap + 1 : rnd.Next(1, (int)Math.Max(1, cap) + 1);
+                    if (q > cap && !over) q = cap;
+                    var origin = rnd.NextDouble() < 0.5 ? HandoverNgSource.DauVao : HandoverNgSource.DauRa;
+                    var cause = origin == HandoverNgSource.DauVao ? (g == "KHO" ? "KHACH" : groups[Math.Max(0, Array.IndexOf(groups, g) - 1)]) : null;
+                    desc = $"ngrep {g} {src} {nc} q={q} cap={cap} {origin}";
+                    var deny = await svc.ReportNgAfterReceiveAsync(1, g, src, nc, Math.Min(q, cap), origin, cause, "loi test", null, 99, groups.Where(x => x != g).ToList());
+                    if (deny.Ok) fails.Add($"[Quyền báo lỗi] PO{po} op{op} người ngoài nhóm báo lỗi được cho {g}");
+                    var res = await svc.ReportNgAfterReceiveAsync(1, g, src, nc, q, origin, cause, "loi test", null, Uid(g), new List<string> { g });
+                    ok = res.Ok; if (!ok) Inc("rej.ngrep");
+                    if (over && ok) fails.Add($"[Báo lỗi vượt trần] PO{po} op{op} {desc}");
+                    if (!over && !ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    break;
+                }
+                case "vngrep":   // [GN-NG-AFTER] huỷ báo lỗi
+                {
+                    var bs = db.HandoverNgReports.List.Where(b => !b.IsVoided).ToList();
+                    if (!bs.Any()) { Inc("skip.vngrep"); continue; }
+                    var b = bs[rnd.Next(bs.Count)];
+                    desc = $"vngrep #{b.HandoverNgReportId} {b.GroupCode} {b.SourceCell} {b.NC} q={b.Qty}";
+                    var deny = await svc.VoidNgReportAsync(b.HandoverNgReportId, "huy thu", 99, groups.Where(x => x != b.GroupCode).ToList());
+                    if (deny.Ok) fails.Add($"[Quyền huỷ báo lỗi] PO{po} op{op} người ngoài nhóm huỷ được báo lỗi #{b.HandoverNgReportId}");
+                    var bid = b.HandoverNgReportId; var by = b.CreatedBy;
+                    var res = await svc.VoidNgReportAsync(bid, "huy thu", by, new List<string>());
+                    ok = res.Ok; if (!ok) Inc("rej.vngrep");
+                    if (!ok && res.Error.StartsWith("Không lưu"))
+                        await WhyCheck(db, svc, led, HandoverWhy.OpVoidNgRep(bid), new HashSet<string> { "B:" + bid },
+                            async () => (await svc.VoidNgReportAsync(bid, "thu lai", by, new List<string>())).Ok, null, rnd, po, op, desc, res.Error);
+                    break;
+                }
+                case "phoi":   // [KH-GUARD] Kho sửa SL phôi nhận (hàm thật KhoVatLieuService.SaveKhoInputAsync)
+                {
+                    var kRow = db.KhoVatLieus.List.First(x => x.PlanDetailId == 1 && x.IsActive);
+                    var cur = kRow.SoLuongThucNhan ?? 0;
+                    var nq = Math.Max(0, cur + rnd.Next(-12, 7));
+                    if (nq == cur) { Inc("skip.phoi"); continue; }
+                    desc = $"phoi {cur}->{nq}";
+                    var kid = kRow.KhoVatLieuId;
+                    var res = await kho.SaveKhoInputAsync(1, DateTime.Now, nq, null, null, null, null, null, "sua phoi", 1);
+                    ok = res.Success; if (!ok) Inc("rej.phoi");
+                    var after = db.KhoVatLieus.List.First(x => x.PlanDetailId == 1 && x.IsActive).SoLuongThucNhan ?? 0;
+                    if (!ok && after != cur) fails.Add($"[Phôi không rollback] PO{po} op{op} {desc} còn {after}");
+                    if (ok && after != nq) fails.Add($"[Phôi không lưu] PO{po} op{op} {desc} còn {after}");
+                    if (!ok && !res.Error!.Contains("Không lưu")) fails.Add($"[Phôi lời báo lạ] PO{po} op{op} {res.Error}");
+                    if (!ok && res.Error!.Contains("Không lưu"))
+                        await WhyCheck(db, svc, led, HandoverWhy.OpSetPhoi(kid, nq), new HashSet<string>(),
+                            async () => (await kho.SaveKhoInputAsync(1, DateTime.Now, nq, null, null, null, null, null, "thu lai", 1)).Success, null, rnd, po, op, desc, res.Error);
                     break;
                 }
                 case "close":
@@ -323,6 +391,16 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         checks++;
         var sum = gcLines.Sum(s => s.Waiting!.Value);
         if (sum != gc.ChuaLam) { F("Σ chờ NC ≠ Chưa GC", $"{sum} ≠ {gc.ChuaLam}"); if (Environment.GetEnvironmentVariable("DUMP") == "1" && !dumped) { dumped = true; Console.WriteLine(desc); Dbg.Dump(row); foreach (var t in db.HandoverTransactions.List) Console.WriteLine($"   tx#{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} {t.FromCell}->{t.ToCell} q={t.QtyIssued} st={t.Status} void={t.IsVoided} fnc={t.FromNC} tnc={t.ToNC} rec={string.Join(",", t.Receives.Select(r => $"{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); foreach (var w in db.WtsProductionLogs.List) Console.WriteLine($"   wts {w.ProcessGroup} {w.NC}{w.WtsCode} {w.QtyOk}/{w.QtyNg} void={w.IsVoided}"); } }
+    }
+    // [GN-WHERE] "PO đang ở đâu": cộng mọi ô = phôi nhận; không ô nào âm (Workflow ON); không có NC loại trừ thì không có phần chênh NC
+    {
+        var wh = HandoverLedgerService.WhereIs(row);
+        checks++;
+        if (!wh.Balanced) F("Đang ở đâu lệch", $"tổng {wh.Total} ≠ phôi {wh.Phoi}: " + string.Join(", ", wh.Items.Select(i => $"{i.Place}/{i.Label}={i.Qty}")));
+        checks++;
+        if (row.ApplyWorkflow && wh.Items.Any(i => i.Qty < 0)) F("Đang ở đâu âm", string.Join(", ", wh.Items.Where(i => i.Qty < 0).Select(i => $"{i.Place}/{i.Label}={i.Qty}")));
+        checks++;
+        if (wh.Items.Any(i => i.Label.StartsWith("chưa GC (lệch NC"))) F("Đang ở đâu lệch NC", string.Join(", ", wh.Items.Where(i => i.Place == "GC").Select(i => $"{i.Label}={i.Qty}")));
     }
     // Dòng B cuối cùng (sổ theo từng bước) phải trùng sổ hiện tại — kể cả bước "huỷ phần chưa nhận"
     var steps = await led.GetStepsForDetailAsync(1);
@@ -405,6 +483,7 @@ async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService 
         bool okStep;
         if (st.Kind == "WTS") okStep = await WtsVoid(db, led, st.Id);
         else if (st.Kind == "NHAN") { var r = await svc.VoidReceiveAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }
+        else if (st.Kind == "BAOLOI") { var r = await svc.VoidNgReportAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }   // [GN-NG-AFTER]
         else { var r = await svc.VoidIssueAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }
         if (!okStep) { fails.Add($"[GN-WHY bước gợi ý bị chặn] PO{po} op{opIdx} {desc} → {st.Kind} #{st.Id}: {lastErr}"); return; }
         Inc("why.step");
