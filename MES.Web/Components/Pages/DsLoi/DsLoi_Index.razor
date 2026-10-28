@@ -239,6 +239,11 @@ else
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Tên lỗi <span class="text-danger">*</span></label>
                         <input class="form-control form-control-sm" maxlength="200" @bind="_fName" @bind:event="oninput" @bind:after="OnFieldChanged" placeholder="VD: Móp cạnh" />
+                        @* [DS-LOI-LIVE 2026-10-28] đổi tên = mọi chứng từ cũ hiện tên mới → nhắc chỉ đổi để rõ nghĩa *@
+                        @if (_CodeLocked)
+                        {
+                            <div class="form-text text-warning-emphasis">Đã dùng trong @UsedOf(_editing!) vụ lỗi — tên mới sẽ hiện trên mọi chứng từ cũ (WTS, phiếu, kế hoạch). Chỉ đổi để rõ nghĩa; lỗi khác hẳn thì thêm loại mới và Ngưng dùng loại này.</div>
+                        }
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Mô tả (không bắt buộc)</label>

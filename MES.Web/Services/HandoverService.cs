@@ -814,6 +814,9 @@ namespace MES.Web.Services
             var closers = closerIds.Count == 0 ? new Dictionary<int, string>()
                 : (await _db.Users.Where(u => closerIds.Contains(u.UserId)).AsNoTracking().ToListAsync())
                     .ToDictionary(u => u.UserId, u => string.IsNullOrEmpty(u.FullName) ? u.Username : u.FullName);
+            // [DS-LOI-LIVE 2026-10-28] chữ lỗi của phiếu / lần nhận có mã vụ → tên loại lỗi hiện tại (DS Lỗi)
+            var caseLbl = await NgCaseService.GetCaseLabelsAsync(_db,
+                txs.Select(t => t.NgCaseId).Concat(txs.SelectMany(t => t.Receives).Select(r => r.NgCaseId)));
 
             return txs.Select(t => new HandoverLogItem
 
@@ -844,7 +847,7 @@ namespace MES.Web.Services
 
                 NgQty         = t.NgQty,       // v0.9
 
-                NgReason      = t.NgReason,    // v0.9
+                NgReason      = NgCaseService.LiveReason(t.NgCaseId, t.NgReason, caseLbl),    // v0.9; [DS-LOI-LIVE]
 
                 IsVoided      = t.IsVoided,
 
@@ -866,7 +869,7 @@ namespace MES.Web.Services
 
                     QtyNg          = r.QtyNg,
 
-                    NgReason       = r.NgReason,
+                    NgReason       = NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl),   // [DS-LOI-LIVE]
 
                     ReceivedAt     = r.ReceivedAt,
 
@@ -922,6 +925,7 @@ namespace MES.Web.Services
             var srcTx  = srcIds.Count == 0 ? new Dictionary<long, long>()
                        : await _db.HandoverReceives.AsNoTracking().Where(r => srcIds.Contains(r.ReceiveId))
                              .ToDictionaryAsync(r => r.ReceiveId, r => r.HandoverTxId);
+            var caseLbl = await NgCaseService.GetCaseLabelsAsync(_db, txs.Select(t => t.NgCaseId));   // [DS-LOI-LIVE 2026-10-28]
 
             return txs.Select(t =>
 
@@ -947,7 +951,7 @@ namespace MES.Web.Services
 
                     NgQty            = t.NgQty,     // v0.9
 
-                    NgReason         = t.NgReason,  // v0.9
+                    NgReason         = NgCaseService.LiveReason(t.NgCaseId, t.NgReason, caseLbl),  // v0.9; [DS-LOI-LIVE] tên lỗi hiện tại
                     Purpose          = t.Purpose,     // [GN-LEDGER]
                     IsReturnNg       = t.IsReturnNg,  // [GN-LEDGER]
                     FromCell         = t.FromCell,    // [GN-CELL]
@@ -2264,7 +2268,7 @@ namespace MES.Web.Services
 
         public async Task<List<HandoverNgReportItem>> GetNgReportsAsync(int khPlanDetailId)
         {
-            return await _db.HandoverNgReports.AsNoTracking()
+            var list = await _db.HandoverNgReports.AsNoTracking()
                 .Where(b => b.KhPlanDetailId == khPlanDetailId)
                 .OrderByDescending(b => b.CreatedAt).ThenByDescending(b => b.HandoverNgReportId)
                 .Select(b => new HandoverNgReportItem
@@ -2279,6 +2283,10 @@ namespace MES.Web.Services
                     VoidedAt = b.VoidedAt
                 })
                 .ToListAsync();
+            // [DS-LOI-LIVE 2026-10-28] báo lỗi có mã vụ → tên loại lỗi hiện tại (DS Lỗi); cột NgReason trong DB giữ nguyên
+            var caseLbl = await NgCaseService.GetCaseLabelsAsync(_db, list.Select(b => b.NgCaseId));
+            foreach (var b in list) b.NgReason = NgCaseService.LiveReason(b.NgCaseId, b.NgReason, caseLbl) ?? b.NgReason;
+            return list;
         }
 
         // ----------------------------------------------------------------

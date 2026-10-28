@@ -4683,6 +4683,10 @@ else
                                  .Select(x => new { x.NgCaseId, x.NgCategoryId }).ToListAsync();
             foreach (var r in rows.Where(r => r.NgCaseId != null))
                 r.NgCategoryId = _caseCat.FirstOrDefault(x => x.NgCaseId == r.NgCaseId)?.NgCategoryId;
+            // [DS-LOI-LIVE 2026-10-28] cột Lý do NG hiện tên loại lỗi HIỆN TẠI (DS Lỗi đổi tên → dòng cũ đổi theo); cột NgReason trong DB giữ nguyên
+            var _caseLbl = await NgCaseService.GetCaseLabelsAsync(Db, _caseIds.Select(x => (long?)x));
+            foreach (var r in rows.Where(r => r.NgCaseId != null))
+                r.NgReason = NgCaseService.LiveReason(r.NgCaseId, r.NgReason, _caseLbl);
         }
         foreach (var log in actLogs)
 

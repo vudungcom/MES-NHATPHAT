@@ -206,6 +206,38 @@ public static class VuScen
             Ok(rows.All(x => x.Balanced), "Mọi dòng cân");
         }
 
+        // [DS-LOI-LIVE 2026-10-28] Đổi tên loại lỗi trên DS Lỗi → mọi chỗ hiện tên mới; chữ lưu trong DB + số không đổi
+        Console.WriteLine("[V8] Đổi tên XUOC 'Xước' → 'Xước cạnh': hiện tên mới khắp nơi, DB + số giữ nguyên");
+        {
+            var before = await Row();
+            var cat = db.NgCategories.List.First(x => x.Code == "XUOC");
+            var (sv, se) = await new NgCaseService(db).SaveCategoryAsync(cat.NgCategoryId, "XUOC", "Xước cạnh", cat.Description, cat.SortOrder, 1);
+            Ok(sv, "Lưu tên mới trên DS Lỗi", se);
+            const string NewLbl = "XUOC · Xước cạnh";
+            var w3 = db.WtsProductionLogs.List.First(x => x.NgCaseId == 3 && !x.IsVoided);
+            Ok(w3.NgReason == "XUOC · Xước", "Cột NgReason trong DB của WTS VL000003 giữ chữ cũ", w3.NgReason);
+            var tr = (await led.GetNgTraceAsync(1))!;
+            var c3 = tr.Cases.FirstOrDefault(x => x.Id == 3);
+            Ok(c3 != null && c3.Loai == NewLbl, "Bảng theo từng vụ: VL000003 hiện tên mới", c3?.Loai);
+            var ev3 = tr.Events.Where(e => e.Reason != null && e.Reason.StartsWith("XUOC")).Select(e => e.Reason).Distinct().ToList();
+            Ok(ev3.Count > 0 && ev3.All(x => x == NewLbl), "Bảng từng lần: mọi dòng lỗi XUOC hiện tên mới", string.Join(" | ", ev3));
+            var logs = await svc.GetLogsAsync(1);
+            var lt = logs.Where(t => t.NgCaseId == 3 && !string.IsNullOrEmpty(t.NgReason)).Select(t => t.NgReason).Distinct().ToList();
+            Ok(lt.Count > 0 && lt.All(x => x == NewLbl), "Lịch sử phiếu: phiếu VL000003 hiện tên mới", string.Join(" | ", lt));
+            var old = logs.Where(t => t.NgCaseId == null && t.NgReason == "Hàng lỗi cũ (chưa có mã vụ)").ToList();
+            Ok(old.Count > 0, "Phiếu hàng lỗi cũ (không mã vụ) giữ chữ cũ");
+            // dòng B + chứng từ trong diễn giải ô: không còn chữ tên cũ (chỉ phiếu có in chữ lỗi mới có, nên kiểm "không còn tên cũ")
+            var rowNow = await Row();
+            var txts = (await led.GetStepsForDetailAsync(1)).Select(s => s.Text)
+                .Concat(rowNow.Groups.Values.SelectMany(g => g.Explains.Values).SelectMany(e => e.Terms).SelectMany(t => t.Docs).Select(d => d.Text))
+                .Where(x => x != null && x.Contains("XUOC")).Distinct().ToList();
+            Ok(!txts.Any(x => x.Replace(NewLbl, "").Contains("XUOC · Xước")), $"Dòng B + diễn giải ô: không còn tên cũ ({txts.Count} dòng có XUOC)", string.Join(" | ", txts.Take(3)));
+            var after = await Row();
+            Ok(after.Cases.Count == before.Cases.Count && after.Cases.All(kv => before.Cases.TryGetValue(kv.Key, out var b0) && b0.SinhRa == kv.Value.SinhRa && b0.HeldTotal == kv.Value.HeldTotal),
+               "Số từng vụ không đổi sau khi đổi tên");
+            await Can("đổi tên");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

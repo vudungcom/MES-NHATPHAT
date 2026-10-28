@@ -673,6 +673,13 @@ namespace MES.Web.Services
             var ngCaseUsers = ngCaseUserIds.Any()
                 ? await _db.Users.Where(u => ngCaseUserIds.Contains(u.UserId)).Select(u => new { u.UserId, Name = u.FullName ?? u.Username }).AsNoTracking().ToListAsync()
                 : new();
+            // [DS-LOI-LIVE 2026-10-28] chữ lỗi trên phiếu / lần nhận / báo lỗi có mã vụ → tên loại lỗi HIỆN TẠI (chỉ hiển thị, không đụng số)
+            var caseLbl = new Dictionary<long, string>();
+            foreach (var x in ngCases)
+            {
+                var k = ngCats.FirstOrDefault(c => c.NgCategoryId == x.NgCategoryId);
+                if (k != null) caseLbl[x.NgCaseId] = NgCaseService.LabelOf(k.Code, k.Name);
+            }
 
             var mach = await _db.KhPlanRouteSnapshotMachining.Where(s => ids.Contains(s.KhPlanDetailId))
                 .Select(s => new { s.KhPlanDetailId, s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.MachineRegistered })
@@ -718,13 +725,14 @@ namespace MES.Web.Services
                         Id = t.HandoverTxId, From = t.FromGroupCode, To = t.ToGroupCode, Purpose = t.Purpose,
                         FromCell = t.FromCell, // [GN-CELL]
                         IsReturnNg = t.IsReturnNg, Issued = t.QtyIssued, Status = t.Status,
-                        FromNC = t.FromNC, ToNC = t.ToNC, At = t.IssuedAt, Notes = t.Notes, NgReason = t.NgReason, // [GN-NG-OUT]
+                        FromNC = t.FromNC, ToNC = t.ToNC, At = t.IssuedAt, Notes = t.Notes,
+                        NgReason = NgCaseService.LiveReason(t.NgCaseId, t.NgReason, caseLbl), // [GN-NG-OUT]; [DS-LOI-LIVE] tên lỗi hiện tại
                         SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                         ToCell = t.ToCell, // [GN-CELL2]
                         Closed = t.QtyClosed ?? 0, ClosedAt = t.ClosedAt, // [GN-VOID-RULE]
                         NgCaseId = t.NgCaseId, // [VULOI]
                         Receives = t.Receives.Where(r => !r.IsVoided)
-                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, r.NgReason, r.ToCell, r.ToCellReason, r.NgCaseId)).ToList()
+                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl), r.ToCell, r.ToCellReason, r.NgCaseId)).ToList()   // [DS-LOI-LIVE]
                     }).ToList(),
                     Wts = wts.Where(w => w.KhPlanDetailId == id).Select(w => new InWts(
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
@@ -733,7 +741,8 @@ namespace MES.Web.Services
                         m.StepOrder, m.NC ?? "", m.IsBackup, m.ParentNC, m.MachineRegistered,
                         !string.IsNullOrWhiteSpace(m.MachineRegistered) && exclSet.Contains(m.MachineRegistered!.Trim()))).ToList(),
                     NgReps = ngReps.Where(b => b.KhPlanDetailId == id).Select(b => new InNgRep(   // [GN-NG-AFTER]
-                        b.HandoverNgReportId, b.CreatedAt, b.GroupCode, b.SourceCell, b.NC, b.Qty, b.Origin, b.CauseGroupCode, b.NgReason, b.Who, b.NgCaseId)).ToList(),   // [VULOI] + vụ lỗi
+                        b.HandoverNgReportId, b.CreatedAt, b.GroupCode, b.SourceCell, b.NC, b.Qty, b.Origin, b.CauseGroupCode,
+                        NgCaseService.LiveReason(b.NgCaseId, b.NgReason, caseLbl), b.Who, b.NgCaseId)).ToList(),   // [VULOI] + vụ lỗi; [DS-LOI-LIVE] tên lỗi hiện tại
                     CaseInfo = ngCases.Where(x => x.KhPlanDetailId == id).ToDictionary(x => x.NgCaseId, x =>   // [VULOI]
                     {
                         var cat = ngCats.FirstOrDefault(k => k.NgCategoryId == x.NgCategoryId);
@@ -1507,8 +1516,10 @@ namespace MES.Web.Services
             var extra = new NgTraceExtra();
             var wr = await _db.WtsProductionLogs
                 .Where(w => w.KhPlanDetailId == khPlanDetailId && !w.IsVoided && w.QtyNg != null && w.QtyNg != 0)
-                .Select(w => new { w.WtsLogId, w.NgReason }).AsNoTracking().ToListAsync();
-            foreach (var w in wr) extra.WtsReason[w.WtsLogId] = w.NgReason;
+                .Select(w => new { w.WtsLogId, w.NgReason, w.NgCaseId }).AsNoTracking().ToListAsync();   // [DS-LOI-LIVE] + vụ
+            // [DS-LOI-LIVE 2026-10-28] dòng WTS có mã vụ → tên loại lỗi hiện tại (CaseInfo đã nạp tên mới ở LoadInputsAsync)
+            var wLbl = inp.CaseInfo.Where(kv => kv.Value.CatCode != null).ToDictionary(kv => kv.Key, kv => NgCaseService.LabelOf(kv.Value.CatCode, kv.Value.CatName));
+            foreach (var w in wr) extra.WtsReason[w.WtsLogId] = NgCaseService.LiveReason(w.NgCaseId, w.NgReason, wLbl);
             var tw = await _db.HandoverTransactions
                 .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided)
                 .Select(t => new { t.HandoverTxId, Who = t.IssuedByUser != null ? (t.IssuedByUser.FullName ?? t.IssuedByUser.Username) : null })

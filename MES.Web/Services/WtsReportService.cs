@@ -71,6 +71,8 @@ public class WtsReportService
 
         // ── 4. Gộp thành WtsReportRow ─────────────────────────────────────
         var rows = new List<WtsReportRow>();
+        // [DS-LOI-LIVE 2026-10-28] dòng NG có mã vụ → tên loại lỗi hiện tại (DS Lỗi)
+        var caseLbl = await NgCaseService.GetCaseLabelsAsync(_db, prodLogs.Select(x => x.NgCaseId));
 
         foreach (var p in prodLogs)
         {
@@ -92,7 +94,7 @@ public class WtsReportService
                 QtyDone         = p.QtyDone,
                 QtyOk           = p.QtyOk,
                 QtyNg           = p.QtyNg,
-                NgReason        = p.NgReason,
+                NgReason        = NgCaseService.LiveReason(p.NgCaseId, p.NgReason, caseLbl),   // [DS-LOI-LIVE]
                 Notes           = p.Notes ?? "",
                 ExtraMinutes    = p.ExtraMinutes,
                 IsOvertime      = p.IsOvertime,

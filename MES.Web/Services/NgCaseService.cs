@@ -54,6 +54,39 @@ namespace MES.Web.Services
             return ids.GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count());
         }
 
+        // =====================================================================
+        // [DS-LOI-LIVE 2026-10-28] Tên loại lỗi hiện THEO DS LỖI HIỆN TẠI (Hùng duyệt: đổi tên = cập nhật mọi kế hoạch).
+        //   Chứng từ có mã vụ lưu sẵn chữ "MÃ · Tên" lúc lưu (cột NgReason) — cột đó GIỮ NGUYÊN trong DB (bản ghi gốc);
+        //   lúc ĐỌC ra màn hình: dòng có mã vụ + có chữ lỗi → thay bằng "MÃ · Tên" hiện tại của loại lỗi của vụ.
+        //   Dòng không mã vụ (hàng lỗi cũ) / không có chữ lỗi → giữ nguyên. Chỉ là chữ hiển thị, không đụng số.
+        // =====================================================================
+
+        /// <summary>[DS-LOI-LIVE] Nhãn hiện tại theo vụ: NgCaseId → "MÃ · Tên" (cùng dạng NgCategory.Label).</summary>
+        public static async Task<Dictionary<long, string>> GetCaseLabelsAsync(AppDbContext db, IEnumerable<long?> caseIds)
+        {
+            var ids = caseIds.Where(x => x != null && x.Value > 0).Select(x => x!.Value).Distinct().ToList();
+            if (ids.Count == 0) return new Dictionary<long, string>();
+            var cases = await db.NgCases.AsNoTracking().Where(x => ids.Contains(x.NgCaseId))
+                .Select(x => new { x.NgCaseId, x.NgCategoryId }).ToListAsync();
+            var catIds = cases.Select(x => x.NgCategoryId).Distinct().ToList();
+            var cats = await db.NgCategories.AsNoTracking().Where(x => catIds.Contains(x.NgCategoryId))
+                .Select(x => new { x.NgCategoryId, x.Code, x.Name }).ToListAsync();
+            var res = new Dictionary<long, string>();
+            foreach (var c in cases)
+            {
+                var k = cats.FirstOrDefault(x => x.NgCategoryId == c.NgCategoryId);
+                if (k != null) res[c.NgCaseId] = LabelOf(k.Code, k.Name);
+            }
+            return res;
+        }
+
+        /// <summary>[DS-LOI-LIVE] Cùng dạng NgCategory.Label.</summary>
+        public static string LabelOf(string? code, string? name) => $"{code} · {name}";
+
+        /// <summary>[DS-LOI-LIVE] Chữ lỗi để HIỆN: có mã vụ + có chữ đã lưu → tên hiện tại; còn lại giữ chữ đã lưu.</summary>
+        public static string? LiveReason(long? caseId, string? stored, IReadOnlyDictionary<long, string> labels)
+            => caseId != null && !string.IsNullOrWhiteSpace(stored) && labels.TryGetValue(caseId.Value, out var l) ? l : stored;
+
         public static string NormalizeCode(string? code) => (code ?? "").Trim().ToUpperInvariant();
 
         /// <summary>Thêm (id null) hoặc sửa loại lỗi. Mã duy nhất, viết hoa, ≤ 20 ký tự; tên ≤ 200.</summary>
