@@ -1,0 +1,117 @@
+@using MES.Web.Services
+@* =====================================================================
+   [GN-WHERE 2026-10-27] PO ĐANG Ở ĐÂU — dùng chung cho Kế hoạch (danh sách + xem chi tiết) và Giao nhận.
+   Chỉ hiển thị: mọi số lấy từ HandoverLedgerService.WhereIs(Row) (đọc lại các ô của sổ, không công thức riêng).
+   Tổng mọi ô = Phôi nhận (L6) — lệch thì báo đỏ ngay trên khung.
+   ===================================================================== *@
+
+@if (Row != null)
+{
+    var w = HandoverLedgerService.WhereIs(Row);
+    <div class="poviti">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:6px;font-size:12px">
+            <span><strong>SL PO</strong> @Row.PlanQty.ToString("0.##")</span>
+            <span><strong>Phôi nhận</strong> @w.Phoi.ToString("0.##")</span>
+            @if (w.ChuaCoPhoi > 0)
+            {
+                <span class="text-warning-emphasis" title="SL PO − phôi Kho đã nhận (chưa vào xưởng, không nằm trong tổng bên dưới)">chưa có phôi @w.ChuaCoPhoi.ToString("0.##")</span>
+            }
+            <span><strong>Thành phẩm nhập kho</strong> @w.TpNhap.ToString("0.##")</span>
+            @if (w.Balanced)
+            {
+                <span class="badge bg-success" title="Cộng mọi ô bên dưới = phôi nhận">cân: @w.Total.ToString("0.##") = phôi @w.Phoi.ToString("0.##")</span>
+            }
+            else
+            {
+                <span class="badge bg-danger" title="Cộng mọi ô bên dưới khác phôi nhận — báo lại để kiểm">lệch: @w.Total.ToString("0.##") ≠ phôi @w.Phoi.ToString("0.##")</span>
+            }
+            @if (w.HasNegative)
+            {
+                <span class="badge bg-danger">có ô âm — xem trang Giao nhận</span>
+            }
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:4px">
+            @foreach (var place in Places)
+            {
+                @PlaceBox(w, place)
+            }
+        </div>
+
+        @if (Steps != null && Steps.Count > 0)
+        {
+            <div class="mt-2">
+                <div class="fw-semibold small mb-1">Đường đi (từ chứng từ, cũ → mới)</div>
+                <div style="max-height:260px;overflow-y:auto">
+                    <table class="table table-sm table-bordered mb-0" style="font-size:11px">
+                        <thead class="table-light"><tr><th style="width:40px">B</th><th style="width:90px">Lúc</th><th style="width:70px">Loại</th><th>Diễn biến</th></tr></thead>
+                        <tbody>
+                            @foreach (var st in Steps)
+                            {
+                                <tr @key="st.Index">
+                                    <td class="text-muted">B@(st.Index)</td>
+                                    <td class="text-nowrap">@(st.At?.ToString("dd/MM HH:mm") ?? "—")</td>
+                                    <td><span class="badge @KindBadge(st.Kind)">@KindLabel(st.Kind)</span></td>
+                                    <td>@st.Text</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Sổ của PO (HandoverLedgerService).</summary>
+    [Parameter] public LedgerRow? Row { get; set; }
+    /// <summary>Các bước B1..Bn (tuỳ chọn) — hiện bảng "Đường đi".</summary>
+    [Parameter] public List<LedgerStepRow>? Steps { get; set; }
+
+    static readonly string[] Places = { "KHO", "GC", "HTSP", "KCS", "PKG", "RA" };
+
+    static string TotalClass(decimal t) => t < 0 ? "text-danger" : t > 0 ? "" : "text-muted";
+
+    static string PlaceLabel(string p) => p == "RA" ? "Thành phẩm / ra khỏi PO" : HandoverLedgerService.GroupLabel(p);
+
+    static string PlaceColor(string p) => p switch
+    {
+        "KHO" => "#fff8e1", "GC" => "#e8f5e9", "HTSP" => "#e3f2fd", "KCS" => "#f3e5f5", "PKG" => "#ede7f6", _ => "#f5f5f5"
+    };
+
+    static string ItemClass(HandoverLedgerService.WhereItem i)
+        => i.Qty < 0 ? "text-danger fw-semibold" : i.Kind is "LOI" or "SUA" ? "text-danger" : i.Kind == "CHO_NHAN" ? "text-warning-emphasis" : "";
+
+    static string KindLabel(string k) => k switch
+    {
+        "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", _ => k
+    };
+
+    static string KindBadge(string k) => k switch
+    {
+        "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", _ => "bg-secondary"
+    };
+
+    private RenderFragment PlaceBox(HandoverLedgerService.WhereSummary w, string place) => __builder =>
+    {
+        var items = w.Items.Where(i => i.Place == place).ToList();
+        var total = items.Sum(i => i.Qty);
+        <div class="border rounded p-2" style="min-width:150px;flex:1;background:@PlaceColor(place);font-size:11.5px">
+            <div style="display:flex;justify-content:space-between;gap:8px;font-weight:600;margin-bottom:2px">
+                <span>@PlaceLabel(place)</span>
+                <span class="@TotalClass(total)">@total.ToString("0.##")</span>
+            </div>
+            @if (items.Count == 0)
+            {
+                <div class="text-muted">—</div>
+            }
+            @foreach (var it in items)
+            {
+                <div class="@ItemClass(it)" style="display:flex;justify-content:space-between;gap:8px" title="@it.Hint">
+                    <span>@it.Label</span><span>@it.Qty.ToString("0.##")</span>
+                </div>
+            }
+        </div>
+    };
+}
