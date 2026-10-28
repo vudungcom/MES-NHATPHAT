@@ -1,0 +1,69 @@
+﻿lệnh: GiaoNhanFuzz.dll 60 120 3 LOI=1 NGREP=40
+  đã chạy 2/60 PO · sai 0 · 8 giây · còn khoảng 218 giây
+  đã chạy 4/60 PO · sai 0 · 14 giây · còn khoảng 198 giây
+  đã chạy 6/60 PO · sai 0 · 20 giây · còn khoảng 176 giây
+  đã chạy 8/60 PO · sai 0 · 26 giây · còn khoảng 170 giây
+  đã chạy 10/60 PO · sai 0 · 34 giây · còn khoảng 170 giây
+  đã chạy 12/60 PO · sai 0 · 41 giây · còn khoảng 165 giây
+  đã chạy 14/60 PO · sai 0 · 49 giây · còn khoảng 160 giây
+  đã chạy 16/60 PO · sai 0 · 56 giây · còn khoảng 154 giây
+  đã chạy 18/60 PO · sai 0 · 63 giây · còn khoảng 146 giây
+  đã chạy 20/60 PO · sai 0 · 70 giây · còn khoảng 140 giây
+  đã chạy 22/60 PO · sai 0 · 80 giây · còn khoảng 138 giây
+  đã chạy 24/60 PO · sai 0 · 87 giây · còn khoảng 131 giây
+  đã chạy 26/60 PO · sai 0 · 96 giây · còn khoảng 125 giây
+  đã chạy 28/60 PO · sai 0 · 103 giây · còn khoảng 118 giây
+  đã chạy 30/60 PO · sai 0 · 111 giây · còn khoảng 111 giây
+  đã chạy 31/60 PO · sai 0 · 117 giây · còn khoảng 109 giây
+  đã chạy 33/60 PO · sai 0 · 125 giây · còn khoảng 102 giây
+  đã chạy 35/60 PO · sai 0 · 133 giây · còn khoảng 95 giây
+  đã chạy 36/60 PO · sai 0 · 138 giây · còn khoảng 92 giây
+  đã chạy 38/60 PO · sai 0 · 147 giây · còn khoảng 85 giây
+  đã chạy 39/60 PO · sai 0 · 152 giây · còn khoảng 82 giây
+  đã chạy 41/60 PO · sai 0 · 159 giây · còn khoảng 74 giây
+  đã chạy 42/60 PO · sai 0 · 165 giây · còn khoảng 71 giây
+  đã chạy 44/60 PO · sai 0 · 173 giây · còn khoảng 63 giây
+  đã chạy 46/60 PO · sai 0 · 183 giây · còn khoảng 56 giây
+  đã chạy 48/60 PO · sai 0 · 188 giây · còn khoảng 47 giây
+  đã chạy 50/60 PO · sai 0 · 198 giây · còn khoảng 40 giây
+  đã chạy 52/60 PO · sai 0 · 206 giây · còn khoảng 32 giây
+  đã chạy 54/60 PO · sai 0 · 213 giây · còn khoảng 24 giây
+  đã chạy 57/60 PO · sai 0 · 223 giây · còn khoảng 12 giây
+  đã chạy 59/60 PO · sai 0 · 231 giây · còn khoảng 4 giây
+  đã chạy 60/60 PO · sai 0 · 233 giây
+PO: 60 · thao tác/PO: 120 · seed 3
+  [GN-WHY] tìm gốc rễ: 221 lần · trung bình 1.0 ms · lâu nhất 16.2 ms · số lần tính sổ TB 7.9 / lớn nhất 50
+  ng.events            2386
+  ng.transit           1409
+  ng.vesx              266
+  ok.close             24
+  ok.issue             542
+  ok.ngrep             310
+  ok.recv              696
+  ok.vissue            57
+  ok.vissue.auto       5
+  ok.vngrep            122
+  ok.vrecv             96
+  ok.wts               426
+  ok.wtsvoid           54
+  rej.close            11
+  rej.issue            51
+  rej.ngrep            38
+  rej.vissue           157
+  rej.vngrep           25
+  rej.vrecv            86
+  rej.wtsvoid          17
+  skip.close           197
+  skip.issue           734
+  skip.ngrep           1527
+  skip.recv            686
+  skip.vissue          83
+  skip.vngrep          50
+  skip.vrecv           104
+  skip.wts             987
+  skip.wtsvoid         120
+  why.complete         221
+  why.retry.ok         221
+  why.step             431
+Phép kiểm: 78754
+SAI: 0

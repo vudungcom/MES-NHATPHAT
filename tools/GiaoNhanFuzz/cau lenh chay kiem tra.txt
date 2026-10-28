@@ -1,4 +1,4 @@
-CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 27/10/2026)
+CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 28/10/2026)
 Tool chỉ kiểm code, chạy trên database giả trong bộ nhớ, KHÔNG đụng SQL / dữ liệu server.
    dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
    dotnet bin2\GiaoNhanFuzz.dll 300 120 2
@@ -11,8 +11,21 @@ cd /d "D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\GiaoNha
 == BIÊN DỊCH (chỉ khi code vừa đổi: chép code mới / pull về) ==
 dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
 
+== 0. KIỂM NẶNG — 1 LỆNH CHẠY HẾT (mới 28/10) ==
+dotnet bin2\GiaoNhanFuzz.dll nang
+-> chạy 2 kịch bản (kh, loi) rồi 6 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
+-> mỗi lượt xong in 1 dòng ĐẠT / SAI; cuối phải ra: SAI: 0
+-> kết quả từng lượt nằm trong thư mục nang_ketqua\ (có SAI thì gửi file đó)
+Tuỳ chỉnh: dotnet bin2\GiaoNhanFuzz.dll nang <số PO mỗi lượt> <thao tác mỗi PO> <seed đầu>
+   vd: dotnet bin2\GiaoNhanFuzz.dll nang 150 120 41   (kỹ hơn, lâu hơn; đổi seed đầu = bộ tình huống khác)
+   set SONG_SONG=2   → chỉ chạy 2 lượt cùng lúc (máy chậm / đang làm việc khác)
+6 lượt gồm: loi (LOI=1) · loi_loaitru (LOI=1 EXCL=0.7) · loi_baoloi (LOI=1 NGREP=40) · loi_phoi (LOI=1 PHOI=8) · thuong (như lệnh thường) · loaitru (EXCL=0.7)
+Máy 2 nhân (sandbox): 6 lượt x 25 PO mất khoảng 8 phút.
+
 == 1. KỊCH BẢN CỐ ĐỊNH (vài giây) ==
 dotnet bin2\GiaoNhanFuzz.dll kh
+-> cuối phải ra: KẾT QUẢ: ĐẠT hết
+dotnet bin2\GiaoNhanFuzz.dll loi      (mới 28/10: hàng lỗi qua nhiều nơi — số phải ra từng bước)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 
 == 2. KIỂM NGẪU NHIÊN ==
@@ -35,6 +48,9 @@ Lưu ý:
 set EXCL=0.7      70% PO có máy loại trừ (giao theo NC / trả về NC). Tắt: set EXCL=
 set NGREP=60      tăng báo hàng lỗi sau nhận + huỷ báo lỗi. Tắt: set NGREP=
 set PHOI=20       tăng Kho sửa phôi nhận. Tắt: set PHOI=
+set LOI=1         (mới 28/10) thử nặng hàng lỗi: chọn thao tác có hàng thật để làm (ít bỏ qua), NG nhiều hơn, nhiều phiếu Hàng lỗi / Hàng sửa,
+                  không sửa phôi (trừ khi đặt PHOI). Lưu được gấp nhiều lần lệnh thường. Tắt: set LOI=
+                  Không đặt LOI thì lệnh thường chạy y như bản cũ (cùng seed ra cùng kết quả).
 
 == 4. XEM THÊM ==
 dotnet bin2\GiaoNhanFuzz.dll scen    3 tình huống bị chặn huỷ, in lời báo gốc rễ + gợi ý gỡ (để xem, không phải kiểm cân)

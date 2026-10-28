@@ -318,6 +318,8 @@ else
                     {
                         @* [GN-WHERE 2026-10-27] PO đang ở đâu (cùng khung với trang Kế hoạch) — đứng yên khi cuộn ngang *@
                         <tr class="gn-step"><td colspan="70" class="p-2 bg-white"><div style="position:sticky;left:0;max-width:calc(100vw - 280px)"><PoViTri Row="row" /></div></td></tr>
+                        @* [GN-NG-TRACE 2026-10-28] Hàng lỗi của PO: từng lần phát sinh / chuyển / xử lý, đang ở đâu (cùng khung với trang Kế hoạch) *@
+                        <tr class="gn-step"><td colspan="70" class="p-2 bg-white"><div style="position:sticky;left:0;max-width:calc(100vw - 280px)"><PoLoi Trace="_ngTrace" /></div></td></tr>
                         @* [GN-CELL] Các dòng B1, B2, B3… đúng kiểu Excel: trạng thái sau từng chứng từ, ô vừa đổi tô màu *@
                         if (_stepsLoading)
                         {
@@ -1347,6 +1349,7 @@ else
     bool _onlyWarn;
     // [GN-CELL] các bước B1..Bn của PO đang mở
     List<LedgerStepRow> _steps = new();
+    NgTrace? _ngTrace;   // [GN-NG-TRACE 2026-10-28] hàng lỗi của PO đang mở
     bool _stepsLoading;
 
     // ── Hiển thị ──────────────────────────────────────────────────────
@@ -1773,6 +1776,7 @@ else
         }
         bool touched(int id) => all || ids.Contains(id);
         List<LedgerStepRow>? steps = expanded != null && touched(expanded.Value) ? await led.GetStepsForDetailAsync(expanded.Value) : null;
+        NgTrace? ngTrace = steps != null ? await led.GetNgTraceAsync(expanded!.Value) : null;   // [GN-NG-TRACE]
         // Modal Nhận đang mở ở danh sách (chưa bung phiếu nào để nhập): làm mới danh sách phiếu chờ. Đang nhập dở thì để nguyên.
         List<HandoverTxPending>? pend = recvOpen && recvExpanded == 0 && selId != null && touched(selId.Value) && !string.IsNullOrEmpty(recvGroup)
             ? await svc.GetPendingForGroupAsync(selId.Value, recvGroup) : null;
@@ -1794,7 +1798,7 @@ else
             }
             if (pc != null) _pendingCountPerDetail = pc;
             if (pic != null) _pendingIssuedCountPerDetail = pic;
-            if (steps != null && _expandedDetailId == expanded) _steps = steps;
+            if (steps != null && _expandedDetailId == expanded) { _steps = steps; _ngTrace = ngTrace; }   // [GN-NG-TRACE] + hàng lỗi
             if (pend != null && _showReceiveModal && _expandedTxId == 0 && _receiveToGroup == recvGroup && _selectedRow?.KhPlanDetailId == selId) _pendingTxs = pend;
             if (_explain != null) RefreshExplain();
             StateHasChanged();
@@ -1837,15 +1841,20 @@ else
     async Task LoadStepsAsync(int detailId)
     {
         _stepsLoading = true;
-        try { _steps = await LedgerSvc.GetStepsForDetailAsync(detailId); }
+        try
+        {
+            _steps = await LedgerSvc.GetStepsForDetailAsync(detailId);
+            _ngTrace = await LedgerSvc.GetNgTraceAsync(detailId);   // [GN-NG-TRACE]
+        }
         finally { _stepsLoading = false; }
     }
 
     async Task ToggleExpandDetailAsync(int detailId)
     {
-        if (_expandedDetailId == detailId) { _expandedDetailId = null; _steps = new(); return; }
+        if (_expandedDetailId == detailId) { _expandedDetailId = null; _steps = new(); _ngTrace = null; return; }
         _expandedDetailId = detailId;
         _steps = new();
+        _ngTrace = null;   // [GN-NG-TRACE]
         StateHasChanged();
         await LoadStepsAsync(detailId);
     }

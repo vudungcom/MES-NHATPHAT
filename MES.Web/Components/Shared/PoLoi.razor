@@ -1,0 +1,203 @@
+@using MES.Web.Services
+@* =====================================================================
+   [GN-NG-TRACE 2026-10-28] HÀNG LỖI CỦA PO — dùng chung cho Kế hoạch (dòng mở ▸) và Giao nhận (mở PO).
+   Tra theo từng lần dính hàng lỗi (WTS NG, NG lúc nhận, báo lỗi sau khi nhận, phiếu / lần nhận hàng lỗi, huỷ, trả khách).
+   Mọi số đọc từ HandoverNgTrace.Build (chứng từ của sổ); "đang giữ" = ô Tồn hàng lỗi / Tồn hàng sửa của sổ.
+   Dòng cân hàng lỗi lệch thì báo đỏ ngay trên khung (không được xảy ra).
+   ===================================================================== *@
+
+@if (Trace != null)
+{
+    <div class="po-loi" style="font-size:11.5px">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:6px">
+            <span class="fw-semibold" style="font-size:12.5px"><i class="bi bi-exclamation-octagon text-danger me-1"></i>Hàng lỗi của PO</span>
+            @if (!Trace.HasAny)
+            {
+                <span class="text-muted">PO chưa có hàng lỗi nào (không có NG trên WTS, NG lúc nhận, báo lỗi hay phiếu hàng lỗi).</span>
+            }
+            else
+            {
+                <span title="Tổng số lỗi phát sinh: NG (WTS) + NG lúc nhận + báo lỗi sau khi nhận + hàng lỗi công đoạn trước"><strong>Phát sinh</strong> <span class="text-danger fw-semibold">@Trace.PhatSinh.ToString("0.##")</span></span>
+                <span title="Hàng lỗi sửa xong, nhận về ô Hàng lỗi đã xử lý / Hàng mới (làm tiếp)"><strong>Đã xử lý</strong> @Trace.VeSx.ToString("0.##")</span>
+                <span><strong>Đã huỷ</strong> @Trace.DaHuy.ToString("0.##")</span>
+                <span><strong>Trả khách</strong> @Trace.TraKhach.ToString("0.##")</span>
+                <span title="Tồn hàng lỗi + Tồn hàng sửa của mọi nhóm (đúng ô trên trang Giao nhận)"><strong>Đang giữ</strong> <span class="@HeldClass(Trace.DangGiu)">@Trace.DangGiu.ToString("0.##")</span></span>
+                <span title="Phiếu giao hàng lỗi / hàng sửa đã lập, bên nhận chưa bấm Nhận"><strong>Đang chuyển</strong> @Trace.DangChuyen.ToString("0.##")</span>
+                @if (Trace.Balanced)
+                {
+                    <span class="badge bg-success" title="Phát sinh − đã xử lý − đã huỷ − trả khách = đang giữ + đang chuyển">cân hàng lỗi</span>
+                }
+                else
+                {
+                    <span class="badge bg-danger" title="@ProblemsTip">lệch hàng lỗi — báo lại để kiểm</span>
+                }
+            }
+        </div>
+
+        @if (Trace.HasAny)
+        {
+            <table class="table table-sm table-bordered mb-2" style="font-size:11px;width:auto;min-width:720px">
+                <thead class="table-light">
+                    <tr>
+                        <th>Nơi</th>
+                        <th title="Lỗi phát hiện tại nơi này (theo từng loại)">Phát hiện tại đây</th>
+                        <th class="text-center" title="Lỗi do nơi này gây ra: NG (WTS) của nơi này, hàng lỗi nơi khác trả về / báo là lỗi đầu vào do nơi này">Do nơi này gây ra</th>
+                        <th class="text-center" title="Ô Tồn hàng lỗi (sổ Giao nhận)">Đang giữ · Hàng lỗi</th>
+                        <th class="text-center" title="Ô Tồn hàng sửa (sổ Giao nhận) — hàng nơi khác gửi nhờ sửa">Đang giữ · Hàng sửa</th>
+                        <th class="text-center">Đã huỷ</th>
+                        <th class="text-center">Trả khách</th>
+                        <th style="width:90px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var g in Trace.Groups)
+                    {
+                        @GroupRow(g)
+                    }
+                </tbody>
+            </table>
+
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:4px">
+                <span class="fw-semibold">Từng lần (cũ → mới)</span>
+                <button class="btn btn-sm py-0 px-2 @FilterBtn(null)" style="font-size:11px" @onclick="ClearFilter">Tất cả (@Trace.Events.Count)</button>
+                @if (_filter != null)
+                {
+                    <span class="text-muted">đang lọc: @FilterLabel()</span>
+                }
+                <span class="ms-auto text-muted">
+                    <span class="badge bg-danger">phát sinh</span>
+                    <span class="badge bg-warning text-dark">chuyển</span>
+                    <span class="badge bg-success">đã xử lý</span>
+                    <span class="badge bg-dark">ra khỏi PO</span>
+                </span>
+            </div>
+            <div style="max-height:320px;overflow-y:auto">
+                <table class="table table-sm table-bordered mb-0" style="font-size:11px">
+                    <thead class="table-light" style="position:sticky;top:0;z-index:1">
+                        <tr>
+                            <th style="width:42px">B</th>
+                            <th style="width:78px">Lúc</th>
+                            <th style="width:150px">Việc</th>
+                            <th>Diễn biến</th>
+                            <th style="width:46px" class="text-center">SL</th>
+                            <th>Lỗi / ghi chú</th>
+                            <th style="width:90px">Người</th>
+                            <th style="width:78px">Chứng từ</th>
+                            <th title="Sau việc này, hàng lỗi đang nằm ở đâu (sổ)">Sau đó lỗi đang ở</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in FilteredEvents)
+                        {
+                            @EventRow(e)
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (Trace.Problems.Count > 0)
+            {
+                <div class="small text-danger mt-1">
+                    @foreach (var p in Trace.Problems.Take(5))
+                    {
+                        <div>• @p</div>
+                    }
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Đường đi hàng lỗi của PO (HandoverLedgerService.GetNgTraceAsync).</summary>
+    [Parameter] public NgTrace? Trace { get; set; }
+
+    private string? _filter;
+
+    private void SetFilter(string code) => _filter = _filter == code ? null : code;
+    private void ClearFilter() => _filter = null;
+
+    private string FilterBtn(string? code) => _filter == code ? "btn-primary" : "btn-outline-secondary";
+    private string FilterLabel() => _filter == "KHACH" ? "Phôi khách" : HandoverLedgerService.GroupLabel(_filter ?? "");
+
+    private IEnumerable<NgTraceEvent> FilteredEvents
+        => Trace == null ? Enumerable.Empty<NgTraceEvent>()
+         : _filter == null ? Trace.Events
+         : Trace.Events.Where(e => e.Group == _filter || e.Other == _filter || e.DetectedAt == _filter || e.CausedBy == _filter);
+
+    static string RowClass(NgTraceEvent e) => e.Lech ? "table-danger" : "";
+    private string ProblemsTip => Trace == null ? "" : string.Join(" | ", Trace.Problems);
+
+    static string HeldClass(decimal v) => v > 0 ? "text-danger fw-semibold" : "";
+    static string Num(decimal v) => v == 0 ? "—" : v.ToString("0.##");
+    static string NumClass(decimal v) => v == 0 ? "text-muted text-center" : "text-center fw-semibold";
+
+    static string CatBadge(NgTraceEvent e) => e.Category switch
+    {
+        "PS" => "bg-danger", "PS_BOT" => "bg-secondary", "XL" => "bg-success", "RA" => "bg-dark", _ => "bg-warning text-dark"
+    };
+
+    static string NoteText(NgTraceEvent e)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(e.Reason)) parts.Add("lỗi: " + e.Reason);
+        if (!string.IsNullOrWhiteSpace(e.OriginText)) parts.Add(e.OriginText!);
+        if (e.PhatSinh != 0 && !string.IsNullOrEmpty(e.CausedBy) && e.CausedBy != e.DetectedAt)
+            parts.Add("do " + (e.CausedBy == "KHACH" ? "phôi khách" : HandoverLedgerService.GroupLabel(e.CausedBy!)));
+        if (!string.IsNullOrEmpty(e.Code)) parts.Add((e.Type == "WTS_NG" && e.Group != "GC" ? "mã " : "NC ") + e.Code);
+        return parts.Count == 0 ? "" : string.Join(" · ", parts);
+    }
+
+    static string AfterText(NgTraceEvent e)
+    {
+        var parts = new List<string>();
+        foreach (var (g, loi, sua) in e.GiuSau)
+        {
+            var s = HandoverLedgerService.GroupLabel(g) + " " + loi.ToString("0.##");
+            if (sua != 0) s += $" (+sửa {sua:0.##})";
+            if (loi == 0 && sua != 0) s = HandoverLedgerService.GroupLabel(g) + $" sửa {sua:0.##}";
+            parts.Add(s);
+        }
+        if (e.DangChuyen != 0) parts.Add($"đang chuyển {e.DangChuyen:0.##}");
+        return parts.Count == 0 ? "hết hàng lỗi" : string.Join(" · ", parts);
+    }
+
+    static string LoaiText(NgTraceGroup g)
+        => g.PhatHienTheoLoai.Count == 0 ? "" : string.Join(" · ", g.PhatHienTheoLoai.Where(kv => kv.Value != 0).Select(kv => $"{kv.Key} {kv.Value:0.##}"));
+
+    static string ExplainTip(LedgerExplain? e)
+        => e == null ? "" : e.Formula + " = " + e.Arithmetic;
+
+    private RenderFragment GroupRow(NgTraceGroup g) => __builder =>
+    {
+        <tr @key="g.Code">
+            <td class="fw-semibold text-nowrap">@g.Label</td>
+            <td>
+                <span class="@NumClass(g.PhatHien)">@Num(g.PhatHien)</span>
+                <span class="text-muted ms-1">@LoaiText(g)</span>
+            </td>
+            <td class="@NumClass(g.GayRa)">@Num(g.GayRa)</td>
+            <td class="@NumClass(g.LoiGiu)" title="@ExplainTip(g.LoiExplain)">@Num(g.LoiGiu)</td>
+            <td class="@NumClass(g.SuaGiu)" title="@ExplainTip(g.SuaExplain)">@Num(g.SuaGiu)</td>
+            <td class="@NumClass(g.DaHuy)">@Num(g.DaHuy)</td>
+            <td class="@NumClass(g.TraKhach)">@Num(g.TraKhach)</td>
+            <td class="text-center">
+                <button class="btn btn-sm py-0 px-1 @FilterBtn(g.Code)" style="font-size:10.5px" @onclick="() => SetFilter(g.Code)">xem từng lần</button>
+            </td>
+        </tr>
+    };
+
+    private RenderFragment EventRow(NgTraceEvent e) => __builder =>
+    {
+        <tr @key="e.Doc + e.Step + e.Type" class="@RowClass(e)">
+            <td class="text-muted">B@(e.Step)</td>
+            <td class="text-nowrap">@(e.At?.ToString("dd/MM HH:mm") ?? "—")</td>
+            <td><span class="badge @CatBadge(e)">@HandoverNgTrace.TypeLabel(e.Type)</span></td>
+            <td>@e.Text</td>
+            <td class="text-center fw-semibold">@e.Qty.ToString("0.##")</td>
+            <td>@NoteText(e)</td>
+            <td class="text-nowrap">@(e.Who ?? "")</td>
+            <td class="text-nowrap font-monospace">@e.Doc</td>
+            <td class="text-nowrap">@AfterText(e)</td>
+        </tr>
+    };
+}

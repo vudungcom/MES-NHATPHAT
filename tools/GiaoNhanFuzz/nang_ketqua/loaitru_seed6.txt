@@ -1,0 +1,61 @@
+﻿lệnh: GiaoNhanFuzz.dll 60 120 6 EXCL=0.7
+  đã chạy 2/60 PO · sai 0 · 5 giây · còn khoảng 156 giây
+  đã chạy 6/60 PO · sai 0 · 13 giây · còn khoảng 114 giây
+  đã chạy 9/60 PO · sai 0 · 18 giây · còn khoảng 103 giây
+  đã chạy 12/60 PO · sai 0 · 24 giây · còn khoảng 97 giây
+  đã chạy 14/60 PO · sai 0 · 29 giây · còn khoảng 96 giây
+  đã chạy 17/60 PO · sai 0 · 36 giây · còn khoảng 90 giây
+  đã chạy 20/60 PO · sai 0 · 41 giây · còn khoảng 82 giây
+  đã chạy 23/60 PO · sai 0 · 48 giây · còn khoảng 78 giây
+  đã chạy 26/60 PO · sai 0 · 55 giây · còn khoảng 71 giây
+  đã chạy 30/60 PO · sai 0 · 61 giây · còn khoảng 61 giây
+  đã chạy 33/60 PO · sai 0 · 66 giây · còn khoảng 54 giây
+  đã chạy 35/60 PO · sai 0 · 72 giây · còn khoảng 51 giây
+  đã chạy 37/60 PO · sai 0 · 77 giây · còn khoảng 48 giây
+  đã chạy 40/60 PO · sai 0 · 84 giây · còn khoảng 42 giây
+  đã chạy 42/60 PO · sai 0 · 89 giây · còn khoảng 38 giây
+  đã chạy 45/60 PO · sai 0 · 95 giây · còn khoảng 32 giây
+  đã chạy 47/60 PO · sai 0 · 100 giây · còn khoảng 28 giây
+  đã chạy 49/60 PO · sai 0 · 107 giây · còn khoảng 24 giây
+  đã chạy 51/60 PO · sai 0 · 113 giây · còn khoảng 20 giây
+  đã chạy 53/60 PO · sai 0 · 118 giây · còn khoảng 16 giây
+  đã chạy 55/60 PO · sai 0 · 124 giây · còn khoảng 11 giây
+  đã chạy 57/60 PO · sai 0 · 129 giây · còn khoảng 7 giây
+  đã chạy 59/60 PO · sai 0 · 134 giây · còn khoảng 2 giây
+  đã chạy 60/60 PO · sai 0 · 138 giây
+PO: 60 · thao tác/PO: 120 · seed 6
+  [GN-WHY] tìm gốc rễ: 90 lần · trung bình 0.6 ms · lâu nhất 2.8 ms · số lần tính sổ TB 5.2 / lớn nhất 29
+  ng.events            471
+  ng.transit           103
+  ok.close             5
+  ok.issue             133
+  ok.ngrep             87
+  ok.phoi              264
+  ok.recv              207
+  ok.vissue            36
+  ok.vissue.auto       5
+  ok.vngrep            35
+  ok.vrecv             58
+  ok.wts               21
+  ok.wtsvoid           4
+  rej.issue            8
+  rej.ngrep            10
+  rej.phoi             32
+  rej.vissue           57
+  rej.vngrep           4
+  rej.vrecv            14
+  skip.close           260
+  skip.issue           1526
+  skip.ngrep           470
+  skip.phoi            50
+  skip.recv            1476
+  skip.vissue          233
+  skip.vngrep          172
+  skip.vrecv           279
+  skip.wts             1536
+  skip.wtsvoid         223
+  why.complete         90
+  why.retry.ok         90
+  why.step             95
+Phép kiểm: 24360
+SAI: 0

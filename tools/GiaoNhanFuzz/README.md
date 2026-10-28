@@ -35,3 +35,11 @@ Biên dịch thêm `KhPlanService`, `KhoVatLieuService`, `PoGuard` (UserService 
 Thêm (GN-NG-AFTER, 27/10/2026): thao tác `ngrep` (báo hàng lỗi phát hiện sau khi nhận, hàm thật `ReportNgAfterReceiveAsync`, 10% cố tình vượt trần phải bị chặn, kiểm cả người ngoài nhóm không báo được) và `vngrep` (huỷ báo lỗi; bị chặn thì làm theo gợi ý gỡ rồi thử lại). Trọng số: `NGREP=30`. Kịch bản `kh` có thêm B1–B3 (Kho báo 3 phôi lỗi → trả khách; GC báo lỗi ở NC1 → chuyển hàng lỗi về Kho; báo rồi huỷ).
 
 Thêm (GN-WHERE, 27/10/2026): sau mỗi thao tác kiểm `HandoverLedgerService.WhereIs` (PO đang ở đâu): tổng = phôi nhận, không ô âm (Workflow ON), không có phần lệch NC. Kịch bản `kh` thêm C1.
+
+Thêm (GN-NG-TRACE, 28/10/2026): sau mỗi thao tác dựng **đường đi hàng lỗi** (`HandoverNgTrace.Build`) và kiểm: cân hàng lỗi ở MỌI bước dòng B (phát sinh − đã xử lý − huỷ − trả khách = đang giữ theo sổ + đang chuyển), đang giữ từng nơi = ô Tồn hàng lỗi / Tồn hàng sửa của sổ, đang chuyển = phiếu hàng lỗi chưa nhận, tổng theo nơi = tổng chung, lọc "có phát sinh lỗi" (`EverHadNg`) khớp khung lỗi; thỉnh thoảng gọi cả hàm nạp thật `GetNgTraceAsync`.
+
+```
+dotnet bin2/GiaoNhanFuzz.dll loi     # kịch bản cố định: hàng lỗi qua Kho → GC → HTSP (sửa) → KCS → huỷ / trả khách, số phải ra từng bước
+LOI=1 dotnet bin2/GiaoNhanFuzz.dll 60 120 5   # thử nặng hàng lỗi: chọn thao tác có hàng thật, NG nhiều hơn (không đặt LOI = y như cũ)
+dotnet bin2/GiaoNhanFuzz.dll nang [PO=60] [thao tác=120] [seed=1]   # kh + loi + 6 cấu hình ngẫu nhiên chạy song song, kết quả ở nang_ketqua/
+```

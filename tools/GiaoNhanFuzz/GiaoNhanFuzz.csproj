@@ -13,6 +13,7 @@
     <Compile Include="../../MES.Web/Services/HandoverLedgerService.cs" />
     <Compile Include="../../MES.Web/Services/HandoverChangeNotifier.cs" />
     <Compile Include="../../MES.Web/Services/HandoverWhy.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverNgTrace.cs" />
     <Compile Include="../../MES.Web/Services/PoGuard.cs" />
     <Compile Include="../../MES.Web/Services/KhPlanService.cs" />
     <Compile Include="../../MES.Web/Services/KhoVatLieuService.cs" />

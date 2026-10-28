@@ -14,6 +14,8 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
+if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
+if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
 var seed0 = args.Length > 2 ? int.Parse(args[2]) : 1;
@@ -29,6 +31,9 @@ string[] groups = { "KHO", "GC", "HTSP", "KCS", "PKG" };
 var editAll = groups.ToList();
 
 var startPo = args.Length > 3 ? int.Parse(args[3]) : 0;
+// [GN-NG-TRACE 2026-10-28] LOI=1: thử nặng hàng lỗi — chọn thao tác có hàng thật để làm (ít bỏ qua), NG nhiều hơn,
+// nhiều phiếu Hàng lỗi / Hàng sửa hơn, không sửa phôi (trừ khi đặt PHOI). Không đặt LOI thì giữ nguyên như cũ (cùng seed ra cùng kết quả).
+bool smart = Environment.GetEnvironmentVariable("LOI") == "1";
 var swProg = System.Diagnostics.Stopwatch.StartNew(); double lastProg = 0; // [FUZZ-UX] đồng hồ báo tiến độ
 for (int po = startPo; po < startPo + poCount; po++)
 {
@@ -72,8 +77,8 @@ for (int po = startPo; po < startPo + poCount; po++)
     for (int op = 0; op < opsPerPo; op++)
     {
         var row = (await led.GetLedgerForDetailAsync(1))!;
-        var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : 6),
-            ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4));   // [GN-NG-AFTER]
+        var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : smart ? 0 : 6),
+            ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4));   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
         string desc = kind;
         bool ok = false;
         try
@@ -100,15 +105,28 @@ for (int po = startPo; po < startPo + poCount; po++)
                     }
                     else
                     {
-                        var cell = Pick(rnd, (HandoverCell.Moi, 6), (HandoverCell.Loi, 3), (HandoverCell.Sua, 2));
+                        var cell = smart ? Pick(rnd, (HandoverCell.Moi, 4), (HandoverCell.Loi, 4), (HandoverCell.Sua, 3)) : Pick(rnd, (HandoverCell.Moi, 6), (HandoverCell.Loi, 3), (HandoverCell.Sua, 2));
                         bool prev = cell == HandoverCell.Loi && rnd.NextDouble() < 0.5;
                         var toCell = rnd.NextDouble() < 0.8 ? HandoverCell.DefaultToCell(cell, prev) : HandoverCell.ReceiveCells[rnd.Next(4)];
                         var (purpose, _) = HandoverCell.ResolveCells(cell, prev, toCell);
                         if (purpose == null) { Inc("skip.issue"); continue; }
-                        var to = rnd.NextDouble() < 0.7 ? groups[(Array.IndexOf(groups, from) + (prev ? 4 : 1)) % 5] : groups[rnd.Next(groups.Length)];
-                        if (to == from) { Inc("skip.issue"); continue; }
-                        var fnc = prev && from == "GC" ? ncs[rnd.Next(3)] : null;
-                        var (max, _) = HandoverLedgerService.IssueCap(row, from, purpose, fnc, cell);
+                        string to = ""; string? fnc = null; decimal max = 0;
+                        // [GN-NG-TRACE] LOI=1: thử lần lượt các nhóm giao (thứ tự ngẫu nhiên) tới khi có hàng ở ô đã chọn
+                        foreach (var f in smart ? groups.OrderBy(_ => rnd.Next()).ToArray() : new[] { from })
+                        {
+                            from = f;
+                            to = rnd.NextDouble() < 0.7 ? groups[(Array.IndexOf(groups, from) + (prev ? 4 : 1)) % 5] : groups[rnd.Next(groups.Length)];
+                            if (to == from) continue;
+                            fnc = null;
+                            if (prev && from == "GC")
+                            {
+                                var cands = smart ? row.G("GC").Steps.Where(x => !x.IsExcluded && (x.Waiting ?? 0) > 0).Select(x => x.Code).ToList() : new List<string>();
+                                fnc = cands.Any() ? cands[rnd.Next(cands.Count)] : ncs[rnd.Next(3)];
+                            }
+                            (max, _) = HandoverLedgerService.IssueCap(row, from, purpose, fnc, cell);
+                            if (max > 0) break;
+                        }
+                        if (to == from || to == "") { Inc("skip.issue"); continue; }
                         if (max <= 0) { Inc("skip.issue"); continue; }
                         var q = rnd.NextDouble() < 0.08 ? (int)max + 1 : rnd.Next(1, (int)Math.Max(1, max) + 1);
                         desc = $"issue {from}->{to} {cell}{(prev ? "☑" : "")}->{toCell} q={q} max={max} fnc={fnc}";
@@ -127,7 +145,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var cell = t.SourceReceiveId != null ? HandoverCell.Loi : (HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell : null);
                     decimal ng = 0;
                     if (cell == HandoverCell.Loi) ng = q;
-                    else if (cell != HandoverCell.Sua && rnd.NextDouble() < 0.25) ng = rnd.Next(1, (int)q + 1);
+                    else if (cell != HandoverCell.Sua && rnd.NextDouble() < (smart ? 0.4 : 0.25)) ng = rnd.Next(1, (int)q + 1);
                     var okq = q - ng;
                     desc = $"recv #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} cell={cell} ok={okq} ng={ng} rem={rem}";
                     var r = await svc.ReceiveAsync(t.HandoverTxId, cell == HandoverCell.Loi ? 0 : okq, cell == HandoverCell.Sua ? 0 : ng, "loi nhan", Uid(t.ToGroupCode));
@@ -142,9 +160,21 @@ for (int po = startPo; po < startPo + poCount; po++)
                     string pg = codeOf[g].pg, code = c;
                     if (g == "HTSP") { pg = c.Split('|')[0]; code = c.Split('|')[1]; }
                     var cap = HandoverLedgerService.WtsCap(row, pg, code);
+                    if (smart && (cap.Max == null || cap.Locked || cap.Max <= 0))
+                    {
+                        // [GN-NG-TRACE] LOI=1: tìm mã CV / NC đang có hàng chờ
+                        var all = codeOf.SelectMany(kv => kv.Value.codes.Select(x => (kv.Key, x))).OrderBy(_ => rnd.Next()).ToList();
+                        foreach (var (gg, cc) in all)
+                        {
+                            string p2 = codeOf[gg].pg, c2 = cc;
+                            if (gg == "HTSP") { p2 = cc.Split('|')[0]; c2 = cc.Split('|')[1]; }
+                            var cp = HandoverLedgerService.WtsCap(row, p2, c2);
+                            if (cp.Max != null && !cp.Locked && cp.Max > 0) { g = gg; pg = p2; code = c2; cap = cp; break; }
+                        }
+                    }
                     if (cap.Max == null || cap.Locked || cap.Max <= 0) { Inc("skip.wts"); continue; }
                     var q = rnd.Next(1, (int)cap.Max.Value + 1);
-                    var ng = rnd.NextDouble() < 0.2 ? rnd.Next(0, q + 1) : 0;
+                    var ng = rnd.NextDouble() < (smart ? 0.4 : 0.2) ? rnd.Next(0, q + 1) : 0;
                     var extra = new List<InWts> { new InWts(-1, DateTime.Now, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, null) };
                     var after = (await led.GetLedgerForDetailAsync(1, null, extra))!;
                     var bad = HandoverLedgerService.NewNegatives(row, after);
@@ -154,7 +184,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         WtsLogId = db.WtsProductionLogs.List.Count + 1, KhPlanDetailId = 1, ProcessGroup = pg,
                         NC = g == "GC" ? code : null, WtsCode = g == "GC" ? null : code, WorkerId = Uid(g),
-                        QtyDone = q, QtyOk = q - ng, QtyNg = ng, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now
+                        QtyDone = q, QtyOk = q - ng, QtyNg = ng, NgReason = ng > 0 ? "lam hong" : null, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now
                     });
                     db.Fixup();
                     ok = true;
@@ -428,6 +458,35 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         }
         checks++;
         if (!last.Balanced) F("Dòng B cuối lệch cân", "");
+    }
+    // [GN-NG-TRACE 2026-10-28] Đường đi hàng lỗi: cân hàng lỗi ở MỌI bước + khớp ô sổ hiện tại
+    {
+        var input = (await led.GetInputForDetailAsync(1))!;
+        var tr = HandoverNgTrace.Build(input, null, steps);
+        checks++;
+        if (tr.Problems.Any()) F("Hàng lỗi lệch", string.Join(" | ", tr.Problems.Take(3)) + (tr.Problems.Count > 3 ? $" (+{tr.Problems.Count - 3})" : ""));
+        checks++;
+        var held = row.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu);
+        if (tr.DangGiu != held) F("Hàng lỗi đang giữ ≠ sổ", $"{tr.DangGiu} ≠ {held}");
+        checks++;
+        foreach (var g in tr.Groups.Where(g => g.Code != "KHACH"))
+            if (g.LoiGiu != row.G(g.Code).LoiGiu || g.SuaGiu != row.G(g.Code).SuaGiu) F("Hàng lỗi từng nơi ≠ sổ", $"{g.Code}: {g.LoiGiu}/{g.SuaGiu} ≠ {row.G(g.Code).LoiGiu}/{row.G(g.Code).SuaGiu}");
+        checks++;
+        var ever = HandoverNgTrace.EverHadNg(row); var any = tr.Events.Any(e => e.PhatSinh > 0);
+        if (ever != any) F("Lọc 'có phát sinh lỗi' ≠ khung lỗi", $"sổ {ever} / khung {any}");
+        checks++;
+        if (tr.Groups.Where(g => g.Code != "KHACH").Sum(g => g.PhatHien) != tr.PhatSinh || tr.Groups.Sum(g => g.GayRa) != tr.PhatSinh)
+            F("Hàng lỗi theo nơi ≠ tổng", $"phát hiện {tr.Groups.Sum(g => g.PhatHien)} · gây ra {tr.Groups.Sum(g => g.GayRa)} · tổng {tr.PhatSinh}");
+        if (op % 15 == 0)   // hàm nạp thật (đọc thêm lý do lỗi WTS, người lập / nhận) — đôi lúc, cho nhanh
+        {
+            checks++;
+            var tr2 = (await led.GetNgTraceAsync(1))!;
+            if (tr2.Events.Count != tr.Events.Count || tr2.PhatSinh != tr.PhatSinh || !tr2.Problems.SequenceEqual(tr.Problems))
+                F("GetNgTraceAsync ≠ Build", $"{tr2.Events.Count}/{tr.Events.Count}");
+        }
+        Inc("ng.events", tr.Events.Count > 0 ? 1 : 0);
+        if (tr.VeSx > 0) Inc("ng.vesx");
+        if (tr.DangChuyen > 0) Inc("ng.transit");
     }
     // Trạng thái phiếu khớp số nhận; phiếu tự lập khớp lần nhận gốc
     foreach (var t in db.HandoverTransactions.List.Where(t => !t.IsVoided))

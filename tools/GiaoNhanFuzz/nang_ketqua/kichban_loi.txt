@@ -1,0 +1,31 @@
+﻿lệnh: GiaoNhanFuzz.dll loi 
+[L0] PO mới chưa có lỗi
+  ĐẠT  Không có dòng lỗi, lọc 'có phát sinh lỗi' không bắt
+[L1] Kho giao GC 40, GC nhận 38 đạt + 2 lỗi phôi → phiếu trả tự lập → Kho nhận lại 2
+  ĐẠT  1 dòng NG lúc nhận: 2, phát hiện Gia công, do Kho, lỗi 'phoi nut', người U2
+  ĐẠT  Phiếu trả chưa nhận: đang chuyển 2, đang giữ 0, cân
+  ĐẠT  Kho nhận lại 2: có dòng 'Nhận lại hàng lỗi bị trả'
+  ĐẠT  Kho đang giữ 2 hàng lỗi, đang chuyển 0, cân
+[L2] GC làm NC1 30 OK + 3 NG (xước), NC2 28 OK + 2 NG
+  ĐẠT  2 dòng NG (WTS): NC1 3 'xuoc', NC2 2 'sai kich thuoc'
+  ĐẠT  Phát sinh 7; GC giữ 5, phát hiện 7 (2 lúc nhận + 5 WTS), gây ra 5
+[L3] GC gửi HTSP nhờ sửa 3 → HTSP nhận ô Hàng sửa → sửa xong trả GC ô Hàng lỗi đã xử lý
+  ĐẠT  Đã giao chưa nhận: GC giữ 2, đang chuyển 3
+  ĐẠT  Dòng 'Giao hàng lỗi (gửi nhờ sửa)'
+  ĐẠT  HTSP nhận: HTSP giữ hàng sửa 3
+  ĐẠT  GC nhận 3 ô Hàng lỗi đã xử lý: dòng 'đã xử lý' 3
+  ĐẠT  Đang giữ 4 (Kho 2 + GC 2), cân
+  ĐẠT  Sổ: Chưa GC = 8 (thêm 3 chiếc sửa xong), cân PO
+[L4] GC giao HTSP 28 → HTSP làm 28 → giao KCS 28 → KCS phát hiện 1 lỗi Gia công, trả GC
+  ĐẠT  Dòng 'Hàng lỗi công đoạn trước': KCS phát hiện, do Gia công, đang chuyển 1
+  ĐẠT  Phát sinh 8; GC giữ 3; KCS phát hiện 1
+[L5] GC huỷ 2 hàng lỗi, Kho trả khách 2 phôi lỗi
+  ĐẠT  Đã huỷ 2, trả khách 2
+  ĐẠT  Cuối: phát sinh 8 = xử lý 3 + huỷ 2 + trả khách 2 + đang giữ 1 + đang chuyển 0
+  ĐẠT  Theo nơi: GC giữ 1, huỷ 2, gây ra 6 (5 WTS + 1 KCS trả); Kho trả khách 2, gây ra 2
+  ĐẠT  Lọc 'có phát sinh lỗi' bắt PO này; cân PO
+  ĐẠT  Lọc Gia công ra các lần dính Gia công (12 dòng tổng)
+[L6] Huỷ lần nhận hàng sửa xong (GC) → hàng về lại 'đang chuyển', khung lỗi vẫn cân
+  ĐẠT  Huỷ được: đã xử lý 0, đang chuyển 3, cân
+
+KẾT QUẢ: ĐẠT hết

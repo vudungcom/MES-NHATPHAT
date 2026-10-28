@@ -61,6 +61,24 @@
     }
     .route-badge.none  { background:#f1f5f9; color:#64748b; }
     .route-badge.has   { background:#dbeafe; color:#1e40af; }
+
+    /* [KH-FREEZE 2026-10-28] Cố định như Excel: dòng tiêu đề + 5 cột trái (Số phiếu, PO, Old PO, Part No, SL).
+       Bảng cao vừa màn hình, tự cuộn bên trong → thanh cuộn ngang luôn ở đáy màn hình (giống Giao nhận [GN-FREEZE]).
+       border-collapse: separate — kiểu collapse làm đường kẻ của ô cố định trôi theo khi cuộn. */
+    .kh-scroll { overflow: auto; max-height: calc(100vh - 200px); min-height: 300px; }
+    .kh-table { border-collapse: separate; border-spacing: 0; }
+    .kh-table > :not(caption) > * > * { border-width: 0 1px 1px 0 !important; border-style: solid; border-color: #dee2e6; }
+    .kh-table thead tr:first-child th { border-top-width: 1px !important; }
+    .kh-table tr > *:first-child { border-left-width: 1px !important; }
+    .kh-table thead th { position: sticky; top: 0; z-index: 4; background: #f8f9fa; }
+    .kh-fz { position: sticky; z-index: 2; background: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kh-table thead th.kh-fz { z-index: 6; background: #f1f3f5; }
+    .kh-fz1 { left: 0;     width: 124px; min-width: 124px; max-width: 124px; }
+    .kh-fz2 { left: 124px; width: 96px;  min-width: 96px;  max-width: 96px; }
+    .kh-fz3 { left: 220px; width: 88px;  min-width: 88px;  max-width: 88px; }
+    .kh-fz4 { left: 308px; width: 104px; min-width: 104px; max-width: 104px; }
+    .kh-fz5 { left: 412px; width: 52px;  min-width: 52px;  max-width: 52px; border-right: 2px solid #8a94a3 !important; }
+    .kh-expand { position: sticky; left: 0; max-width: calc(100vw - 260px); }   /* dòng mở ▸ đứng yên khi cuộn ngang */
 </style>
 
 @if (_isLoading)
@@ -115,6 +133,7 @@ else
                 <option value="CHUA_PHOI">Chưa có phôi</option>
                 <option value="DANG_SX">Đang SX</option>
                 <option value="CO_LOI">Có hàng lỗi đang giữ</option>
+                <option value="CO_LOI_TUNG">Có phát sinh lỗi (kể cả đã xử lý)</option>   @* [GN-NG-TRACE] *@
                 <option value="DU">Đủ thành phẩm</option>
                 <option value="AM">Số âm — cần kiểm</option>
             </select>
@@ -142,18 +161,20 @@ else
     }
     else
     {
-        <div class="table-responsive" @onclick="CloseAllDropdowns">
-            <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
-                <thead class="table-light" style="position: sticky; top: 0; z-index: 10;">
+        @* [KH-FREEZE 2026-10-28] trước: table-responsive (tiêu đề trôi khi kéo xuống, thanh cuộn ngang ở cuối bảng).
+           Thứ tự cột theo Hùng chốt: 5 cột cố định Số phiếu · PO · Old PO · Part No · SL, rồi Ngày lập · Ngày nhận · Khách hàng (cuộn theo). *@
+        <div class="kh-scroll border rounded" @onclick="CloseAllDropdowns">
+            <table class="table table-sm table-hover align-middle small mb-0 kh-table" style="font-size: 0.8rem;">
+                <thead>
                     <tr>
-                        <th style="white-space:nowrap;">@ColHeader("PlanNo", "Số phiếu")</th>
+                        <th class="kh-fz kh-fz1">@ColHeader("PlanNo", "Số phiếu")</th>
+                        <th class="kh-fz kh-fz2"><strong>PO</strong></th>
+                        <th class="kh-fz kh-fz3">Old PO</th>
+                        <th class="kh-fz kh-fz4">@ColHeader("PartNo", "Part No")</th>
+                        <th class="kh-fz kh-fz5 text-end">SL</th>
                         <th style="white-space:nowrap;">@ColHeader("PlanDate", "Ngày lập")</th>
                         <th style="white-space:nowrap;">@ColHeader("ReceivedDate", "Ngày nhận")</th>
                         <th style="white-space:nowrap;">@ColHeader("CustomerName", "Khách hàng")</th>
-                        <th style="white-space:nowrap;"><strong>PO</strong></th>
-                        <th style="white-space:nowrap;">Old PO</th>
-                        <th style="white-space:nowrap;">@ColHeader("PartNo", "Part No")</th>
-                        <th class="text-end" style="white-space:nowrap;">SL</th>
                         <th style="white-space:nowrap;">@ColHeader("Unit", "Đvị")</th>
                         <th style="white-space:nowrap;">STD</th>
                         <th style="white-space:nowrap;">@ColHeader("Type", "Loại")</th>
@@ -179,20 +200,21 @@ else
                     {
                         _snapshotSummary.TryGetValue(r.KhPlanDetailId, out var snap);
                         <tr @ondblclick="() => OpenView(r)" style="cursor: pointer;" title="Double-click để xem chi tiết">
-                            <td><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
+                            @* [KH-FREEZE] 5 cột cố định *@
+                            <td class="kh-fz kh-fz1" title="@r.PlanNo"><a href="@($"/kh-plan/{r.KhPlanId}/detail/{r.KhPlanDetailId}")" @onclick:stopPropagation><code>@r.PlanNo</code></a></td>
+                            <td class="kh-fz kh-fz2" title="@r.PurchaseOrder"><code>@r.PurchaseOrder</code></td>
+                            <td class="kh-fz kh-fz3" title="@r.OldPurchaseOrder">
+                                @if (!string.IsNullOrEmpty(r.OldPurchaseOrder))
+                                { <code class="text-muted" title="Tách từ PO này">@r.OldPurchaseOrder</code> }
+                            </td>
+                            <td class="kh-fz kh-fz4" title="@r.PartNo"><code>@r.PartNo</code></td>
+                            <td class="kh-fz kh-fz5 text-end">@r.Quantity.ToString("0.####")</td>
                             <td class="text-nowrap">@r.PlanDate.ToString("dd/MM/yy")</td>
                             <td class="text-nowrap">
                                 @if (r.ReceivedDate.HasValue) { @r.ReceivedDate.Value.ToString("dd/MM/yy") }
                                 else { <span class="text-muted">-</span> }
                             </td>
                             <td class="text-truncate" style="max-width: 180px;" title="@r.CustomerName">@r.CustomerName</td>
-                            <td><code>@r.PurchaseOrder</code></td>
-                            <td>
-                                @if (!string.IsNullOrEmpty(r.OldPurchaseOrder))
-                                { <code class="text-muted" title="Tách từ PO này">@r.OldPurchaseOrder</code> }
-                            </td>
-                            <td><code>@r.PartNo</code></td>
-                            <td class="text-end text-nowrap">@r.Quantity.ToString("0.####")</td>
                             <td class="text-nowrap">@r.Unit</td>
                             <td class="text-nowrap">
                                 @r.STD.ToString("dd/MM/yy")
@@ -273,8 +295,12 @@ else
                         {
                             @* [GN-WHERE] Dòng mở rộng: PO đang ở đâu + đường đi *@
                             <tr class="bg-light">
-                                <td colspan="24" class="p-2">
-                                    <PoViTri Row="lr" Steps="WhereSteps(r.KhPlanDetailId)" />
+                                <td colspan="24" class="p-2" style="background:#f8f9fa">
+                                    <div class="kh-expand">   @* [KH-FREEZE] đứng yên khi cuộn ngang *@
+                                        <PoViTri Row="lr" Steps="WhereSteps(r.KhPlanDetailId)" />
+                                        @* [GN-NG-TRACE 2026-10-28] Hàng lỗi của PO: từng lần phát sinh / chuyển / xử lý, đang ở đâu *@
+                                        <div class="border-top mt-2 pt-2"><PoLoi Trace="NgTraceOf(r.KhPlanDetailId)" /></div>
+                                    </div>
                                 </td>
                             </tr>
                         }
@@ -499,6 +525,7 @@ else
             _ledger = await LedgerSvc.GetLedgerForDetailsAsync(ids);
             _where  = _ledger.ToDictionary(kv => kv.Key, kv => HandoverLedgerService.WhereIs(kv.Value));
             _whereSteps.Clear();
+            _ngTrace.Clear();   // [GN-NG-TRACE]
         }
     }
 
@@ -529,9 +556,14 @@ else
     private bool PassStatus(int id)
     {
         if (_statusFilter == "CO_LOI") return _where.TryGetValue(id, out var w) && w.Loi > 0;
+        if (_statusFilter == "CO_LOI_TUNG") return _ledger.TryGetValue(id, out var lr) && HandoverNgTrace.EverHadNg(lr);   // [GN-NG-TRACE]
         return WhereStatusOf(id) == _statusFilter;
     }
     private List<LedgerStepRow>? WhereSteps(int id) => _whereSteps.TryGetValue(id, out var s) ? s : null;
+
+    // [GN-NG-TRACE 2026-10-28] Hàng lỗi của PO (nạp khi bấm ▸, giữ trong bộ nhớ tới khi tải lại trang)
+    private Dictionary<int, NgTrace?> _ngTrace = new();
+    private NgTrace? NgTraceOf(int id) => _ngTrace.TryGetValue(id, out var t) ? t : null;
 
     private async Task ToggleWhereAsync(int id)
     {
@@ -539,6 +571,8 @@ else
         _whereOpen = id;
         if (!_whereSteps.ContainsKey(id))
             _whereSteps[id] = await LedgerSvc.GetStepsForDetailAsync(id);   // lazy load + cache
+        if (!_ngTrace.ContainsKey(id))
+            _ngTrace[id] = await LedgerSvc.GetNgTraceAsync(id);   // [GN-NG-TRACE]
     }
 
     private void BuildColDefs()

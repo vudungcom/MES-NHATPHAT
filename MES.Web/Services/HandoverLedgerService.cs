@@ -358,6 +358,9 @@ namespace MES.Web.Services
         public List<string> Warnings => Groups.Values.SelectMany(g => g.Warnings).ToList();
         public bool HasWarning => Warnings.Count > 0 || !Balanced;
         public bool HasLoiGiu  => Groups.Values.Any(g => g.LoiGiu > 0 || g.SuaGiu > 0);   // [GN-CELL] cả 2 ô đang giữ
+        /// <summary>[GN-NG-TRACE 2026-10-28] Ô bên giao lấy hàng của từng phiếu (MOI / LOI / SUA; null = phiếu theo NC) — đúng ô Compute() đã dùng để trừ.
+        /// Chỉ ghi lại để khung "Hàng lỗi" đọc, không dùng để tính số nào.</summary>
+        public Dictionary<long, string?> TxFromCell { get; set; } = new();
     }
 
     /// <summary>[GN-CELL] Một dòng "Bước" của PO — đúng kiểu Excel xưởng (B1, B2, B3…): trạng thái sổ SAU một chứng từ.</summary>
@@ -845,12 +848,14 @@ namespace MES.Web.Services
                                    + (string.IsNullOrEmpty(t.NgReason) ? "" : $" · lỗi: {t.NgReason}")
                                    + (string.IsNullOrEmpty(t.Notes) ? "" : $" · {t.Notes}") });
                     if (isScrap) row.DaHuy += t.Issued; else row.TraKhach += t.Issued;
+                    row.TxFromCell[t.Id] = HandoverCell.Loi;   // [GN-NG-TRACE] chỉ ghi lại, không tính
                     continue;
                 }
                 if (!row.Groups.ContainsKey(t.From) || !row.Groups.ContainsKey(t.To)) continue;
                 // [GN-RECV-NG] Phiếu trả tự lập: số tính ở lần nhận gốc; ở đây chỉ đếm badge chờ nhận
                 if (t.SourceReceiveId != null)
                 {
+                    row.TxFromCell[t.Id] = HandoverCell.Loi;   // [GN-NG-TRACE] phiếu trả tự lập = hàng lỗi (chỉ ghi lại)
                     if (!recvIds.Contains(t.SourceReceiveId.Value)) orphanAuto.Add(t);
                     else if (t.Status != "COMPLETED") { row.G(t.From).PendingToIssue++; row.G(t.To).PendingToReceive++; }
                     continue;
@@ -875,6 +880,7 @@ namespace MES.Web.Services
                         ? (suaRunning[t.From] >= giao && giao > 0 ? HandoverCell.Sua : HandoverCell.Loi)   // [GN-CELL] phiếu Trả hàng đã sửa cũ
                         : HandoverCell.IssueCellOf(purpose, null));
                 bool prevNg = purpose == HandoverPurpose.NgReturn;
+                row.TxFromCell[t.Id] = fromCell;   // [GN-NG-TRACE] chỉ ghi lại ô đã dùng, không đổi phép tính
                 string? desig = isHelp ? null : DesigCellOf(t, purpose);
                 // Thành phẩm: Đóng gói → Kho hàng mới — không vào phôi Kho. [GN-CELL2] chỉ phần Kho nhận vào ô Hàng mới mới là thành phẩm.
                 bool isTpTx = t.From == "PKG" && t.To == "KHO" && fromCell == HandoverCell.Moi;
@@ -1267,6 +1273,32 @@ namespace MES.Web.Services
             if (!details.Any()) return new List<LedgerStepRow>();
             var inputs = await LoadInputsAsync(details);
             return ComputeSteps(inputs[0]);
+        }
+
+        /// <summary>
+        /// [GN-NG-TRACE 2026-10-28] Đường đi hàng lỗi của 1 PO (chỉ đọc): chứng từ của sổ + lý do lỗi trên WTS + người lập / nhận phiếu.
+        /// Tính bằng HandoverNgTrace.Build — không công thức số riêng; số đang giữ đọc từ ô Tồn hàng lỗi / Tồn hàng sửa của sổ.
+        /// </summary>
+        public async Task<NgTrace?> GetNgTraceAsync(int khPlanDetailId)
+        {
+            var inp = await GetInputForDetailAsync(khPlanDetailId);
+            if (inp == null) return null;
+            var extra = new NgTraceExtra();
+            var wr = await _db.WtsProductionLogs
+                .Where(w => w.KhPlanDetailId == khPlanDetailId && !w.IsVoided && w.QtyNg != null && w.QtyNg != 0)
+                .Select(w => new { w.WtsLogId, w.NgReason }).AsNoTracking().ToListAsync();
+            foreach (var w in wr) extra.WtsReason[w.WtsLogId] = w.NgReason;
+            var tw = await _db.HandoverTransactions
+                .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided)
+                .Select(t => new { t.HandoverTxId, Who = t.IssuedByUser != null ? (t.IssuedByUser.FullName ?? t.IssuedByUser.Username) : null })
+                .AsNoTracking().ToListAsync();
+            foreach (var t in tw) extra.TxWho[t.HandoverTxId] = t.Who;
+            var rw = await _db.HandoverReceives
+                .Where(r => r.Transaction.KhPlanDetailId == khPlanDetailId && !r.IsVoided)
+                .Select(r => new { r.ReceiveId, Who = r.ReceivedByUser != null ? (r.ReceivedByUser.FullName ?? r.ReceivedByUser.Username) : null })
+                .AsNoTracking().ToListAsync();
+            foreach (var r in rw) extra.RecvWho[r.ReceiveId] = r.Who;
+            return HandoverNgTrace.Build(inp, extra);
         }
 
         public static List<LedgerStepRow> ComputeSteps(LedgerInput inp)

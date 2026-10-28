@@ -1,0 +1,75 @@
+﻿lệnh: GiaoNhanFuzz.dll 60 120 4 LOI=1 PHOI=8
+  đã chạy 2/60 PO · sai 0 · 10 giây · còn khoảng 281 giây
+  đã chạy 4/60 PO · sai 0 · 15 giây · còn khoảng 209 giây
+  đã chạy 6/60 PO · sai 0 · 22 giây · còn khoảng 194 giây
+  đã chạy 8/60 PO · sai 0 · 29 giây · còn khoảng 188 giây
+  đã chạy 10/60 PO · sai 0 · 36 giây · còn khoảng 181 giây
+  đã chạy 13/60 PO · sai 0 · 44 giây · còn khoảng 159 giây
+  đã chạy 15/60 PO · sai 0 · 52 giây · còn khoảng 155 giây
+  đã chạy 17/60 PO · sai 0 · 57 giây · còn khoảng 143 giây
+  đã chạy 19/60 PO · sai 0 · 63 giây · còn khoảng 135 giây
+  đã chạy 20/60 PO · sai 0 · 69 giây · còn khoảng 138 giây
+  đã chạy 22/60 PO · sai 0 · 77 giây · còn khoảng 133 giây
+  đã chạy 24/60 PO · sai 0 · 84 giây · còn khoảng 126 giây
+  đã chạy 26/60 PO · sai 0 · 91 giây · còn khoảng 118 giây
+  đã chạy 28/60 PO · sai 0 · 97 giây · còn khoảng 110 giây
+  đã chạy 30/60 PO · sai 0 · 102 giây · còn khoảng 102 giây
+  đã chạy 32/60 PO · sai 0 · 109 giây · còn khoảng 95 giây
+  đã chạy 34/60 PO · sai 0 · 116 giây · còn khoảng 89 giây
+  đã chạy 36/60 PO · sai 0 · 125 giây · còn khoảng 83 giây
+  đã chạy 37/60 PO · sai 0 · 131 giây · còn khoảng 82 giây
+  đã chạy 39/60 PO · sai 0 · 144 giây · còn khoảng 77 giây
+  đã chạy 40/60 PO · sai 0 · 150 giây · còn khoảng 75 giây
+  đã chạy 42/60 PO · sai 0 · 156 giây · còn khoảng 67 giây
+  đã chạy 44/60 PO · sai 0 · 161 giây · còn khoảng 58 giây
+  đã chạy 46/60 PO · sai 0 · 168 giây · còn khoảng 51 giây
+  đã chạy 48/60 PO · sai 0 · 177 giây · còn khoảng 44 giây
+  đã chạy 50/60 PO · sai 0 · 187 giây · còn khoảng 37 giây
+  đã chạy 52/60 PO · sai 0 · 193 giây · còn khoảng 30 giây
+  đã chạy 54/60 PO · sai 0 · 201 giây · còn khoảng 22 giây
+  đã chạy 56/60 PO · sai 0 · 209 giây · còn khoảng 15 giây
+  đã chạy 58/60 PO · sai 0 · 215 giây · còn khoảng 7 giây
+  đã chạy 60/60 PO · sai 0 · 224 giây
+PO: 60 · thao tác/PO: 120 · seed 4
+  [GN-WHY] tìm gốc rễ: 240 lần · trung bình 1.4 ms · lâu nhất 24.4 ms · số lần tính sổ TB 12.9 / lớn nhất 81
+  [GN-WHY chưa lần ra hết] PO19 op22 vissue #1 KHO->GC NEW st=COMPLETED auto= (1 bước, 6 lần tính)
+  [GN-WHY chưa lần ra hết] PO19 op84 phoi 30->21 (26 bước, 80 lần tính)
+  [GN-WHY chưa lần ra hết] PO35 op112 phoi 11->3 (27 bước, 81 lần tính)
+  ng.events            1506
+  ng.transit           889
+  ng.vesx              204
+  ok.close             25
+  ok.issue             463
+  ok.ngrep             77
+  ok.phoi              250
+  ok.recv              571
+  ok.vissue            54
+  ok.vissue.auto       9
+  ok.vngrep            25
+  ok.vrecv             73
+  ok.wts               370
+  ok.wtsvoid           33
+  rej.close            5
+  rej.issue            41
+  rej.ngrep            5
+  rej.phoi             100
+  rej.vissue           118
+  rej.vngrep           5
+  rej.vrecv            54
+  rej.wtsvoid          8
+  skip.close           239
+  skip.issue           1111
+  skip.ngrep           458
+  skip.phoi            82
+  skip.recv            1036
+  skip.vissue          163
+  skip.vngrep          203
+  skip.vrecv           191
+  skip.wts             1273
+  skip.wtsvoid         167
+  why.complete         237
+  why.incomplete       3
+  why.retry.ok         237
+  why.step             821
+Phép kiểm: 63663
+SAI: 0

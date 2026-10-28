@@ -1,0 +1,132 @@
+﻿lệnh: GiaoNhanFuzz.dll kh 
+[A1] Kho sửa phôi nhận (K5)
+  ĐẠT  Đã giao 40 cho GC, sửa phôi nhận 40→30: bị chặn + gợi ý gỡ
+         → Sửa SL phôi nhận: Không lưu: làm xong sẽ sai số ở Kho: phôi còn giao = -10. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+           
+           Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+           1. Kiểm tra Phiếu #1 · Kho → Gia công · 40 chiếc · 28/10 13:30 · U1 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+           2. Sau đó thử lại thao tác này.
+           Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.
+  ĐẠT  Bị chặn thì phôi nhận vẫn 40 (rollback)
+  ĐẠT  Tăng phôi nhận 40→45: lưu được
+  ĐẠT  Huỷ phiếu giao rồi sửa 45→30: lưu được
+  ĐẠT  Workflow OFF: không chặn (như luật H7), ô Phôi còn giao hiện −10 để người kiểm
+         → ConGiao=-10
+[A2] Xoá PO
+  ĐẠT  PO có phôi nhận: không xoá
+         → PO PO1 đã có chứng từ số lượng (phôi Kho đã nhận 40) — không xoá được để giữ cân số lượng và lịch sử. Nếu PO tạo nhầm: huỷ hết phiếu giao nhận / WTS và đưa phôi nhận về 0 trước (WTS đã huỷ vẫn là lịch sử nên PO vẫn không xoá được — báo quản trị).
+  ĐẠT  Không chạy lệnh xoá nào
+  ĐẠT  PO chỉ có WTS đã huỷ: vẫn không xoá (WTS là lịch sử)
+         → PO PO1 đã có chứng từ số lượng (1 dòng WTS (1 dòng đã huỷ)) — không xoá được để giữ cân số lượng và lịch sử. Nếu PO tạo nhầm: huỷ hết phiếu giao nhận / WTS và đưa phôi nhận về 0 trước (WTS đã huỷ vẫn là lịch sử nên PO vẫn không xoá được — báo quản trị).
+  ĐẠT  PO trắng: xoá được
+  ĐẠT  Dòng Kho tắt IsActive, không xoá cứng WTS / Kho
+[A3] Tách PO
+  ĐẠT  PO có phôi nhận: không tách
+         → PO PO1 đã có chứng từ số lượng (phôi Kho đã nhận 40) — không tách được. Hàng đã vào sản xuất đi theo PO gốc; muốn chia giao khách thì xử lý ở bước giao thành phẩm.
+  ĐẠT  Không sinh PO mới
+  ĐẠT  PO trắng: tách được thành 2 PO
+  ĐẠT  PO mới #2: quy trình GC chép đúng từ PO gốc (NC1, NC2, máy đồng dạng)
+  ĐẠT  PO mới #2: Taro / KCS / Đóng gói chép đủ
+  ĐẠT  PO mới #2: trạng thái xác nhận TG chuẩn trỏ đúng dòng snapshot mới
+  ĐẠT  PO mới #2: dòng Kho chép order / vị trí, chưa có phôi nhận
+  ĐẠT  PO mới #3: quy trình GC chép đúng từ PO gốc (NC1, NC2, máy đồng dạng)
+  ĐẠT  PO mới #3: Taro / KCS / Đóng gói chép đủ
+  ĐẠT  PO mới #3: trạng thái xác nhận TG chuẩn trỏ đúng dòng snapshot mới
+  ĐẠT  PO mới #3: dòng Kho chép order / vị trí, chưa có phôi nhận
+  ĐẠT  Dòng Kho của PO gốc tắt IsActive
+  ĐẠT  Xoá snapshot PO gốc TRƯỚC khi xoá dòng gốc (khoá ngoại NO ACTION)
+[A4] Cập nhật quy trình (K6)
+  ĐẠT  PO đã có WTS: chặn cập nhật quy trình
+         → PO đã chạy (phôi Kho đã nhận 40, 1 dòng WTS) — không cập nhật quy trình được (K6): số đã ghi theo NC / mã CV hiện tại sẽ lệch. Quy trình mới chỉ áp cho PO tạo sau. Nếu bắt buộc phải đổi: huỷ hết WTS + phiếu giao nhận của PO trước.
+  ĐẠT  PO chỉ có WTS đã huỷ: cập nhật được
+[A5] Bật Workflow (K7)
+  ĐẠT  Có ô âm: chặn bật Workflow
+         → Không bật Workflow được (K7) — đang có số âm do nhập lúc tắt Workflow:
+           PO PO1: Gia công NC1: chưa làm -5
+           Nên sửa / huỷ các WTS hoặc phiếu gây âm trước rồi mới bật.
+  ĐẠT  Bị chặn thì vẫn OFF, không ghi log
+  ĐẠT  Sửa WTS gây âm rồi bật: được + ghi lịch sử OFF→ON
+[B1] Kho nhận 40 phôi, sau phát hiện 3 phôi lỗi → báo lỗi → trả khách
+  ĐẠT  Trước khi báo: Kho tồn hàng lỗi 0 (ô Hàng lỗi xám như ảnh)
+  ĐẠT  Người nhóm GC không báo lỗi thay Kho được
+         → Bạn không có quyền sửa nhóm Kho — không báo lỗi thay nhóm khác được.
+  ĐẠT  Báo 41 > phôi còn 40: chặn
+         → Báo lỗi tối đa 40 (Kho · Phôi còn giao: 40 = 40). Không thể báo 41.
+  ĐẠT  Báo 3: Phôi còn 37, Tồn hàng lỗi 3, Tồn Kho vẫn 40
+         → 
+  ĐẠT  Trả khách 3 từ ô Hàng lỗi: Tồn Kho 37, Đã trả khách 3
+         → 
+  ĐẠT  Cân PO: 40 = phôi 40
+  ĐẠT  Hàng lỗi đã trả khách: huỷ báo lỗi bị chặn + gợi ý
+         → Không lưu: làm xong sẽ sai số ở Kho: tồn hàng lỗi = -3. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+           
+           Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+           1. Kiểm tra Phiếu #1 · Kho → Khách hàng · 3 chiếc · 28/10 13:30 · U1 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+           2. Huỷ phiếu báo lỗi #1
+           3. Sau đó thử lại thao tác này.
+           Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.
+  ĐẠT  Dòng B có bước Báo lỗi
+[B2] GC nhận 40, NC1 làm 10, phát hiện 2 chiếc lỗi phôi đang chờ NC1 → chuyển hàng lỗi về Kho
+  ĐẠT  GC không chọn NC: bắt chọn NC
+         → Gia công: bắt buộc chọn NC đang chứa hàng lỗi.
+  ĐẠT  NC1 còn chờ 30: báo 31 bị chặn
+         → Báo lỗi tối đa 30 (Gia công · NC NC1 · chưa gia công: 30). Không thể báo 31.
+  ĐẠT  NC1 chờ 30→28, Tồn hàng lỗi GC 2, Chưa GC = Σ chờ các NC
+         → 
+  ĐẠT  Trần WTS NC1 giảm theo: 28
+  ĐẠT  GC giao ô Hàng lỗi → Kho nhận ô Hàng lỗi: GC hết lỗi, Kho tồn lỗi 2, cân PO
+         → 
+  ĐẠT  Hàng lỗi đã chuyển Kho: huỷ báo lỗi bị chặn + chỉ phiếu cần gỡ
+         → Không lưu: làm xong sẽ sai số ở Gia công: tồn hàng lỗi = -2. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+           
+           Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+           1. Kiểm tra Lần nhận #2 của phiếu #2 · Gia công → Kho · nhận 2 (NG 2) · 28/10 13:30 · U1 nhận — nếu nhận sai thì huỷ lần nhận này ở Lịch sử phiếu
+           2. Kiểm tra Phiếu #2 · Gia công → Kho · 2 chiếc · 28/10 13:30 · U2 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+           3. Huỷ phiếu báo lỗi #1
+           4. Sau đó thử lại thao tác này.
+           Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.
+[B3] HTSP: hàng đã làm chưa giao phát hiện lỗi đầu ra → huỷ báo (chưa dùng) được
+  ĐẠT  HTSP chưa có hàng: không báo được
+         → Báo lỗi tối đa 0 (HTSP · Đã làm chưa giao: 0 − 0 = 0). Không thể báo 1.
+  ĐẠT  Báo rồi huỷ ngay: số về lại như cũ
+         → 
+[C1] PO 40 đang ở đâu: Kho giao GC 30, NC1 làm 18 OK + 2 NG, Kho báo 2 phôi lỗi
+  ĐẠT  Tổng = phôi 40: 40
+  ĐẠT  Kho: phôi còn 8, hàng lỗi 2
+  ĐẠT  GC: chờ NC1 10, chờ NC2 18, hàng lỗi (NG WTS) 2
+  ĐẠT  Tóm tắt dòng KH: «Kho 8 · Gia công 28 · lỗi 4» · Đang SX
+[C2] Đúng các bước trong tài liệu test vòng 2 (Bài 1–4)
+  ĐẠT  Bài 1: báo 41 bị chặn
+  ĐẠT  Bài 1: báo 3
+  ĐẠT  Bài 1: trả khách 3
+  ĐẠT  Bài 2: Kho giao 30
+  ĐẠT  Bài 2: bỏ trống NC bị chặn
+  ĐẠT  Bài 2: GC báo 2 ở NC1
+  ĐẠT  Bài 2: WTS NC1 chưa làm 18
+  ĐẠT  Bài 2: GC giao Hàng lỗi → Kho ô Hàng lỗi
+  ĐẠT  Bài 3: báo nhầm 1 → phôi còn 6
+  ĐẠT  Bài 3: huỷ → phôi còn 7
+  ĐẠT  Bài 3: huỷ báo lỗi GC bị chặn + liệt kê lần nhận / phiếu
+         → Không lưu: làm xong sẽ sai số ở Gia công: tồn hàng lỗi = -2. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+           
+           Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+           1. Kiểm tra Lần nhận #2 của phiếu #3 · Gia công → Kho · nhận 2 (NG 2) · 28/10 13:30 · U1 nhận — nếu nhận sai thì huỷ lần nhận này ở Lịch sử phiếu
+           2. Kiểm tra Phiếu #3 · Gia công → Kho · 2 chiếc · 28/10 13:30 · U2 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+           3. Huỷ phiếu báo lỗi #2
+           4. Sau đó thử lại thao tác này.
+           Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.
+  ĐẠT  Bài 3: huỷ báo lỗi Kho bị chặn (đã trả khách)
+         → Không lưu: làm xong sẽ sai số ở Kho: tồn hàng lỗi = -1. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+           
+           Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+           1. Kiểm tra Phiếu #1 · Kho → Khách hàng · 3 chiếc · 28/10 13:30 · U1 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+           2. Huỷ phiếu báo lỗi #1
+           3. Sau đó thử lại thao tác này.
+           Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.
+  ĐẠT  Bài 3: người HTSP không huỷ được báo lỗi Kho
+  ĐẠT  Bài 4: tóm tắt «Kho 7 · Gia công 28 · lỗi 2 · huỷ/trả 3»
+  ĐẠT  Bài 4: Kho 9 · GC 28 · ra 3 · cân 40
+  ĐẠT  Bài 4: NC1 OK 10/vào 28, NC2 OK 0/vào 10
+  ĐẠT  Bài 4: trạng thái Đang SX · lỗi 2
+
+KẾT QUẢ: ĐẠT hết
