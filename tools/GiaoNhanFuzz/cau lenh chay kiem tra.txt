@@ -1,2 +1,41 @@
-chcp 65001
-dotnet bin2\GiaoNhanFuzz.dll scen
+CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 27/10/2026)
+Tool chỉ kiểm code, chạy trên database giả trong bộ nhớ, KHÔNG đụng SQL / dữ liệu server.
+   dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
+   dotnet bin2\GiaoNhanFuzz.dll 300 120 2
+
+== MỖI LẦN MỞ CMD ==
+cd /d "D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\GiaoNhanFuzz"
+
+(Từ bản này tool tự hiện tiếng Việt, không cần gõ chcp 65001 nữa.)
+
+== BIÊN DỊCH (chỉ khi code vừa đổi: chép code mới / pull về) ==
+dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
+
+== 1. KỊCH BẢN CỐ ĐỊNH (vài giây) ==
+dotnet bin2\GiaoNhanFuzz.dll kh
+-> cuối phải ra: KẾT QUẢ: ĐẠT hết
+
+== 2. KIỂM NGẪU NHIÊN ==
+dotnet bin2\GiaoNhanFuzz.dll <số PO> <thao tác mỗi PO> <seed>
+-> cuối phải ra: SAI: 0
+-> trong lúc chạy, khoảng 5 giây in 1 dòng: đã chạy x/y PO · sai n · ... giây · còn khoảng ... giây
+
+Gợi ý:
+dotnet bin2\GiaoNhanFuzz.dll 20 100 1      (thử nhanh)
+dotnet bin2\GiaoNhanFuzz.dll 100 120 1     (kiểm vừa)
+dotnet bin2\GiaoNhanFuzz.dll 300 120 2     (kiểm kỹ, lâu)
+
+Lưu ý:
+- Số thứ 2 là thao tác CHO MỖI PO, giữ 100-150. Muốn kiểm kỹ thì tăng số PO hoặc đổi seed.
+- Cùng câu lệnh luôn ra cùng kết quả (để tái hiện lỗi). Đổi seed = bộ tình huống khác.
+- Dừng giữa chừng: Ctrl+C. Dòng tiến độ cuối cùng vẫn cho biết đến lúc đó sai bao nhiêu.
+- Có SAI khác 0: chụp màn hình + gửi đúng câu lệnh (nhất là seed).
+
+== 3. ĐỔI KIỂU THAO TÁC (chỉ có tác dụng trong cửa sổ cmd đang mở) ==
+set EXCL=0.7      70% PO có máy loại trừ (giao theo NC / trả về NC). Tắt: set EXCL=
+set NGREP=60      tăng báo hàng lỗi sau nhận + huỷ báo lỗi. Tắt: set NGREP=
+set PHOI=20       tăng Kho sửa phôi nhận. Tắt: set PHOI=
+
+== 4. XEM THÊM ==
+dotnet bin2\GiaoNhanFuzz.dll scen    3 tình huống bị chặn huỷ, in lời báo gốc rễ + gợi ý gỡ (để xem, không phải kiểm cân)
+dotnet bin2\GiaoNhanFuzz.dll bench   đo thời gian tính sổ trên 1 PO lớn

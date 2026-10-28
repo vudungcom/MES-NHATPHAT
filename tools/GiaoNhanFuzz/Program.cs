@@ -8,6 +8,9 @@ using MES.Web.Data.Entities;
 using MES.Web.Services;
 using Microsoft.EntityFrameworkCore;
 
+// [FUZZ-UX] 27/10/2026: tự hiện tiếng Việt ở mọi cửa sổ cmd / VS, không cần gõ chcp 65001
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
@@ -26,6 +29,7 @@ string[] groups = { "KHO", "GC", "HTSP", "KCS", "PKG" };
 var editAll = groups.ToList();
 
 var startPo = args.Length > 3 ? int.Parse(args[3]) : 0;
+var swProg = System.Diagnostics.Stopwatch.StartNew(); double lastProg = 0; // [FUZZ-UX] đồng hồ báo tiến độ
 for (int po = startPo; po < startPo + poCount; po++)
 {
     var rnd = new Random(seed0 * 100000 + po);
@@ -351,6 +355,14 @@ for (int po = startPo; po < startPo + poCount; po++)
         if (!ok) continue;
         Inc("ok." + kind);
         await CheckAll(db, led, po, op, desc);
+    }
+    // [FUZZ-UX] 27/10/2026: báo tiến độ ~5 giây một lần + khi xong, để biết tool đang chạy (không đổi phép kiểm nào)
+    var poDone = po - startPo + 1;
+    if (poDone == poCount || swProg.Elapsed.TotalSeconds - lastProg >= 5)
+    {
+        lastProg = swProg.Elapsed.TotalSeconds;
+        var conLai = poDone < poCount ? $" · còn khoảng {lastProg / poDone * (poCount - poDone):0} giây" : "";
+        Console.WriteLine($"  đã chạy {poDone}/{poCount} PO · sai {fails.Count} · {lastProg:0} giây{conLai}");
     }
 }
 
