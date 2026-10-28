@@ -10,6 +10,8 @@
 @using Microsoft.Extensions.DependencyInjection @* [GN-LIVE] scope DbContext riêng cho tự cập nhật *@
 @inject HandoverService HandoverSvc
 @inject HandoverLedgerService LedgerSvc
+@* [VULOI][DS-LOI] danh mục lỗi *@
+@inject NgCaseService NgSvc
 @inject UserService UserSvc
 @inject AppDbContext Db
 @inject NavigationManager Nav
@@ -700,7 +702,12 @@ else
                             }
                         }
 
-                        var capEx = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell);
+                        @* [VULOI] Lấy từ ô Hàng lỗi / Hàng sửa, Huỷ, Trả khách: chọn vụ lỗi đang giữ (1 phiếu = 1 vụ; chỉ 1 vụ thì tự chọn) *@
+                        @if (TakesCaseNow(purpose))
+                        {
+                            @VuPicker(purpose)
+                        }
+                        var capEx = IssueCapNow(purpose);   // [VULOI] trước: IssueCap — nay trần theo vụ đang chọn
                         <div class="mb-3 p-2 border rounded" style="font-size:12px">
                             <div class="d-flex justify-content-between">
                                 <span>@capEx.Explain.Title</span>
@@ -726,12 +733,13 @@ else
                                 <div class="small text-danger">Vượt tối đa @capEx.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
                             }
                         </div>
-                        @if (IsNgPurpose(purpose))
+                        @if (purpose == HandoverPurpose.NgReturn)
                         {
+                            @* [VULOI][DS-LOI] Hàng lỗi công đoạn trước: CHỌN loại lỗi trong DS Lỗi (trước: gõ "Lỗi cụ thể") → phần mềm tự đặt mã vụ lỗi *@
                             <div class="mb-2">
-                                <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control form-control-sm border-danger" @bind="_issueReason"
-                                       placeholder="VD: phôi rỗ khí, xước bề mặt trước khi via..." />
+                                <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi (DS Lỗi) <span class="text-danger">*</span></label>
+                                <NgCategoryPicker Categories="_ngCats" @bind-Value="_issueCatId" Required="true" />
+                                <div class="small text-muted mt-1">Chọn trong danh sách, không tự gõ. Lưu xong phần mềm tự đặt mã @NgCaseNo.Term.</div>
                             </div>
                         }
                         <div class="mb-2">
@@ -874,8 +882,9 @@ else
                         }
                     </div>
                     <div class="mb-2">
-                        <label class="form-label form-label-sm fw-semibold text-danger">Lỗi cụ thể <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm border-danger" @bind="_ngReason" placeholder="VD: phôi rỗ khí, ren hỏng, xước bề mặt..." />
+                        @* [VULOI][DS-LOI] chọn loại lỗi (trước: gõ "Lỗi cụ thể") — lưu xong phần mềm tự đặt mã vụ lỗi *@
+                        <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi (DS Lỗi) <span class="text-danger">*</span></label>
+                        <NgCategoryPicker Categories="_ngCats" @bind-Value="_ngCatId" Required="true" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
@@ -966,6 +975,10 @@ else
                                             {
                                                 <span class="badge bg-danger" style="font-size:10px" title="@p.NgReason">Lỗi: @p.NgReason</span>
                                             }
+                                            @if (p.NgCaseId != null)
+                                            {
+                                                <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle" style="font-size:10px">@NgCaseNo.Format(p.NgCaseId.Value)</span>   @* [VULOI] *@
+                                            }
                                             <span style="font-size:12px;font-weight:500">Còn: <strong class="text-primary">@p.QtyRemaining.ToString("0.##")</strong> chiếc</span>
                                             <span style="font-size:11px;color:#888">@p.IssuedAt.ToString("dd/MM HH:mm")</span>
                                         </div>
@@ -1022,6 +1035,19 @@ else
                                                 <input type="number" class="form-control form-control-sm border-danger" @bind="_receiveQtyNg" min="0" disabled="@RecvSua(p)" />   @* [GN-RECV-SUA] ô Hàng sửa: khoá xám, giữ bố cục *@
                                             </div>
                                         </div>
+                                        @* [VULOI] Phiếu mang vụ: vụ đi theo phiếu, không chọn. Phiếu không mang vụ mà nhận vào ô Hàng lỗi / Hàng sửa: lỗi phát sinh lúc nhận → chọn loại lỗi *@
+                                        @if (RecvCarry(p) && p.NgCaseId != null)
+                                        {
+                                            <div class="small mb-2"><span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle">@NgCaseNo.Format(p.NgCaseId.Value)</span> <span class="text-muted">@NgCaseNo.Term theo phiếu — bên nhận không chọn</span></div>
+                                        }
+                                        @if (!RecvCarry(p) && (RecvLoi(p) || RecvSua(p)))
+                                        {
+                                            <div class="mb-2">
+                                                <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi (DS Lỗi) *</label>
+                                                <NgCategoryPicker Categories="_ngCats" @bind-Value="_receiveCatId" Required="true" />
+                                                <div class="small text-muted mt-1">Hàng Mới nhận vào ô @HandoverCell.Label(RecvCellOf(p)) = lỗi phát sinh lúc nhận — phần mềm tự đặt mã @NgCaseNo.Term.</div>
+                                            </div>
+                                        }
                                         @if (RecvLoi(p))
                                         {
                                             <div class="small text-muted mb-2">Vào ô Nhận · Hàng lỗi của nhóm mình, rồi xử lý tiếp (gửi sửa / tự sửa trả / huỷ / trả khách).@(string.IsNullOrEmpty(p.NgReason) ? "" : " Lỗi theo phiếu: ")<strong>@p.NgReason</strong></div>
@@ -1035,8 +1061,17 @@ else
                                         {
                                             <div class="mb-2">
                                                 @* [GN-RECV-SUA] khách thấy "bắt ghi lỗi" là lạ vì họ không làm ra lỗi → đổi chữ: ghi lỗi của hàng nhận về (trước: "Lỗi cụ thể *") *@
-                                                <label class="form-label form-label-sm fw-semibold text-danger">Lỗi phát hiện (bạn thấy gì) *</label>
-                                                <input type="text" class="form-control form-control-sm border-danger" @bind="_receiveNgReason" placeholder="VD: móp, thiếu ren… — lỗi của hàng nhận về, không phải lỗi của nhóm bạn" />
+                                                @if (RecvCarry(p))
+                                                {
+                                                    @* [VULOI] phiếu mang vụ: NG lúc nhận vẫn là vụ đó, quay về bên giao *@
+                                                    <div class="small text-danger fw-semibold">Lỗi theo phiếu: @(p.NgReason ?? "—")</div>
+                                                }
+                                                else
+                                                {
+                                                    @* [VULOI][DS-LOI] chọn loại lỗi (trước: gõ "Lỗi phát hiện (bạn thấy gì)") *@
+                                                    <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi phát hiện (DS Lỗi) *</label>
+                                                    <NgCategoryPicker Categories="_ngCats" @bind-Value="_receiveCatId" Required="true" Placeholder="Chọn loại lỗi của hàng nhận về…" />
+                                                }
                                                 @* [GN-RECV-NG] mục 38 *@
                                                 <div class="small text-muted mt-1">Số NG này ghi ngay là Giao · Hàng lỗi của nhóm mình. Phần mềm tự lập phiếu trả về @HandoverLedgerService.GroupLabel(p.FromGroupCode); bên đó bấm Nhận thì mới vào Nhận · Hàng lỗi của họ (trong lúc chờ: Tồn của họ, chờ nhận).</div>
                                             </div>
@@ -1109,7 +1144,7 @@ else
                             <strong>@b.Qty.ToString("0.##") chiếc</strong> lấy từ @HandoverNgSource.SourceLabel(b.SourceCell, b.GroupCode)@(string.IsNullOrEmpty(b.NC) ? "" : " NC " + b.NC)
                             → Tồn hàng lỗi · @HandoverNgSource.OriginLabel(b.Origin, b.CauseGroupCode)
                         </div>
-                        <div class="small text-danger">Lỗi: @b.NgReason@(string.IsNullOrEmpty(b.Notes) ? "" : " — " + b.Notes)</div>
+                        <div class="small text-danger">Lỗi: @b.NgReason@(string.IsNullOrEmpty(b.Notes) ? "" : " — " + b.Notes) @CaseChip(b.NgCaseId)</div>   @* [VULOI] + mã vụ *@
                         @if (b.IsVoided)
                         {
                             <div class="small text-muted">Huỷ: @b.VoidReason · @b.VoidedByName · @(b.VoidedAt?.ToString("dd/MM HH:mm"))</div>
@@ -1172,6 +1207,10 @@ else
                         {
                             <div class="small mb-2"><span class="text-danger">Lỗi: @tx.NgReason</span></div>
                         }
+                        @if (tx.NgCaseId != null)
+                        {
+                            <div class="small mb-2">@CaseChip(tx.NgCaseId)</div>   @* [VULOI] *@
+                        }
                         @if (tx.QtyClosed > 0)
                         {
                             @* [GN-VOID-RULE] *@
@@ -1198,7 +1237,7 @@ else
                                             </td>
                                             <td class="text-end text-success fw-semibold">@r.QtyOk.ToString("0.##")</td>
                                             <td class="text-end text-danger fw-semibold">@(r.QtyNg > 0 ? r.QtyNg.ToString("0.##") : "—")</td>
-                                            <td class="text-danger small">@(r.NgReason ?? "—")</td>
+                                            <td class="text-danger small">@(r.NgReason ?? "—") @CaseChip(r.NgCaseId)</td>   @* [VULOI] *@
                                             <td>
                                                 @if (r.IsVoided) { <span class="badge bg-secondary" title="@r.VoidReason">Đã huỷ</span> }
                                                 else { <span class="badge bg-success">OK</span> }
@@ -1377,7 +1416,7 @@ else
     string  _issueFromNC  = "";
     string  _issueToNC    = "";
     decimal _issueQty;
-    string  _issueReason  = "";
+    // [VULOI] _issueReason bỏ: lỗi chọn từ DS Lỗi / theo vụ, không gõ tay
     string  _issueNotes   = "";
 
     string  _receiveToGroup  = "";
@@ -1385,7 +1424,7 @@ else
     long    _expandedTxId;
     decimal _receiveQtyOk;
     decimal _receiveQtyNg;
-    string  _receiveNgReason = "";
+    // [VULOI] _receiveNgReason bỏ: lỗi chọn từ DS Lỗi, không gõ tay
     string  _receiveNotes    = "";
     string  _receiveCell       = "";   // [GN-CELL2] ô bên nhận chọn ("" = theo bên giao chỉ định)
     string  _receiveCellReason = "";   // [GN-CELL2] lý do khi đổi
@@ -1406,6 +1445,12 @@ else
     string  _ngOrigin = "";      // DAU_VAO | DAU_RA
     string  _ngCause  = "";
     string  _ngReason = "";
+    // [VULOI][DS-LOI 2026-10-28] Danh mục lỗi + vụ lỗi trên các form
+    List<NgCategory> _ngCats = new();   // loại lỗi đang dùng (DS Lỗi)
+    long? _issueCaseKey;                // form Giao: vụ đang chọn (0 = hàng lỗi cũ chưa có mã); null = chưa chọn
+    int?  _issueCatId;                  // form Giao: loại lỗi khi tích Hàng lỗi công đoạn trước
+    int?  _receiveCatId;                // form Nhận: loại lỗi khi lần nhận sinh vụ mới
+    int?  _ngCatId;                     // form Báo lỗi sau khi nhận
     string  _ngNotes  = "";
     long    _voidingNgId;
     List<HandoverNgReportItem> _ngLogs = new();
@@ -1678,6 +1723,7 @@ else
         if (_canView)
         {
             _customers = await Db.Customers.Where(c => c.IsActive).OrderBy(c => c.CustomerName).ToListAsync();
+            _ngCats = await NgSvc.GetCategoriesAsync(true);   // [DS-LOI]
             await LoadDataAsync();
             // [GN-LIVE] Nghe "PO vừa đổi" từ mọi người dùng → tự tính lại đúng dòng đó, không cần F5.
             HandoverChangeNotifier.Changed += OnHandoverChanged;
@@ -1828,6 +1874,7 @@ else
 
     async Task ReloadRowAsync(int detailId)
     {
+        _ngCats = await NgSvc.GetCategoriesAsync(true);   // [DS-LOI] lấy lại danh mục (có thể vừa được thêm)
         var fresh = await LedgerSvc.GetLedgerForDetailAsync(detailId);
         var idx = _rows.FindIndex(r => r.KhPlanDetailId == detailId);
         if (fresh != null && idx >= 0) _rows[idx] = fresh;
@@ -1963,6 +2010,81 @@ else
         return list;
     }
 
+    // ── [VULOI 2026-10-28] Vụ lỗi trên form Giao / Nhận ─────────────────────
+    /// <summary>Ô lấy hàng của phiếu đang lập (Huỷ / Trả khách: ô Hàng lỗi).</summary>
+    string? TakeCellOf(string purpose) => _issueSpecialMode ? (HandoverPurpose.IsOut(purpose) ? HandoverCell.Loi : null) : _issueCell;
+    bool TakesCaseNow(string? purpose) => purpose != null && _selectedRow != null && HandoverLedgerService.TakesHeldCase(purpose, TakeCellOf(purpose));
+    List<LedgerCase> HeldCasesNow(string purpose)
+        => _selectedRow == null || TakeCellOf(purpose) is not string cell ? new() : _selectedRow.CasesHeldAt(_issueFrom, cell);
+    /// <summary>Vụ đang dùng: vụ bấm chọn (nếu còn hàng), hoặc tự chọn khi chỉ có 1 vụ. Null = phải chọn.</summary>
+    long? EffIssueCaseKey(string purpose)
+    {
+        var held = HeldCasesNow(purpose);
+        if (_issueCaseKey != null && held.Any(h => h.Id == _issueCaseKey)) return _issueCaseKey;
+        return held.Count == 1 ? held[0].Id : null;
+    }
+    (decimal Max, LedgerExplain Explain) IssueCapNow(string purpose)
+    {
+        if (_selectedRow == null) return (0m, new LedgerExplain());
+        if (!TakesCaseNow(purpose))
+            return HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell);
+        var key = EffIssueCaseKey(purpose);
+        if (key == null)
+            return (0m, new LedgerExplain { Title = $"Chọn {NgCaseNo.Term} ở trên", Note = "Số tối đa tính theo vụ đang chọn." });
+        return HandoverLedgerService.IssueCapCase(_selectedRow, _issueFrom, purpose, _issueFromNC, TakeCellOf(purpose), key == 0 ? null : key);
+    }
+    void SelectIssueCase(long id)
+    {
+        _issueCaseKey = id;
+        if (EffectivePurpose is string p) _issueQty = IssueCapNow(p).Max;
+    }
+    string CaseFrom(LedgerCase cs)
+        => cs.Id == 0 ? "dữ liệu trước khi có mã vụ"
+         : "phát hiện ở " + (cs.DetectGroup == null ? "?" : HandoverLedgerService.GroupLabel(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + cs.DetectNc))
+           + (string.IsNullOrEmpty(cs.Cause) || cs.Cause == cs.DetectGroup ? "" : " · do " + HandoverNgSource.CauseLabel(cs.Cause));
+    static string CaseRadioId(long id) => "vuIssue_" + id;
+
+    RenderFragment VuPicker(string purpose) => __builder =>
+    {
+        var cell = TakeCellOf(purpose) ?? "";
+        var held = HeldCasesNow(purpose);
+        var eff = EffIssueCaseKey(purpose);
+        <div class="mb-3 p-2 border border-danger-subtle rounded" style="background:#fff5f5;font-size:12px">
+            <div class="fw-semibold text-danger mb-1">@NgCaseNo.TermCap <span class="text-danger">*</span> <span class="text-muted fw-normal">— 1 phiếu chỉ 1 vụ; lỗi ghi theo vụ</span></div>
+            @if (held.Count == 0)
+            {
+                <div class="text-muted">Ô @HandoverCell.Label(cell) của @HandoverLedgerService.GroupLabel(_issueFrom) không có @NgCaseNo.Term nào đang giữ.</div>
+            }
+            @foreach (var cs in held)
+            {
+                var id = cs.Id;
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="radio" name="vuIssue" id="@CaseRadioId(id)" checked="@(eff == id)" @onchange="() => SelectIssueCase(id)" />
+                    <label class="form-check-label" for="@CaseRadioId(id)">
+                        <strong>@(id == 0 ? "Hàng lỗi cũ" : cs.No)</strong> · @cs.CatLabel · <span class="text-muted">@CaseFrom(cs)</span> · còn <strong>@cs.HeldAt(_issueFrom, cell).ToString("0.##")</strong>
+                    </label>
+                </div>
+            }
+            @if (held.Count == 1)
+            {
+                <div class="text-muted fst-italic mt-1">Chỉ có 1 vụ — phần mềm tự chọn.</div>
+            }
+        </div>
+    };
+
+    /// <summary>[VULOI] Phiếu chờ nhận có mang vụ không (phiếu trả tự lập, phiếu lấy từ ô Hàng lỗi / Hàng sửa). Bên nhận không chọn vụ.</summary>
+    static bool RecvCarry(HandoverTxPending p)
+        => p.IsAutoReturn || p.NgCaseId != null || HandoverCell.IssueCellOf(PendingPurpose(p), p.FromCell) is HandoverCell.Loi or HandoverCell.Sua;
+
+    /// <summary>[VULOI] Nhãn mã vụ nhỏ trong Lịch sử phiếu.</summary>
+    RenderFragment CaseChip(long? id) => __builder =>
+    {
+        if (id != null)
+        {
+            <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle ms-1" style="font-size:10px">@NgCaseNo.Format(id.Value)</span>
+        }
+    };
+
     static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.Scrap or HandoverPurpose.CustReturn;
 
     /// <summary>Loại phiếu suy từ ô + tích + lựa chọn (hoặc mục Khác). null = chưa chọn xong.</summary>
@@ -2025,7 +2147,8 @@ else
     {
         _issueTo = ""; _issueCell = ""; _issuePrev = false; _issueToCell = "";
         _issueSpecialMode = false; _issueSpecial = "";
-        _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _issueReason = ""; _issueNotes = "";
+        _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _issueNotes = "";
+        _issueCaseKey = null; _issueCatId = null;   // [VULOI]
     }
 
     void OnIssueFromChanged(ChangeEventArgs e)
@@ -2092,6 +2215,7 @@ else
     {
         var purpose = EffectivePurpose;
         _issueTo = "";
+        _issueCaseKey = null;   // [VULOI] đổi loại phiếu / ô → chọn lại vụ
         if (purpose == null || _selectedRow == null) { _issueQty = 0; return; }
         if (HandoverPurpose.IsOut(purpose)) _issueTo = HandoverPurpose.OutTarget(purpose)!;
         else
@@ -2110,7 +2234,7 @@ else
             }
             else if (targets.Count == 1) _issueTo = targets[0];
         }
-        _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell).Max;
+        _issueQty = IssueCapNow(purpose).Max;   // [VULOI] trước: IssueCap — nay theo vụ (chỉ 1 vụ thì tự chọn)
     }
 
     void OnFromNcChanged(ChangeEventArgs e)
@@ -2142,6 +2266,19 @@ else
         if (purpose == null)                  { _modalError = _issueSpecialMode ? "Chọn loại phiếu." : "Chọn phân loại hàng (Hàng mới / Hàng lỗi / Hàng sửa)." /* [GN-PLH] mục 36 */; return; }
         if (string.IsNullOrEmpty(_issueTo))   { _modalError = "Chọn nhóm nhận."; return; }
         if (RouteError != null)               { _modalError = RouteError; return; }
+        // [VULOI] vụ lấy hàng / loại lỗi
+        long? caseArg = null; int? catArg = null;
+        if (TakesCaseNow(purpose))
+        {
+            var key = EffIssueCaseKey(purpose);
+            if (key == null) { _modalError = $"Chọn {NgCaseNo.Term} đang giữ."; return; }
+            caseArg = key == 0 ? null : key;
+        }
+        if (purpose == HandoverPurpose.NgReturn)
+        {
+            if (_issueCatId == null) { _modalError = NgCaseService.MsgPickCategory; return; }
+            catArg = _issueCatId;
+        }
         if (_issueQty <= 0)                   { _modalError = "Số lượng phải lớn hơn 0."; return; }
         _saving = true;
         var detailId = _selectedRow.KhPlanDetailId;
@@ -2149,12 +2286,12 @@ else
             ? await HandoverSvc.IssueSpecialAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId, purpose,
                 fromNC: string.IsNullOrEmpty(_issueFromNC) ? null : _issueFromNC,
                 toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-                notes:  _issueNotes, reason: _issueReason)
+                notes:  _issueNotes, reason: null, ngCaseId: caseArg)   // [VULOI] lỗi theo vụ (trước: _issueReason gõ tay)
             : await HandoverSvc.IssueByCellAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId,
                 _issueCell, _issuePrev, IssueToCellNow,   // [GN-CELL2] trước: _issueRepaired
                 fromNC: _issuePrev && _issueFrom == "GC" && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,   // [GN-NC-PIN]
                 toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-                notes:  _issueNotes, reason: _issueReason);
+                notes:  _issueNotes, reason: null, ngCategoryId: catArg, ngCaseId: caseArg);   // [VULOI]
         _saving = false;
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
@@ -2176,6 +2313,7 @@ else
     {
         _ngSource = _ngGroup == "KHO" ? HandoverNgSource.Phoi : "";
         _ngNc = ""; _ngQty = 0; _ngOrigin = ""; _ngCause = ""; _ngReason = ""; _ngNotes = "";
+        _ngCatId = null;   // [VULOI]
     }
 
     void OnNgGroupChanged(ChangeEventArgs e)
@@ -2230,11 +2368,12 @@ else
         if (string.IsNullOrEmpty(_ngSource)) { _modalError = "Chọn hàng lỗi đang nằm ở ô nào."; return; }
         if (string.IsNullOrEmpty(_ngOrigin)) { _modalError = "Chọn nguồn lỗi (đầu vào / đầu ra)."; return; }
         if (_ngQty <= 0)                     { _modalError = "Số lượng lỗi phải lớn hơn 0."; return; }
+        if (_ngCatId == null)                { _modalError = NgCaseService.MsgPickCategory; return; }   // [VULOI]
         _saving = true;
         var detailId = _selectedRow.KhPlanDetailId;
         (bool ok, string err) = await HandoverSvc.ReportNgAfterReceiveAsync(detailId, _ngGroup, _ngSource,
             string.IsNullOrEmpty(_ngNc) ? null : _ngNc, _ngQty, _ngOrigin,
-            string.IsNullOrEmpty(_ngCause) ? null : _ngCause, _ngReason, _ngNotes, _currentUserId, _myEditGroups);
+            string.IsNullOrEmpty(_ngCause) ? null : _ngCause, _ngReason, _ngNotes, _currentUserId, _myEditGroups, _ngCatId);   // [VULOI] + loại lỗi
         _saving = false;
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
@@ -2270,7 +2409,8 @@ else
 
     void ResetReceiveInputs()
     {
-        _receiveQtyOk = 0; _receiveQtyNg = 0; _receiveNgReason = ""; _receiveNotes = "";
+        _receiveQtyOk = 0; _receiveQtyNg = 0; _receiveNotes = "";
+        _receiveCatId = null;   // [VULOI]
         _receiveCell = ""; _receiveCellReason = "";   // [GN-CELL2]
     }
 
@@ -2300,9 +2440,13 @@ else
         if (pend != null && cell != null && cell != pend.ToCell && string.IsNullOrWhiteSpace(_receiveCellReason))
         { _modalError = "Đổi phân loại khác bên giao chỉ định: bắt buộc ghi lý do."; _saving = false; return; }
         if (pend != null && pend.IsAutoReturn) cell = null;
+        // [VULOI] lần nhận sinh vụ mới (phiếu không mang vụ + vào ô Hàng lỗi / Hàng sửa, hoặc có NG lúc nhận): bắt chọn loại lỗi
+        if (pend != null && !RecvCarry(pend) && (RecvLoi(pend) || RecvSua(pend) || _receiveQtyNg > 0) && _receiveCatId == null)
+        { _modalError = NgCaseService.MsgPickCategory; _saving = false; return; }
         // [GN-RECV-SUA] ô Hàng sửa không gửi NG (ô NG khoá xám)
-        (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, cell == HandoverCell.Sua ? 0 : _receiveQtyNg, _receiveNgReason, _currentUserId, _receiveNotes,
-            toCell: cell, toCellReason: cell != null && pend != null && cell != pend.ToCell ? _receiveCellReason : null);
+        (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, cell == HandoverCell.Sua ? 0 : _receiveQtyNg, null, _currentUserId, _receiveNotes,
+            toCell: cell, toCellReason: cell != null && pend != null && cell != pend.ToCell ? _receiveCellReason : null,
+            ngCategoryId: _receiveCatId);   // [VULOI] lỗi chọn từ DS Lỗi (trước: _receiveNgReason gõ tay)
         _saving = false;
         if (!ok) { _modalError = err; return; }
         _expandedTxId = 0;

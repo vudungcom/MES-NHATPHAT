@@ -19,6 +19,10 @@ namespace MES.Web.Data.Entities
         /// <summary>[GN-CELL2] Lý do khi bên nhận đổi khác ô bên giao chỉ định (bắt buộc khi đổi).</summary>
         public string? ToCellReason { get; set; }
 
+        /// <summary>[VULOI 2026-10-28] Vụ lỗi SINH RA ở lần nhận này (NG đếm lúc nhận, hoặc nhận phiếu chưa mang vụ vào ô Hàng lỗi / Hàng sửa).
+        /// Phiếu đã mang vụ: cột này = vụ của phiếu (không sinh vụ mới).</summary>
+        public long? NgCaseId { get; set; }
+
         public int ReceivedBy { get; set; }
         public DateTime ReceivedAt { get; set; }
         public string? Notes { get; set; }

@@ -15,6 +15,8 @@
 @using MES.Web.Data.Entities
 
 @using MES.Web.Services
+@* [VULOI] NgCategoryPicker *@
+@using MES.Web.Components.Shared
 
 @using MES.Web.Constants
 
@@ -30,6 +32,8 @@
 @inject HandoverService HandoverSvc
 @* [GN-WTS-CAP] Trần nhập WTS lấy từ hàm tính chung của Giao nhận — cùng số với trang Giao nhận *@
 @inject HandoverLedgerService LedgerSvc
+@* [VULOI][DS-LOI] danh mục lỗi: NG chọn loại lỗi, lưu tạo / giữ vụ lỗi *@
+@inject NgCaseService NgSvc
 
 @inject ThietBiService ThietBiSvc
 
@@ -526,7 +530,7 @@ else
 
                                 <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
 
-                                <td><small class="text-muted">@(row.NgReason ?? "")</small></td>
+                                <td><small class="text-muted">@WtsNgText(row)</small></td>   @* [VULOI] + mã vụ lỗi *@
 
                                 <td style="background:#fff8e6">
 
@@ -1325,13 +1329,9 @@ else
 
                                     <td>
 
-                                        <input class="form-control form-control-sm" style="font-size:11px"
-
-                                               value="@sub.NgReason" placeholder="Lý do NG..."
-
-                                               disabled="@(sub.QtyNg <= 0)"
-
-                                               @oninput="e => sub.NgReason = e.Value?.ToString()" />
+                                        @* [VULOI][DS-LOI] chọn loại lỗi trong DS Lỗi (trước: gõ "Lý do NG...") *@
+                                        <NgCategoryPicker Categories="_ngCats" Value="sub.NgCategoryId" ValueChanged="v => OnSubNgCatChanged(sub, v)"
+                                                          Disabled="@(sub.QtyNg <= 0)" Required="@(sub.QtyNg > 0)" Style="font-size:11px" Placeholder="Loại lỗi…" />
 
                                     </td>
 
@@ -3896,6 +3896,17 @@ else
 
     private HashSet<int> _hasReceivedForGroup = new();
 
+    // ── [VULOI][DS-LOI 2026-10-28] Loại lỗi (DS Lỗi) cho ô NG ──
+    private List<NgCategory> _ngCats = new();
+    private void OnSubNgCatChanged(WtsRow sub, int? catId)
+    {
+        sub.NgCategoryId = catId;
+        sub.NgReason = _ngCats.FirstOrDefault(x => x.NgCategoryId == catId)?.Label;
+        sub.ErrorMsg = null;
+    }
+    private static string WtsNgText(WtsRow row)
+        => (row.NgReason ?? "") + (row.NgCaseId != null && row.QtyNg > 0 ? " · " + NgCaseNo.Format(row.NgCaseId.Value) : "");
+
     // GroupCode handover tương ứng với quyền WTS của công nhân
 
     private string HandoverGroupCode
@@ -4310,6 +4321,7 @@ else
         // Load permissions từ bảng phân quyền — không hardcode GroupCode
 
         _perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+        _ngCats = await NgSvc.GetCategoriesAsync(true);   // [DS-LOI] loại lỗi cho ô NG
 
         _canSubmit = _perms.TryGetValue(SystemPermissions.WtsGc,      out var p1) && p1.CanView
 
@@ -4625,6 +4637,7 @@ else
                 QtyNg          = log.QtyNg ?? 0m,
 
                 NgReason       = log.NgReason,
+                NgCaseId       = log.NgCaseId,   // [VULOI]
 
                 Notes          = log.Notes,
 
@@ -4662,6 +4675,15 @@ else
 
         }
 
+        // [VULOI] loại lỗi của vụ (để Sửa dòng mở ra đúng loại lỗi đã chọn)
+        var _caseIds = rows.Where(r => r.NgCaseId != null).Select(r => r.NgCaseId!.Value).Distinct().ToList();
+        if (_caseIds.Any())
+        {
+            var _caseCat = await Db.NgCases.AsNoTracking().Where(x => _caseIds.Contains(x.NgCaseId))
+                                 .Select(x => new { x.NgCaseId, x.NgCategoryId }).ToListAsync();
+            foreach (var r in rows.Where(r => r.NgCaseId != null))
+                r.NgCategoryId = _caseCat.FirstOrDefault(x => x.NgCaseId == r.NgCaseId)?.NgCategoryId;
+        }
         foreach (var log in actLogs)
 
         {
@@ -5522,7 +5544,7 @@ else
             {
                 sub.NC = null; sub.MachineUsed = null;
                 sub.WtsCode = null; sub.WtsName = null;
-                sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null;
+                sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null; sub.NgCategoryId = null;   // [VULOI]
                 sub.SetupTime_Actual = null; sub.MachiningTime_Actual = null; sub.InspectionTime_Actual = null;
                 sub.PreparationTime_Actual = null; sub.TrialRunTime_Actual = null;
                 sub.ActualTimePerPc = null;
@@ -5704,7 +5726,7 @@ else
 
         sub.WtsName = item?.Name;
         // [FLAT-QTY-ZERO] Mã chuẩn bị không có khối lượng → xóa SL đã nhập + lỗi SL cũ
-        if (IsPrepNoQty(sub)) { sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null; sub.ErrorMsg = null; }
+        if (IsPrepNoQty(sub)) { sub.QtyOk = 0; sub.QtyNg = 0; sub.QtyDone = 0; sub.NgReason = null; sub.NgCategoryId = null; sub.ErrorMsg = null; }   // [VULOI] + loại lỗi
 
         // [FIX2] Auto-fill T.Chuẩn/pc từ snapshot khi chọn Mã CV (non-GC)
         // Dùng PO của chính sub đang chọn, không propagate sang row khác
@@ -6683,9 +6705,14 @@ else
                 if (_missSerial != null)
                 { sub.ErrorMsg = _missSerial; grp.ErrorMsg = IsGcGroup ? $"Có hàng thiếu thời gian — {_missSerial}" : "Có hàng chưa nhập T.Thực tế."; return; }   // [ACTUAL-REQUIRED-NONGC]   // [TRIAL-PREP-REQUIRED] msg chung Hàng loạt / Chạy thử
 
-                if (sub.QtyNg > 0 && string.IsNullOrWhiteSpace(sub.NgReason))
-
-                { sub.ErrorMsg = "Phải nhập lý do NG."; grp.ErrorMsg = "Có hàng thiếu lý do NG."; return; }
+                // [VULOI][DS-LOI] NG: bắt buộc CHỌN loại lỗi trong DS Lỗi (trước: gõ lý do). Sửa dòng đã có vụ lỗi đã đi phiếu: không đổi loại lỗi.
+                if (sub.QtyNg > 0 && sub.NgCategoryId == null)
+                { sub.ErrorMsg = "Chọn loại lỗi (DS Lỗi)."; grp.ErrorMsg = "Có hàng NG chưa chọn loại lỗi. " + NgCaseService.MsgPickCategory; return; }
+                if (sub.QtyNg > 0 && (await NgCaseService.GetCategoryForCaseAsync(Db, sub.NgCategoryId, sub.IsEditing ? sub.NgCaseId : null)) == null)
+                { sub.ErrorMsg = "Loại lỗi đã ngưng dùng — chọn loại khác."; grp.ErrorMsg = sub.ErrorMsg; return; }
+                if (sub.QtyNg > 0 && sub.IsEditing && sub.NgCaseId != null && sub.NgCategoryId != null
+                    && await NgCaseService.CategoryChangeBlockedAsync(Db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk)
+                { sub.ErrorMsg = _catBlk; grp.ErrorMsg = _catBlk; return; }
 
                 if (sub.EndTime <= sub.StartTime)
 
@@ -6833,7 +6860,9 @@ else
             }
 
             // 3) Thử lưu xong — ô nào mới âm thì chặn (K5, K8)
-            var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, IsGcGroup ? grp.NC : null, IsGcGroup ? null : CodeOf(s), s.QtyOk, s.QtyNg, null)).ToList();
+            // [VULOI] dòng sửa giữ vụ cũ (NG giảm mà vụ đã đi phiếu → ô vụ âm → chặn); dòng mới = vụ mới (Id âm)
+            var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, IsGcGroup ? grp.NC : null, IsGcGroup ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
+                                                   s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null)).ToList();
             var after = await LedgerSvc.GetLedgerForDetailAsync(id, editIds, extra);
             if (after == null) continue;
             var bad = HandoverLedgerService.NewNegatives(before, after);
@@ -7362,9 +7391,8 @@ else
 
             { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
 
-            if (row.QtyNg > 0 && string.IsNullOrWhiteSpace(row.NgReason))
-
-            { row.ErrorMsg = "Phải nhập lý do NG khi có số lượng NG."; return; }
+            if (row.QtyNg > 0 && row.NgCategoryId == null)   // [VULOI][DS-LOI] trước: kiểm lý do NG gõ tay
+            { row.ErrorMsg = "Chọn loại lỗi (DS Lỗi) khi có số lượng NG."; return; }
 
             // [GN-WTS-CAP] Đã bỏ 2 khối kiểm SL ở đây ([BUG2 FIX] dòng ≤ PO, [WORKFLOW Phase 3] non-GC ≤ SL nhận):
             // chúng chạy SAU khi dòng cũ đã bị void (sửa dòng) → kiểm không qua là mất dòng cũ.
@@ -7455,6 +7483,29 @@ else
 
                 }
 
+                // [VULOI 2026-10-28] NG → vụ lỗi: dòng mới tạo vụ (nơi phát hiện = nơi gây lỗi = nhóm này);
+                //   sửa dòng (void + dòng mới) thì GIỮ vụ cũ (đổi loại lỗi chỉ khi vụ chưa đi phiếu — đã kiểm ở SaveGroupAsync).
+                string? _ngLabel = null; long? _ngCaseId = null;
+                if (row.QtyNg > 0)
+                {
+                    var _cat = await NgCaseService.GetCategoryForCaseAsync(Db, row.NgCategoryId, row.NgCaseId);
+                    if (_cat == null) { row.ErrorMsg = NgCaseService.MsgPickCategory; return; }
+                    _ngLabel = _cat.Label;
+                    if (row.NgCaseId != null)
+                    {
+                        var _chg = await NgCaseService.ChangeCaseCategoryAsync(Db, row.NgCaseId.Value, _cat.NgCategoryId);
+                        if (_chg != null) { row.ErrorMsg = _chg; return; }
+                        _ngCaseId = row.NgCaseId;
+                    }
+                    else
+                    {
+                        var _ngGrp = processGroup switch { "GC" => "GC", "TARO" or "BAVIA" or "WASHING" => "HTSP", "KCS" => "KCS", _ => "PKG" };
+                        var _vu = await NgCaseService.CreateCaseAsync(Db, row.KhPlanDetailId!.Value, _cat, NgOrigin.Wts,
+                            _ngGrp, ncValue ?? wtsCodeValue, _ngGrp, _currentUserId);
+                        _ngCaseId = _vu.NgCaseId;
+                    }
+                }
+
                 var log = new WtsProductionLog
 
                 {
@@ -7481,7 +7532,8 @@ else
 
                     QtyNg                   = row.QtyNg,
 
-                    NgReason                = row.QtyNg > 0 ? row.NgReason : null,
+                    NgReason                = row.QtyNg > 0 ? _ngLabel : null,   // [VULOI] tên loại lỗi (DS Lỗi)
+                    NgCaseId                = row.QtyNg > 0 ? _ngCaseId : null,  // [VULOI] vụ lỗi (sửa dòng: giữ vụ cũ)
 
                     StartTime               = row.StartTime,
 
@@ -7522,6 +7574,7 @@ else
                 await Db.SaveChangesAsync();
 
                 row.WtsLogId = log.WtsLogId;
+                row.NgCaseId = log.NgCaseId;   // [VULOI]
 
                 // Lưu từng dòng phát sinh chi tiết vào WtsExtraItems
 
@@ -8251,7 +8304,9 @@ else
 
         public decimal QtyNg   { get; set; }  // SL làm sai phát hiện tại NC
 
-        public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0)
+        public string? NgReason { get; set; } // Lý do NG (bắt buộc khi QtyNg > 0) — [VULOI] nay = tên loại lỗi đã chọn
+        public int?    NgCategoryId { get; set; } // [VULOI][DS-LOI] loại lỗi chọn trong DS Lỗi (bắt buộc khi QtyNg > 0)
+        public long?   NgCaseId     { get; set; } // [VULOI] vụ lỗi của dòng đã lưu (sửa dòng giữ vụ này)
 
         public string? Notes   { get; set; }
 

@@ -1,4 +1,4 @@
-CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 28/10/2026)
+CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 28/10/2026 — vòng MÃ VỤ LỖI)
 Tool chỉ kiểm code, chạy trên database giả trong bộ nhớ, KHÔNG đụng SQL / dữ liệu server.
    dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
    dotnet bin2\GiaoNhanFuzz.dll 300 120 2
@@ -13,19 +13,21 @@ dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
 
 == 0. KIỂM NẶNG — 1 LỆNH CHẠY HẾT (mới 28/10) ==
 dotnet bin2\GiaoNhanFuzz.dll nang
--> chạy 2 kịch bản (kh, loi) rồi 6 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
+-> chạy 3 kịch bản (kh, loi, vu) rồi 7 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
 -> mỗi lượt xong in 1 dòng ĐẠT / SAI; cuối phải ra: SAI: 0
 -> kết quả từng lượt nằm trong thư mục nang_ketqua\ (có SAI thì gửi file đó)
 Tuỳ chỉnh: dotnet bin2\GiaoNhanFuzz.dll nang <số PO mỗi lượt> <thao tác mỗi PO> <seed đầu>
    vd: dotnet bin2\GiaoNhanFuzz.dll nang 150 120 41   (kỹ hơn, lâu hơn; đổi seed đầu = bộ tình huống khác)
    set SONG_SONG=2   → chỉ chạy 2 lượt cùng lúc (máy chậm / đang làm việc khác)
-6 lượt gồm: loi (LOI=1) · loi_loaitru (LOI=1 EXCL=0.7) · loi_baoloi (LOI=1 NGREP=40) · loi_phoi (LOI=1 PHOI=8) · thuong (như lệnh thường) · loaitru (EXCL=0.7)
+7 lượt gồm: loi (LOI=1) · loi_loaitru (LOI=1 EXCL=0.7) · loi_baoloi (LOI=1 NGREP=40) · loi_phoi (LOI=1 PHOI=8) · vu_suawts (LOI=1 WTSEDIT=20, mới: sửa dòng WTS giữ vụ lỗi) · thuong (như lệnh thường) · loaitru (EXCL=0.7)
 Máy 2 nhân (sandbox): 6 lượt x 25 PO mất khoảng 8 phút.
 
 == 1. KỊCH BẢN CỐ ĐỊNH (vài giây) ==
 dotnet bin2\GiaoNhanFuzz.dll kh
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll loi      (mới 28/10: hàng lỗi qua nhiều nơi — số phải ra từng bước)
+-> cuối phải ra: KẾT QUẢ: ĐẠT hết
+dotnet bin2\GiaoNhanFuzz.dll vu       (mới 28/10 tối: VỤ LỖI — Lỗi A/B/C/D theo ví dụ Hùng, K5 theo vụ, hàng lỗi cũ chưa có mã)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 
 == 2. KIỂM NGẪU NHIÊN ==
@@ -55,3 +57,10 @@ set LOI=1         (mới 28/10) thử nặng hàng lỗi: chọn thao tác có h
 == 4. XEM THÊM ==
 dotnet bin2\GiaoNhanFuzz.dll scen    3 tình huống bị chặn huỷ, in lời báo gốc rễ + gợi ý gỡ (để xem, không phải kiểm cân)
 dotnet bin2\GiaoNhanFuzz.dll bench   đo thời gian tính sổ trên 1 PO lớn
+
+
+== VÒNG MÃ VỤ LỖI (28/10) ==
+Mọi lượt ngẫu nhiên nay kiểm thêm sau MỖI thao tác: cân từng vụ lỗi (sinh ra = đang giữ + đang chuyển + đã xử lý + huỷ + trả khách),
+mỗi nhóm Σ vụ đang giữ = ô Tồn hàng lỗi / Tồn hàng sửa của sổ, không vụ nào âm ở nơi nào, không còn hàng lỗi chưa gắn vụ (PO mới),
+nhận / báo lỗi / hàng lỗi công đoạn trước thiếu loại lỗi hoặc loại lỗi đã ngưng phải bị chặn.
+VU=0 để tắt kiểm "không còn hàng lỗi chưa gắn vụ" (khi muốn thử dữ liệu kiểu cũ).

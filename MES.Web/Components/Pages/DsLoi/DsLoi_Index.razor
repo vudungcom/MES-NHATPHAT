@@ -1,0 +1,576 @@
+@page "/ds-loi"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@using MES.Web.Constants
+@inject NgCaseService NgSvc
+@inject UserService UserSvc
+@inject AuthenticationStateProvider AuthState
+
+@* =====================================================================
+   [DS-LOI 2026-10-28] DANH MỤC LỖI (DS Lỗi)
+   Mọi chỗ ghi lỗi (WTS NG, NG lúc nhận, báo lỗi sau khi nhận, phiếu hàng lỗi công đoạn trước) CHỌN loại lỗi từ đây.
+   Quyền: DS_LOI (trang Cài đặt Phân quyền) — Xem = thấy trang; Sửa = thêm / sửa / ngưng dùng / xoá. ADMIN luôn có quyền.
+   Đã dùng trong vụ lỗi thì không xoá, không đổi mã — chỉ Ngưng dùng (ẩn khỏi danh sách chọn).
+   ===================================================================== *@
+
+<PageTitle>DS Lỗi - MES</PageTitle>
+
+@* CSS cho Excel-style filter dropdown (giống Part Master) *@
+<style>
+    .col-filter-wrap { position: relative; display: inline-block; }
+    .col-filter-btn {
+        background: none; border: none; padding: 0 2px;
+        cursor: pointer; color: #555; font-size: 0.7rem;
+        vertical-align: middle;
+    }
+    .col-filter-btn.active { color: #0d6efd; }
+    .col-filter-dropdown {
+        position: absolute; top: 100%; left: 0; z-index: 1050;
+        background: #fff; border: 1px solid #ccc; border-radius: 4px;
+        min-width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 8px 0;
+    }
+    .col-filter-dropdown .section { padding: 4px 10px; }
+    .col-filter-dropdown .sort-btn {
+        display: block; width: 100%; text-align: left;
+        background: none; border: none; padding: 4px 10px;
+        font-size: 0.82rem; cursor: pointer;
+    }
+    .col-filter-dropdown .sort-btn:hover { background: #f0f0f0; }
+    .col-filter-dropdown .divider { border-top: 1px solid #eee; margin: 4px 0; }
+    .col-filter-dropdown .search-box {
+        width: calc(100% - 20px); margin: 4px 10px;
+        padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px;
+        font-size: 0.8rem;
+    }
+    .col-filter-dropdown .value-list { max-height: 200px; overflow-y: auto; padding: 2px 10px; }
+    .col-filter-dropdown .value-list label { display: block; font-size: 0.8rem; cursor: pointer; padding: 1px 0; }
+    .col-filter-dropdown .footer {
+        padding: 6px 10px; display: flex; gap: 6px;
+        justify-content: flex-end; border-top: 1px solid #eee; margin-top: 4px;
+    }
+</style>
+
+@if (_isLoading)
+{
+    <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải danh mục lỗi...</div>
+}
+else if (!_canView)
+{
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p>Tài khoản của bạn không có quyền xem <b>DS Lỗi</b>. Nhờ Admin bật quyền "DS Lỗi" ở trang Cài đặt Phân quyền.</p>
+    </div>
+}
+else
+{
+    <div class="container-fluid pt-3 pb-5">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h2 style="font-weight: bold; color: #1e293b;">DS Lỗi — Danh mục loại lỗi</h2>
+                <p class="text-muted small mb-0">
+                    Ghi lỗi ở WTS, lúc nhận hàng, báo lỗi sau khi nhận, phiếu hàng lỗi công đoạn trước đều <b>chọn</b> từ danh sách này (không tự gõ).
+                    Loại lỗi đã dùng thì không xoá được — bấm <b>Ngưng dùng</b> để ẩn khỏi danh sách chọn.
+                </p>
+            </div>
+            @if (_canEdit)
+            {
+                <button type="button" class="btn btn-primary btn-sm" @onclick="OpenAdd">
+                    <i class="bi bi-plus-lg"></i> Thêm loại lỗi
+                </button>
+            }
+        </div>
+
+        <div class="row g-2 mb-2">
+            <div class="col-md-5">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" placeholder="Tìm theo mã / tên / mô tả..." autocomplete="off"
+                           @bind-value="_searchText" @bind-value:event="oninput" />
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select form-select-sm" @bind="_statusFilter">
+                    <option value="">-- Tất cả trạng thái --</option>
+                    <option value="on">Đang dùng</option>
+                    <option value="off">Ngưng dùng</option>
+                </select>
+            </div>
+            <div class="col-md-4 text-end d-flex align-items-center justify-content-end gap-2">
+                @if (HasActiveColFilters)
+                {
+                    <button class="btn btn-sm btn-outline-warning" @onclick="ClearAllColFilters">
+                        <i class="bi bi-x-circle"></i> Xóa filter cột
+                    </button>
+                }
+                <small class="text-muted">Hiển thị @Filtered.Count() / @_rows.Count loại lỗi</small>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_pageMsg))
+        {
+            <div class="@_PageMsgCls py-2 small">@_pageMsg</div>
+        }
+
+        @if (_rows.Count == 0)
+        {
+            <div class="alert alert-secondary"><i class="bi bi-inbox"></i> Chưa có loại lỗi nào. @(_canEdit ? "Bấm “Thêm loại lỗi” để tạo." : "Nhờ người có quyền DS Lỗi thêm.")</div>
+        }
+        else
+        {
+            <div class="table-responsive" @onclick="CloseAllDropdowns">
+                <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.85rem;">
+                    <thead class="table-light" style="position: sticky; top: 0; z-index: 10;">
+                        <tr>
+                            <th style="width: 50px;" class="text-center">STT</th>
+                            <th style="width: 120px;">@ColHeader("Code", "Mã lỗi")</th>
+                            <th>@ColHeader("Name", "Tên lỗi")</th>
+                            <th>Mô tả</th>
+                            <th style="width: 70px;" class="text-center">Thứ tự</th>
+                            <th style="width: 110px;" class="text-center">@ColHeader("Status", "Trạng thái")</th>
+                            <th style="width: 90px;" class="text-center" title="Số vụ lỗi đã dùng loại lỗi này">Đã dùng</th>
+                            <th style="width: 220px;">Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var (r, stt) in FilteredWithStt)
+                        {
+                            <tr @key="r.NgCategoryId" class="@RowCls(r)" @ondblclick="() => OpenEdit(r)" style="cursor: pointer;" title="Double-click để sửa">
+                                <td class="text-center text-muted">@stt</td>
+                                <td class="fw-bold">@r.Code</td>
+                                <td>@r.Name</td>
+                                <td class="text-muted">@r.Description</td>
+                                <td class="text-center">@r.SortOrder</td>
+                                <td class="text-center">
+                                    @if (r.IsActive) { <span class="badge bg-success">Đang dùng</span> }
+                                    else { <span class="badge bg-secondary">Ngưng dùng</span> }
+                                </td>
+                                <td class="text-center">@UsedOf(r)</td>
+                                <td @onclick:stopPropagation @ondblclick:stopPropagation>
+                                    <div class="d-flex gap-1 flex-wrap">
+                                        @if (_canEdit)
+                                        {
+                                            <button class="btn btn-sm btn-outline-primary py-0" title="Sửa" @onclick="() => OpenEdit(r)"><i class="bi bi-pencil"></i></button>
+                                            @if (r.IsActive)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary py-0" title="Ẩn khỏi danh sách chọn" @onclick="() => ToggleActiveAsync(r)">Ngưng dùng</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-outline-success py-0" title="Hiện lại trong danh sách chọn" @onclick="() => ToggleActiveAsync(r)">Dùng lại</button>
+                                            }
+                                            @if (UsedOf(r) == 0)
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger py-0" title="Xoá (chưa dùng lần nào)" @onclick="() => OpenDelete(r)"><i class="bi bi-trash"></i></button>
+                                            }
+                                        }
+                                        <button class="btn btn-sm btn-outline-dark py-0" title="Lịch sử sửa" @onclick="() => OpenHistoryAsync(r)"><i class="bi bi-clock-history"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @* Dropdown filter cột — render ngoài table để không bị clip *@
+        @if (_openDropdown != null && _colDefs.TryGetValue(_openDropdown, out var colDef))
+        {
+            <div class="col-filter-dropdown" style="position: fixed; top: @(_ddTop)px; left: @(_ddLeft)px; z-index: 9999;" @onclick:stopPropagation>
+                <div class="section">
+                    <button class="sort-btn" @onclick="SortAsc"><i class="bi bi-sort-alpha-down"></i> Sort A → Z</button>
+                    <button class="sort-btn" @onclick="SortDesc"><i class="bi bi-sort-alpha-up"></i> Sort Z → A</button>
+                </div>
+                <div class="divider"></div>
+                @if (colDef.IsActive)
+                {
+                    <button class="sort-btn text-danger" @onclick="ClearOpenColFilter"><i class="bi bi-x-circle"></i> Xóa filter cột này</button>
+                    <div class="divider"></div>
+                }
+                <input class="search-box" placeholder="Tìm trong danh sách..." @bind="colDef.SearchText" @bind:event="oninput" />
+                <div class="value-list">
+                    <label>
+                        <input type="checkbox" checked="@AllVisibleChecked(colDef)" @onchange="e => ToggleSelectAll(colDef, e)" />
+                        <strong>(Chọn tất cả)</strong>
+                    </label>
+                    @foreach (var val in VisibleValues(colDef))
+                    {
+                        var v = val;
+                        <label>
+                            <input type="checkbox" checked="@colDef.IsChecked(v)" @onchange="e => ToggleColValue(colDef, v, e)" />
+                            @v
+                        </label>
+                    }
+                </div>
+                <div class="footer">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="CloseAllDropdowns">Hủy</button>
+                    <button class="btn btn-sm btn-primary" @onclick="CloseAllDropdowns">OK</button>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@* ── Modal thêm / sửa (backdrop không đóng khi bấm ngoài) ── *@
+@if (_showEdit)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal fade show d-block" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title">@_EditTitle</h5>
+                    <button type="button" class="btn-close" @onclick="CloseEdit"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Mã lỗi <span class="text-danger">*</span></label>
+                        <input class="form-control form-control-sm text-uppercase" maxlength="20" @bind="_fCode" @bind:event="oninput" @bind:after="OnFieldChanged"
+                               disabled="@_CodeLocked" placeholder="VD: MOP, XUOC, REN" />
+                        @if (_CodeLocked)
+                        {
+                            <div class="form-text">Loại lỗi đã dùng trong vụ lỗi — không đổi mã (đổi tên / mô tả thì được).</div>
+                        }
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Tên lỗi <span class="text-danger">*</span></label>
+                        <input class="form-control form-control-sm" maxlength="200" @bind="_fName" @bind:event="oninput" @bind:after="OnFieldChanged" placeholder="VD: Móp cạnh" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Mô tả (không bắt buộc)</label>
+                        <textarea class="form-control form-control-sm" rows="2" maxlength="500" @bind="_fDesc" @bind:event="oninput" @bind:after="OnFieldChanged"></textarea>
+                    </div>
+                    <div class="mb-2" style="max-width: 140px;">
+                        <label class="form-label small fw-bold mb-1">Thứ tự hiện</label>
+                        <input type="number" class="form-control form-control-sm" @bind="_fSort" @bind:after="OnFieldChanged" />
+                    </div>
+                    @if (!string.IsNullOrEmpty(_editErr))
+                    {
+                        <div class="alert alert-danger py-1 small mb-0">@_editErr</div>
+                    }
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-sm btn-secondary" @onclick="CloseEdit">Hủy</button>
+                    <button class="@_SaveBtnCls" disabled="@_saving" @onclick="SaveAsync">@_SaveBtnLabel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Modal xoá ── *@
+@if (_deleting != null)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal fade show d-block" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title text-danger">Xoá loại lỗi @_deleting.Code</h5>
+                    <button type="button" class="btn-close" @onclick="CloseDelete"></button>
+                </div>
+                <div class="modal-body small">
+                    Xoá hẳn loại lỗi <b>@_deleting.Label</b>? Loại lỗi này chưa dùng lần nào nên xoá được (lịch sử sửa vẫn giữ).
+                    @if (!string.IsNullOrEmpty(_editErr))
+                    {
+                        <div class="alert alert-danger py-1 mt-2 mb-0">@_editErr</div>
+                    }
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-sm btn-secondary" @onclick="CloseDelete">Hủy</button>
+                    <button class="btn btn-sm btn-danger" disabled="@_saving" @onclick="DeleteAsync">@_DeleteLabel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Modal lịch sử ── *@
+@if (_historyOf != null)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal fade show d-block" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title">Lịch sử sửa — @_historyOf.Code</h5>
+                    <button type="button" class="btn-close" @onclick="CloseHistory"></button>
+                </div>
+                <div class="modal-body">
+                    @if (_history.Count == 0)
+                    {
+                        <div class="text-muted small">Chưa có lịch sử.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-bordered small mb-0">
+                            <thead class="table-light"><tr><th style="width:130px">Lúc</th><th style="width:120px">Người</th><th style="width:90px">Việc</th><th>Trước</th><th>Sau</th></tr></thead>
+                            <tbody>
+                                @foreach (var h in _history)
+                                {
+                                    <tr>
+                                        <td>@h.Log.ChangedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td>@h.Who</td>
+                                        <td>@ActionLabel(h.Log.Action)</td>
+                                        <td class="text-muted">@h.Log.OldValue</td>
+                                        <td>@h.Log.NewValue</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                <div class="modal-footer py-2">
+                    <button class="btn btn-sm btn-secondary" @onclick="CloseHistory">Đóng</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _isLoading = true;
+    private bool _canView, _canEdit;
+    private int _userId;
+
+    private List<NgCategory> _rows = new();
+    private Dictionary<int, int> _used = new();
+
+    private string _searchText = "";
+    private string _statusFilter = "";
+    private string _pageMsg = "";
+    private bool _pageMsgOk = true;
+
+    // Modal thêm / sửa
+    private bool _showEdit;
+    private NgCategory? _editing;
+    private string _fCode = "", _fName = "", _fDesc = "";
+    private int _fSort;
+    private string _editErr = "";
+    private bool _saving, _saved;
+
+    private NgCategory? _deleting;
+    private NgCategory? _historyOf;
+    private List<(NgCategoryChangeLog Log, string Who)> _history = new();
+
+    // Lọc cột
+    private Dictionary<string, ColFilterDef> _colDefs = new();
+    private string? _openDropdown;
+    private double _ddTop, _ddLeft;
+    private string? _sortCol;
+    private bool _sortAsc = true;
+
+    // ── Chữ / class tính sẵn (không biểu thức lồng trong attribute) ──
+    private string _PageMsgCls => _pageMsgOk ? "alert alert-success" : "alert alert-danger";
+    private string _EditTitle => _editing == null ? "Thêm loại lỗi" : "Sửa loại lỗi " + _editing.Code;
+    private bool _CodeLocked => _editing != null && UsedOf(_editing) > 0;
+    private string _SaveBtnLabel => _saving ? "Đang xử lý..." : _saved ? "Đã lưu ✓" : "Lưu & Xác nhận OK";
+    private string _SaveBtnCls => _saved ? "btn btn-sm btn-outline-success" : "btn btn-sm btn-primary";
+    private string _DeleteLabel => _saving ? "Đang xử lý..." : "Xoá";
+    private string RowCls(NgCategory r) => r.IsActive ? "" : "text-muted";
+    private int UsedOf(NgCategory r) => _used.TryGetValue(r.NgCategoryId, out var n) ? n : 0;
+    private static string StatusOf(NgCategory r) => r.IsActive ? "Đang dùng" : "Ngưng dùng";
+    private static string ActionLabel(string a) => a switch { "ADD" => "Thêm", "EDIT" => "Sửa", "OFF" => "Ngưng dùng", "ON" => "Dùng lại", "DEL" => "Xoá", _ => a };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        var user = auth.User;
+        int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out _userId);
+        var isAdmin = user.IsInRole("ADMIN")
+                   || user.FindFirst("GroupCode")?.Value == "ADMIN"
+                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+                   || user.Identity?.Name?.ToLower() == "admin";
+        if (isAdmin) { _canView = true; _canEdit = true; }
+        else if (_userId > 0)
+        {
+            var perms = await UserSvc.GetAllUserPermissionsAsync(_userId);
+            if (perms.TryGetValue(SystemPermissions.DsLoi, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
+        }
+        if (_canView) await LoadAsync();
+        _isLoading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        _rows = await NgSvc.GetCategoriesAsync(false);
+        _used = await NgSvc.GetUsageCountAsync();
+        _colDefs = new Dictionary<string, ColFilterDef>
+        {
+            ["Code"]   = ColFilterDef.Build(_rows, r => r.Code),
+            ["Name"]   = ColFilterDef.Build(_rows, r => r.Name),
+            ["Status"] = ColFilterDef.Build(_rows, StatusOf),
+        };
+    }
+
+    private IEnumerable<NgCategory> Filtered
+    {
+        get
+        {
+            IEnumerable<NgCategory> q = _rows;
+            if (_statusFilter == "on") q = q.Where(r => r.IsActive);
+            else if (_statusFilter == "off") q = q.Where(r => !r.IsActive);
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                var s = _searchText.Trim();
+                q = q.Where(r => r.Code.Contains(s, StringComparison.OrdinalIgnoreCase)
+                              || r.Name.Contains(s, StringComparison.OrdinalIgnoreCase)
+                              || (r.Description ?? "").Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+            if (_colDefs.TryGetValue("Code", out var dc)) q = q.Where(r => dc.Passes(r.Code));
+            if (_colDefs.TryGetValue("Name", out var dn)) q = q.Where(r => dn.Passes(r.Name));
+            if (_colDefs.TryGetValue("Status", out var ds)) q = q.Where(r => ds.Passes(StatusOf(r)));
+            q = _sortCol switch
+            {
+                "Code"   => _sortAsc ? q.OrderBy(r => r.Code) : q.OrderByDescending(r => r.Code),
+                "Name"   => _sortAsc ? q.OrderBy(r => r.Name) : q.OrderByDescending(r => r.Name),
+                "Status" => _sortAsc ? q.OrderBy(r => StatusOf(r)) : q.OrderByDescending(r => StatusOf(r)),
+                _        => q.OrderBy(r => r.SortOrder).ThenBy(r => r.Code)
+            };
+            return q.ToList();
+        }
+    }
+
+    private List<(NgCategory r, int stt)> FilteredWithStt => Filtered.Select((r, i) => (r, i + 1)).ToList();
+
+    // ── Thêm / sửa ──
+    private void OpenAdd()
+    {
+        _editing = null; _fCode = ""; _fName = ""; _fDesc = ""; _fSort = (_rows.Count == 0 ? 0 : _rows.Max(r => r.SortOrder)) + 1;
+        _editErr = ""; _saved = false; _showEdit = true;
+    }
+
+    private void OpenEdit(NgCategory r)
+    {
+        if (!_canEdit) return;
+        _editing = r; _fCode = r.Code; _fName = r.Name; _fDesc = r.Description ?? ""; _fSort = r.SortOrder;
+        _editErr = ""; _saved = false; _showEdit = true;
+    }
+
+    private void CloseEdit() { _showEdit = false; _editing = null; }
+    private void OnFieldChanged() { _saved = false; _editErr = ""; }
+
+    private async Task SaveAsync()
+    {
+        if (!_canEdit) return;
+        _saving = true; _editErr = "";
+        var (ok, err) = await NgSvc.SaveCategoryAsync(_editing?.NgCategoryId, _fCode, _fName, _fDesc, _fSort, _userId);
+        _saving = false;
+        if (!ok) { _editErr = err; return; }
+        var code = NgCaseService.NormalizeCode(_fCode);
+        await LoadAsync();
+        _saved = true;
+        _showEdit = false;
+        ShowMsg(true, (_editing == null ? "Đã thêm loại lỗi " : "Đã lưu loại lỗi ") + code + ".");
+    }
+
+    private async Task ToggleActiveAsync(NgCategory r)
+    {
+        if (!_canEdit) return;
+        var (ok, err) = await NgSvc.SetActiveAsync(r.NgCategoryId, !r.IsActive, _userId);
+        if (!ok) { ShowMsg(false, err); return; }
+        await LoadAsync();
+        ShowMsg(true, (r.IsActive ? "Đã ngưng dùng " : "Đã dùng lại ") + r.Code + ".");
+    }
+
+    private void OpenDelete(NgCategory r) { _deleting = r; _editErr = ""; }
+    private void CloseDelete() { _deleting = null; }
+
+    private async Task DeleteAsync()
+    {
+        if (!_canEdit || _deleting == null) return;
+        _saving = true;
+        var code = _deleting.Code;
+        var (ok, err) = await NgSvc.DeleteCategoryAsync(_deleting.NgCategoryId, _userId);
+        _saving = false;
+        if (!ok) { _editErr = err; return; }
+        _deleting = null;
+        await LoadAsync();
+        ShowMsg(true, "Đã xoá loại lỗi " + code + ".");
+    }
+
+    private async Task OpenHistoryAsync(NgCategory r)
+    {
+        _history = await NgSvc.GetChangeLogsAsync(r.NgCategoryId);
+        _historyOf = r;
+    }
+    private void CloseHistory() { _historyOf = null; }
+
+    private void ShowMsg(bool ok, string msg) { _pageMsgOk = ok; _pageMsg = msg; }
+
+    // ── Lọc cột (chuẩn Index_PartMaster: ColFilterDef + ExcludedValues + SearchText + Passes) ──
+    private RenderFragment ColHeader(string colKey, string label) => __builder =>
+    {
+        <span class="col-filter-wrap">
+            <span style="cursor: pointer; user-select: none;" @onclick="() => ToggleSortCol(colKey)">
+                @label
+                @if (_sortCol == colKey)
+                {
+                    <i class="@SortIconCls" style="font-size:0.65rem;"></i>
+                }
+            </span>
+            <button class="@FilterBtnCls(colKey)" title="Lọc cột này" @onclick:stopPropagation @onclick="e => OpenDropdown(colKey, e)">
+                <i class="@FilterIconCls(colKey)"></i>
+            </button>
+        </span>
+    };
+
+    private string SortIconCls => _sortAsc ? "bi bi-arrow-up ms-1" : "bi bi-arrow-down ms-1";
+    private bool ColActive(string k) => _colDefs.TryGetValue(k, out var d) && d.IsActive;
+    private string FilterBtnCls(string k) => ColActive(k) ? "col-filter-btn active" : "col-filter-btn";
+    private string FilterIconCls(string k) => ColActive(k) ? "bi bi-funnel-fill" : "bi bi-funnel";
+
+    private void ToggleSortCol(string k) { if (_sortCol == k) _sortAsc = !_sortAsc; else { _sortCol = k; _sortAsc = true; } }
+    private void OpenDropdown(string colKey, MouseEventArgs e)
+    {
+        if (_openDropdown == colKey) { _openDropdown = null; return; }
+        _openDropdown = colKey;
+        _ddTop = e.ClientY + 10;
+        _ddLeft = Math.Min(e.ClientX - 10, 1100);
+    }
+    private void CloseAllDropdowns() => _openDropdown = null;
+    private void SortAsc() { _sortCol = _openDropdown; _sortAsc = true; _openDropdown = null; }
+    private void SortDesc() { _sortCol = _openDropdown; _sortAsc = false; _openDropdown = null; }
+    private void ClearOpenColFilter()
+    {
+        if (_openDropdown != null && _colDefs.TryGetValue(_openDropdown, out var d)) { d.ExcludedValues.Clear(); d.SearchText = ""; }
+        _openDropdown = null;
+    }
+    private void ClearAllColFilters()
+    {
+        foreach (var d in _colDefs.Values) { d.ExcludedValues.Clear(); d.SearchText = ""; }
+        _sortCol = null;
+    }
+    private bool HasActiveColFilters => _colDefs.Values.Any(d => d.IsActive) || _sortCol != null;
+
+    private static List<string> VisibleValues(ColFilterDef d)
+        => d.AllValues.Where(v => string.IsNullOrEmpty(d.SearchText) || v.Contains(d.SearchText, StringComparison.OrdinalIgnoreCase)).ToList();
+    private static bool AllVisibleChecked(ColFilterDef d) => VisibleValues(d).All(d.IsChecked);
+    private static void ToggleSelectAll(ColFilterDef d, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        foreach (var v in VisibleValues(d)) { if (on) d.ExcludedValues.Remove(v); else d.ExcludedValues.Add(v); }
+    }
+    private static void ToggleColValue(ColFilterDef d, string v, ChangeEventArgs e)
+    {
+        if (e.Value is bool b && b) d.ExcludedValues.Remove(v); else d.ExcludedValues.Add(v);
+    }
+
+    private class ColFilterDef
+    {
+        public List<string> AllValues { get; set; } = new();
+        public HashSet<string> ExcludedValues { get; set; } = new();
+        public string SearchText { get; set; } = string.Empty;
+        public bool IsActive => !string.IsNullOrEmpty(SearchText) || ExcludedValues.Count > 0;
+        public bool IsChecked(string v) => !ExcludedValues.Contains(v);
+        public bool Passes(string v) =>
+            (string.IsNullOrEmpty(SearchText) || v.Contains(SearchText, StringComparison.OrdinalIgnoreCase))
+            && !ExcludedValues.Contains(v);
+        public static ColFilterDef Build(List<NgCategory> rows, Func<NgCategory, string> selector)
+            => new ColFilterDef { AllValues = rows.Select(selector).Distinct().OrderBy(v => v).ToList() };
+    }
+}

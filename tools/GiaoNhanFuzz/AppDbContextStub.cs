@@ -17,6 +17,9 @@ namespace MES.Web.Data
         public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
         public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
         public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER]
+        public DbSet<NgCategory> NgCategories => Set<NgCategory>();                   // [VULOI]
+        public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
+        public DbSet<NgCase> NgCases => Set<NgCase>();
         public DbSet<KhPlanRouteSnapshotMachining> KhPlanRouteSnapshotMachining => Set<KhPlanRouteSnapshotMachining>();
         public DbSet<KhPlanRouteSnapshotTaro> KhPlanRouteSnapshotTaro => Set<KhPlanRouteSnapshotTaro>();
         public DbSet<KhPlanRouteSnapshotBavia> KhPlanRouteSnapshotBavia => Set<KhPlanRouteSnapshotBavia>();
@@ -69,6 +72,7 @@ namespace MES.Web.Data
         {
             // tạo sẵn mọi set để snapshot giao dịch luôn thấy đủ bảng
             _ = Customers; _ = Users; _ = KhPlans; _ = KhPlanDetails; _ = KhoVatLieus; _ = KhoVatLieuChangeLogs; _ = KhPlanDetailChangeLogs; _ = WtsProductionLogs;
+            _ = NgCategories; _ = NgCategoryChangeLogs; _ = NgCases;   // [VULOI]
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;
             _ = KhPlanRouteSnapshotPackaging; _ = KhPlanRouteSnapshotMachineExclude;

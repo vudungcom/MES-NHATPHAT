@@ -41,5 +41,16 @@ Thêm (GN-NG-TRACE, 28/10/2026): sau mỗi thao tác dựng **đường đi hàn
 ```
 dotnet bin2/GiaoNhanFuzz.dll loi     # kịch bản cố định: hàng lỗi qua Kho → GC → HTSP (sửa) → KCS → huỷ / trả khách, số phải ra từng bước
 LOI=1 dotnet bin2/GiaoNhanFuzz.dll 60 120 5   # thử nặng hàng lỗi: chọn thao tác có hàng thật, NG nhiều hơn (không đặt LOI = y như cũ)
-dotnet bin2/GiaoNhanFuzz.dll nang [PO=60] [thao tác=120] [seed=1]   # kh + loi + 6 cấu hình ngẫu nhiên chạy song song, kết quả ở nang_ketqua/
+dotnet bin2/GiaoNhanFuzz.dll nang [PO=60] [thao tác=120] [seed=1]   # kh + loi + vu + 7 cấu hình ngẫu nhiên chạy song song, kết quả ở nang_ketqua/
 ```
+
+
+Thêm (VULOI, 28/10/2026 — vụ lỗi + danh mục lỗi):
+
+```
+dotnet bin2/GiaoNhanFuzz.dll vu      # kịch bản vụ lỗi: A (GC → Kho tự xử lý → GC), B (GC → Kho → HTSP → GC), C (WTS NG 3: 2 sửa + 1 huỷ, 1 dòng), D (NG lúc nhận → trả khách), K5 theo vụ, hàng lỗi cũ chưa có mã
+WTSEDIT=20 LOI=1 dotnet bin2/GiaoNhanFuzz.dll 25 120 45   # nhiều thao tác sửa dòng WTS (giữ vụ, đổi loại lỗi)
+VU=0 ...                             # tắt kiểm "không còn hàng lỗi chưa gắn vụ"
+```
+
+Sau mỗi thao tác kiểm thêm sổ theo từng vụ (`LedgerRow.Cases`): cân từng vụ, Σ vụ = ô Tồn hàng lỗi / Tồn hàng sửa từng nhóm, khớp đường đi hàng lỗi, dòng B cuối = sổ vụ, không vụ nào âm, mọi chứng từ lỗi mới đều gắn vụ. Thao tác mới `wtsedit` (sửa dòng WTS như trang WTS: dòng mới giữ vụ cũ, NG giảm mà vụ đã đi phiếu thì K5 chặn, đổi loại lỗi chỉ khi vụ chưa đi phiếu). Nhận / báo lỗi / hàng lỗi công đoạn trước thử bỏ trống loại lỗi hoặc loại đã ngưng → phải bị chặn. Danh mục lỗi giả: `VuHelp.SeedCats` (5 loại + 1 đã ngưng).

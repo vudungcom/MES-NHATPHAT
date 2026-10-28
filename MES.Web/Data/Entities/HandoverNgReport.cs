@@ -33,6 +33,9 @@ namespace MES.Web.Data.Entities
         public string NgReason { get; set; } = string.Empty;
         public string? Notes { get; set; }
 
+        /// <summary>[VULOI 2026-10-28] Vụ lỗi sinh ra từ phiếu báo lỗi này.</summary>
+        public long? NgCaseId { get; set; }
+
         public int CreatedBy { get; set; }
         public DateTime CreatedAt { get; set; }
 

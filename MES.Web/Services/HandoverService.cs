@@ -152,7 +152,8 @@ namespace MES.Web.Services
 
         /// <summary>[GN-CELL2] Ô bên giao chỉ định cho bên nhận (phiếu cũ: suy theo loại phiếu; phiếu theo NC: null).</summary>
         public string? ToCell            { get; set; }
-
+        /// <summary>[VULOI] Vụ lỗi phiếu mang theo (bên nhận không chọn — vụ đi theo phiếu).</summary>
+        public long?   NgCaseId          { get; set; }
     }
 
     /// <summary>[GN-NG-AFTER] Dòng "Báo hàng lỗi phát hiện sau khi nhận" cho Lịch sử phiếu.</summary>
@@ -167,6 +168,7 @@ namespace MES.Web.Services
         public string?  CauseGroupCode { get; set; }
         public string   NgReason       { get; set; } = string.Empty;
         public string?  Notes          { get; set; }
+        public long?    NgCaseId       { get; set; }   // [VULOI]
         public int      CreatedBy      { get; set; }
         public string   CreatedByName  { get; set; } = string.Empty;
         public DateTime CreatedAt      { get; set; }
@@ -229,9 +231,8 @@ namespace MES.Web.Services
 
         /// <summary>[GN-CELL2] Ô bên giao chỉ định cho bên nhận.</summary>
         public string? ToCell        { get; set; }
-
         public string? ToNC          { get; set; }
-
+        public long?   NgCaseId      { get; set; }   // [VULOI]
         public List<HandoverReceiveItem> Receives { get; set; } = new();
 
     }
@@ -258,7 +259,7 @@ namespace MES.Web.Services
         /// <summary>[GN-CELL2] Ô bên nhận thực nhận + lý do nếu đổi khác chỉ định.</summary>
         public string? ToCell         { get; set; }
         public string? ToCellReason   { get; set; }
-
+        public long?   NgCaseId       { get; set; }   // [VULOI] vụ lỗi sinh ra ở lần nhận (hoặc vụ của phiếu)
         public bool    IsVoided       { get; set; }
 
         public string? VoidReason     { get; set; }
@@ -854,7 +855,7 @@ namespace MES.Web.Services
                 SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                 ToCell        = HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell : (t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : null)) is string lp ? HandoverCell.ReceiveCellOf(lp) : null, // [GN-CELL2]
                 ToNC          = t.ToNC,        // [GN-LEDGER]
-
+                NgCaseId      = t.NgCaseId,    // [VULOI]
                 Receives      = t.Receives.OrderBy(r => r.ReceivedAt).Select(r => new HandoverReceiveItem
 
                 {
@@ -873,7 +874,7 @@ namespace MES.Web.Services
                     ReceivedBy     = r.ReceivedBy,     // [GN-VOID-RULE]
                     ToCell         = r.ToCell,         // [GN-CELL2]
                     ToCellReason   = r.ToCellReason,   // [GN-CELL2]
-
+                    NgCaseId       = r.NgCaseId,       // [VULOI]
                     IsVoided       = r.IsVoided,
 
                     VoidReason     = r.VoidReason,
@@ -955,7 +956,7 @@ namespace MES.Web.Services
                     ToCell           = t.SourceReceiveId != null ? HandoverCell.Loi   // [GN-CELL2] ô bên giao chỉ định (phiếu cũ: theo loại phiếu)
                                      : HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell
                                      : (t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : null)) is string pp2 ? HandoverCell.ReceiveCellOf(pp2) : null,
-
+                    NgCaseId         = t.NgCaseId,    // [VULOI]
                 };
 
             }).ToList();
@@ -1526,31 +1527,36 @@ namespace MES.Web.Services
         public async Task<(bool Ok, string Error)> IssueByCellAsync(
             int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued, int issuedByUserId,
             string cell, bool prevStageNg, string toCell,   // [GN-CELL2] trước: bool repaired — nay bên giao chọn thẳng ô bên nhận
-            string? fromNC = null, string? toNC = null, string? notes = null, string? reason = null)
+            string? fromNC = null, string? toNC = null, string? notes = null, string? reason = null,
+            int? ngCategoryId = null,   // [VULOI] Hàng lỗi công đoạn trước: loại lỗi (DS Lỗi) — sinh vụ mới
+            long? ngCaseId = null)      // [VULOI] Hàng lỗi / Hàng sửa đang giữ: vụ lấy hàng (null = hàng lỗi cũ chưa có mã)
         {
             var (purpose, err) = HandoverCell.ResolveCells(cell, prevStageNg, toCell);   // [GN-CELL2]
             if (purpose == null) return (false, err ?? "Phân loại hàng không hợp lệ."); // [GN-PLH] mục 36
             return await IssueWithPurposeAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
-                issuedByUserId, purpose, fromNC, toNC, notes, reason, cell, toCell);
+                issuedByUserId, purpose, fromNC, toNC, notes, reason, cell, toCell, ngCategoryId, ngCaseId);
         }
 
         /// <summary>[GN-CELL] Phiếu ngoài 4 ô Excel (Làm hộ gửi / trả, Huỷ, Trả khách) — vẫn đi qua cùng một hàm kiểm.</summary>
         public async Task<(bool Ok, string Error)> IssueSpecialAsync(
             int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued, int issuedByUserId,
-            string purpose, string? fromNC = null, string? toNC = null, string? notes = null, string? reason = null)
+            string purpose, string? fromNC = null, string? toNC = null, string? notes = null, string? reason = null,
+            long? ngCaseId = null)   // [VULOI] Huỷ / Trả khách: vụ lấy hàng (null = hàng lỗi cũ chưa có mã)
         {
             if (purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn or HandoverPurpose.Scrap or HandoverPurpose.CustReturn))
                 return (false, "Loại phiếu này phải lập theo ô Excel (Hàng mới / Hàng lỗi / Hàng sửa).");
             var cell = purpose is HandoverPurpose.Scrap or HandoverPurpose.CustReturn ? HandoverCell.Loi : null;
             return await IssueWithPurposeAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
-                issuedByUserId, purpose, fromNC, toNC, notes, reason, cell);
+                issuedByUserId, purpose, fromNC, toNC, notes, reason, cell, null, null, ngCaseId);
         }
 
         private async Task<(bool Ok, string Error)> IssueWithPurposeAsync(
             int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued,
             int issuedByUserId, string purpose, string? fromNC, string? toNC, string? notes, string? reason,
             string? fromCell = null,   // [GN-CELL] ô bên giao chọn (null = gọi từ chỗ cũ → suy từ purpose)
-            string? toCell = null)     // [GN-CELL2] ô bên giao chỉ định cho bên nhận (null = theo loại phiếu)
+            string? toCell = null,     // [GN-CELL2] ô bên giao chỉ định cho bên nhận (null = theo loại phiếu)
+            int? ngCategoryId = null,  // [VULOI] Hàng lỗi công đoạn trước: loại lỗi → sinh vụ mới
+            long? ngCaseId = null)     // [VULOI] Hàng lỗi / Hàng sửa đang giữ, Huỷ, Trả khách: vụ lấy hàng
         {
             fromCell ??= HandoverCell.IssueCellOf(purpose, null);
             bool cellPurpose = purpose is HandoverPurpose.New or HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn;
@@ -1567,8 +1573,18 @@ namespace MES.Web.Services
             var routeErr = HandoverLedgerService.CheckRoute(fromGroupCode, toGroupCode, purpose);
             if (routeErr != null) return (false, routeErr);
             bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend || isOut;   // [GN-NG-OUT] huỷ / trả khách bắt buộc ghi lỗi
-            if (isNg && string.IsNullOrWhiteSpace(reason))
-                return (false, "Bắt buộc ghi lỗi cụ thể khi giao hàng lỗi.");
+            // [VULOI 2026-10-28] Lỗi không tự gõ nữa: Hàng lỗi công đoạn trước chọn loại lỗi (DS Lỗi) → sinh vụ;
+            //   lấy từ ô Hàng lỗi / Hàng sửa, Huỷ, Trả khách: chọn vụ đang giữ → lỗi theo vụ. (Trước: bắt buộc gõ lỗi cụ thể.)
+            bool takesCase = HandoverLedgerService.TakesHeldCase(purpose, fromCell);
+            NgCategory? ngCat = null;
+            if (purpose == HandoverPurpose.NgReturn)
+            {
+                ngCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
+                if (ngCat == null) return (false, NgCaseService.MsgPickCategory);
+                reason = ngCat.Label;
+                ngCaseId = null;
+            }
+            else if (!takesCase) ngCaseId = null;
             // [GN-CELL] Ô giao phải khớp loại phiếu (chặn gọi sai từ code)
             if (fromCell != null && !HandoverCell.IssueCells.Contains(fromCell))
                 return (false, "Phân loại hàng không hợp lệ."); // [GN-PLH] mục 36
@@ -1599,10 +1615,33 @@ namespace MES.Web.Services
                 if (!row.G("GC").Steps.Any(s => s.Code == fromNC && !s.IsExcluded))
                     return (false, $"NC {fromNC} không có trong snapshot của PO (hoặc là máy loại trừ).");
             }
-            var (max, ex) = HandoverLedgerService.IssueCap(row, fromGroupCode, purpose, fromNC, fromCell);   // [GN-CELL] trần theo ô
+            // [VULOI] Vụ lấy hàng phải thuộc PO này và đang có hàng ở ô bên giao; không chọn vụ = hàng lỗi cũ chưa có mã (chỉ khi còn)
+            if (takesCase)
+            {
+                var cellTake = fromCell ?? HandoverCell.IssueCellOf(purpose, null)!;
+                if (ngCaseId != null)
+                {
+                    if (!row.Cases.TryGetValue(ngCaseId.Value, out var csSel) || ngCaseId.Value <= 0)
+                        return (false, $"{NgCaseNo.Format(ngCaseId.Value)} không thuộc PO này.");
+                    reason = csSel.CatLabel;
+                }
+                else
+                {
+                    if (row.CaseHeld(0, fromGroupCode, cellTake) <= 0)
+                        return (false, $"Chọn {NgCaseNo.Term} đang giữ ở ô {HandoverCell.Label(cellTake)} của {HandoverLedgerService.GroupLabel(fromGroupCode)}.");
+                    reason = "Hàng lỗi cũ (chưa có mã vụ)";
+                }
+            }
+            var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ
             if (qtyIssued > max)
-                return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}: {ex.Arithmetic}). Không thể giao {qtyIssued:0.##}.");
-
+                return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể giao {qtyIssued:0.##}.");
+            // [VULOI] Hàng lỗi công đoạn trước: vụ sinh ra cùng phiếu (nơi phát hiện = bên giao, nơi gây lỗi = bên nhận)
+            if (ngCat != null)
+            {
+                var vu = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, ngCat, NgOrigin.TraLoi, fromGroupCode,
+                    fromGroupCode == "GC" ? fromNC : null, toGroupCode, issuedByUserId);
+                ngCaseId = vu.NgCaseId;
+            }
             _db.HandoverTransactions.Add(new HandoverTransaction
             {
                 KhPlanDetailId = khPlanDetailId,
@@ -1617,6 +1656,7 @@ namespace MES.Web.Services
                 Purpose        = purpose,
                 FromCell       = fromCell,                               // [GN-CELL] ô bên giao chọn (đúng cột Excel)
                 ToCell         = toCell,                                 // [GN-CELL2] ô bên giao chỉ định cho bên nhận
+                NgCaseId       = ngCaseId,                               // [VULOI] vụ lỗi của phiếu
                 Status         = isOut ? "COMPLETED" : "PENDING",   // [GN-NG-OUT] ra khỏi PO ngay, không chờ nhận
                 IssuedBy       = issuedByUserId,
                 IssuedAt       = DateTime.Now,
@@ -1688,9 +1728,8 @@ namespace MES.Web.Services
             string? notes = null,
 
             string? toCell = null,          // [GN-CELL2] ô bên nhận chọn (null = theo ô bên giao chỉ định)
-
-            string? toCellReason = null)    // [GN-CELL2] bắt buộc khi đổi khác ô chỉ định
-
+            string? toCellReason = null,    // [GN-CELL2] bắt buộc khi đổi khác ô chỉ định
+            int? ngCategoryId = null)       // [VULOI] loại lỗi khi lần nhận SINH vụ mới (NG đếm lúc nhận / nhận vào ô Hàng lỗi, Hàng sửa)
         {
 
             if (qtyOk < 0 || qtyNg < 0)
@@ -1704,7 +1743,7 @@ namespace MES.Web.Services
             // [GN-RECV-NG2] Kiểm lý do NG dời xuống sau khi đọc phiếu: phiếu Hàng lỗi công đoạn trước lấy lỗi theo phiếu
 
             var txHead = await _db.HandoverTransactions.AsNoTracking()
-                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId }).FirstOrDefaultAsync(); // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
+                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId, t.NgCaseId }).FirstOrDefaultAsync();   // [VULOI] + vụ // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
             if (txHead == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
             // [GN-CELL2] Ô bên nhận: mặc định ô bên giao chỉ định (phiếu cũ: theo loại phiếu); bên nhận đổi được, đổi thì bắt buộc lý do.
@@ -1738,9 +1777,7 @@ namespace MES.Web.Services
                 ngReason = !string.IsNullOrWhiteSpace(txHead.NgReason) ? txHead.NgReason
                          : cellChanged && !string.IsNullOrWhiteSpace(toCellReason) ? toCellReason!.Trim()   // [GN-CELL2] bên nhận đổi sang ô Hàng lỗi: lỗi = lý do đổi
                          : "Hàng lỗi trả về";
-            if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
-                return (false, "Bắt buộc nhập lý do khi có hàng NG.");
-
+            // [VULOI] Kiểm lý do NG dời vào trong giao dịch (cần sổ để biết phiếu có mang vụ không)
             // [GN-K8] Khoá PO + giao dịch: nhận xong tính lại sổ, ô nào mới âm thì không lưu
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(txHead.KhPlanDetailId);
@@ -1765,12 +1802,36 @@ namespace MES.Web.Services
                 return (false, "Phiếu giao đã nhận đủ.");
 
             var alreadyReceived = tx.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
-
             var remaining       = tx.QtyIssued - alreadyReceived;
-
             if (qtyOk + qtyNg > remaining)
-
                 return (false, $"Tổng nhận ({qtyOk + qtyNg}) vượt số còn lại của phiếu ({remaining:0.##}).");
+
+            // [VULOI 2026-10-28] Vụ lỗi của lần nhận (đúng cách sổ tính — HandoverLedgerService.Compute):
+            //   - Phiếu trả tự lập / phiếu lấy từ ô Hàng lỗi, Hàng sửa (mang vụ): vụ đi theo phiếu, bên nhận KHÔNG chọn; NG đếm lúc nhận vẫn là vụ đó.
+            //   - Phiếu không mang vụ: nhận vào ô Hàng lỗi / Hàng sửa, hoặc có NG đếm lúc nhận → vụ MỚI, bắt buộc chọn loại lỗi (DS Lỗi).
+            var txFromCell = before != null && before.TxFromCell.TryGetValue(handoverTxId, out var tfc) ? tfc : null;
+            bool autoTx  = txHead.SourceReceiveId != null;
+            bool carryTx = !autoTx && txFromCell is HandoverCell.Loi or HandoverCell.Sua;
+            bool newCase = !autoTx && !carryTx && (effCell is HandoverCell.Loi or HandoverCell.Sua || qtyNg > 0);
+            long? rcvCaseId = autoTx || carryTx ? tx.NgCaseId : null;
+            NgCategory? rcvCat = null;
+            if (newCase)
+            {
+                rcvCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
+                if (rcvCat == null) return (false, NgCaseService.MsgPickCategory);
+                ngReason = rcvCat.Label;
+            }
+            else if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
+                ngReason = !string.IsNullOrWhiteSpace(txHead.NgReason) ? txHead.NgReason : "Hàng lỗi trả về";   // phiếu mang vụ: lỗi theo phiếu
+            if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
+                return (false, "Bắt buộc nhập lý do khi có hàng NG.");
+            if (rcvCat != null)
+            {
+                var vu = await NgCaseService.CreateCaseAsync(_db, tx.KhPlanDetailId, rcvCat,
+                    effCell is HandoverCell.Loi or HandoverCell.Sua ? NgOrigin.NhanLoi : NgOrigin.Nhan,
+                    tx.ToGroupCode, tx.ToGroupCode == "GC" ? tx.ToNC : null, tx.FromGroupCode, receivedByUserId);
+                rcvCaseId = vu.NgCaseId;
+            }
 
             // [GN-RECV-NG2] (bỏ luật riêng phiếu tự lập "chặn NG" — nay mọi phiếu hàng lỗi nhập ở ô Hàng lỗi, xem đầu hàm)
 
@@ -1788,7 +1849,7 @@ namespace MES.Web.Services
 
                 ToCell       = desigCell != null ? effCell : null,                 // [GN-CELL2] ô thực nhận
                 ToCellReason = cellChanged ? toCellReason!.Trim() : null,          // [GN-CELL2]
-
+                NgCaseId     = rcvCaseId,                                          // [VULOI]
                 ReceivedBy   = receivedByUserId,
 
                 ReceivedAt   = DateTime.Now,
@@ -1825,6 +1886,7 @@ namespace MES.Web.Services
                     Purpose         = HandoverPurpose.NgReturn,
                     FromCell        = HandoverCell.Loi,
                     SourceReceiveId = rcv.ReceiveId,
+                    NgCaseId        = rcvCaseId,   // [VULOI] phiếu trả mang vụ của phần NG
                     Status          = "PENDING",
                     IssuedBy        = receivedByUserId,
                     IssuedAt        = now,
@@ -2101,7 +2163,8 @@ namespace MES.Web.Services
         public async Task<(bool Ok, string Error)> ReportNgAfterReceiveAsync(
             int khPlanDetailId, string groupCode, string sourceCell, string? nc, decimal qty,
             string origin, string? causeGroupCode, string ngReason, string? notes,
-            int userId, IReadOnlyCollection<string> editGroups)
+            int userId, IReadOnlyCollection<string> editGroups,
+            int? ngCategoryId = null)   // [VULOI] loại lỗi (DS Lỗi) — bắt buộc; ngReason giữ tham số cũ, không còn dùng chữ gõ tay
         {
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
             if (!validGroups.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
@@ -2116,9 +2179,10 @@ namespace MES.Web.Services
                 return (false, "Lỗi đầu vào: chọn nơi gây lỗi (phôi khách / nhóm trước).");
             if (origin == HandoverNgSource.DauVao && causeGroupCode == groupCode)
                 return (false, "Lỗi do chính nhóm mình gây ra là lỗi đầu ra.");
-            if (string.IsNullOrWhiteSpace(ngReason) || ngReason.Trim().Length < 3)
-                return (false, "Bắt buộc ghi lỗi cụ thể (ít nhất 3 ký tự).");
-
+            // [VULOI 2026-10-28] Lỗi chọn từ DS Lỗi (trước: gõ tay ít nhất 3 ký tự)
+            var repCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
+            if (repCat == null) return (false, NgCaseService.MsgPickCategory);
+            ngReason = repCat.Label;
             using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
             var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8]
             if (lockErr != null) return (false, lockErr);
@@ -2132,8 +2196,12 @@ namespace MES.Web.Services
             if (qty > max)
                 return (false, $"Báo lỗi tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể báo {qty:0.##}.");
 
+            // [VULOI] vụ sinh ra: nơi phát hiện = nhóm báo; nơi gây lỗi = nhóm chọn (đầu vào) / chính nhóm (đầu ra)
+            var repCase = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, repCat, NgOrigin.BaoLoi, groupCode, nc,
+                origin == HandoverNgSource.DauVao ? causeGroupCode : groupCode, userId);
             _db.HandoverNgReports.Add(new HandoverNgReport
             {
+                NgCaseId       = repCase.NgCaseId,   // [VULOI]
                 KhPlanDetailId = khPlanDetailId,
                 GroupCode      = groupCode,
                 SourceCell     = sourceCell,
@@ -2203,6 +2271,7 @@ namespace MES.Web.Services
                 {
                     Id = b.HandoverNgReportId, GroupCode = b.GroupCode, SourceCell = b.SourceCell, NC = b.NC, Qty = b.Qty,
                     Origin = b.Origin, CauseGroupCode = b.CauseGroupCode, NgReason = b.NgReason, Notes = b.Notes,
+                    NgCaseId = b.NgCaseId,   // [VULOI]
                     CreatedBy = b.CreatedBy,
                     CreatedByName = b.CreatedByUser != null ? (b.CreatedByUser.FullName ?? b.CreatedByUser.Username) : "",
                     CreatedAt = b.CreatedAt, IsVoided = b.IsVoided, VoidReason = b.VoidReason,

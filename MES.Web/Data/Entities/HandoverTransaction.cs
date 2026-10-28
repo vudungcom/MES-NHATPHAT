@@ -79,6 +79,13 @@ namespace MES.Web.Data.Entities
         public DateTime? ClosedAt { get; set; }
         public string? ClosedReason { get; set; }
 
+        /// <summary>
+        /// [VULOI 2026-10-28] Vụ lỗi của phiếu (1 phiếu hàng lỗi = 1 vụ). Phiếu Hàng lỗi công đoạn trước: vụ sinh ra cùng phiếu.
+        /// Phiếu lấy từ ô Hàng lỗi / Hàng sửa, Huỷ, Trả khách: vụ đang giữ bên giao chọn. Phiếu trả tự lập: vụ của lần nhận gốc.
+        /// NULL = phiếu Hàng mới / theo NC, hoặc hàng lỗi cũ chưa có mã.
+        /// </summary>
+        public long? NgCaseId { get; set; }
+
         /// <summary>PENDING | PARTIAL | COMPLETED</summary>
         public string Status { get; set; } = "PENDING";
 

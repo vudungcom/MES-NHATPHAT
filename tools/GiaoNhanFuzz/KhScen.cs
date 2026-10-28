@@ -32,6 +32,7 @@ public static class KhScen
         db.KhPlanRouteSnapshotInspection.List.Add(new KhPlanRouteSnapshotInspection { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "K1" });
         db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "P1" });
         db.KhPlanRouteSnapshotStdConfirms.List.Add(new KhPlanRouteSnapshotStdConfirm { Id = 1, KhPlanDetailId = 1, SnapshotTable = StdTrack.Table.Machining, SnapshotRowId = 2, FieldName = "SetupTime", IsConfirmed = true });
+        VuHelp.SeedCats(db);   // [VULOI]
         db.KhPlanRouteSnapshotStdConfirms.List.Add(new KhPlanRouteSnapshotStdConfirm { Id = 2, KhPlanDetailId = 1, SnapshotTable = StdTrack.Table.Taro, SnapshotRowId = 1, FieldName = "StandardTime", IsConfirmed = false });
         db.Fixup();
         return db;
@@ -159,14 +160,14 @@ public static class KhScen
             var db = Seed(); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
             var r0 = await led.GetLedgerForDetailAsync(1);
             Ok(r0!.G("KHO").LoiGiu == 0 && HandoverLedgerService.IssueCap(r0, "KHO", HandoverPurpose.CustReturn, null, HandoverCell.Loi).Max == 0, "Trước khi báo: Kho tồn hàng lỗi 0 (ô Hàng lỗi xám như ảnh)");
-            var deny = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 2, new List<string> { "GC" });
+            var deny = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 2, new List<string> { "GC" }, ngCategoryId: 1);
             Ok(!deny.Ok, "Người nhóm GC không báo lỗi thay Kho được", deny.Error);
-            var over = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 41, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" });
+            var over = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 41, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
             Ok(!over.Ok && over.Error.Contains("tối đa 40"), "Báo 41 > phôi còn 40: chặn", over.Error);
-            var r = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" });
+            var r = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
             var r1 = await led.GetLedgerForDetailAsync(1);
             Ok(r.Ok && r1!.G("KHO").ConGiao == 37 && r1.G("KHO").LoiGiu == 3 && r1.G("KHO").Ton == 40, "Báo 3: Phôi còn 37, Tồn hàng lỗi 3, Tồn Kho vẫn 40", r.Error);
-            var cr = await svc.IssueSpecialAsync(1, "KHO", "KHACH", 3, 1, HandoverPurpose.CustReturn, reason: "phoi ro khi");
+            var cr = await svc.IssueSpecialAsync(1, "KHO", "KHACH", 3, 1, HandoverPurpose.CustReturn, reason: "phoi ro khi", ngCaseId: VuHelp.LastCase(db));
             var r2 = await led.GetLedgerForDetailAsync(1);
             Ok(cr.Ok && r2!.G("KHO").LoiGiu == 0 && r2.TraKhach == 3 && r2.G("KHO").Ton == 37, "Trả khách 3 từ ô Hàng lỗi: Tồn Kho 37, Đã trả khách 3", cr.Error);
             Ok(r2.BalanceExplain.Result == r2.Phoi, $"Cân PO: {r2.BalanceExplain.Result} = phôi {r2.Phoi}");
@@ -181,18 +182,18 @@ public static class KhScen
             await svc.IssueByCellAsync(1, "KHO", "GC", 40, 1, "MOI", false, "MOI");
             await svc.ReceiveAsync(1, 40, 0, null, 2);
             Wts(db, "NC1", 10);
-            var r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, null, 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" });
+            var r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, null, 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" }, ngCategoryId: 1);
             Ok(!r.Ok && r.Error.Contains("NC"), "GC không chọn NC: bắt chọn NC", r.Error);
-            r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 31, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" });
+            r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 31, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" }, ngCategoryId: 1);
             Ok(!r.Ok && r.Error.Contains("tối đa 30"), "NC1 còn chờ 30: báo 31 bị chặn", r.Error);
-            r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" });
+            r = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, new List<string> { "GC" }, ngCategoryId: 1);
             var row = await led.GetLedgerForDetailAsync(1);
             var nc1 = row!.G("GC").Steps.First(x => x.Code == "NC1");
             Ok(r.Ok && nc1.Waiting == 28 && row.G("GC").LoiGiu == 2 && row.G("GC").ChuaLam == 28 + row.G("GC").Steps.First(x => x.Code == "NC2").Waiting,
                $"NC1 chờ 30→28, Tồn hàng lỗi GC 2, Chưa GC = Σ chờ các NC", r.Error);
             var cap = HandoverLedgerService.WtsCap(row, "GC", "NC1");
             Ok(cap.Max == 28, $"Trần WTS NC1 giảm theo: {cap.Max}");
-            var mv = await svc.IssueByCellAsync(1, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "phoi nut");
+            var mv = await svc.IssueByCellAsync(1, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "phoi nut", ngCaseId: VuHelp.LastCase(db));
             await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 2, "phoi nut", 1);
             var r2 = await led.GetLedgerForDetailAsync(1);
             Ok(mv.Ok && r2!.G("GC").LoiGiu == 0 && r2.G("KHO").LoiGiu == 2 && r2.BalanceExplain.Result == r2.Phoi,
@@ -203,9 +204,9 @@ public static class KhScen
         Console.WriteLine("[B3] HTSP: hàng đã làm chưa giao phát hiện lỗi đầu ra → huỷ báo (chưa dùng) được");
         {
             var db = Seed(); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
-            var r = await svc.ReportNgAfterReceiveAsync(1, "HTSP", HandoverNgSource.Da, null, 1, HandoverNgSource.DauRa, null, "xuoc", null, 3, new List<string> { "HTSP" });
+            var r = await svc.ReportNgAfterReceiveAsync(1, "HTSP", HandoverNgSource.Da, null, 1, HandoverNgSource.DauRa, null, "xuoc", null, 3, new List<string> { "HTSP" }, ngCategoryId: 1);
             Ok(!r.Ok, "HTSP chưa có hàng: không báo được", r.Error);
-            var r2 = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauRa, null, "kho lam mop", null, 1, new List<string> { "KHO" });
+            var r2 = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauRa, null, "kho lam mop", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
             var v = await svc.VoidNgReportAsync(1, "bao nham", 1, new List<string>());
             var row = await led.GetLedgerForDetailAsync(1);
             Ok(r2.Ok && v.Ok && row!.G("KHO").ConGiao == 40 && row.G("KHO").LoiGiu == 0, "Báo rồi huỷ ngay: số về lại như cũ", v.Error);
@@ -218,7 +219,7 @@ public static class KhScen
             await svc.ReceiveAsync(1, 30, 0, null, 2);
             db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 1, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", WorkerId = 2, QtyDone = 20, QtyOk = 18, QtyNg = 2, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now });
             db.Fixup();
-            await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauVao, "KHACH", "phoi ro", null, 1, new List<string> { "KHO" });
+            await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauVao, "KHACH", "phoi ro", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
             var w = HandoverLedgerService.WhereIs((await led.GetLedgerForDetailAsync(1))!);
             decimal Q(string place, string label) => w.Items.Where(i => i.Place == place && i.Label == label).Sum(i => i.Qty);
             Ok(w.Balanced && w.Total == 40, $"Tổng = phôi 40: {w.Total}");
@@ -231,19 +232,19 @@ public static class KhScen
         {
             var db = Seed(); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
             var K = new List<string> { "KHO" }; var Gc = new List<string> { "GC" };
-            Ok((await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 41, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, K)).Ok == false, "Bài 1: báo 41 bị chặn");
-            Ok((await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, K)).Ok, "Bài 1: báo 3");
-            Ok((await svc.IssueSpecialAsync(1, "KHO", "KHACH", 3, 1, HandoverPurpose.CustReturn, reason: "phoi ro khi")).Ok, "Bài 1: trả khách 3");
+            Ok((await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 41, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, K, ngCategoryId: 1)).Ok == false, "Bài 1: báo 41 bị chặn");
+            Ok((await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, K, ngCategoryId: 1)).Ok, "Bài 1: báo 3");
+            Ok((await svc.IssueSpecialAsync(1, "KHO", "KHACH", 3, 1, HandoverPurpose.CustReturn, reason: "phoi ro khi", ngCaseId: VuHelp.LastCase(db))).Ok, "Bài 1: trả khách 3");
             Ok((await svc.IssueByCellAsync(1, "KHO", "GC", 30, 1, "MOI", false, "MOI")).Ok, "Bài 2: Kho giao 30");
             await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 30, 0, null, 2);
             Wts(db, "NC1", 10);
-            Ok(!(await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, null, 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, Gc)).Ok, "Bài 2: bỏ trống NC bị chặn");
-            Ok((await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, Gc)).Ok, "Bài 2: GC báo 2 ở NC1");
+            Ok(!(await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, null, 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, Gc, ngCategoryId: 1)).Ok, "Bài 2: bỏ trống NC bị chặn");
+            Ok((await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 2, HandoverNgSource.DauVao, "KHO", "phoi nut", null, 2, Gc, ngCategoryId: 1)).Ok, "Bài 2: GC báo 2 ở NC1");
             var rw = (await led.GetLedgerForDetailAsync(1))!;
             Ok(HandoverLedgerService.WtsCap(rw, "GC", "NC1").Max == 18, "Bài 2: WTS NC1 chưa làm 18");
-            Ok((await svc.IssueByCellAsync(1, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "phoi nut")).Ok, "Bài 2: GC giao Hàng lỗi → Kho ô Hàng lỗi");
+            Ok((await svc.IssueByCellAsync(1, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "phoi nut", ngCaseId: VuHelp.LastCase(db))).Ok, "Bài 2: GC giao Hàng lỗi → Kho ô Hàng lỗi");
             await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 2, "phoi nut", 1);
-            var rep3 = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 1, HandoverNgSource.DauRa, null, "thu bao nham", null, 1, K);
+            var rep3 = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 1, HandoverNgSource.DauRa, null, "thu bao nham", null, 1, K, ngCategoryId: 1);
             var id3 = db.HandoverNgReports.List.Max(b => b.HandoverNgReportId);
             Ok(rep3.Ok && (await led.GetLedgerForDetailAsync(1))!.G("KHO").ConGiao == 6, "Bài 3: báo nhầm 1 → phôi còn 6");
             Ok((await svc.VoidNgReportAsync(id3, "bao nham", 1, K)).Ok && (await led.GetLedgerForDetailAsync(1))!.G("KHO").ConGiao == 7, "Bài 3: huỷ → phôi còn 7");

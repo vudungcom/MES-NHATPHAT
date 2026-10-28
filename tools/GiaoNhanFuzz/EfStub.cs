@@ -99,6 +99,9 @@ namespace Microsoft.EntityFrameworkCore
             ["WtsProductionLog"]    = "WtsLogId",
             ["KhoVatLieu"]          = "KhoVatLieuId",
             ["HandoverNgReport"]    = "HandoverNgReportId",   // [GN-NG-AFTER]
+            ["NgCategory"]          = "NgCategoryId",         // [VULOI]
+            ["NgCase"]              = "NgCaseId",
+            ["NgCategoryChangeLog"] = "ChangeId",
         };
 
         public int SaveChanges() => SaveChangesAsync().GetAwaiter().GetResult();

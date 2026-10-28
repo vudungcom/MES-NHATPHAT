@@ -20,6 +20,8 @@ public static class SystemPermissions
     public const string Dao         = "DAO";
     public const string WtsMaster   = "WTS_MASTER";
     public const string WtsMapping  = "WTS_MAPPING"; // Quyền cấu hình nhóm WTS → ProcessGroup
+    // [DS-LOI 2026-10-28] Danh mục lỗi: Xem = thấy trang DS Lỗi; Sửa = thêm / sửa / ngưng dùng / xoá loại lỗi. ADMIN luôn có quyền.
+    public const string DsLoi       = "DS_LOI";
     public const string SettingAdmin = "SETTING_ADMIN";
     public const string CaLamViec   = "CA_LAM_VIEC";
 
@@ -57,6 +59,7 @@ public static class SystemPermissions
         new PermissionSection(Dao,         "Quản lý dao",           "Quản lý danh mục dao cụ CNC, mũi khoan, taro và tồn kho"),
         new PermissionSection(WtsMaster,   "WTS Tiêu chuẩn",        "Thêm/sửa danh mục WTS chuẩn"),
         new PermissionSection(WtsMapping,  "WTS: Cấu hình nhóm",   "Gán nhóm công việc WTS vào nhóm sản xuất (GC/HTSP/KCS/PKG)"),
+        new PermissionSection(DsLoi,       "DS Lỗi",               "Danh mục loại lỗi: Sửa = thêm / sửa / ngưng dùng loại lỗi (mọi chỗ ghi lỗi chọn từ danh mục này)"),   // [DS-LOI]
 
         // 4 Vùng phân quyền Nhập WTS công nhân
         new PermissionSection(WtsGc,      "Nhập WTS: Gia công",        "Công nhân gia công ghi nhận NC, thời gian, sản lượng thực tế"),

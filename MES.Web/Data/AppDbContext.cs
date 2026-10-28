@@ -89,6 +89,10 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
     public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
     public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận
+    // [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi (nhãn, không lưu số)
+    public DbSet<NgCategory> NgCategories => Set<NgCategory>();
+    public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
+    public DbSet<NgCase> NgCases => Set<NgCase>();
 
     // ==== Cài đặt ca làm việc ====
     public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
@@ -644,6 +648,37 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<HandoverNgReport>()
             .HasOne(x => x.VoidedByUser).WithMany()
             .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi ====
+        mb.Entity<NgCategory>().ToTable("NgCategories");
+        mb.Entity<NgCategory>().HasKey(x => x.NgCategoryId);
+        mb.Entity<NgCategory>().Property(x => x.Code).HasMaxLength(20).IsRequired();
+        mb.Entity<NgCategory>().Property(x => x.Name).HasMaxLength(200).IsRequired();
+        mb.Entity<NgCategory>().Property(x => x.Description).HasMaxLength(500);
+        mb.Entity<NgCategory>().Ignore(x => x.Label);
+        mb.Entity<NgCategory>().HasIndex(x => x.Code).IsUnique();
+        mb.Entity<NgCategoryChangeLog>().ToTable("NgCategoryChangeLogs");
+        mb.Entity<NgCategoryChangeLog>().HasKey(x => x.ChangeId);
+        mb.Entity<NgCategoryChangeLog>().Property(x => x.Action).HasMaxLength(10).IsRequired();
+        mb.Entity<NgCategoryChangeLog>().Property(x => x.OldValue).HasMaxLength(1000);
+        mb.Entity<NgCategoryChangeLog>().Property(x => x.NewValue).HasMaxLength(1000);
+        mb.Entity<NgCase>().ToTable("NgCases");
+        mb.Entity<NgCase>().HasKey(x => x.NgCaseId);
+        mb.Entity<NgCase>().Property(x => x.CaseNo).HasMaxLength(20)
+            .HasComputedColumnSql("('VL' + RIGHT('000000' + CAST([NgCaseId] AS varchar(20)), 6))", stored: true);
+        mb.Entity<NgCase>().Property(x => x.OriginKind).HasMaxLength(10).IsRequired();
+        mb.Entity<NgCase>().Property(x => x.DetectGroupCode).HasMaxLength(20).IsRequired();
+        mb.Entity<NgCase>().Property(x => x.DetectNC).HasMaxLength(20);
+        mb.Entity<NgCase>().Property(x => x.CauseGroupCode).HasMaxLength(20);
+        mb.Entity<NgCase>().HasIndex(x => x.KhPlanDetailId);
+        mb.Entity<NgCase>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<NgCase>()
+            .HasOne(x => x.NgCategory).WithMany()
+            .HasForeignKey(x => x.NgCategoryId)
             .OnDelete(DeleteBehavior.NoAction);
 
         // ==== CaLamViec ====

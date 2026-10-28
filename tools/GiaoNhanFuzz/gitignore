@@ -1,0 +1,8 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+.vscode/
+appsettings.Local.json
+tools/GiaoNhanFuzz/nang_ketqua/

@@ -84,6 +84,9 @@ public class WtsProductionLog
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
+    /// <summary>[VULOI 2026-10-28] Vụ lỗi của phần NG (QtyNg &gt; 0). Sửa dòng (void + dòng mới) thì dòng mới giữ vụ cũ.</summary>
+    public long? NgCaseId { get; set; }
+
     // Void — nhập sai thì void dòng này + tạo dòng mới đúng
     public bool IsVoided { get; set; } = false;
     [MaxLength(200)] public string? VoidReason { get; set; }

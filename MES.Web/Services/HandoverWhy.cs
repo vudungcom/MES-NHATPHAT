@@ -105,6 +105,7 @@ namespace MES.Web.Services
             Txs = i.Txs.Select(t => t.CloneTx()).ToList(),
             Wts = new List<InWts>(i.Wts),
             NgReps = new List<InNgRep>(i.NgReps),   // [GN-NG-AFTER]
+            CaseInfo = i.CaseInfo,                  // [VULOI] nhãn vụ lỗi (không góp số)
         };
 
         static string GroupOfPg(string pg) => pg switch
@@ -206,6 +207,19 @@ namespace MES.Web.Services
             {
                 var p = k.Split('|');
                 var g = p[0];
+                // [VULOI 2026-10-28] Ô vụ lỗi âm ("VU|<id>|<nhóm>|<ô>"): phiếu đang lấy hàng của vụ đó từ nhóm đó (mới nhất gỡ trước)
+                if (g == "VU")
+                {
+                    if (p.Length == 4 && long.TryParse(p[1], out var vuId))
+                    {
+                        long? want = vuId == 0 ? null : vuId;
+                        var vg = p[2]; var vcell = p[3];
+                        AddTx(t => t.From == vg && t.NgCaseId == want && t.SourceReceiveId == null
+                                   && (HandoverPurpose.IsOut(t.Purpose)
+                                       || (t.Purpose != HandoverPurpose.NgReturn && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == vcell)));
+                    }
+                    continue;
+                }
                 if (p.Length == 2)
                 {
                     switch (p[1])

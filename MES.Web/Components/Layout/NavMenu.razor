@@ -123,6 +123,16 @@
 
         }
 
+        @* [DS-LOI 2026-10-28] Danh mục lỗi — ngay dưới WTS Tiêu chuẩn *@
+        @if (CanView("DS_LOI"))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/ds-loi">
+                    <i class="bi bi-exclamation-octagon"></i> DS Lỗi
+                </NavLink>
+            </li>
+        }
+
         <!-- MỤC CÀI ĐẶT & PHÂN QUYỀN (HIỂN THỊ DÀNH CHO ADMIN) -->
         <AuthorizeView>
             <Authorized>

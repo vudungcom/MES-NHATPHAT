@@ -1,0 +1,73 @@
+@using MES.Web.Data.Entities
+@* =====================================================================
+   [DS-LOI 2026-10-28] Ô CHỌN LOẠI LỖI — kiểu input + datalist (lọc khi gõ), nhưng BẮT BUỘC chọn đúng 1 dòng của DS Lỗi:
+   gõ chữ không khớp thì Value = null (ô viền đỏ) → nơi lưu báo "Chọn loại lỗi trong danh sách". Không cho tự gõ lỗi.
+   Khớp: đúng nhãn "MÃ · Tên", hoặc đúng mã (không phân biệt hoa thường), hoặc đúng tên.
+   ===================================================================== *@
+
+<input class="@InputCls" style="@Style" list="@_listId" value="@_text" placeholder="@Placeholder" disabled="@Disabled"
+       title="Chọn loại lỗi trong DS Lỗi" autocomplete="off" @oninput="OnInput" @onchange="OnChange" />
+<datalist id="@_listId">
+    @foreach (var c in Categories)
+    {
+        <option value="@c.Label"></option>
+    }
+</datalist>
+
+@code {
+    /// <summary>Loại lỗi đang dùng (NgCaseService.GetCategoriesAsync(true)).</summary>
+    [Parameter] public List<NgCategory> Categories { get; set; } = new();
+    [Parameter] public int? Value { get; set; }
+    [Parameter] public EventCallback<int?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Chọn loại lỗi…";
+    [Parameter] public string CssClass { get; set; } = "form-control form-control-sm";
+    [Parameter] public string Style { get; set; } = "";
+    /// <summary>Viền đỏ khi bắt buộc mà chưa chọn đúng.</summary>
+    [Parameter] public bool Required { get; set; }
+
+    private readonly string _listId = "ngcat_" + Guid.NewGuid().ToString("N");
+    private string _text = "";
+    private int? _lastValue;
+    private bool _typedBad;
+
+    private string InputCls => CssClass + ((_typedBad || (Required && Value == null && !Disabled)) ? " border-danger" : "");
+
+    protected override void OnParametersSet()
+    {
+        // Giá trị đổi từ ngoài (mở form, sửa dòng, xoá trắng) → hiện đúng nhãn
+        if (Value != _lastValue)
+        {
+            _lastValue = Value;
+            var c = Value == null ? null : Categories.FirstOrDefault(x => x.NgCategoryId == Value);
+            _text = c?.Label ?? (Value == null ? (_typedBad ? _text : "") : "");
+            if (Value != null) _typedBad = false;
+        }
+    }
+
+    private NgCategory? Match(string? s)
+    {
+        var t = (s ?? "").Trim();
+        if (t.Length == 0) return null;
+        return Categories.FirstOrDefault(x => string.Equals(x.Label, t, StringComparison.OrdinalIgnoreCase))
+            ?? Categories.FirstOrDefault(x => string.Equals(x.Code, t, StringComparison.OrdinalIgnoreCase))
+            ?? Categories.FirstOrDefault(x => string.Equals(x.Name, t, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task OnInput(ChangeEventArgs e) => await SetText(e.Value?.ToString());
+    private async Task OnChange(ChangeEventArgs e) => await SetText(e.Value?.ToString());
+
+    private async Task SetText(string? s)
+    {
+        _text = s ?? "";
+        var m = Match(_text);
+        _typedBad = m == null && _text.Trim().Length > 0;
+        var v = m?.NgCategoryId;
+        if (m != null) _text = m.Label;
+        if (v != Value)
+        {
+            _lastValue = v;
+            await ValueChanged.InvokeAsync(v);
+        }
+    }
+}

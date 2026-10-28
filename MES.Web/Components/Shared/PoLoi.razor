@@ -1,4 +1,5 @@
 @using MES.Web.Services
+@using MES.Web.Data.Entities
 @* =====================================================================
    [GN-NG-TRACE 2026-10-28] HÀNG LỖI CỦA PO — dùng chung cho Kế hoạch (dòng mở ▸) và Giao nhận (mở PO).
    Tra theo từng lần dính hàng lỗi (WTS NG, NG lúc nhận, báo lỗi sau khi nhận, phiếu / lần nhận hàng lỗi, huỷ, trả khách).
@@ -33,6 +34,38 @@
                 }
             }
         </div>
+
+        @if (Trace.HasAny && Trace.Cases.Count > 0)
+        {
+            @* [VULOI 2026-10-28] Bảng theo TỪNG VỤ LỖI: mỗi dòng 1 vụ (1 lần phát sinh), cột = chặng. Vụ tách nhánh vẫn 1 dòng.
+               Đọc từ LedgerRow.Cases của sổ (HandoverNgTrace.BuildCases) — không công thức riêng. *@
+            <div class="fw-semibold mb-1">Theo từng @NgCaseNo.Term <span class="text-muted fw-normal">(bấm dòng để xem từng chặng)</span></div>
+            <div style="max-height:320px;overflow-y:auto" class="mb-2">
+                <table class="table table-sm table-bordered mb-0" style="font-size:11px;min-width:980px">
+                    <thead class="table-light" style="position:sticky;top:0;z-index:1">
+                        <tr>
+                            <th style="width:78px">Mã vụ</th>
+                            <th>Loại lỗi</th>
+                            <th style="width:40px" class="text-center">SL</th>
+                            <th title="Nơi phát hiện (NC / mã CV) · cách phát sinh">Phát hiện</th>
+                            <th title="Nơi giữ hàng lỗi ở ô Hàng lỗi (kể cả nơi tự giữ hàng mình làm hỏng); (tự xử lý) = tự sửa xong trả về">Nhận lỗi (+ xử lý)</th>
+                            <th title="Nơi nhận hàng nhờ sửa (ô Hàng sửa)">Sửa</th>
+                            <th title="Nơi nhận lại hàng đã xử lý (ô Hàng lỗi đã xử lý / Hàng mới) — làm tiếp">Hàng đã xử lý</th>
+                            <th style="width:56px" class="text-center">Huỷ</th>
+                            <th style="width:62px" class="text-center">Trả khách</th>
+                            <th title="Còn nằm ở đâu (ô Hàng lỗi / Hàng sửa) · phiếu chưa nhận">Đang giữ / chuyển</th>
+                            <th style="width:46px" class="text-center" title="Sinh ra = đã xử lý + huỷ + trả khách + đang giữ + đang chuyển">Cân</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var v in FilteredCases)
+                        {
+                            @CaseRow(v)
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
 
         @if (Trace.HasAny)
         {
@@ -112,6 +145,71 @@
     [Parameter] public NgTrace? Trace { get; set; }
 
     private string? _filter;
+    private readonly HashSet<long> _openCases = new();   // [VULOI] vụ đang mở xem chặng
+
+    // ── [VULOI] Bảng theo từng vụ lỗi ──
+    private IEnumerable<NgCaseTrace> FilteredCases
+        => Trace == null ? Enumerable.Empty<NgCaseTrace>()
+         : _filter == null ? Trace.Cases
+         : Trace.Cases.Where(v => v.Places.Contains(_filter));
+    private void ToggleCase(long id) { if (!_openCases.Remove(id)) _openCases.Add(id); }
+    static string CaseRowClass(NgCaseTrace v) => !v.Balanced ? "table-danger" : v.Done ? "text-muted" : "";
+    static string Txt(string s) => string.IsNullOrEmpty(s) ? "—" : s;
+    static string HeldText(NgCaseTrace v)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(v.DangGiu)) parts.Add(v.DangGiu);
+        if (v.DangChuyen != 0) parts.Add($"đang chuyển {v.DangChuyen:0.##}");
+        return parts.Count == 0 ? "xong" : string.Join(" · ", parts);
+    }
+    static string HopText(LedgerCaseHop h)
+    {
+        var g = HandoverLedgerService.GroupLabel(h.Group);
+        var o = string.IsNullOrEmpty(h.Other) ? "" : HandoverLedgerService.GroupLabel(h.Other);
+        var cell = string.IsNullOrEmpty(h.Cell) ? "" : " · ô " + MES.Web.Services.HandoverCell.Label(h.Cell);
+        return h.Kind switch
+        {
+            "PS"    => $"{g} phát hiện {h.Qty:0.##}" + (string.IsNullOrEmpty(h.Other) || h.Other == h.Group ? "" : " · do " + HandoverNgSource.CauseLabel(h.Other)) + cell,
+            "GIAO"  => $"{g} giao {h.Qty:0.##} → {o}" + cell,
+            "NHAN"  => $"{g} nhận {h.Qty:0.##} từ {o}" + cell,
+            "TRA"   => $"{g} nhận lại {h.Qty:0.##} (NG lúc {o} nhận)",
+            "HUY"   => $"{g} huỷ {h.Qty:0.##}",
+            "KHACH" => $"{g} trả khách {h.Qty:0.##}",
+            _ => h.Kind
+        };
+    }
+
+    private RenderFragment CaseRow(NgCaseTrace v) => __builder =>
+    {
+        <tr @key="v.Id" class="@CaseRowClass(v)" style="cursor:pointer" @onclick="() => ToggleCase(v.Id)">
+            <td class="fw-semibold text-nowrap font-monospace">@v.No</td>
+            <td>@v.Loai</td>
+            <td class="text-center fw-semibold">@v.SinhRa.ToString("0.##")</td>
+            <td>@v.PhatHien<div class="text-muted" style="font-size:10px">@v.Nguon@(string.IsNullOrEmpty(v.GayLoi) ? "" : " · do " + v.GayLoi)</div></td>
+            <td>@Txt(v.NhanLoi)</td>
+            <td>@Txt(v.Sua)</td>
+            <td>@Txt(v.DaXuLy)</td>
+            <td class="@NumClass(v.Huy)" title="@v.HuyText">@Num(v.Huy)</td>
+            <td class="@NumClass(v.TraKhach)" title="@v.KhachText">@Num(v.TraKhach)</td>
+            <td class="@HeldClass(v.DangGiuQty + v.DangChuyen)">@HeldText(v)</td>
+            <td class="text-center">@(v.Balanced ? "✓" : "lệch")</td>
+        </tr>
+        @if (_openCases.Contains(v.Id))
+        {
+            <tr @key="-v.Id - 1">
+                <td colspan="11" class="bg-light">
+                    @foreach (var h in v.Hops)
+                    {
+                        <div><span class="text-muted">@(h.At?.ToString("dd/MM HH:mm") ?? "—")</span> · @HopText(h) <span class="text-muted font-monospace">@h.Doc</span></div>
+                    }
+                    @if (!string.IsNullOrEmpty(v.Who))
+                    {
+                        <div class="text-muted">Mã vụ đặt bởi @v.Who · @(v.At?.ToString("dd/MM HH:mm") ?? "")</div>
+                    }
+                </td>
+            </tr>
+        }
+    };
 
     private void SetFilter(string code) => _filter = _filter == code ? null : code;
     private void ClearFilter() => _filter = null;

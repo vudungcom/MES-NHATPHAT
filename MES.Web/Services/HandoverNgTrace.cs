@@ -88,6 +88,42 @@ namespace MES.Web.Services
         public bool    HasAny => Events.Count > 0;
         /// <summary>Chỗ khung lỗi không khớp sổ (không được xảy ra — báo lại để kiểm).</summary>
         public List<string> Problems { get; set; } = new();
+        /// <summary>[VULOI 2026-10-28] Bảng theo từng vụ lỗi (mỗi dòng 1 vụ, cột = chặng). Đọc từ LedgerRow.Cases của sổ.</summary>
+        public List<NgCaseTrace> Cases { get; set; } = new();
+    }
+
+    /// <summary>
+    /// [VULOI 2026-10-28] Một dòng bảng "Theo từng vụ lỗi": Phát hiện → Nhận lỗi (+ tự xử lý) → Sửa → Hàng đã xử lý / Huỷ / Trả khách.
+    /// Vụ nhiều chiếc tách nhánh vẫn 1 dòng, mỗi ô ghi số theo nhánh. Cân: Sinh ra = đã xử lý + huỷ + trả khách + đang giữ + đang chuyển.
+    /// </summary>
+    public class NgCaseTrace
+    {
+        public long     Id        { get; set; }
+        public string   No        { get; set; } = "";
+        public string   Loai      { get; set; } = "";
+        public string   Nguon     { get; set; } = "";   // NG (WTS) / NG lúc nhận / Báo lỗi sau khi nhận / Hàng lỗi công đoạn trước / Nhận vào ô Hàng lỗi
+        public DateTime? At       { get; set; }
+        public string?  Who       { get; set; }
+        public decimal  SinhRa    { get; set; }
+        public string   PhatHien  { get; set; } = "";   // "Gia công NC1"
+        public string   GayLoi    { get; set; } = "";   // nơi gây lỗi
+        public string   NhanLoi   { get; set; } = "";   // "Kho 2 (tự xử lý)"
+        public string   Sua       { get; set; } = "";   // "HTSP 3"
+        public string   DaXuLy    { get; set; } = "";   // "Gia công 3"
+        public decimal  DaXuLyQty { get; set; }
+        public decimal  Huy       { get; set; }
+        public string   HuyText   { get; set; } = "";
+        public decimal  TraKhach  { get; set; }
+        public string   KhachText { get; set; } = "";
+        public string   DangGiu   { get; set; } = "";   // "Gia công 1" / "HTSP 2 (hàng sửa)"
+        public decimal  DangGiuQty { get; set; }
+        public decimal  DangChuyen { get; set; }
+        public bool     Balanced  { get; set; }
+        public bool     Done      => DangGiuQty == 0 && DangChuyen == 0;
+        /// <summary>Các chặng theo thời gian (dòng chi tiết khi mở vụ).</summary>
+        public List<LedgerCaseHop> Hops { get; set; } = new();
+        /// <summary>Mọi nơi vụ đi qua (để lọc theo nơi).</summary>
+        public HashSet<string> Places { get; set; } = new();
     }
 
     public static class HandoverNgTrace
@@ -124,6 +160,57 @@ namespace MES.Web.Services
         }
 
         static decimal Held(LedgerRow r) => r.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu);
+
+        /// <summary>[VULOI] Tên chặng của 1 vụ (Kind của LedgerCaseHop).</summary>
+        public static string HopLabel(LedgerCaseHop h) => h.Kind switch
+        {
+            "PS"    => "Phát sinh",
+            "GIAO"  => "Giao",
+            "NHAN"  => "Nhận",
+            "TRA"   => "NG lúc nhận, trả bên giao",
+            "HUY"   => "Huỷ",
+            "KHACH" => "Trả khách",
+            _ => h.Kind
+        };
+
+        /// <summary>
+        /// [VULOI 2026-10-28] Bảng theo từng vụ lỗi — chỉ đọc LedgerRow.Cases (sổ đã tính), không công thức riêng.
+        /// Nơi trong mỗi chặng xếp theo lần đầu vụ tới nơi đó.
+        /// </summary>
+        public static List<NgCaseTrace> BuildCases(LedgerRow row)
+        {
+            var list = new List<NgCaseTrace>();
+            foreach (var cs in row.Cases.Values.OrderBy(x => x.Id == 0 ? 1 : 0).ThenBy(x => x.At ?? DateTime.MinValue).ThenBy(x => x.Id))
+            {
+                // thứ tự nơi theo chặng đầu tiên vụ tới nơi đó
+                var order = new List<string>();
+                foreach (var h in cs.Hops) { if (!order.Contains(h.Group)) order.Add(h.Group); if (h.Other != null && !order.Contains(h.Other)) order.Add(h.Other); }
+                string Join(Dictionary<string, decimal> d, Func<string, string>? suffix = null)
+                    => string.Join(" → ", d.Where(x => x.Value != 0).OrderBy(x => order.IndexOf(x.Key) < 0 ? 99 : order.IndexOf(x.Key))
+                                           .Select(x => $"{GL(x.Key)} {x.Value:0.##}" + (suffix?.Invoke(x.Key) ?? "")));
+                var held = cs.Held.Where(x => x.Value != 0).OrderBy(x => order.IndexOf(x.Key.Split('|')[0]))
+                    .Select(x => { var p = x.Key.Split('|'); return $"{GL(p[0])} {x.Value:0.##}" + (p[1] == HandoverCell.Sua ? " (hàng sửa)" : ""); });
+                var t = new NgCaseTrace
+                {
+                    Id = cs.Id, No = cs.Id == 0 ? "—" : cs.No, Loai = cs.CatLabel,
+                    Nguon = cs.Id == 0 ? "Dữ liệu trước khi có mã vụ" : NgOrigin.Label(cs.Origin),
+                    At = cs.At, Who = cs.Who, SinhRa = cs.SinhRa,
+                    PhatHien = cs.DetectGroup == null ? "—" : GL(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + (cs.DetectGroup == "GC" ? HandoverLedgerService.NcName(cs.DetectNc) : cs.DetectNc)),
+                    GayLoi = cs.Cause == null ? "" : HandoverNgSource.CauseLabel(cs.Cause),
+                    NhanLoi = Join(cs.NhanLoi, g => cs.TuXuLy.Contains(g) ? " (tự xử lý)" : ""),
+                    Sua = Join(cs.NhanSua),
+                    DaXuLy = Join(cs.DaXuLy), DaXuLyQty = cs.DaXuLyTotal,
+                    Huy = cs.Huy, HuyText = Join(cs.HuyBy),
+                    TraKhach = cs.TraKhach, KhachText = Join(cs.KhachBy),
+                    DangGiu = string.Join(" · ", held), DangGiuQty = cs.HeldTotal, DangChuyen = cs.Transit,
+                    Balanced = cs.Lech == 0,
+                    Hops = cs.Hops.ToList(),
+                };
+                foreach (var g in order) t.Places.Add(g);
+                list.Add(t);
+            }
+            return list;
+        }
 
         /// <summary>
         /// Dựng đường đi hàng lỗi. steps: dòng B đã tính sẵn (truyền vào để khỏi tính lại); null thì tự tính.
@@ -390,6 +477,7 @@ namespace MES.Web.Services
             // Phôi lỗi do khách (báo lỗi đầu vào ở Kho): nơi gây lỗi = khách
             var khach = tr.Events.Where(e => e.CausedBy == "KHACH").Sum(e => e.PhatSinh);
             if (khach != 0) tr.Groups.Add(new NgTraceGroup { Code = "KHACH", Label = "Phôi khách", GayRa = khach });
+            tr.Cases = BuildCases(final);   // [VULOI]
             return tr;
         }
     }
