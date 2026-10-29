@@ -23,7 +23,7 @@ public static class VuScen
     {
         var db = new AppDbContext();
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };
-        for (int u = 1; u <= 5; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : null, GroupId = u == 1 ? 1 : null });
+        for (int u = 1; u <= 5; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : FuzzPerm.Xuong(db), GroupId = u == 1 ? 1 : FuzzPerm.XuongId });
         var cust = new Customer { CustomerId = 1, CustomerName = "KH" };
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-VU", Customer = cust, CustomerId = 1, ApplyWorkflow = true };

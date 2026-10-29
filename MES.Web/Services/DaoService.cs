@@ -55,6 +55,8 @@ public class DaoService
 
     public async Task<(bool Success, string? Error, Dao? Data)> CreateAsync(Dao model, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa Dao (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"), null);
         if (string.IsNullOrWhiteSpace(model.TenDao))
             return (false, "Tên dao không được để trống.", null);
 
@@ -113,6 +115,8 @@ public class DaoService
 
     public async Task<(bool Success, string? Error)> UpdateAsync(Dao updated, string? reason, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa Dao (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"));
         if (string.IsNullOrWhiteSpace(updated.TenDao))
             return (false, "Tên dao không được để trống.");
 
@@ -184,6 +188,8 @@ public class DaoService
 
     public async Task<(bool Success, string? Error)> ToggleActiveAsync(int id, bool isActive, string? reason, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa Dao (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"));
         var existing = await _db.Daos.FirstOrDefaultAsync(d => d.DaoId == id);
         if (existing == null) return (false, "Không tìm thấy dao.");
 

@@ -30,18 +30,27 @@ public class CustomerService
 
     public async Task<(bool Success, string? Error, Customer? Data)> CreateAsync(Customer model, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền: Sửa KHACH_HANG, hoặc Sửa KE_HOACH (trang Tạo Kế hoạch được tạo nhanh khách mới)
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.KhachHang, MES.Web.Constants.SystemPermissions.KeHoach))
+            return (false, PermCheck.NoEdit("Khách hàng"), null);
         if (string.IsNullOrWhiteSpace(model.CustomerName))
             return (false, "Tên khách hàng không được để trống.", null);
 
         var code = model.CustomerCode?.Trim();
-        if (!string.IsNullOrWhiteSpace(code))
-        {
-            // Kiểm tra trùng mã khách hàng
-            var duplicateCode = await _db.Customers
-                .AnyAsync(c => c.CustomerCode.ToLower() == code.ToLower() && c.IsActive);
-            if (duplicateCode)
-                return (false, $"Mã khách hàng '{code}' đã tồn tại trên hệ thống.", null);
-        }
+        // [RS-E8 2026-10-29] Mã KH: bắt buộc + không trùng với MỌI khách (kể cả đang Ngừng hoạt động).
+        //   Chỉ mục CustomerCode trong DB là unique KHÔNG lọc IsActive → trước đây ngừng hoạt động rồi tạo lại cùng mã
+        //   (hoặc 2 khách cùng để trống mã) thì SQL báo lỗi trùng khoá. Khách ngừng hoạt động thì Khôi phục để dùng lại
+        //   (giữ 1 mã = 1 khách, lịch sử PO không bị tách đôi) — không cần đổi chỉ mục SQL.
+        if (string.IsNullOrWhiteSpace(code))
+            return (false, "Mã khách hàng không được để trống.", null);
+        var sameCode = await _db.Customers.AsNoTracking()
+            .Where(c => c.CustomerCode.ToLower() == code.ToLower())
+            .Select(c => new { c.CustomerName, c.IsActive })
+            .FirstOrDefaultAsync();
+        if (sameCode != null)
+            return (false, sameCode.IsActive
+                ? $"Mã khách hàng '{code}' đã tồn tại trên hệ thống."
+                : $"Mã khách hàng '{code}' đã có (khách '{sameCode.CustomerName}' đang Ngừng hoạt động) — chọn khách đó sau khi được khôi phục: người có quyền Khách hàng vào trang Khách hàng, hiện khách ngừng hoạt động rồi bấm Khôi phục.", null);
 
         var name = model.CustomerName.Trim();
         var duplicateName = await _db.Customers
@@ -83,6 +92,9 @@ public class CustomerService
 
     public async Task<(bool Success, string? Error)> UpdateAsync(Customer updated, string? reason, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa KHACH_HANG
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.KhachHang))
+            return (false, PermCheck.NoEdit("Khách hàng"));
         if (string.IsNullOrWhiteSpace(updated.CustomerName))
             return (false, "Tên khách hàng không được để trống.");
 
@@ -90,12 +102,19 @@ public class CustomerService
         if (existing == null) return (false, "Không tìm thấy khách hàng.");
 
         var code = updated.CustomerCode?.Trim() ?? "";
+        // [RS-E8 2026-10-29] Không cho xoá trắng mã (khách cũ đang trống mã thì để nguyên được); trùng xét MỌI khách, kể cả ngừng hoạt động
+        if (string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(existing.CustomerCode))
+            return (false, "Mã khách hàng không được để trống.");
         if (!string.IsNullOrWhiteSpace(code))
         {
-            var duplicateCode = await _db.Customers
-                .AnyAsync(c => c.CustomerId != updated.CustomerId && c.CustomerCode.ToLower() == code.ToLower() && c.IsActive);
-            if (duplicateCode)
-                return (false, $"Mã khách hàng '{code}' đã được sử dụng bởi khách hàng khác.");
+            var dup = await _db.Customers.AsNoTracking()
+                .Where(c => c.CustomerId != updated.CustomerId && c.CustomerCode.ToLower() == code.ToLower())
+                .Select(c => new { c.CustomerName, c.IsActive })
+                .FirstOrDefaultAsync();
+            if (dup != null)
+                return (false, dup.IsActive
+                    ? $"Mã khách hàng '{code}' đã được sử dụng bởi khách hàng khác."
+                    : $"Mã khách hàng '{code}' đã thuộc khách '{dup.CustomerName}' (đang Ngừng hoạt động) — chọn mã khác.");
         }
 
         var now = DateTime.Now;
@@ -134,6 +153,9 @@ public class CustomerService
 
     public async Task<(bool Success, string? Error)> ToggleActiveAsync(int id, bool isActive, string? reason, int userId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa KHACH_HANG
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.KhachHang))
+            return (false, PermCheck.NoEdit("Khách hàng"));
         var existing = await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == id);
         if (existing == null) return (false, "Không tìm thấy khách hàng.");
 

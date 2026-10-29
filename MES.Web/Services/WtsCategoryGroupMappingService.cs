@@ -78,6 +78,9 @@ public class WtsCategoryGroupMappingService
         List<(string Code, string Name)> selectedCategories,
         int currentUserId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MAPPING (trước: trang xét quyền Xem, service không kiểm)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMapping))
+            return (false, PermCheck.NoEdit("Cấu hình nhóm WTS"));
         if (!ProcessGroups.Any(g => g.Code == processGroup))
             return (false, $"ProcessGroup '{processGroup}' không hợp lệ.");
 

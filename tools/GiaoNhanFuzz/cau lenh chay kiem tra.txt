@@ -13,7 +13,7 @@ dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
 
 == 0. KIỂM NẶNG — 1 LỆNH CHẠY HẾT (mới 28/10) ==
 dotnet bin2\GiaoNhanFuzz.dll nang
--> chạy 5 kịch bản (kh, loi, vu, chuoi, wts) rồi 10 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
+-> chạy 6 kịch bản (kh, loi, vu, chuoi, wts, quyen) rồi 10 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
 -> mỗi lượt xong in 1 dòng ĐẠT / SAI; cuối phải ra: SAI: 0
 -> kết quả từng lượt nằm trong thư mục nang_ketqua\ (có SAI thì gửi file đó)
 Tuỳ chỉnh: dotnet bin2\GiaoNhanFuzz.dll nang <số PO mỗi lượt> <thao tác mỗi PO> <seed đầu>
@@ -32,6 +32,9 @@ dotnet bin2\GiaoNhanFuzz.dll vu       (mới 28/10 tối: VỤ LỖI — Lỗi A
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll wts      (mới 29/10 tối [WTS-SVC]: lưu / sửa / xoá WTS bằng HÀM THẬT Services/WtsSaveService — từng lời báo phải y chữ bản cũ,
                                      1 giao dịch, số chuẩn, vụ lỗi, máy trùng giờ, K5, [RS-E14] mã ngoài snapshot)
+-> cuối phải ra: KẾT QUẢ: ĐẠT hết
+dotnet bin2\GiaoNhanFuzz.dll quyen    (mới 29/10 khuya [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16]: máy chủ kiểm quyền ma trận khi lập / nhận phiếu
+                                     và ở 5 trang danh mục; mã CV / khách hàng trùng sau xoá; quy trình Part trống; khoá cấp số KH)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll chuoi    (mới 29/10: đi đủ chuỗi Part Master → tạo KH → snapshot → Kho → giao nhận + WTS bằng HÀM THẬT)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết  (bản 29/10 còn 3 SAI ở C9 / C10 = 2 lỗi phần mềm chờ vá — xem REPORT_CHUOI_2026-10-29.md)

@@ -50,6 +50,8 @@ public class StandardWtsTaskService
 
     public async Task<(bool Success, string? Error)> CreateAsync(StandardWtsTask model, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -68,6 +70,40 @@ public class StandardWtsTaskService
 
         bool exists = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == model.TaskCode && x.IsActive);
         if (exists) return (false, $"Mã công việc '{model.TaskCode}' đã tồn tại trong danh mục.");
+
+        // [RS-E8 2026-10-29] Mã đã xoá (IsActive = 0) mà thêm lại cùng mã → KHÔI PHỤC dòng cũ thay vì thêm dòng mới.
+        //   Chỉ mục TaskCode trong DB là unique KHÔNG lọc IsActive → trước đây thêm lại báo lỗi SQL trùng khoá.
+        //   Giữ 1 mã = 1 dòng: Part Master / snapshot PO / WTS / báo cáo đều nối theo CHỮ mã, nên không tách 2 dòng cùng mã.
+        var deleted = await _db.StandardWtsTasks.Where(x => x.TaskCode == model.TaskCode && !x.IsActive)
+            .OrderByDescending(x => x.TaskId).FirstOrDefaultAsync();
+        if (deleted != null)
+        {
+            var nowR = DateTime.Now;
+            var oldText = $"[{deleted.TaskCode}] {deleted.TaskName} ({deleted.CategoryName}) | Có ích: {(deleted.IsProductiveTask ? "Có" : "Không")} | Đã xóa";
+            deleted.CategoryCode = model.CategoryCode;
+            deleted.CategoryName = model.CategoryName;
+            deleted.TaskName = model.TaskName;
+            deleted.DefaultUnit = model.DefaultUnit;
+            deleted.StandardTimeSec = model.StandardTimeSec;
+            deleted.DisplayOrder = model.DisplayOrder;
+            deleted.GhiChu = model.GhiChu?.Trim();
+            deleted.IsProductiveTask = model.IsProductiveTask;
+            deleted.IsActive = true;
+            deleted.UpdatedAt = nowR;
+            deleted.UpdatedBy = currentUserId;
+            _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog
+            {
+                TaskId = deleted.TaskId,
+                FieldName = "Khôi phục mã đã xóa",
+                OldValue = oldText,
+                NewValue = $"[{deleted.TaskCode}] {deleted.TaskName} ({deleted.CategoryName}) | Có ích: {(deleted.IsProductiveTask ? "Có" : "Không")}",
+                Reason = "Thêm lại mã đã xóa → khôi phục dòng cũ (1 mã = 1 dòng)",
+                ChangedAt = nowR,
+                ChangedBy = currentUserId
+            });
+            await _db.SaveChangesAsync();
+            return (true, null);
+        }
 
         var now = DateTime.Now;
         model.IsActive = true;
@@ -93,6 +129,8 @@ public class StandardWtsTaskService
 
     public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -103,6 +141,19 @@ public class StandardWtsTaskService
         var newCode = updatedModel.TaskCode.Trim().ToUpper();
         bool duplicate = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == newCode && x.TaskId != task.TaskId && x.IsActive);
         if (duplicate) return (false, $"Mã công việc '{newCode}' đã được sử dụng bởi một mục khác.");
+        // [RS-E8 2026-10-29] Đổi MÃ: (1) mã mới trùng dòng đã xoá → SQL báo trùng khoá (unique không lọc IsActive);
+        //   (2) mã cũ đã dùng ở Part Master / snapshot PO / WTS → đổi chữ mã làm các nơi đó treo mã cũ (mọi nơi nối theo chữ) → chặn.
+        //   Đổi tên / nhóm / đơn vị / ghi chú vẫn được.
+        if (string.IsNullOrWhiteSpace(newCode)) return (false, "Mã công việc không được để trống.");
+        // Mã cũ lưu chữ thường / có khoảng trắng ("1t", "1T ") mà người dùng không đổi mã → không coi là đổi mã, giữ nguyên chữ đã lưu
+        if (string.Equals(newCode, (task.TaskCode ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) newCode = task.TaskCode!;
+        if (newCode != task.TaskCode)
+        {
+            bool dupDeleted = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == newCode && x.TaskId != task.TaskId && !x.IsActive);
+            if (dupDeleted) return (false, $"Mã công việc '{newCode}' thuộc một mục đã xóa — muốn dùng lại mã này thì bấm \"Thêm công việc mới\" với mã '{newCode}' (phần mềm khôi phục mục cũ).");
+            var used = await UsedWhereAsync(task.TaskCode);
+            if (used != null) return (false, $"Mã công việc '{task.TaskCode}' đã dùng ở {used} — không đổi mã được (đổi tên / nhóm / ghi chú thì được). Cần mã khác thì thêm công việc mới.");
+        }
 
         var now = DateTime.Now;
         var logs = new List<StandardWtsTaskChangeLog>();
@@ -166,6 +217,8 @@ public class StandardWtsTaskService
     public async Task<(bool Success, string? Error)> BulkUpdateProductiveAsync(
         List<(int TaskId, bool NewValue)> changes, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -215,12 +268,24 @@ public class StandardWtsTaskService
 
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int taskId, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
         var task = await _db.StandardWtsTasks.FirstOrDefaultAsync(x => x.TaskId == taskId && x.IsActive);
         if (task == null) return (false, "Không tìm thấy công việc cần xóa.");
+
+        // [RS-E8 2026-10-29] Mã đang dùng trong quy trình Part Master (bước đang dùng, Part chưa ngưng) → không xoá:
+        //   xoá thì Part Master không chọn lại được mã, PO mới chụp quy trình có mã không còn trong danh mục.
+        //   PO cũ đã chụp (snapshot) / WTS cũ không cản: WTS vẫn ghi được mã có trong snapshot; cần lại mã thì "Thêm công việc mới" cùng mã = khôi phục.
+        var parts = await PartsUsingAsync(task.TaskCode);
+        if (parts.Count > 0)
+        {
+            var list = string.Join(", ", parts.Take(5)) + (parts.Count > 5 ? $" … (+{parts.Count - 5})" : "");
+            return (false, $"Mã công việc '{task.TaskCode}' đang dùng trong quy trình của {parts.Count} Part ({list}) — không xóa được. Bỏ mã này khỏi Part Master trước.");
+        }
 
         var now = DateTime.Now;
         task.IsActive = false;
@@ -240,6 +305,52 @@ public class StandardWtsTaskService
 
         await _db.SaveChangesAsync();
         return (true, null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // [RS-E8 2026-10-29] Mã CV đang được dùng ở đâu (mọi nơi nối theo CHỮ mã)
+    //   Part Master: Taro dùng WtsTaskCode (trống thì NC); Bavia / Rửa / KCS / Đóng gói dùng NC = mã CV.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>Part No (đang dùng, chưa ngưng) có bước đang dùng mã này.</summary>
+    private async Task<List<string>> PartsUsingAsync(string code)
+    {
+        var ids = new List<int>();
+        ids.AddRange(await _db.PartTaroSteps.AsNoTracking()
+            .Where(s => s.IsActive && (s.WtsTaskCode == code || ((s.WtsTaskCode == null || s.WtsTaskCode == "") && s.NC == code)))
+            .Select(s => s.PartId).ToListAsync());
+        ids.AddRange(await _db.PartBaviaSteps.AsNoTracking().Where(s => s.IsActive && s.NC == code).Select(s => s.PartId).ToListAsync());
+        ids.AddRange(await _db.PartWashingSteps.AsNoTracking().Where(s => s.IsActive && s.NC == code).Select(s => s.PartId).ToListAsync());
+        ids.AddRange(await _db.PartInspectionSteps.AsNoTracking().Where(s => s.IsActive && s.NC == code).Select(s => s.PartId).ToListAsync());
+        ids.AddRange(await _db.PartPackagingSteps.AsNoTracking().Where(s => s.IsActive && s.NC == code).Select(s => s.PartId).ToListAsync());
+        var distinct = ids.Distinct().ToList();
+        if (distinct.Count == 0) return new List<string>();
+        var parts = await _db.PartMasters.AsNoTracking()
+            .Where(p => distinct.Contains(p.PartId) && p.IsActive && !p.IsObsolete)
+            .Select(p => p.PartNo).ToListAsync();
+        return parts.OrderBy(x => x).ToList();
+    }
+
+    /// <summary>Mã đã từng dùng ở bất kỳ đâu (Part Master kể cả bước cũ, snapshot PO, WTS, hoạt động, phát sinh) → chữ mô tả; chưa dùng → null.</summary>
+    private async Task<string?> UsedWhereAsync(string code)
+    {
+        if (await _db.PartTaroSteps.AsNoTracking().AnyAsync(s => s.WtsTaskCode == code || s.NC == code)
+            || await _db.PartBaviaSteps.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.PartWashingSteps.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.PartInspectionSteps.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.PartPackagingSteps.AsNoTracking().AnyAsync(s => s.NC == code))
+            return "Part Master";
+        if (await _db.KhPlanRouteSnapshotTaro.AsNoTracking().AnyAsync(s => s.WtsTaskCode == code || s.NC == code)
+            || await _db.KhPlanRouteSnapshotBavia.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.KhPlanRouteSnapshotWashing.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.KhPlanRouteSnapshotInspection.AsNoTracking().AnyAsync(s => s.NC == code)
+            || await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().AnyAsync(s => s.NC == code))
+            return "quy trình (snapshot) của PO";
+        if (await _db.WtsProductionLogs.AsNoTracking().AnyAsync(w => w.WtsCode == code || (w.ProcessGroup != "GC" && w.NC == code))
+            || await _db.WorkerActivityLogs.AsNoTracking().AnyAsync(w => w.WtsCode == code)
+            || await _db.WtsExtraItems.AsNoTracking().AnyAsync(w => w.WtsCode == code))
+            return "WTS đã ghi";
+        return null;
     }
 
     public async Task<List<StandardWtsTaskChangeLog>> GetChangeLogsAsync(int taskId)

@@ -1700,20 +1700,15 @@ else
             Nav.NavigateTo("/login");
             return;
         }
-        bool isAdmin = claimUser.IsInRole("ADMIN")
-                    || claimUser.FindFirst("GroupCode")?.Value == "ADMIN"
-                    || claimUser.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
-                    || claimUser.Identity?.Name?.ToLower() == "admin";
+        // [RS-C2 2026-10-29] Quyền nhóm lấy THEO DB (GetAllUserPermissionsAsync đã trả đủ quyền cho Admin) — cùng nguồn với máy chủ
+        //   (HandoverService kiểm lại khi lập / nhận). Trước: thêm nhánh tin claim "ADMIN" → tài khoản admin có nhóm bị khoá / claim cũ
+        //   vẫn thấy nút mà máy chủ từ chối. (Bản cũ: isAdmin = claim Role / GroupCode "ADMIN" hoặc tên "admin".)
         var allPerms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
         foreach (var (grp, key) in GroupPermKey)
         {
-            if (isAdmin) { _canViewGroup[grp] = true; _canEditGroup[grp] = true; }
-            else
-            {
-                allPerms.TryGetValue(key, out var p);
-                _canViewGroup[grp] = p.CanView;
-                _canEditGroup[grp] = p.CanEdit;
-            }
+            allPerms.TryGetValue(key, out var p);
+            _canViewGroup[grp] = p.CanView;
+            _canEditGroup[grp] = p.CanEdit;
         }
         _canView      = _canViewGroup.Values.Any(v => v);
         _canEditAny   = _canEditGroup.Values.Any(v => v);

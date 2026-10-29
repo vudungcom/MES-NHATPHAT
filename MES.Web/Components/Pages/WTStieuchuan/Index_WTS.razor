@@ -9,6 +9,7 @@
 @inject MES.Web.Services.UserService UserSvc
 @using MES.Web.Constants
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <PageTitle>Danh mục Công việc WTS Tiêu Chuẩn - MES</PageTitle>
 
@@ -34,9 +35,12 @@
                     <span>Xuất Excel</span>
                 }
             </button>
-            <button type="button" class="btn btn-primary btn-sm" @onclick="MoPopupThem">
-                <i class="bi bi-plus-lg"></i> Thêm công việc mới
-            </button>
+            @if (_canEditMaster)
+            {
+                <button type="button" class="btn btn-primary btn-sm" @onclick="MoPopupThem">
+                    <i class="bi bi-plus-lg"></i> Thêm công việc mới
+                </button>
+            }
         </div>
     </div>
 
@@ -47,7 +51,7 @@
             <i class="bi bi-list-check me-1"></i>Danh mục công việc
         </button>
     </li>
-    @if (_canEditMapping)
+    @if (_canViewMapping)
     {
         <li class="nav-item">
             <button class="@_MainTabMapCls" @onclick="SetMainTabMapping">
@@ -181,18 +185,24 @@
                                     <td class="text-center small text-muted">@item.DisplayOrder</td>
                                     <td class="small text-muted">@item.GhiChu</td>
                                     <td class="text-center">
-                                        <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa"
-                                                @onclick="() => MoPopupSua(itemRef)">
-                                            <i class="bi bi-pencil"></i>
-                                        </button>
+                                        @if (_canEditMaster)
+                                        {
+                                            <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa"
+                                                    @onclick="() => MoPopupSua(itemRef)">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                        }
                                         <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử"
                                                 @onclick="() => MoPopupLichSu(itemRef)">
                                             <i class="bi bi-clock-history"></i>
                                         </button>
-                                        <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa"
-                                                @onclick="() => MoPopupXoa(itemRef)">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
+                                        @if (_canEditMaster)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa"
+                                                    @onclick="() => MoPopupXoa(itemRef)">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        }
                                     </td>
                                 </tr>
                             }
@@ -253,7 +263,7 @@
                                 1 nhóm có thể chọn ở nhiều tab.
                             </div>
                             <button class="btn btn-sm btn-primary" @onclick="MXacNhanLuuAsync"
-                                    disabled="@(!_mIsDirty || _mIsProcessing)">
+                                    disabled="@_MSaveDisabled">
                                 <i class="bi bi-floppy me-1"></i>
                                 @(_mIsProcessing ? "Đang lưu..." : $"Lưu cấu hình ({_mPendingCount} thay đổi)")
                             </button>
@@ -284,6 +294,7 @@
                                             <input type="checkbox" class="form-check-input"
                                                    title="Chọn/bỏ tất cả"
                                                    checked="@_mIsAllSelected"
+                                                   disabled="@_MNoEdit"
                                                    @onchange="MToggleAll" />
                                         </th>
                                         <th style="width:220px;">Nhóm công việc</th>
@@ -314,6 +325,7 @@
                                                 <td class="text-center">
                                                     <input type="checkbox" class="form-check-input"
                                                            checked="@isChecked"
+                                                           disabled="@_MNoEdit"
                                                            @onchange="() => MToggleCategory(catLocal.Code)" />
                                                 </td>
                                                 <td>
@@ -795,6 +807,7 @@
 
     private void ToggleLocal(int taskId, bool dbValue)
     {
+        if (!_canEditMaster) return; // [RS-C1] đổi Có ích / Vô ích cần quyền Sửa WTS_MASTER
         var current = GetLocalValue(taskId, dbValue);
         var newValue = !current;
         if (newValue == dbValue)
@@ -834,6 +847,7 @@
 
     private void MoPopupLuuTong()
     {
+        if (!_canEditMaster) return; // [RS-C1]
         pinLuuTong = "";
         loiLuuTong = "";
         isHienThiPopupLuuTong = true;
@@ -886,8 +900,10 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
-        await LoadDataAsync();
+        // [RS-C1 2026-10-29] quyền đọc trước khi nạp: không Xem WTS_MASTER lẫn WTS_MAPPING → về trang chủ
         await LoadMappingPermAsync();
+        if (!_canViewMaster && !_canViewMapping) { Nav.NavigateTo("/"); return; }
+        await LoadDataAsync();
     }
 
     private async Task LoadDataAsync()
@@ -947,6 +963,7 @@
 
     private void MoPopupThem()
     {
+        if (!_canEditMaster) return; // [RS-C1]
         var defaultCat = DanhSachNhom.FirstOrDefault();
         itemDangSua = new StandardWtsTask
         {
@@ -966,6 +983,7 @@
 
     private void MoPopupSua(StandardWtsTask item)
     {
+        if (!_canEditMaster) return; // [RS-C1]
         itemDangSua = new StandardWtsTask
         {
             TaskId           = item.TaskId,
@@ -1030,6 +1048,7 @@
 
     private void MoPopupXoa(StandardWtsTask item)
     {
+        if (!_canEditMaster) return; // [RS-C1]
         itemCanXoa = item;
         pinXacNhan = "";
         loiPopup = "";
@@ -1114,8 +1133,14 @@
     private async Task LoadMappingPermAsync()
     {
         var perms = await UserSvc.GetAllUserPermissionsAsync(currentUserId);
-        _canEditMapping = perms.TryGetValue(SystemPermissions.WtsMapping, out var p) && p.CanView;
+        // [RS-C1 2026-10-29] trước: _canEditMapping = quyền XEM WTS_MAPPING → người chỉ có quyền xem vẫn lưu được cấu hình nhóm.
+        //   Nay: Xem → thấy tab; Sửa → mới tích / lưu được. Danh mục công việc: Sửa WTS_MASTER mới thêm / sửa / xoá / đổi phân loại.
+        if (perms.TryGetValue(SystemPermissions.WtsMapping, out var p)) { _canViewMapping = p.CanView || p.CanEdit; _canEditMapping = p.CanEdit; }
+        if (perms.TryGetValue(SystemPermissions.WtsMaster, out var m)) { _canViewMaster = m.CanView || m.CanEdit; _canEditMaster = m.CanEdit; }
     }
+    private bool _canViewMapping, _canViewMaster, _canEditMaster; // [RS-C1]
+    private bool _MNoEdit => !_canEditMapping; // [RS-C1] chỉ Xem: ô tích khoá
+    private bool _MSaveDisabled => !_mIsDirty || _mIsProcessing || !_canEditMapping; // [RS-C1]
 
     private bool   _mIsLoading    = false;
     private bool   _mIsProcessing = false;
@@ -1176,12 +1201,14 @@
 
     private void MToggleCategory(string code)
     {
+        if (!_canEditMapping) return; // [RS-C1]
         if (_mLocalSelection.Contains(code)) _mLocalSelection.Remove(code);
         else _mLocalSelection.Add(code);
     }
 
     private void MToggleAll(ChangeEventArgs e)
     {
+        if (!_canEditMapping) return; // [RS-C1]
         var check = (bool)(e.Value ?? false);
         if (check) foreach (var cat in _mAllCategories) _mLocalSelection.Add(cat.Code);
         else _mLocalSelection.Clear();
@@ -1192,6 +1219,7 @@
 
     private async Task MXacNhanLuuAsync()
     {
+        if (!_canEditMapping) return; // [RS-C1]
         _mIsProcessing = true;
         _mThongBaoLoi  = "";
         var selected = _mAllCategories.Where(c => _mLocalSelection.Contains(c.Code)).ToList();

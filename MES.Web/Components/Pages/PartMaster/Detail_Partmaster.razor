@@ -3639,11 +3639,17 @@ else
         var log = new List<string>();
         var errors = new List<string>();
         var reason = string.IsNullOrWhiteSpace(_reason) ? "Khởi tạo quy trình ban đầu" : _reason.Trim();
+        // [RS-E2 2026-10-29] Mục nào lưu lỗi giữa chừng (1 dòng NC / mã CV không lưu được) thì KHÔNG đánh "Xác nhận OK" cho mục đó.
+        //   Trước: lỗi từng dòng chỉ ghi vào danh sách lỗi, cờ Is*Confirmed vẫn = confirmOk → quy trình thiếu dòng mà vẫn OK,
+        //   PO tạo sau đó chụp (snapshot) quy trình thiếu. Nay mỗi mục đếm lỗi riêng: có lỗi → mục đó về NG, báo rõ để lưu lại.
+        bool okA = true, okB = true, okC = true, okD = true, okE = true;
+        int errMark;
 
         try
         {
             if (_canEditA)
             {
+                errMark = errors.Count;   // [RS-E2]
                 if (_partName != _originalPartName)
                 {
                     try
@@ -3700,11 +3706,13 @@ else
                     catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {ex.Message}"); }
                 }
 
-                _part!.IsPlanConfirmed = confirmOk; 
+                okA = errors.Count == errMark;   // [RS-E2]
+                _part!.IsPlanConfirmed = confirmOk && okA; 
             }
 
             if (_canEditB)
             {
+                errMark = errors.Count;   // [RS-E2]
                 await SaveStepListAsync(_machiningEdits,
                     e => MachiningSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
@@ -3718,11 +3726,13 @@ else
                 // [FIX] Lưu các pending timing confirmations (tích xác nhận chưa được lưu vào DB)
                 await SavePendingTimingConfirmsAsync(log, errors);
 
-                _part!.IsMachiningConfirmed = confirmOk;
+                okB = errors.Count == errMark;   // [RS-E2]
+                _part!.IsMachiningConfirmed = confirmOk && okB;
             }
 
             if (_canEditC)
             {
+                errMark = errors.Count;   // [RS-E2]
                 await SaveStepListAsync(_taroEdits,
                     e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
@@ -3747,11 +3757,13 @@ else
                 // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Taro/Bavia/Rửa
                 await SavePendingStdConfirmsAsync(new[] { "Taro", "Bavia", "Washing" }, log, errors);
 
-                _part!.IsHtspConfirmed = confirmOk;
+                okC = errors.Count == errMark;   // [RS-E2]
+                _part!.IsHtspConfirmed = confirmOk && okC;
             }
 
             if (_canEditD)
             {
+                errMark = errors.Count;   // [RS-E2]
                 await SaveStepListAsync(_inspectionEdits,
                     e => InspectionSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => InspectionSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
@@ -3762,11 +3774,13 @@ else
                 // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Kiểm tra
                 await SavePendingStdConfirmsAsync(new[] { "Inspection" }, log, errors);
 
-                _part!.IsKcsConfirmed = confirmOk;
+                okD = errors.Count == errMark;   // [RS-E2]
+                _part!.IsKcsConfirmed = confirmOk && okD;
             }
 
             if (_canEditE)
             {
+                errMark = errors.Count;   // [RS-E2]
                 await SaveStepListAsync(_packagingEdits,
                     e => PackagingSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => PackagingSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
@@ -3777,7 +3791,8 @@ else
                 // [STD-CONFIRM] Lưu tích xác nhận T.Chuẩn Đóng gói
                 await SavePendingStdConfirmsAsync(new[] { "Packaging" }, log, errors);
 
-                _part!.IsPkgConfirmed = confirmOk;
+                okE = errors.Count == errMark;   // [RS-E2]
+                _part!.IsPkgConfirmed = confirmOk && okE;
             }
 
             if (_part != null)
@@ -3787,14 +3802,15 @@ else
                 {
                     if (_canViewA)
                     {
-                        if (confirmOk) trackedPart.IsPlanConfirmed = true;
+                        if (confirmOk && okA) trackedPart.IsPlanConfirmed = true;   // [RS-E2] mục A lưu lỗi → không OK
                         else if (_canEditA) trackedPart.IsPlanConfirmed = false;
                     }
 
-                    if (_canEditB) trackedPart.IsMachiningConfirmed = confirmOk;
-                    if (_canEditC) trackedPart.IsHtspConfirmed = confirmOk;
-                    if (_canEditD) trackedPart.IsKcsConfirmed = confirmOk;
-                    if (_canEditE) trackedPart.IsPkgConfirmed = confirmOk;
+                    // [RS-E2] mục nào lưu lỗi giữa chừng → về NG (trước: = confirmOk dù có lỗi)
+                    if (_canEditB) trackedPart.IsMachiningConfirmed = confirmOk && okB;
+                    if (_canEditC) trackedPart.IsHtspConfirmed = confirmOk && okC;
+                    if (_canEditD) trackedPart.IsKcsConfirmed = confirmOk && okD;
+                    if (_canEditE) trackedPart.IsPkgConfirmed = confirmOk && okE;
 
                     await Db.SaveChangesAsync();
                     _part = trackedPart;
@@ -3803,7 +3819,21 @@ else
 
             if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
             {
-                log.Add(confirmOk ? "✓ Đã lưu & Xác nhận OK." : "✓ Đã lưu nháp (trạng thái chuyển về NG).");
+                // [RS-E2] có lỗi thì không báo "Xác nhận OK" — nói rõ mục nào vẫn NG
+                if (confirmOk && errors.Count > 0)
+                {
+                    var ngSec = new List<string>();
+                    if (_canEditA && !okA) ngSec.Add("A");
+                    if (_canEditB && !okB) ngSec.Add("B Gia công");
+                    if (_canEditC && !okC) ngSec.Add("C HTSP");
+                    if (_canEditD && !okD) ngSec.Add("D KCS");
+                    if (_canEditE && !okE) ngSec.Add("E Đóng gói");
+                    log.Add(ngSec.Count > 0
+                        ? $"⚠ Đã lưu phần không lỗi; mục {string.Join(", ", ngSec)} lưu lỗi giữa chừng nên CHƯA Xác nhận OK (vẫn NG) — sửa lỗi bên dưới rồi bấm lưu lại."
+                        : "⚠ Đã lưu nhưng có lỗi — CHƯA Xác nhận OK, xem lỗi bên dưới rồi bấm lưu lại.");
+                }
+                else
+                    log.Add(confirmOk ? "✓ Đã lưu & Xác nhận OK." : "✓ Đã lưu nháp (trạng thái chuyển về NG).");
             }
         }
         catch (Exception ex)
@@ -3812,6 +3842,27 @@ else
             // Giờ bắt lại, báo lỗi rõ ràng trên trang và dọn DbContext để lần lưu sau chạy được.
             Db.ChangeTracker.Clear();
             errors.Add("✗ Lỗi hệ thống khi lưu: " + ex.GetBaseException().Message);
+            // [RS-E2 2026-10-29] Lỗi văng giữa chừng (không bắt theo dòng) → không biết mục nào đã lưu đủ: mọi mục người này được sửa về NG
+            //   (trước: cờ Xác nhận OK cũ giữ nguyên dù quy trình lưu dở). Ghi riêng, lỗi tiếp thì chỉ báo thêm.
+            try
+            {
+                var pmErr = _part == null ? null : await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part.PartId);
+                if (pmErr != null)
+                {
+                    if (_canEditA) pmErr.IsPlanConfirmed = false;
+                    if (_canEditB) pmErr.IsMachiningConfirmed = false;
+                    if (_canEditC) pmErr.IsHtspConfirmed = false;
+                    if (_canEditD) pmErr.IsKcsConfirmed = false;
+                    if (_canEditE) pmErr.IsPkgConfirmed = false;
+                    await Db.SaveChangesAsync();
+                    errors.Add("⚠ Các mục bạn được sửa đã chuyển về NG (chưa Xác nhận OK) — kiểm tra lại rồi lưu lại.");
+                }
+            }
+            catch (Exception ex2)
+            {
+                Db.ChangeTracker.Clear();
+                errors.Add("✗ Không chuyển được trạng thái về NG: " + ex2.GetBaseException().Message);
+            }
         }
         finally
         {
@@ -3832,8 +3883,8 @@ else
             _setDefaultMaterial = false;
             _setDefaultConfig = false;
             _setDefaultNote = false;
-            _savedSuccessfully = confirmOk;
-            _isDraftSaved = !confirmOk; 
+            _savedSuccessfully = confirmOk && errors.Count == 0;   // [RS-E2] có lỗi → nút không hiện "Đã lưu & Xác nhận OK ✓"
+            _isDraftSaved = !_savedSuccessfully; 
             _hasChanges = false;
             await LoadAllAsync();
         }

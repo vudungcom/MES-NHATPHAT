@@ -25,7 +25,36 @@ public class KhPlanService
         return $"{prefix}{(max + 1):D4}";
     }
 
+    /// <summary>[RS-E16 2026-10-29] Tên khoá chung cho mọi chỗ cấp số Kế hoạch / thêm số PO mới (tạo KH, tách PO).</summary>
+    public const string KhNumberLock = "MES_KH_NUMBERS";
+
     public async Task<int> CreateAsync(KhPlan plan, int userId)
+    {
+        // [RS-E16 2026-10-29] Cấp PlanNo (max + 1) và kiểm trùng số PO phải nằm DƯỚI KHOÁ: trước đây đọc ngoài khoá →
+        //   2 người tạo KH cùng lúc trong ngày ra cùng PlanNo (unique chặn, 1 người lỗi phải làm lại), 2 người gõ cùng số PO
+        //   cùng lúc thì lọt cả 2 ([B5-PODUP]). Khoá sp_getapplock LockOwner = Transaction, nhả khi giao dịch của trang
+        //   (Create_Khplan: tạo phiếu + chép quy trình) Commit / Rollback. Không có giao dịch ngoài thì tự mở.
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            if (!await PoGuard.TryLockInTransactionAsync(_db, KhNumberLock))
+                throw new InvalidOperationException("Đang có người khác tạo Kế hoạch / tách PO — chờ vài giây rồi bấm lưu lại.");
+            var id = await CreateCoreAsync(plan, userId);
+            if (ownTx != null) await ownTx.CommitAsync();
+            return id;
+        }
+        catch
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
+    }
+
+    private async Task<int> CreateCoreAsync(KhPlan plan, int userId)
     {
         // [B5-PODUP 2026-10-28] Số PO là khoá tra cứu của WTS / Kho / Tách PO → không cho trùng (trong phiếu và với PO đã có).
         //   Trước: tạo được 2 dòng cùng số PO, WTS gõ PO vào dòng tìm thấy đầu → sổ dòng kia thiếu, dòng này dư. (Tách PO đã chặn trùng từ trước.)
@@ -284,7 +313,9 @@ public class KhPlanService
                 $"Tổng SL các PO mới ({totalNewQty}) không khớp SL PO gốc ({source.Quantity}). " +
                 "Phải bằng nhau tuyệt đối.");
 
-        var duplicates = newRows.GroupBy(r => r.PurchaseOrder).Where(g => g.Count() > 1).ToList();
+        // [RS-E16 2026-10-29] Chuẩn hoá số PO trước khi kiểm (trước: kiểm chữ gốc, lưu chữ đã Trim; trùng hoa / thường lọt — SQL coi là 1 số)
+        foreach (var r in newRows) r.PurchaseOrder = (r.PurchaseOrder ?? "").Trim();
+        var duplicates = newRows.GroupBy(r => r.PurchaseOrder, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToList();
         if (duplicates.Any())
             throw new InvalidOperationException($"PO mới bị trùng: {string.Join(", ", duplicates.Select(g => g.Key))}");
 
@@ -326,6 +357,15 @@ public class KhPlanService
             //   đúng lúc Kho nhập phôi / ai đó lập phiếu thì vẫn tách được → phôi / phiếu mất chỗ bám.
             var lockSplit = await PoGuard.LockAsync(_db, sourceDetailId);
             if (lockSplit != null) throw new InvalidOperationException(lockSplit);
+            // [RS-E16 2026-10-29] Số PO mới: kiểm trùng lại dưới khoá chung với Tạo KH (trước: chỉ kiểm ngoài khoá)
+            if (!await PoGuard.TryLockInTransactionAsync(_db, KhNumberLock))
+                throw new InvalidOperationException("Đang có người khác tạo Kế hoạch / tách PO — chờ vài giây rồi bấm lại.");
+            var newPoList = newRows.Select(r => r.PurchaseOrder).ToList();
+            var dupUnder = await _db.KhPlanDetails.AsNoTracking()
+                .Where(x => newPoList.Contains(x.PurchaseOrder) && x.KhPlanDetailId != sourceDetailId)
+                .Select(x => x.PurchaseOrder).Distinct().ToListAsync();
+            if (dupUnder.Any())
+                throw new InvalidOperationException($"PO {string.Join(", ", dupUnder)} đã tồn tại trong hệ thống");
             var srcDocs2 = await PoGuard.CountDocsAsync(_db, sourceDetailId);
             if (srcDocs2.HasAny)
                 throw new InvalidOperationException($"PO {srcPO} vừa có chứng từ số lượng ({srcDocs2.Text()}) — không tách được.");
@@ -785,6 +825,11 @@ public class KhPlanService
             var docsRf = await PoGuard.CountDocsAsync(_db, khPlanDetailId);
             if (docsRf.HasActiveFlow)
                 throw new InvalidOperationException($"PO vừa có số chạy ({docsRf.Text()}) — không cập nhật quy trình được (K6).");
+            // [RS-E15 2026-10-29] Part không còn công đoạn nào (B→E đều trống / đã xoá) → không làm mới:
+            //   trước đây vẫn xoá hết snapshot cũ rồi chép "rỗng" và commit → PO mất hẳn quy trình (log GC:0 …), WTS không có NC / mã CV để ghi.
+            //   Kiểm TRƯỚC khi xoá, cùng điều kiện CopyRouteSnapshotAsync chép (bước đang dùng của Part).
+            if (!await PartHasRouteAsync(partId))
+                throw new InvalidOperationException("Part trong Part Master chưa có công đoạn nào (Gia công / HTSP / KCS / Đóng gói đều trống) — không cập nhật quy trình được: làm mới lúc này PO sẽ mất hẳn quy trình. Nhập quy trình ở Part Master trước rồi cập nhật lại.");
             // 1. Đếm snapshot cũ để ghi log
             var oldCountMachining  = await _db.KhPlanRouteSnapshotMachining .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
             var oldCountTaro       = await _db.KhPlanRouteSnapshotTaro       .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
@@ -850,6 +895,15 @@ public class KhPlanService
             throw;
         }
     }
+    /// <summary>[RS-E15 2026-10-29] Part có ít nhất 1 công đoạn đang dùng (cùng điều kiện CopyRouteSnapshotAsync: PartId + IsActive).</summary>
+    private async Task<bool> PartHasRouteAsync(int partId)
+        => await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+        || await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+        || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+        || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+        || await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+        || await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive);
+
     /// <summary>
     /// Lấy tóm tắt số bước snapshot cho nhiều KhPlanDetail cùng lúc (batch).
     /// Trả về dict: KhPlanDetailId → SnapshotSummary

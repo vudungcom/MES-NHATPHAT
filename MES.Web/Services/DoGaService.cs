@@ -34,6 +34,8 @@ public class DoGaService
     /// </summary>
     public async Task<(bool Success, string? Error)> CreateAsync(DoGa model, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa DoGa (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -70,6 +72,8 @@ public class DoGaService
     /// </summary>
     public async Task<(bool Success, string? Error)> UpdateAsync(DoGa updatedModel, string? reason, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa DoGa (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -144,6 +148,8 @@ public class DoGaService
         int currentUserId, 
         string pin)
     {
+        // [RS-C1 2026-10-29] Mượn / trả đồ gá là thao tác hằng ngày: cần ít nhất quyền Xem DO_GA (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanViewAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoView("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -203,6 +209,8 @@ public class DoGaService
         int currentUserId, 
         string pin)
     {
+        // [RS-C1 2026-10-29] Mượn / trả đồ gá là thao tác hằng ngày: cần ít nhất quyền Xem DO_GA (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanViewAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoView("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -259,6 +267,8 @@ public class DoGaService
     /// </summary>
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int doGaId, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa DoGa (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");

@@ -215,6 +215,7 @@ namespace Microsoft.EntityFrameworkCore
         readonly DbContext _c;
         public DatabaseFacade(DbContext c) { _c = c; }
         public StubTransaction? Current;
+        public StubTransaction? CurrentTransaction => Current;   // [RS-E16] KhPlanService.CreateAsync: có giao dịch ngoài thì dùng, không thì tự mở
         public Task<StubTransaction> BeginTransactionAsync(CancellationToken ct = default) => Begin();
         public Task<StubTransaction> BeginTransactionAsync(System.Data.IsolationLevel lvl, CancellationToken ct = default) => Begin();
         Task<StubTransaction> Begin()

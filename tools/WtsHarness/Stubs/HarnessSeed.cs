@@ -102,6 +102,26 @@ public static class HarnessSeed
         await Move(ids[2], "KHO", "GC", 30, "NC1");
         RawWts(ids[2], "GC", "NC1", null, 30, admin.UserId); RawWts(ids[2], "GC", "NC2", null, 30, admin.UserId);
         await Move(ids[2], "GC", "HTSP", 30);
+        // ── [RS-C1][RS-C2][RS-E2 29/10] người dùng cho drive_quyen.py (thêm SAU dữ liệu WTS → không đổi id / kết quả kịch bản WTS) ──
+        static string PermsVE(params (string c, bool v, bool e)[] ps) => JsonSerializer.Serialize(ps.Select(p => new GroupPermissionSetting { SectionCode = p.c, CanView = p.v, CanEdit = p.e }).ToList());
+        var dmCodes = new[] { SystemPermissions.ThietBi, SystemPermissions.KhachHang, SystemPermissions.Dao, SystemPermissions.DoGa, SystemPermissions.WtsMaster, SystemPermissions.WtsMapping };
+        var gXem = new UserGroup { GroupCode = "XEMDM", GroupName = "Xem danh mục", IsActive = true, Permissions = PermsVE(dmCodes.Select(c => (c, true, false)).ToArray()) };
+        var gDm  = new UserGroup { GroupCode = "SUADM", GroupName = "Sửa danh mục", IsActive = true, Permissions = PermsVE(dmCodes.Select(c => (c, true, true)).ToArray()) };
+        var gGn  = new UserGroup { GroupCode = "GNGC", GroupName = "Giao nhận GC", IsActive = true, Permissions = PermsVE(
+            (SystemPermissions.HandoverGc, true, true), (SystemPermissions.HandoverKho, true, false), (SystemPermissions.HandoverHtsp, true, false)) };
+        db.UserGroups.AddRange(gXem, gDm, gGn); await db.SaveChangesAsync();
+        db.Users.AddRange(
+            new User { Username = "xem01", FullName = "Xem danh mục", PasswordHash = hash, GroupId = gXem.GroupId, IsActive = true, PIN = "1111" },
+            new User { Username = "dm01",  FullName = "Sửa danh mục", PasswordHash = hash, GroupId = gDm.GroupId,  IsActive = true, PIN = "1111" },
+            new User { Username = "gn01",  FullName = "Giao nhận GC", PasswordHash = hash, GroupId = gGn.GroupId,  IsActive = true, PIN = "1111" });
+        await db.SaveChangesAsync();
+        // Part cho [RS-E2]: 1 dòng Bavia, mục C đang Xác nhận OK
+        var pe2 = new PartMaster { PartNo = "PART-E2", PartName = "Thử E2", IsActive = true, IsPlanConfirmed = true, IsHtspConfirmed = true, CustomerId = cust.CustomerId };
+        db.PartMasters.Add(pe2); await db.SaveChangesAsync();
+        db.PartBaviaSteps.Add(new PartBaviaStep { PartId = pe2.PartId, StepOrder = 1, NC = "B1", StepName = "Bavia", StandardTime = 0.5m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartWashingSteps.Add(new PartWashingStep { PartId = pe2.PartId, StepOrder = 1, NC = "R1", StepName = "Rửa", StandardTime = 0.2m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        await db.SaveChangesAsync();
+
         db.ChangeTracker.Clear();
         db.Fixup();
         Console.WriteLine($"[HARNESS] seed xong: {db.KhPlanDetails.List.Count} PO, {db.WtsProductionLogs.List.Count} WTS, {db.HandoverTransactions.List.Count} phiếu");
@@ -128,6 +148,10 @@ public static class HarnessSeed
             cases = db.NgCases.List.OrderBy(c => c.NgCaseId).Select(c => new { c.NgCaseId, c.KhPlanDetailId, c.NgCategoryId, c.OriginKind, c.DetectGroupCode, c.DetectNC, c.CauseGroupCode, c.CreatedBy }),
             acts = db.WorkerActivityLogs.List.OrderBy(a => a.ActivityLogId).Select(a => new { a.ActivityLogId, a.WorkerId, a.WtsCode, a.WtsName, Start = D(a.StartTime), End = D(a.EndTime), a.IsVoided }),
             raw = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.ToList(),
+            // [RS-E2] cờ xác nhận Part (drive_quyen.py) · [RS-C1] máy / khách / mã CV (đếm)
+            parts = db.PartMasters.List.OrderBy(p => p.PartId).Select(p => new { p.PartNo, p.IsPlanConfirmed, p.IsMachiningConfirmed, p.IsHtspConfirmed, p.IsKcsConfirmed, p.IsPkgConfirmed }),
+            bavia = db.PartBaviaSteps.List.OrderBy(b => b.StepId).Select(b => new { b.PartId, b.NC, b.StepName, b.IsActive }),
+            thietbi = db.ThietBis.List.Where(t => t.IsActive).Select(t => t.SoMay),
         };
     }
 }

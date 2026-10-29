@@ -151,6 +151,11 @@ namespace MES.Web.Services
         public static bool EverHadNg(LedgerRow r)
         {
             if (r.DaHuy > 0 || r.TraKhach > 0) return true;
+            // [EVER-NG-TP 2026-10-29] Kho đếm NG lúc nhận THÀNH PHẨM (Đóng gói → Kho) mà phiếu trả tự lập chưa được Đóng gói bấm Nhận:
+            //   Kho không giữ ô thành phẩm, bên giao mới chỉ có "Chờ nhận" → không ô NG nào > 0 → lọc "có phát sinh lỗi" ở trang Kế hoạch
+            //   bỏ sót PO trong khi khung hàng lỗi (PoLoi) đã hiện vụ. Bộ kiểm nặng bắt được (seed 84 LOI=1 PHOI=8, có từ trước bản này).
+            //   Sổ vụ đã ghi số sinh ra → dùng làm dấu hiệu chung.
+            if (r.Cases.Values.Any(c => c.SinhRa > 0)) return true;
             foreach (var g in r.Groups.Values)
             {
                 if (g.NgCuoi > 0 || g.NgDau > 0 || g.NhanLoi > 0 || g.NhanSua > 0 || g.GiaoLoi > 0 || g.GiaoSua > 0 || g.LoiGiu > 0 || g.SuaGiu > 0) return true;

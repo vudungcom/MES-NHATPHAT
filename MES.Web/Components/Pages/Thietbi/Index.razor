@@ -5,6 +5,8 @@
 @using System.Security.Claims
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.ThietBiService ThietBiSvc
+@inject MES.Web.Services.UserService UserSvc
+@inject NavigationManager Nav
 
 <PageTitle>Danh sách thiết bị - MES</PageTitle>
 
@@ -15,9 +17,12 @@
             <h2 style="font-weight: bold; color: #1e293b;">Danh sách thiết bị</h2>
             <p class="text-muted mb-0">Mỗi dòng = 1 Thiết bị. <b>Double-click</b> để xem chi tiết. Bấm nút Sửa / Lịch sử / Xóa để thao tác.</p>
         </div>
-        <button class="btn btn-primary" style="border-radius: 6px; font-weight: 500;" @onclick="MoPopupThem">
-            <i class="bi bi-plus-lg"></i> Thêm thiết bị mới
-        </button>
+        @if (_canEdit)
+        {
+            <button class="btn btn-primary" style="border-radius: 6px; font-weight: 500;" @onclick="MoPopupThem">
+                <i class="bi bi-plus-lg"></i> Thêm thiết bị mới
+            </button>
+        }
     </div>
 
     <!-- Thanh Search & Filter -->
@@ -143,15 +148,21 @@
                                 }
                             </td>
                             <td class="text-center align-middle text-nowrap" @onclick:stopPropagation="true">
-                                <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa" @onclick="() => MoPopupSua(may)">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
+                                @if (_canEdit)
+                                {
+                                    <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Sửa" @onclick="() => MoPopupSua(may)">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                }
                                 <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử trạng thái" @onclick="() => MoPopupLichSu(may)">
                                     <i class="bi bi-clock-history"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa" @onclick="() => MoPopupXoa(may)">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                                @if (_canEdit)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Xóa" @onclick="() => MoPopupXoa(may)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
                             </td>
                         </tr>
                         stt++;
@@ -233,9 +244,12 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => { DongPopupView(); MoPopupLichSu(mayDangXem); }">
                         <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
-                    <button type="button" class="btn btn-sm btn-primary" @onclick="() => ChuyenSangSua(mayDangXem)">
-                        <i class="bi bi-pencil"></i> Sửa thiết bị
-                    </button>
+                    @if (_canEdit)
+                    {
+                        <button type="button" class="btn btn-sm btn-primary" @onclick="() => ChuyenSangSua(mayDangXem)">
+                            <i class="bi bi-pencil"></i> Sửa thiết bị
+                        </button>
+                    }
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupView">Đóng</button>
                 </div>
             </div>
@@ -556,6 +570,8 @@
     private string loiPopup = "";
     
     private bool isLoading = true;
+    // [RS-C1 2026-10-29] Quyền ma trận THIET_BI (Admin luôn có). Máy chủ (ThietBiService) cũng chặn — trang chỉ ẩn nút.
+    private bool _canView, _canEdit;
     private bool isProcessing = false;
     private bool isLoadingLogs = false;
     private int currentUserId;
@@ -604,6 +620,10 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        // [RS-C1 2026-10-29] Không có quyền Xem → về trang chủ; không có quyền Sửa → ẩn Thêm / Sửa / Xoá (trước: chỉ cần đăng nhập)
+        var perms = await UserSvc.GetAllUserPermissionsAsync(currentUserId);
+        if (perms.TryGetValue(MES.Web.Constants.SystemPermissions.ThietBi, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
+        if (!_canView) { Nav.NavigateTo("/"); return; }
         await LoadDataAsync();
     }
 
@@ -623,12 +643,14 @@
 
     private void ChuyenSangSua(ThietBi may)
     {
+        if (!_canEdit) return; // [RS-C1]
         DongPopupView();
         _ = MoPopupSua(may);
     }
 
     private async Task MoPopupSua(ThietBi may)
     {
+        if (!_canEdit) return; // [RS-C1]
         mayDangSua = new ThietBi
         {
             ThietBiId = may.ThietBiId,
@@ -731,6 +753,7 @@
 
     private void MoPopupThem() 
     { 
+        if (!_canEdit) return; // [RS-C1]
         mayMoi = new ThietBi { TrangThai = "Hoạt động" }; 
         thongBaoLoi = string.Empty;
         isHienThiPopupThem = true; 
@@ -759,6 +782,7 @@
 
     private void MoPopupXoa(ThietBi may)
     {
+        if (!_canEdit) return; // [RS-C1]
         mayCanXoa = may;
         pinXacNhan = "";
         loiPopup = "";

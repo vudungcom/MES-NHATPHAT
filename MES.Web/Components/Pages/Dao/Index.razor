@@ -6,6 +6,8 @@
 @using MES.Web.Services
 @inject DaoService DaoSvc
 @inject AuthenticationStateProvider AuthState
+@inject UserService UserSvc
+@inject NavigationManager Nav
 
 <PageTitle>Quản lý Dao cụ - MES</PageTitle>
 
@@ -15,11 +17,19 @@
         <p class="text-muted small mb-0">Mỗi dòng = 1 Dao cụ. Cột Ký hiệu dao là khóa tham chiếu chuẩn Master Data.</p>
     </div>
     <div>
-        <button class="btn btn-primary" @onclick="OpenCreateModal">
-            <i class="bi bi-plus-lg"></i> Thêm dao mới
-        </button>
+        @if (_canEdit)
+        {
+            <button class="btn btn-primary" @onclick="OpenCreateModal">
+                <i class="bi bi-plus-lg"></i> Thêm dao mới
+            </button>
+        }
     </div>
 </div>
+
+@if (!string.IsNullOrEmpty(_toggleError))
+{
+    <div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle-fill"></i> @_toggleError</div>
+}
 
 <div class="row g-2 mb-3">
     <div class="col-md-5">
@@ -105,22 +115,25 @@ else
                             }
                         </td>
                         <td class="text-center text-nowrap">
-                            <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Chỉnh sửa"
-                                    @onclick="() => OpenEditModal(item)">
-                                <i class="bi bi-pencil"></i>
-                            </button>
+                            @if (_canEdit)
+                            {
+                                <button class="btn btn-sm btn-outline-primary py-0 px-2 me-1" title="Chỉnh sửa"
+                                        @onclick="() => OpenEditModal(item)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            }
                             <button class="btn btn-sm btn-outline-secondary py-0 px-2 me-1" title="Lịch sử thay đổi"
                                     @onclick="async () => await OpenHistoryModal(item)">
                                 <i class="bi bi-clock-history"></i>
                             </button>
-                            @if (item.IsActive)
+                            @if (_canEdit && item.IsActive)
                             {
                                 <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Ngừng dùng / Xóa"
                                         @onclick="async () => await ToggleDelete(item, false)">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             }
-                            else
+                            else if (_canEdit)
                             {
                                 <button class="btn btn-sm btn-outline-success py-0 px-2" title="Khôi phục hoạt động"
                                         @onclick="async () => await ToggleDelete(item, true)">
@@ -292,6 +305,9 @@ else
     private Dao? _editingModel;
     private string _editReason = string.Empty;
     private string? _errorMessage;
+    // [RS-C1 2026-10-29] Quyền ma trận DAO (Admin luôn có). Máy chủ (DaoService) cũng chặn — trang chỉ ẩn nút.
+    private bool _canView, _canEdit;
+    private string? _toggleError;
 
     private bool _showHistoryModal = false;
     private bool _historyLoading = false;
@@ -326,6 +342,10 @@ else
         var auth = await AuthState.GetAuthenticationStateAsync();
         var uidStr = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         int.TryParse(uidStr, out _currentUserId);
+        // [RS-C1 2026-10-29] Không có quyền Xem → về trang chủ; không có quyền Sửa → ẩn Thêm / Sửa / Ngừng / Khôi phục (trước: chỉ cần đăng nhập)
+        var perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+        if (perms.TryGetValue(MES.Web.Constants.SystemPermissions.Dao, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
+        if (!_canView) { Nav.NavigateTo("/"); return; }
 
         await LoadDataAsync();
         _loading = false;
@@ -339,6 +359,7 @@ else
 
     private void OpenCreateModal()
     {
+        if (!_canEdit) return; // [RS-C1]
         _editingModel = new Dao { IsActive = true, SoLuongTon = 0 };
         _editReason = string.Empty;
         _errorMessage = null;
@@ -347,6 +368,7 @@ else
 
     private void OpenEditModal(Dao item)
     {
+        if (!_canEdit) return; // [RS-C1]
         _editingModel = new Dao
         {
             DaoId = item.DaoId,
@@ -410,7 +432,9 @@ else
 
     private async Task ToggleDelete(Dao item, bool activate)
     {
-        await DaoSvc.ToggleActiveAsync(item.DaoId, activate, activate ? "Khôi phục sử dụng" : "Ngừng sử dụng dao", _currentUserId);
+        // [RS-C1 2026-10-29] trước: bỏ qua kết quả → máy chủ từ chối cũng không báo
+        var (okT, errT) = await DaoSvc.ToggleActiveAsync(item.DaoId, activate, activate ? "Khôi phục sử dụng" : "Ngừng sử dụng dao", _currentUserId);
+        _toggleError = okT ? null : errT;
         await LoadDataAsync();
     }
 

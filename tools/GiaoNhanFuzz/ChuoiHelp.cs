@@ -17,7 +17,7 @@ public static class ChuoiHelp
     {
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = true };
         db.UserGroups.List.Add(adminG);
-        for (int u = 1; u <= 6; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : null, GroupId = u == 1 ? 1 : null });
+        for (int u = 1; u <= 6; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : FuzzPerm.Xuong(db), GroupId = u == 1 ? 1 : FuzzPerm.XuongId });
         db.Customers.List.Add(new Customer { CustomerId = 1, CustomerName = "KH" });
         if (exclH04) db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 1, SoMay = "H04", AddedAt = DateTime.Now, AddedByUserId = 1 });
         VuHelp.SeedCats(db);

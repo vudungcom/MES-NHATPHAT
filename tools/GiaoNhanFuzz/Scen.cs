@@ -8,7 +8,7 @@ public static class Scen
     {
         var db = new AppDbContext();
         foreach (var (id, n) in new[] { (1, "Kho Lan"), (2, "GC Minh"), (3, "HTSP Hoa"), (4, "KCS Tuan"), (5, "PKG Nga") })
-            db.Users.List.Add(new User { UserId = id, Username = "u" + id, FullName = n });
+            db.Users.List.Add(new User { UserId = id, Username = "u" + id, FullName = n, IsActive = true, Group = FuzzPerm.Xuong(db), GroupId = FuzzPerm.XuongId });   // [RS-C2]
         var cust = new Customer { CustomerId = 1, CustomerName = "KH" };
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-TEST", Customer = cust, CustomerId = 1, ApplyWorkflow = true };

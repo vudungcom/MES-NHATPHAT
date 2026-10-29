@@ -7,7 +7,7 @@ public static class Bench
     {
         // 1 PO lớn: 200 chiếc, nhiều phiếu + WTS nhỏ lẻ (giống PO chạy nhiều ngày)
         var db = new AppDbContext();
-        for (int u = 1; u <= 5; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u });
+        for (int u = 1; u <= 5; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = FuzzPerm.Xuong(db), GroupId = FuzzPerm.XuongId });   // [RS-C2]
         var cust = new Customer { CustomerId = 1, CustomerName = "KH" }; db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH", Customer = cust, CustomerId = 1, ApplyWorkflow = true }; db.KhPlans.List.Add(plan);
         db.KhPlanDetails.List.Add(new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO", Quantity = 200 });

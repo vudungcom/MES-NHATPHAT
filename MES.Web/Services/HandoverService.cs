@@ -1577,6 +1577,11 @@ namespace MES.Web.Services
             if (isOut) toGroupCode = HandoverPurpose.OutTarget(purpose)!;
             if (!validGroups.Contains(fromGroupCode) || (!isOut && !validGroups.Contains(toGroupCode)))
                 return (false, "Mã nhóm không hợp lệ.");
+            // [RS-C2 2026-10-29] Máy chủ kiểm người lập phiếu có quyền SỬA nhóm giao (ma trận HANDOVER_*, Admin = mọi nhóm).
+            //   Trước: chỉ trang lọc ô chọn nhóm — máy chủ không kiểm. Số vẫn cân, nhưng sai người lập là mất truy vết.
+            //   Áp cho mọi đường lập phiếu: IssueByCellAsync, IssueSpecialAsync, IssueAsync (có loại phiếu).
+            var denyIssue = await DenyGroupAsync(issuedByUserId, fromGroupCode, "lập phiếu giao");
+            if (denyIssue != null) return (false, denyIssue);
             if (!HandoverPurpose.All.Contains(purpose)) return (false, "Loại phiếu không hợp lệ.");
             var routeErr = HandoverLedgerService.CheckRoute(fromGroupCode, toGroupCode, purpose);
             if (routeErr != null) return (false, routeErr);
@@ -1755,9 +1760,17 @@ namespace MES.Web.Services
             // [GN-RECV-NG2] Kiểm lý do NG dời xuống sau khi đọc phiếu: phiếu Hàng lỗi công đoạn trước lấy lỗi theo phiếu
 
             var txHead = await _db.HandoverTransactions.AsNoTracking()
-                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId, t.NgCaseId }).FirstOrDefaultAsync();   // [VULOI] + vụ // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
+                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId, t.NgCaseId, t.ToGroupCode }).FirstOrDefaultAsync();   // [RS-C2] + nhóm nhận   // [VULOI] + vụ // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
             if (txHead == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+            // [RS-C2 2026-10-29] Máy chủ kiểm người bấm Nhận có quyền SỬA nhóm nhận (ma trận HANDOVER_*, Admin = mọi nhóm).
+            //   Trước: trang lấy nhóm từ ô chọn, máy chủ không kiểm (huỷ thì đã kiểm qua editGroups).
+            //   Phiếu Huỷ / Trả khách không có bên nhận: bỏ qua bước này để lời báo cũ ("không có bên nhận") hiện đúng.
+            if (!HandoverPurpose.IsOut(txHead.Purpose))
+            {
+                var denyRecv = await DenyGroupAsync(receivedByUserId, txHead.ToGroupCode, "nhận hàng");
+                if (denyRecv != null) return (false, denyRecv);
+            }
             // [GN-CELL2] Ô bên nhận: mặc định ô bên giao chỉ định (phiếu cũ: theo loại phiếu); bên nhận đổi được, đổi thì bắt buộc lý do.
             //   Phiếu theo NC / phiếu cũ không rõ loại: không có ô để chọn. Phiếu trả tự lập (NG lúc nhận): luôn ô Hàng lỗi.
             var headPurpose = txHead.Purpose ?? (txHead.IsReturnNg ? HandoverPurpose.NgReturn : null);
@@ -2155,6 +2168,14 @@ namespace MES.Web.Services
         //   Huỷ lần nhận: người bấm Nhận, hoặc người có quyền sửa nhóm nhận.
         //   Admin: trang truyền đủ 5 nhóm vào editGroups.
         // ----------------------------------------------------------------
+        /// <summary>[RS-C2 2026-10-29] null = được; còn lại = lời báo không có quyền sửa nhóm (đọc ma trận từ DB, không tin trang).</summary>
+        private async Task<string?> DenyGroupAsync(int userId, string groupCode, string viec)
+        {
+            var eg = await PermCheck.HandoverEditGroupsAsync(_db, userId);
+            return eg.Contains(groupCode) ? null
+                : $"Bạn không có quyền sửa nhóm {HandoverLedgerService.GroupLabel(groupCode)} — không {viec} thay nhóm khác được.";
+        }
+
         public static bool CanVoidIssue(int issuedBy, string fromGroupCode, int userId, IReadOnlyCollection<string> editGroups)
             => issuedBy == userId || editGroups.Contains(fromGroupCode);
 

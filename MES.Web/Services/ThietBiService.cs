@@ -63,6 +63,8 @@ public class ThietBiService
 
     public async Task<(bool Success, string? Error)> CreateAsync(ThietBi thietBi, int currentUserId)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa THIET_BI (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.ThietBi)) return (false, PermCheck.NoEdit("Thiết bị"));
         if (string.IsNullOrWhiteSpace(thietBi.SoMay)) return (false, "Số máy không được để trống.");
 
         var isDuplicate = await _db.ThietBis.AnyAsync(t => t.SoMay == thietBi.SoMay.Trim() && t.IsActive);
@@ -99,6 +101,8 @@ public class ThietBiService
         int currentUserId, 
         string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa THIET_BI (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.ThietBi)) return (false, PermCheck.NoEdit("Thiết bị"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN không chính xác.");
@@ -234,6 +238,8 @@ public class ThietBiService
 
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int thietBiId, int currentUserId, string pin)
     {
+        // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa THIET_BI (trước: chỉ cần đăng nhập)
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.ThietBi)) return (false, PermCheck.NoEdit("Thiết bị"));
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN không chính xác.");
 

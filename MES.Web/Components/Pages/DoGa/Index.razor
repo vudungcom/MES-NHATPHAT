@@ -5,6 +5,8 @@
 @using System.Security.Claims
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.DoGaService DoGaSvc
+@inject MES.Web.Services.UserService UserSvc
+@inject NavigationManager Nav
 @inject IJSRuntime JS
 
 <PageTitle>Quản lý Đồ gá & Phụ kiện - MES</PageTitle>
@@ -31,9 +33,12 @@
                     <span>Xuất Excel</span>
                 }
             </button>
-            <button type="button" class="btn btn-primary btn-sm" @onclick="MoPopupThem">
-                <i class="bi bi-plus-lg"></i> Thêm đồ gá mới
-            </button>
+            @if (_canEdit)
+            {
+                <button type="button" class="btn btn-primary btn-sm" @onclick="MoPopupThem">
+                    <i class="bi bi-plus-lg"></i> Thêm đồ gá mới
+                </button>
+            }
         </div>
     </div>
 
@@ -203,15 +208,21 @@
                                         <i class="bi bi-hand-index-thumb"></i> Mượn
                                     </button>
                                 }
-                                <button class="btn btn-sm btn-outline-primary py-0 px-1 me-1" title="Sửa thông tin" @onclick="() => MoPopupSua(item)">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
+                                @if (_canEdit)
+                                {
+                                    <button class="btn btn-sm btn-outline-primary py-0 px-1 me-1" title="Sửa thông tin" @onclick="() => MoPopupSua(item)">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                }
                                 <button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1" title="Lịch sử mượn trả & sửa đổi" @onclick="() => MoPopupLichSu(item)">
                                     <i class="bi bi-clock-history"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Xóa" @onclick="() => MoPopupXoa(item)">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                                @if (_canEdit)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Xóa" @onclick="() => MoPopupXoa(item)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
                             </td>
                         </tr>
                         stt++;
@@ -571,9 +582,12 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary me-auto" @onclick="() => { DongPopupView(); MoPopupLichSu(itemDangXem); }">
                         <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
-                    <button type="button" class="btn btn-sm btn-primary" @onclick="() => { DongPopupView(); MoPopupSua(itemDangXem); }">
-                        <i class="bi bi-pencil"></i> Sửa
-                    </button>
+                    @if (_canEdit)
+                    {
+                        <button type="button" class="btn btn-sm btn-primary" @onclick="() => { DongPopupView(); MoPopupSua(itemDangXem); }">
+                            <i class="bi bi-pencil"></i> Sửa
+                        </button>
+                    }
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupView">Đóng</button>
                 </div>
             </div>
@@ -617,6 +631,9 @@
 
 @code {
     private bool isLoading = true;
+    // [RS-C1 2026-10-29] Quyền ma trận DO_GA (Admin luôn có): Thêm / Sửa / Xoá cần quyền Sửa; Mượn / Trả cần quyền Xem.
+    //   Máy chủ (DoGaService) cũng chặn — trang chỉ ẩn nút.
+    private bool _canView, _canEdit;
     private bool isProcessing = false;
     private bool isExporting = false;
     private bool isLoadingLogs = false;
@@ -668,6 +685,10 @@
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        // [RS-C1 2026-10-29] Không có quyền Xem → về trang chủ; không có quyền Sửa → ẩn Thêm / Sửa / Xoá (trước: chỉ cần đăng nhập)
+        var perms = await UserSvc.GetAllUserPermissionsAsync(currentUserId);
+        if (perms.TryGetValue(MES.Web.Constants.SystemPermissions.DoGa, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
+        if (!_canView) { Nav.NavigateTo("/"); return; }
         await LoadDataAsync();
     }
 
@@ -756,6 +777,7 @@
 
     private void MoPopupThem()
     {
+        if (!_canEdit) return; // [RS-C1]
         itemDangSua = new DoGa { SoLuong = "1", TrangThai = "Sẵn sàng" };
         isThemMoi = true;
         pinXacNhan = "";
@@ -766,6 +788,7 @@
 
     private void MoPopupSua(DoGa item)
     {
+        if (!_canEdit) return; // [RS-C1]
         itemDangSua = new DoGa
         {
             DoGaId = item.DoGaId,
@@ -826,6 +849,7 @@
 
     private void MoPopupXoa(DoGa item)
     {
+        if (!_canEdit) return; // [RS-C1]
         itemCanXoa = item;
         pinXacNhan = "";
         loiPopup = "";
