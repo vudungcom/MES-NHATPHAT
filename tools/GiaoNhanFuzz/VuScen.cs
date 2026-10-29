@@ -238,6 +238,67 @@ public static class VuScen
             await Can("đổi tên");
         }
 
+        // [VL8-TIMELINE 2026-10-28] Hàng lỗi đi vòng (fuzz seed 77 EXCL=0.7): Kho nhận vụ → giao đi → nhận lại đúng vụ đó.
+        //   Huỷ lần nhận ĐẦU của Kho: số cuối vẫn 0 nhưng lúc giao đi vụ chưa có nguồn → phải chặn (trước: lọt, vụ kẹt không gỡ được).
+        Console.WriteLine("[V9] VL8: Kho nhận vụ → giao Đóng gói → Đóng gói đếm NG trả lại Kho → huỷ lần nhận đầu của Kho phải bị chặn");
+        {
+            db = Seed(); svc = new HandoverService(db); led = new HandoverLedgerService(db);
+            await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            var t1 = LastTx(db);
+            await svc.ReceiveAsync(t1, 9, 0, null, 2);
+            var rNg = await svc.ReceiveAsync(t1, 0, 1, null, 2, ngCategoryId: 1);   // GC đếm 1 NG lúc nhận → phiếu trả tự lập về Kho
+            var back1 = db.HandoverTransactions.List.Last();
+            Ok(rNg.Ok && back1.SourceReceiveId != null && back1.NgCaseId != null, "GC nhận 1 NG → phiếu trả tự lập mang vụ", rNg.Error);
+            var vu = back1.NgCaseId!.Value;
+            var k1 = await svc.ReceiveAsync(back1.HandoverTxId, 0, 1, null, 1);
+            var kRcv1 = db.HandoverReceives.List.Last();
+            Ok(k1.Ok, "Kho nhận phiếu trả vào ô Hàng lỗi", k1.Error);
+            var g2 = await svc.IssueByCellAsync(1, "KHO", "PKG", 1, 1, "LOI", false, "MOI", ngCaseId: vu);
+            var t2 = LastTx(db);
+            Ok(g2.Ok, "Kho giao 1 hàng lỗi (đã xử lý) sang Đóng gói", g2.Error);
+            var p2 = await svc.ReceiveAsync(t2, 0, 1, null, 5);   // Đóng gói đếm NG → vụ quay về Kho bằng phiếu trả tự lập
+            var back2 = db.HandoverTransactions.List.Last();
+            Ok(p2.Ok && back2.SourceReceiveId != null && back2.NgCaseId == vu, "Đóng gói đếm NG → phiếu trả tự lập về Kho, cùng vụ", p2.Error);
+            var k2 = await svc.ReceiveAsync(back2.HandoverTxId, 0, 1, null, 1);
+            Ok(k2.Ok, "Kho nhận lại vụ vào ô Hàng lỗi", k2.Error);
+            await Can("trước khi huỷ");
+            var v = await svc.VoidReceiveAsync(kRcv1.ReceiveId, "nham", 1, All);
+            Ok(!v.Ok && v.Error.Contains(NgCaseNo.Format(vu)), "Huỷ lần nhận ĐẦU của Kho (vụ đã giao đi rồi quay lại): bị chặn", v.Error);
+            Ok(!db.HandoverReceives.List.Single(x => x.ReceiveId == kRcv1.ReceiveId).IsVoided, "Lần nhận đầu vẫn còn (không ghi gì)");
+            // Gỡ đúng thứ tự (từ cuối ngược lên) thì được
+            var u1 = await svc.VoidReceiveAsync(db.HandoverReceives.List.Last(x => x.HandoverTxId == back2.HandoverTxId && !x.IsVoided).ReceiveId, "go loi", 1, All);
+            var u2 = await svc.VoidReceiveAsync(db.HandoverReceives.List.Last(x => x.HandoverTxId == t2 && !x.IsVoided).ReceiveId, "go loi", 5, All);
+            var u3 = await svc.VoidIssueAsync(t2, "go loi", 1, All);
+            var u4 = await svc.VoidReceiveAsync(kRcv1.ReceiveId, "go loi", 1, All);
+            Ok(u1.Ok && u2.Ok && u3.Ok && u4.Ok, "Gỡ từ cuối ngược lên: huỷ được hết, rồi huỷ lần nhận đầu của Kho được",
+               $"{u1.Error} | {u2.Error} | {u3.Error} | {u4.Error}");
+            await Can("sau khi gỡ");
+        }
+
+        // [VL8-TIMELINE 29/10] Rà độc lập bắt: hàng lỗi cũ chưa có mã vụ, WTS giờ kết thúc (người nhập) MUỘN hơn phiếu huỷ → không được báo âm / chặn oan
+        Console.WriteLine("[V10] Hàng lỗi cũ (không mã vụ): WTS NG giờ kết thúc 17:00, huỷ lúc 11:00 → không báo âm, sửa dòng WTS không bị chặn, bật Workflow được");
+        {
+            db = Seed(); svc = new HandoverService(db); led = new HandoverLedgerService(db);
+            await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            await svc.ReceiveAsync(LastTx(db), 10, 0, null, 2);
+            var day = DateTime.Today;
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 902, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", WorkerId = 2,
+                QtyDone = 2, QtyOk = 0, QtyNg = 2, NgReason = "loi cu", StartTime = day.AddHours(9), EndTime = day.AddHours(17), CreatedAt = day.AddHours(10) });
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 900, KhPlanDetailId = 1, FromGroupCode = "GC", ToGroupCode = "HUY",
+                Purpose = HandoverPurpose.Scrap, QtyIssued = 2, Status = "COMPLETED", IssuedAt = day.AddHours(11), IssuedBy = 2, NgReason = "Hàng lỗi cũ" });
+            db.Fixup();
+            var r = await Row();
+            Ok(!HandoverLedgerService.NegativeCells(r).Any(), "WTS NG 2 (kết thúc 17:00) + huỷ 2 lúc 11:00: không ô âm (kể cả ô vụ)", string.Join("; ", HandoverLedgerService.NegativeCells(r).Values.Select(v => v.Text + " " + v.Value)));
+            Ok(await new KhPlanService(db).CheckWorkflowOnAsync(1) == null, "Bật Workflow (K7): không bị chặn");
+            // thêm 1 dòng WTS cũ 08:00 (NG 2), rồi sửa dòng đó (giữ số, form lưu dòng mới lúc 12:00)
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 901, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", WorkerId = 2,
+                QtyDone = 3, QtyOk = 1, QtyNg = 2, NgReason = "loi cu", StartTime = day.AddHours(7), EndTime = day.AddHours(8), CreatedAt = day.AddHours(8) });
+            db.Fixup();
+            r = await Row();
+            var after = await led.GetLedgerForDetailAsync(1, new List<long> { 901 }, new[] { new InWts(-1, day.AddHours(12), "GC", "NC1", null, 1, 2, null, -1) });
+            Ok(!HandoverLedgerService.NewNegatives(r, after!).Any(), "Sửa dòng WTS 08:00 (giữ số): không bị chặn", string.Join("; ", HandoverLedgerService.NewNegatives(r, after!)));
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

@@ -797,7 +797,7 @@ namespace MES.Web.Services
 
         {
 
-            var txs = await _db.HandoverTransactions
+            var txs = await _db.HandoverTransactions.AsNoTracking()   // [B1-STALE] chỉ đọc để hiện: luôn lấy số mới từ DB, không lấy bản EF đang giữ
 
                 .Where(t => t.KhPlanDetailId == khPlanDetailId)
 
@@ -902,7 +902,7 @@ namespace MES.Web.Services
 
         {
 
-            var txs = await _db.HandoverTransactions
+            var txs = await _db.HandoverTransactions.AsNoTracking()   // [B1-STALE] chỉ đọc để hiện danh sách chờ nhận
 
                 .Where(t => t.KhPlanDetailId == khPlanDetailId
 
@@ -1357,6 +1357,10 @@ namespace MES.Web.Services
             string? purpose     = null)    // [GN-LEDGER 2026-10-22] loại phiếu mới — có thì dùng trần của sổ giao nhận
 
         {
+            // [E12-OLD-ISSUE 2026-10-28] Nhánh cũ (không loại phiếu) ghi phiếu KHÔNG khoá PO, KHÔNG kiểm K8 — không trang nào gọi nữa.
+            //   Chặn hẳn để sau này không ai gọi nhầm làm lệch in/out; mọi phiếu đi qua IssueByCellAsync / IssueSpecialAsync.
+            if (string.IsNullOrEmpty(purpose))
+                return (false, "Hàm giao cũ đã ngưng (không kiểm sổ) — dùng form Giao trên trang Giao nhận.");
             // [GN-LEDGER 2026-10-22] Trang Giao nhận mới luôn gửi purpose → kiểm theo hàm tính chung, bỏ qua nhánh cũ
             if (!string.IsNullOrEmpty(purpose))
                 return await IssueWithPurposeAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
@@ -1690,6 +1694,10 @@ namespace MES.Web.Services
                     "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
                     "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
                     "MES_PO_" + khPlanDetailId);
+                // [B1-STALE 2026-10-28] Có khoá rồi mới đọc số: bỏ mọi phiếu / lần nhận EF đang giữ trong bộ nhớ trang (DbContext sống suốt phiên).
+                //   Trước: đọc lại phiếu sau khoá vẫn ra bản cũ (vd lần nhận đã bị người khác huỷ vẫn tính là còn) → Nhận / Huỷ ghi sai trạng thái phiếu.
+                //   Trước khoá các hàm ghi chỉ đọc AsNoTracking (không có gì đang thêm / sửa dở) nên dọn ở đây an toàn.
+                _db.ChangeTracker.Clear();
                 return null;
             }
             catch (Exception ex) when (ex.Message.Contains("PO đang có người khác lưu"))
@@ -1978,7 +1986,7 @@ namespace MES.Web.Services
 
             receive.IsVoided   = true;
 
-            receive.VoidReason = voidReason.Trim();
+            receive.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();   // [D10-REASON 29/10] cột 200 ký tự: dài hơn thì cắt (trước: lỗi SQL, trang sập)
 
             receive.VoidedBy   = voidedByUserId;
 
@@ -2111,7 +2119,7 @@ namespace MES.Web.Services
 
             tx.IsVoided   = true;
 
-            tx.VoidReason = voidReason.Trim();
+            tx.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();   // [D10-REASON 29/10]
 
             tx.VoidedBy   = voidedByUserId;
 
@@ -2382,7 +2390,10 @@ namespace MES.Web.Services
                          && t.FromGroupCode == "KHO"
 
                          && !t.IsVoided
-                         && t.SourceReceiveId == null)   // [GN-RECV-NG] phiếu trả thành phẩm NG tự lập (Kho → Đóng gói) không phải phôi Kho giao
+                         && t.SourceReceiveId == null   // [GN-RECV-NG] phiếu trả thành phẩm NG tự lập (Kho → Đóng gói) không phải phôi Kho giao
+                         // [D11-KHO-SL 2026-10-28] "SL đã giao" của Kho = chỉ phôi tốt (phiếu Hàng mới). Trước: đếm cả gửi sửa / chuyển hàng lỗi /
+                         //   huỷ / trả khách → Kho gửi sửa 10 phôi lỗi hiện "Đã giao 10, Giao một phần" dù chưa giao phôi tốt nào.
+                         && (t.Purpose == HandoverPurpose.New || (t.Purpose == null && !t.IsReturnNg)))
 
                 .Include(t => t.Receives)
 

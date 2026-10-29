@@ -145,7 +145,8 @@ public class UserService
 
         dbUser.FullName = user.FullName;
         dbUser.GroupId = user.GroupId;
-        dbUser.PIN = user.PIN;
+        // [C6-PIN 2026-10-28] Không ghi đè PIN khi sửa thông tin user (form sửa không có ô PIN → trước: đổi nhóm / họ tên là mất PIN).
+        //   Đổi PIN: user tự đặt ở Hồ sơ; xoá PIN: nút Reset PIN (ResetPinAsync).
         dbUser.IsActive = user.IsActive;
 
         await db.SaveChangesAsync();

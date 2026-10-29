@@ -8,6 +8,7 @@
 @inject PartMasterService PartSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject MES.Web.Services.UserService UserSvc
 
 <PageTitle>Sửa phiếu KH - MES</PageTitle>
 
@@ -497,11 +498,21 @@ else
     private bool _refreshing;
     private bool _refreshSuccess;
 
+    // [C1-KH-PERM] Quyền Sửa Kế hoạch theo ma trận phân quyền (Admin luôn có)
+    private async Task<bool> KhEditAllowedAsync(System.Security.Claims.ClaimsPrincipal u)
+    {
+        if (!int.TryParse(u.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var uid)) return false;
+        var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+        return perms.TryGetValue(MES.Web.Constants.SystemPermissions.KeHoach, out var p) && p.CanEdit;
+    }
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         _currentUserId = int.Parse(
             authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        // [C1-KH-PERM 2026-10-28] Trang ghi dữ liệu Kế hoạch: bắt buộc quyền Sửa KE_HOACH (trước: chỉ cần đăng nhập — công nhân gõ URL là sửa được)
+        if (!await KhEditAllowedAsync(authState.User)) { Nav.NavigateTo("/kh-plan"); return; }
 
         var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
         if (plan == null || detail == null || plan.KhPlanId != Id) return;

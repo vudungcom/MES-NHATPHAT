@@ -746,7 +746,7 @@ else
                             <label class="form-label form-label-sm @(purpose == HandoverPurpose.HelpSend ? "fw-semibold text-danger" : "")">
                                 Ghi chú @(purpose == HandoverPurpose.HelpSend ? "*" : "(tuỳ chọn)")
                             </label>
-                            <input type="text" class="form-control form-control-sm" @bind="_issueNotes" />
+                            <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_issueNotes" />   @* [D10-REASON] cột 500 ký tự *@
                         </div>
                     }
                 }
@@ -888,7 +888,7 @@ else
                     </div>
                     <div class="mb-2">
                         <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
-                        <input type="text" class="form-control form-control-sm" @bind="_ngNotes" />
+                        <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_ngNotes" />
                     </div>
                 }
 
@@ -1078,7 +1078,7 @@ else
                                         }
                                         <div class="mb-2">
                                             <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
-                                            <input type="text" class="form-control form-control-sm" @bind="_receiveNotes" />
+                                            <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_receiveNotes" />
                                         </div>
                                         @if (!string.IsNullOrEmpty(_modalError))
                                         {
@@ -1340,7 +1340,7 @@ else
                 </div>
                 <div class="mb-3">
                     <label class="form-label form-label-sm fw-semibold text-danger">Lý do huỷ *</label>
-                    <input type="text" class="form-control form-control-sm border-danger" @bind="_voidReason" placeholder="Nhập lý do (ít nhất 3 ký tự)..." />
+                    <input type="text" class="form-control form-control-sm border-danger" maxlength="200" @bind="_voidReason" placeholder="Nhập lý do (ít nhất 3 ký tự)..." />
                 </div>
                 @if (!string.IsNullOrEmpty(_modalError))
                 {
@@ -2259,6 +2259,7 @@ else
 
     async Task ConfirmIssueAsync()
     {
+        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
         if (_selectedRow == null) return;
         _modalError = "";
         var purpose = EffectivePurpose;
@@ -2362,6 +2363,7 @@ else
 
     async Task ConfirmNgAsync()
     {
+        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
         if (_selectedRow == null) return;
         _modalError = "";
         if (string.IsNullOrEmpty(_ngGroup))  { _modalError = "Chọn nhóm phát hiện."; return; }
@@ -2432,6 +2434,7 @@ else
 
     async Task ConfirmReceiveAsync(long txId)
     {
+        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
         _modalError = "";
         _saving     = true;
         // [GN-CELL2] ô bên nhận chọn (null = phiếu không có ô: theo NC / phiếu tự lập); đổi khác chỉ định phải có lý do
@@ -2552,6 +2555,7 @@ else
 
     async Task ConfirmVoidIssueAsync()
     {
+        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
         if (string.IsNullOrWhiteSpace(_voidReason) || _voidReason.Trim().Length < 3)
         {
             _modalError = "Nhập lý do huỷ (ít nhất 3 ký tự).";

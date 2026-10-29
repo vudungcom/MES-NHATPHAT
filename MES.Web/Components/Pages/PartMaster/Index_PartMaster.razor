@@ -174,12 +174,14 @@ else
     }
     else
     {
-        <div class="table-responsive" @onclick="CloseAllDropdowns">
-            <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.8rem;">
-                <thead class="table-light" style="position: sticky; top: 0; z-index: 10;">
+        @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề + 2 cột trái (▸, Part No) như Giao nhận.
+           Trước: table-responsive không giới hạn chiều cao → tiêu đề "sticky" không dính được, thanh cuộn ngang ở cuối bảng. *@
+        <div class="mes-scroll border rounded" @onclick="CloseAllDropdowns">
+            <table class="table table-sm table-hover align-middle small mb-0 mes-table" style="font-size: 0.8rem;">
+                <thead class="table-light">
                     <tr>
-                        <th style="width: 30px;"></th>
-                        <th>@ColHeader("PartNo", "Part No")</th>
+                        <th class="mes-fz" style="left:0;width:30px;min-width:30px;max-width:30px;"></th>
+                        <th class="mes-fz mes-fz-last" style="left:30px;width:170px;min-width:170px;max-width:170px;">@ColHeader("PartNo", "Part No")</th>
                         <th>@ColHeader("CustomerName", "Khách hàng")</th>
                         <th>@ColHeader("Material", "Mã VL")</th>
                         <th>@ColHeader("MaterialConfig", "Cấu hình phôi")</th>
@@ -197,12 +199,12 @@ else
                     {
                         <tr @ondblclick="() => OpenDetail(row.PartNo)"
                             style="cursor: pointer;" title="Double-click để mở trang chi tiết">
-                            <td class="text-center" @onclick:stopPropagation @ondblclick:stopPropagation>
+                            <td class="text-center mes-fz" style="left:0;width:30px;min-width:30px;max-width:30px;" @onclick:stopPropagation @ondblclick:stopPropagation>
                                 <button class="btn btn-sm btn-link p-0" @onclick="async () => await ToggleExpandAsync(row.PartId)">
                                     <i class="bi @(IsExpanded(row.PartId) ? "bi-caret-down-fill" : "bi-caret-right-fill")"></i>
                                 </button>
                             </td>
-                            <td>
+                            <td class="mes-fz mes-fz-last" style="left:30px;width:170px;min-width:170px;max-width:170px;" title="@row.PartNo">
                                 <code class="fw-bold">@row.PartNo</code>
                                 @if (row.IsObsolete)
                                 {

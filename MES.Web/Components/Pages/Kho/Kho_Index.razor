@@ -124,49 +124,51 @@
 }
 else
 {
-    <div class="table-responsive bg-white shadow-sm rounded border" style="max-height: 75vh; overflow-y: auto;"
-         @onclick="CloseAllDropdowns">
-        <table id="kho-table" class="table table-bordered table-hover align-middle mb-0 text-center" style="font-size: 0.78rem;">
-            <thead class="table-light sticky-top" style="z-index: 2;">
+    @* [TBL-FREEZE 2026-10-28] Cố định 2 dòng tiêu đề + 5 cột trái (#, Số PO, Mã chi tiết, ĐVT, SL KH) như Giao nhận;
+       khung cao vừa màn hình → thanh cuộn ngang luôn ở đáy. Trước: table-responsive 75vh, tiêu đề dính nhưng cột trái trôi khi cuộn ngang. *@
+    <div class="mes-scroll bg-white shadow-sm rounded border" @onclick="CloseAllDropdowns">
+        <table id="kho-table" class="table table-hover align-middle mb-0 text-center mes-table" style="font-size: 0.78rem;">
+            <thead class="table-light">
                 @* Header phân cụm *@
-                <tr style="background-color: #f8fafc;">
-                    <th style="width:35px;">#</th>
-                    <th colspan="8" class="text-center bg-primary bg-opacity-10 text-primary fw-bold border-end">
-                        <i class="bi bi-link-45deg"></i> CỘT A - H: DỮ LIỆU LINK TỪ KẾ HOẠCH
+                <tr style="height:30px;">
+                    <th rowspan="2" class="mes-fz" style="left:0;width:35px;min-width:35px;max-width:35px;">#</th>
+                    <th colspan="4" class="text-center text-primary fw-bold mes-fz mes-fz-last" style="left:35px;width:345px;min-width:345px;max-width:345px;background:#e7f0ff;">
+                        <i class="bi bi-link-45deg"></i> CỘT A - D: LINK TỪ KẾ HOẠCH
                     </th>
-                    <th colspan="8" class="text-center bg-warning bg-opacity-10 text-dark fw-bold border-end">
+                    <th colspan="4" class="text-center text-primary fw-bold border-end" style="background:#e7f0ff;">
+                        <i class="bi bi-link-45deg"></i> CỘT E - H: DỮ LIỆU LINK TỪ KẾ HOẠCH
+                    </th>
+                    <th colspan="8" class="text-center text-dark fw-bold border-end" style="background:#fff8e1;">
                         <i class="bi bi-box-seam"></i> CỘT I - O: KHO NHẬP THỰC TẾ &amp; CẤP PHÁT
                     </th>
                     @* Thao tác + Trạng thái ra ngoài cùng bên phải *@
                     <th colspan="2" class="text-center bg-light">Thao tác & Trạng thái</th>
                 </tr>
-                @* Tiêu đề cột *@
+                @* Tiêu đề cột — [TBL-FREEZE] dòng 2 dính dưới dòng 1 (top = chiều cao dòng 1) *@
                 <tr class="align-middle">
-                    <th style="width:35px;">#</th>
-
-                    @* Cụm A - H link Kế hoạch *@
-                    <th style="min-width:110px;">@ColHeader("SoPO", "Số PO", "A")</th>
-                    <th style="min-width:120px;">@ColHeader("PartNo", "Mã chi tiết", "B")</th>
-                    <th style="width:50px;">@ColHeader("DonViTinh", "ĐVT", "C")</th>
-                    <th style="width:65px;">@ColHeader("SoLuongKH", "SL KH", "D")</th>
-                    <th style="width:90px;">@ColHeader("ThoiHan", "Thời hạn", "E")</th>
-                    <th style="min-width:100px;">@ColHeader("MaVatLieu", "Mã vật liệu", "F")</th>
-                    <th style="min-width:120px;">@ColHeader("CauHinhPhoi", "Cấu hình phôi", "G")</th>
-                    <th style="min-width:110px;" class="border-end">@ColHeader("GhiChuPhoi", "Ghi chú phôi", "H")</th>
+                    @* Cụm A - H link Kế hoạch — A..D cố định *@
+                    <th class="mes-fz" style="top:30px;left:35px;width:110px;min-width:110px;max-width:110px;">@ColHeader("SoPO", "Số PO", "A")</th>
+                    <th class="mes-fz" style="top:30px;left:145px;width:120px;min-width:120px;max-width:120px;">@ColHeader("PartNo", "Mã chi tiết", "B")</th>
+                    <th class="mes-fz" style="top:30px;left:265px;width:50px;min-width:50px;max-width:50px;">@ColHeader("DonViTinh", "ĐVT", "C")</th>
+                    <th class="mes-fz mes-fz-last" style="top:30px;left:315px;width:65px;min-width:65px;max-width:65px;">@ColHeader("SoLuongKH", "SL KH", "D")</th>
+                    <th style="top:30px;width:90px;">@ColHeader("ThoiHan", "Thời hạn", "E")</th>
+                    <th style="top:30px;min-width:100px;">@ColHeader("MaVatLieu", "Mã vật liệu", "F")</th>
+                    <th style="top:30px;min-width:120px;">@ColHeader("CauHinhPhoi", "Cấu hình phôi", "G")</th>
+                    <th style="top:30px;min-width:110px;" class="border-end">@ColHeader("GhiChuPhoi", "Ghi chú phôi", "H")</th>
 
                     @* Cụm I - O Kho nhập *@
-                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayNhan", "Ngày nhận", "I")</th>
-                    <th style="width:75px;" class="bg-warning bg-opacity-10">@ColHeader("SlNhan", "SL nhận", "J")</th>
-                    <th style="min-width:110px;" class="bg-warning bg-opacity-10">@ColHeader("OrderVL", "Order VL", "K")</th>
-                    <th style="min-width:85px;" class="bg-warning bg-opacity-10">@ColHeader("ViTriDe", "Vị trí để", "L")</th>
-                    <th style="min-width:90px;" class="bg-warning bg-opacity-10">@ColHeader("TinhTrang", "Tình trạng", "M")</th>
-                    <th style="width:95px;" class="bg-warning bg-opacity-10">@ColHeader("NgayCap", "Ngày giao GC", "N")</th>
-                    <th style="width:75px;" class="bg-warning bg-opacity-10">@ColHeader("SlCap", "SL đã giao", "O")</th>
-                    <th style="width:75px;" class="bg-warning bg-opacity-10 border-end text-warning fw-bold">Còn lại</th>
+                    <th style="top:30px;background:#fff8e1;width:95px;">@ColHeader("NgayNhan", "Ngày nhận", "I")</th>
+                    <th style="top:30px;background:#fff8e1;width:75px;">@ColHeader("SlNhan", "SL nhận", "J")</th>
+                    <th style="top:30px;background:#fff8e1;min-width:110px;">@ColHeader("OrderVL", "Order VL", "K")</th>
+                    <th style="top:30px;background:#fff8e1;min-width:85px;">@ColHeader("ViTriDe", "Vị trí để", "L")</th>
+                    <th style="top:30px;background:#fff8e1;min-width:90px;">@ColHeader("TinhTrang", "Tình trạng", "M")</th>
+                    <th style="top:30px;background:#fff8e1;width:95px;">@ColHeader("NgayCap", "Ngày giao GC", "N")</th>
+                    <th style="top:30px;background:#fff8e1;width:75px;">@ColHeader("SlCap", "SL đã giao", "O")</th>
+                    <th style="top:30px;background:#fff8e1;width:75px;" class="border-end text-warning fw-bold">Còn lại</th>
 
                     @* Thao tác + Trạng thái — ngoài cùng bên phải *@
-                    <th style="width:90px;">Thao tác</th>
-                    <th style="width:110px;">Trạng thái</th>
+                    <th style="top:30px;width:90px;">Thao tác</th>
+                    <th style="top:30px;width:110px;">Trạng thái</th>
                 </tr>
             </thead>
             <tbody>
@@ -183,13 +185,13 @@ else
                     <tr @ondblclick="() => OpenEditKhoModal(row)"
                         style="cursor: pointer;"
                         title="Double-click để mở form cập nhật kho">
-                        <td class="text-muted">@(idx + 1)</td>
+                        <td class="text-muted mes-fz" style="left:0;width:35px;min-width:35px;max-width:35px;">@(idx + 1)</td>
 
-                        @* Cột A - H: Kế hoạch *@
-                        <td class="text-start font-monospace fw-bold text-primary">@row.SoPO</td>
-                        <td class="text-start fw-bold">@row.PartNo</td>
-                        <td>@row.DonViTinh</td>
-                        <td class="fw-bold text-dark">@row.SoLuongKeHoach.ToString("0.####")</td>
+                        @* Cột A - H: Kế hoạch — [TBL-FREEZE] A..D cố định *@
+                        <td class="text-start font-monospace fw-bold text-primary mes-fz" style="left:35px;width:110px;min-width:110px;max-width:110px;" title="@row.SoPO">@row.SoPO</td>
+                        <td class="text-start fw-bold mes-fz" style="left:145px;width:120px;min-width:120px;max-width:120px;" title="@row.PartNo">@row.PartNo</td>
+                        <td class="mes-fz" style="left:265px;width:50px;min-width:50px;max-width:50px;">@row.DonViTinh</td>
+                        <td class="fw-bold text-dark mes-fz mes-fz-last" style="left:315px;width:65px;min-width:65px;max-width:65px;">@row.SoLuongKeHoach.ToString("0.####")</td>
                         <td>@row.ThoiHan.ToString("dd/MM/yyyy")</td>
                         <td class="text-start">@(string.IsNullOrEmpty(row.MaVatLieu) ? "—" : row.MaVatLieu)</td>
                         <td class="text-start">@(string.IsNullOrEmpty(row.CauHinhPhoi) ? "—" : row.CauHinhPhoi)</td>

@@ -21,11 +21,13 @@ namespace MES.Web.Services
             public int     WtsActive   { get; set; }
             public int     PhieuAll    { get; set; }
             public int     PhieuActive { get; set; }
+            public int     BaoLoiAll    { get; set; }   // [E3-NGREP 2026-10-28] phiếu báo hàng lỗi sau nhận (HandoverNgReports)
+            public int     BaoLoiActive { get; set; }
 
             /// <summary>Có bất kỳ chứng từ nào (kể cả đã huỷ) — dùng cho Xoá / Tách PO.</summary>
-            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0;
+            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0;   // [E3-NGREP] + báo lỗi
             /// <summary>Đang có số chạy (WTS / phiếu chưa huỷ) — dùng cho Cập nhật quy trình (K6).</summary>
-            public bool HasActiveFlow => WtsActive > 0 || PhieuActive > 0;
+            public bool HasActiveFlow => WtsActive > 0 || PhieuActive > 0 || BaoLoiActive > 0;   // [E3-NGREP] + báo lỗi
 
             public string Text()
             {
@@ -33,6 +35,7 @@ namespace MES.Web.Services
                 if (PhoiNhan > 0) parts.Add($"phôi Kho đã nhận {PhoiNhan:0.##}");
                 if (WtsAll > 0)   parts.Add($"{WtsAll} dòng WTS" + (WtsAll != WtsActive ? $" ({WtsAll - WtsActive} dòng đã huỷ)" : ""));
                 if (PhieuAll > 0) parts.Add($"{PhieuAll} phiếu giao nhận" + (PhieuAll != PhieuActive ? $" ({PhieuAll - PhieuActive} phiếu đã huỷ)" : ""));
+                if (BaoLoiAll > 0) parts.Add($"{BaoLoiAll} phiếu báo hàng lỗi" + (BaoLoiAll != BaoLoiActive ? $" ({BaoLoiAll - BaoLoiActive} phiếu đã huỷ)" : ""));   // [E3-NGREP]
                 return string.Join(", ", parts);
             }
         }
@@ -51,6 +54,8 @@ namespace MES.Web.Services
                 WtsActive   = await db.WtsProductionLogs.CountAsync(w => w.KhPlanDetailId == khPlanDetailId && !w.IsVoided),
                 PhieuAll    = await db.HandoverTransactions.CountAsync(t => t.KhPlanDetailId == khPlanDetailId),
                 PhieuActive = await db.HandoverTransactions.CountAsync(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided),
+                BaoLoiAll    = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId),                 // [E3-NGREP]
+                BaoLoiActive = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId && !b.IsVoided),
             };
         }
 
@@ -63,6 +68,7 @@ namespace MES.Web.Services
                     "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
                     "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
                     "MES_PO_" + khPlanDetailId);
+                db.ChangeTracker.Clear();   // [B1-STALE 2026-10-28] có khoá rồi mới đọc: bỏ bản cũ EF đang giữ (như HandoverService.LockPoAsync)
                 return null;
             }
             catch (Exception ex) when (ex.Message.Contains("PO đang có người khác lưu"))

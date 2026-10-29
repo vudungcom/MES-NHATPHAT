@@ -11,6 +11,7 @@
 @inject CustomerService CustomerSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject UserService UserSvc
 
 <PageTitle>Tạo phiếu KH mới - MES</PageTitle>
 
@@ -291,11 +292,21 @@
     private string _newCustomerName = "";
     private string _newCustomerSupCode = "";
 
+    // [C1-KH-PERM] Quyền Sửa Kế hoạch theo ma trận phân quyền (Admin luôn có)
+    private async Task<bool> KhEditAllowedAsync(System.Security.Claims.ClaimsPrincipal u)
+    {
+        if (!int.TryParse(u.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var uid)) return false;
+        var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+        return perms.TryGetValue(MES.Web.Constants.SystemPermissions.KeHoach, out var p) && p.CanEdit;
+    }
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         _currentUserName = authState.User.FindFirst("FullName")?.Value ?? authState.User.Identity?.Name ?? "";
         _currentUserId = int.Parse(authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+        // [C1-KH-PERM 2026-10-28] Trang ghi dữ liệu Kế hoạch: bắt buộc quyền Sửa KE_HOACH (trước: chỉ cần đăng nhập — công nhân gõ URL là sửa được)
+        if (!await KhEditAllowedAsync(authState.User)) { Nav.NavigateTo("/kh-plan"); return; }
 
         await ReloadMasterDataAsync();
         AddDetail();
@@ -410,6 +421,9 @@
     private async Task DoSaveAsync()
     {
         _saving = true;
+        // [E1-KH-TRX 2026-10-28] Tạo phiếu + chép quy trình (snapshot) trong 1 giao dịch: lỗi giữa chừng thì không còn PO thiếu quy trình
+        //   (trước: PO đã lưu mà snapshot thiếu → WTS không có NC để chọn; người dùng tạo lại → PO trùng).
+        await using var _trx = await Db.Database.BeginTransactionAsync();
         try
         {
             foreach (var d in _details)
@@ -468,11 +482,16 @@
                 await Db.SaveChangesAsync();
             }
 
+            await _trx.CommitAsync();   // [E1-KH-TRX]
             Nav.NavigateTo("/kh-plan");
         }
         catch (Exception ex)
         {
-            _error = "Lỗi khi lưu: " + ex.Message;
+            await _trx.RollbackAsync();   // [E1-KH-TRX] không để PO nửa vời
+            Db.ChangeTracker.Clear();
+            _plan.KhPlanId = 0;           // lưu lại lần sau tạo mới từ đầu
+            _plan.Details = new List<KhPlanDetail>();
+            _error = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message);
         }
         finally
         {

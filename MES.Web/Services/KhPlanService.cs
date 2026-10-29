@@ -19,12 +19,24 @@ public class KhPlanService
     public async Task<string> GenerateNextPlanNoAsync(DateTime date)
     {
         var prefix = $"KH-{date:yyyyMMdd}-";
-        var count = await _db.KhPlans.CountAsync(x => x.PlanNo.StartsWith(prefix));
-        return $"{prefix}{(count + 1):D4}";
+        // [D1-PLANNO 2026-10-28] Lấy số lớn nhất + 1 (trước: đếm + 1 → xoá 1 phiếu giữa ngày thì sinh lại số đã có, PlanNo unique → không tạo được phiếu nào nữa trong ngày)
+        var nos = await _db.KhPlans.Where(x => x.PlanNo.StartsWith(prefix)).Select(x => x.PlanNo).ToListAsync();
+        var max = nos.Select(n => int.TryParse(n.Substring(prefix.Length), out var v) ? v : 0).DefaultIfEmpty(0).Max();
+        return $"{prefix}{(max + 1):D4}";
     }
 
     public async Task<int> CreateAsync(KhPlan plan, int userId)
     {
+        // [B5-PODUP 2026-10-28] Số PO là khoá tra cứu của WTS / Kho / Tách PO → không cho trùng (trong phiếu và với PO đã có).
+        //   Trước: tạo được 2 dòng cùng số PO, WTS gõ PO vào dòng tìm thấy đầu → sổ dòng kia thiếu, dòng này dư. (Tách PO đã chặn trùng từ trước.)
+        foreach (var d in plan.Details) d.PurchaseOrder = (d.PurchaseOrder ?? "").Trim();
+        var dupIn = plan.Details.GroupBy(d => d.PurchaseOrder, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        if (dupIn.Any())
+            throw new InvalidOperationException($"Số PO bị trùng trong phiếu: {string.Join(", ", dupIn)}");
+        var poList = plan.Details.Select(d => d.PurchaseOrder).ToList();
+        var dupDb = await _db.KhPlanDetails.AsNoTracking().Where(x => poList.Contains(x.PurchaseOrder)).Select(x => x.PurchaseOrder).Distinct().ToListAsync();
+        if (dupDb.Any())
+            throw new InvalidOperationException($"Số PO đã có trong hệ thống: {string.Join(", ", dupDb)} — mỗi số PO chỉ 1 dòng.");
         plan.PlanNo = await GenerateNextPlanNoAsync(plan.PlanDate);
         plan.CreatedBy = userId;
         plan.CreatedAt = DateTime.Now;
@@ -91,7 +103,7 @@ public class KhPlanService
         var q = from d in _db.KhPlanDetails
                 join p in _db.KhPlans on d.KhPlanId equals p.KhPlanId
                 join c in _db.Customers on p.CustomerId equals c.CustomerId
-                join k in _db.KhoVatLieus on d.KhPlanDetailId equals k.PlanDetailId into kGroup
+                join k in _db.KhoVatLieus.Where(x => x.IsActive) on d.KhPlanDetailId equals k.PlanDetailId into kGroup   // [KHO-ACTIVE 2026-10-28] dòng Kho đã tắt không nhân đôi dòng PO
                 from k in kGroup.DefaultIfEmpty()
                 orderby p.PlanDate descending, d.LineNo
                 select new KhPlanDetailRow
@@ -123,7 +135,9 @@ public class KhPlanService
                     ApplyWorkflow = p.ApplyWorkflow,
                 };
 
-        return await q.Take(1000).ToListAsync();
+        // [B4-TAKE 2026-10-28] trước Take(1000): quá 1000 dòng thì PO cũ biến khỏi Kế hoạch + WTS (sửa / xoá WTS PO đó bỏ qua kiểm).
+        //   Nâng trần lên 20.000 dòng (mọi kiểm số lúc lưu WTS nay đọc thẳng DB, không dựa vào danh sách này).
+        return await q.Take(20000).ToListAsync();
     }
 
     public async Task UpdateFieldAsync(
@@ -308,6 +322,13 @@ public class KhPlanService
         using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // [D3-LOCK 2026-10-28] Khoá PO (chung WTS + Giao nhận + Kho) rồi kiểm lại "PO trắng" — trước: kiểm ngoài khoá,
+            //   đúng lúc Kho nhập phôi / ai đó lập phiếu thì vẫn tách được → phôi / phiếu mất chỗ bám.
+            var lockSplit = await PoGuard.LockAsync(_db, sourceDetailId);
+            if (lockSplit != null) throw new InvalidOperationException(lockSplit);
+            var srcDocs2 = await PoGuard.CountDocsAsync(_db, sourceDetailId);
+            if (srcDocs2.HasAny)
+                throw new InvalidOperationException($"PO {srcPO} vừa có chứng từ số lượng ({srcDocs2.Text()}) — không tách được.");
             var newDetailIds = new List<int>();
             var newIdList = new List<string>();
 
@@ -524,6 +545,11 @@ public class KhPlanService
         using var trx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // [D3-LOCK 2026-10-28] Khoá PO rồi kiểm lại "PO trắng" trong cùng giao dịch (trước: kiểm ngoài khoá)
+            var lockDel = await PoGuard.LockAsync(_db, khPlanDetailId);
+            if (lockDel != null) { await trx.RollbackAsync(); return (false, lockDel); }
+            var docs2 = await PoGuard.CountDocsAsync(_db, khPlanDetailId);
+            if (docs2.HasAny) { await trx.RollbackAsync(); return (false, $"PO {detail.PurchaseOrder} vừa có chứng từ số lượng ({docs2.Text()}) — không xoá được."); }
             // Xóa snapshot quy trình B→E + Máy loại trừ
             // Xóa timing sub-rows TRƯỚC Machining (FK constraint)
             await _db.Database.ExecuteSqlRawAsync(
@@ -753,6 +779,12 @@ public class KhPlanService
         using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // [D3-LOCK 2026-10-28] K6 kiểm lại dưới khoá PO (trước: kiểm ngoài khoá, WTS / phiếu chen vào giữa vẫn làm mới quy trình được)
+            var lockRf = await PoGuard.LockAsync(_db, khPlanDetailId);
+            if (lockRf != null) throw new InvalidOperationException(lockRf);
+            var docsRf = await PoGuard.CountDocsAsync(_db, khPlanDetailId);
+            if (docsRf.HasActiveFlow)
+                throw new InvalidOperationException($"PO vừa có số chạy ({docsRf.Text()}) — không cập nhật quy trình được (K6).");
             // 1. Đếm snapshot cũ để ghi log
             var oldCountMachining  = await _db.KhPlanRouteSnapshotMachining .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
             var oldCountTaro       = await _db.KhPlanRouteSnapshotTaro       .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
@@ -1404,4 +1436,4 @@ public class SnapshotSummary
     // HTSP = Taro + Bavia + Rửa
     public int HTSP => Taro + Bavia + Rua;
     public bool HasAny => GC + HTSP + KCS + DG > 0;
-}
+}

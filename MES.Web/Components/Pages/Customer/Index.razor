@@ -50,8 +50,9 @@
 }
 else
 {
-    <div class="table-responsive border rounded bg-white shadow-sm">
-        <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+    @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề *@
+    <div class="mes-scroll border rounded bg-white shadow-sm">
+        <table class="table table-sm table-hover align-middle mb-0 mes-table" style="font-size: 0.85rem;">
             <thead class="table-light">
                 <tr>
                     <th style="width: 50px;" class="text-center">#</th>
@@ -356,4 +357,4 @@ else
         _historyLogs = await CustomerSvc.GetChangeLogsAsync(item.CustomerId);
         _historyLoading = false;
     }
-}
+}

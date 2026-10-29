@@ -121,9 +121,10 @@ else
         }
         else
         {
-            <div class="table-responsive" @onclick="CloseAllDropdowns">
-                <table class="table table-sm table-hover table-bordered align-middle small" style="font-size: 0.85rem;">
-                    <thead class="table-light" style="position: sticky; top: 0; z-index: 10;">
+            @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề (trước: table-responsive không giới hạn chiều cao → tiêu đề không dính) *@
+            <div class="mes-scroll border rounded" @onclick="CloseAllDropdowns">
+                <table class="table table-sm table-hover align-middle small mb-0 mes-table" style="font-size: 0.85rem;">
+                    <thead class="table-light">
                         <tr>
                             <th style="width: 50px;" class="text-center">STT</th>
                             <th style="width: 120px;">@ColHeader("Code", "Mã lỗi")</th>

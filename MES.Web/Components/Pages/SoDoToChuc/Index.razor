@@ -148,8 +148,9 @@
         <!-- CHẾ ĐỘ BẢNG DANH SÁCH -->
         <div class="card shadow-sm border-0">
             <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover table-bordered mb-0 align-middle">
+                @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề *@
+                <div class="mes-scroll">
+                    <table class="table table-hover table-bordered mb-0 align-middle mes-table">
                         <thead style="background-color: #f8fafc;">
                             <tr>
                                 <th style="width: 50px;" class="text-center">ID</th>
@@ -1148,4 +1149,4 @@
         isLoadingLogs = false;
     }
     private void DongPopupLichSu() { isHienThiPopupLichSu = false; }
-}
+}

@@ -117,3 +117,19 @@ body {
     .mes-sidebar .nav-link { text-align: center; padding: 0.75rem 0.25rem; font-size: 0; }
     .mes-sidebar .nav-link i { margin: 0; font-size: 1.1rem; }
 }
+
+/* ==== [TBL-FREEZE 2026-10-28] Bảng nhiều dòng / nhiều cột: cuộn trong khung + cố định tiêu đề + cố định cột trái ====
+   Cùng kiểu trang Giao nhận [GN-FREEZE] / Kế hoạch [KH-FREEZE]: khung cao vừa màn hình nên thanh cuộn ngang luôn ở đáy màn hình.
+   Cách dùng: <div class="mes-scroll"> <table class="table ... mes-table"> ; cột cố định: class="mes-fz" + style="left:Npx;width:Wpx;min-width:Wpx;max-width:Wpx"
+   (cột cố định cuối thêm mes-fz-last để có vạch ngăn). border-collapse: separate — kiểu collapse làm đường kẻ ô cố định trôi khi cuộn. */
+.mes-scroll { overflow: auto; max-height: calc(100vh - 230px); min-height: 240px; }
+.mes-table { border-collapse: separate; border-spacing: 0; }
+.mes-table > :not(caption) > * > * { border-width: 0 1px 1px 0 !important; border-style: solid; border-color: #dee2e6; }
+.mes-table > thead > tr:first-child > * { border-top-width: 1px !important; }
+.mes-table > * > tr > *:first-child { border-left-width: 1px !important; }
+.mes-table > thead > tr > th { position: sticky; top: 0; z-index: 4; background-color: #f8f9fa; }
+.mes-table .mes-fz { position: sticky; z-index: 2; background-color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mes-table > thead .mes-fz { z-index: 6; background-color: #f1f3f5; }
+.mes-table .mes-fz-last { border-right: 2px solid #8a94a3 !important; }
+.mes-table .mes-expand { position: sticky; left: 0; max-width: calc(100vw - 280px); }   /* dòng mở chi tiết đứng yên khi cuộn ngang */
+.mes-table > tbody > tr[class*="table-"] > .mes-fz { background-color: var(--bs-table-bg); }   /* dòng tô màu (table-secondary / table-warning…): ô cố định cùng màu */

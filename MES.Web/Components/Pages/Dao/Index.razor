@@ -59,13 +59,14 @@
 }
 else
 {
-    <div class="table-responsive bg-white shadow-sm rounded border">
-        <table class="table table-bordered table-sm table-hover align-middle mb-0" style="font-size: 0.85rem;">
+    @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề + 3 cột trái (#, Phân loại, Ký hiệu dao) *@
+    <div class="mes-scroll bg-white shadow-sm rounded border">
+        <table class="table table-bordered table-sm table-hover align-middle mb-0 mes-table" style="font-size: 0.85rem;">
             <thead class="table-light">
                 <tr class="text-center">
-                    <th style="width: 45px;">#</th>
-                    <th style="width: 130px;">Phân loại</th>
-                    <th style="width: 240px;">Ký hiệu dao (Cột B) *</th>
+                    <th class="mes-fz" style="left:0;width:45px;min-width:45px;max-width:45px;">#</th>
+                    <th class="mes-fz" style="left:45px;width:130px;min-width:130px;max-width:130px;">Phân loại</th>
+                    <th class="mes-fz mes-fz-last" style="left:175px;width:240px;min-width:240px;max-width:240px;">Ký hiệu dao (Cột B) *</th>
                     <th class="text-start">Thông số / Quy cách (Cột C)</th>
                     <th style="width: 120px;">Hãng SX</th>
                     <th style="width: 100px;">Vị trí tủ</th>
@@ -86,9 +87,9 @@ else
                 @foreach (var (item, idx) in Filtered.Select((d, i) => (d, i)))
                 {
                     <tr class="@(!item.IsActive ? "table-secondary text-muted text-decoration-line-through" : "")">
-                        <td class="text-center text-muted">@(idx + 1)</td>
-                        <td class="text-center">@(string.IsNullOrEmpty(item.LoaiDao) ? "—" : item.LoaiDao)</td>
-                        <td class="text-start font-monospace"><strong class="text-danger">@item.TenDao</strong></td>
+                        <td class="text-center text-muted mes-fz" style="left:0;width:45px;min-width:45px;max-width:45px;">@(idx + 1)</td>
+                        <td class="text-center mes-fz" style="left:45px;width:130px;min-width:130px;max-width:130px;">@(string.IsNullOrEmpty(item.LoaiDao) ? "—" : item.LoaiDao)</td>
+                        <td class="text-start font-monospace mes-fz mes-fz-last" style="left:175px;width:240px;min-width:240px;max-width:240px;" title="@item.TenDao"><strong class="text-danger">@item.TenDao</strong></td>
                         <td class="text-start">@(string.IsNullOrEmpty(item.QuyCach) ? "—" : item.QuyCach)</td>
                         <td class="text-center">@(string.IsNullOrEmpty(item.HangSX) ? "—" : item.HangSX)</td>
                         <td class="text-center font-monospace">@(string.IsNullOrEmpty(item.ViTriKho) ? "—" : item.ViTriKho)</td>
@@ -421,4 +422,4 @@ else
         _historyLogs = await DaoSvc.GetChangeLogsAsync(item.DaoId);
         _historyLoading = false;
     }
-}
+}

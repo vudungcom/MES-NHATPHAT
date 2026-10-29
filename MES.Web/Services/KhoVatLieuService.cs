@@ -149,6 +149,10 @@ public class KhoVatLieuService
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
             return (false, "Lý do thay đổi là bắt buộc (tối thiểu 3 ký tự).");
 
+        // [E4-KHO-NEG 2026-10-28] Máy chủ chặn số âm (trước chỉ form chặn)
+        if (slNhan < 0 || slCap < 0)
+            return (false, "Số lượng không được âm.");
+
         var canEdit = await HasPermissionAsync(userId, SystemPermissions.Kho, requireEdit: true);
         if (!canEdit)
             return (false, "Bạn không có quyền chỉnh sửa dữ liệu kho (KHO).");
@@ -165,7 +169,7 @@ public class KhoVatLieuService
         if (lockErr != null) return (false, lockErr);
         var ledgerBefore = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
 
-        var existing = await _db.KhoVatLieus.FirstOrDefaultAsync(k => k.PlanDetailId == khPlanDetailId);
+        var existing = await _db.KhoVatLieus.FirstOrDefaultAsync(k => k.PlanDetailId == khPlanDetailId && k.IsActive);   // [KHO-ACTIVE] sổ chỉ đọc dòng đang dùng
         var now = DateTime.Now;
 
         if (existing == null)

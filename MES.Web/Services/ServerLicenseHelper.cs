@@ -619,7 +619,13 @@ namespace MES.Web.Services
                         info.Message = err.GetString() ?? "API Error";
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // [C7-LICENSE 2026-10-28] Phản hồi không phải JSON (trang lỗi / "Service invoked too many times"…) = API chưa trả lời được,
+                //   KHÔNG phải "chưa kích hoạt". Ném ra để PerformOnlineCheck giữ nguyên bản quyền đang có (như mất mạng).
+                //   Trước: nuốt lỗi → Inactive → ghi đè cache → khoá cả xưởng tới lần kiểm sau.
+                throw new InvalidOperationException("Phản hồi máy chủ bản quyền không đọc được (không phải JSON).", ex);
+            }
 
             return info;
         }
@@ -738,4 +744,4 @@ namespace MES.Web.Services
             }
         }
     }
-}
+}

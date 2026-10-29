@@ -470,6 +470,7 @@ for (int po = startPo; po < startPo + poCount; po++)
         if (db.Database.Current != null) { fails.Add($"[Giao dịch treo] PO{po} op{op} {desc}"); db.Database.Current = null; }
         if (!ok) continue;
         Inc("ok." + kind);
+    if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] op{op} {desc}");   // [FIX-1028] in từng thao tác thành công của 1 PO để tái hiện lỗi
         await CheckAll(db, led, po, op, desc);
     }
     // [FUZZ-UX] 27/10/2026: báo tiến độ ~5 giây một lần + khi xong, để biết tool đang chạy (không đổi phép kiểm nào)

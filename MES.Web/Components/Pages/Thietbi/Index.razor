@@ -72,13 +72,14 @@
     }
 
     <!-- Bảng Dữ Liệu -->
-    <div class="table-responsive" style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <table class="table table-hover table-bordered mb-0">
+    @* [TBL-FREEZE 2026-10-28] Khung cuộn vừa màn hình + cố định tiêu đề + 3 cột trái (#, Bộ phận, Số máy) như Giao nhận *@
+    <div class="mes-scroll" style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <table class="table table-hover table-bordered mb-0 mes-table">
             <thead style="background-color: #f8f9fa;">
                 <tr>
-                    <th style="width: 45px;" class="text-center">#</th>
-                    <th>Bộ phận</th>
-                    <th style="color: #d81b60;">Số máy (ID)</th>
+                    <th style="left:0;width:45px;min-width:45px;max-width:45px;" class="text-center mes-fz">#</th>
+                    <th class="mes-fz" style="left:45px;width:120px;min-width:120px;max-width:120px;">Bộ phận</th>
+                    <th class="mes-fz mes-fz-last" style="left:165px;width:110px;min-width:110px;max-width:110px;color: #d81b60;">Số máy (ID)</th>
                     <th>Tên Máy (Hiệu)</th>
                     <th>Mã máy (Model)</th>
                     <th>Loại máy</th>
@@ -99,9 +100,9 @@
                     foreach (var may in DanhSachHienThi)
                     {
                         <tr @ondblclick="() => MoPopupView(may)" style="cursor: pointer;" title="Double-click để xem chi tiết">
-                            <td class="text-center align-middle">@stt</td>
-                            <td class="align-middle">@may.BoPhan</td>
-                            <td class="align-middle fw-bold" style="color: #d81b60;">@may.SoMay</td>
+                            <td class="text-center align-middle mes-fz" style="left:0;width:45px;min-width:45px;max-width:45px;">@stt</td>
+                            <td class="align-middle mes-fz" style="left:45px;width:120px;min-width:120px;max-width:120px;" title="@may.BoPhan">@may.BoPhan</td>
+                            <td class="align-middle fw-bold mes-fz mes-fz-last" style="left:165px;width:110px;min-width:110px;max-width:110px;color: #d81b60;">@may.SoMay</td>
                             <td class="align-middle">@may.TenMay</td>
                             <td class="align-middle">@may.MaMay</td>
                             <td class="align-middle">@may.LoaiMay</td>
@@ -791,4 +792,4 @@
 
         isProcessing = false;
     }
-}
+}

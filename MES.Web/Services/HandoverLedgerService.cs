@@ -427,6 +427,12 @@ namespace MES.Web.Services
         public List<LedgerCaseHop> Hops { get; set; } = new();
 
         public decimal HeldAt(string g, string cell) => Held.TryGetValue(g + "|" + cell, out var v) ? v : 0m;
+        /// <summary>[VL8-TIMELINE 2026-10-28] Mỗi lần ô đang giữ của vụ đổi: (lúc, "NHÓM|Ô", số). Compute ghi, chỉ dùng để tính MinHeld.</summary>
+        internal List<(DateTime At, string Key, decimal Q)> Moves { get; } = new();
+        /// <summary>[VL8-TIMELINE] Số thấp nhất của từng ô đang giữ theo THỨ TỰ THỜI GIAN chứng từ (chỉ ghi ô từng xuống dưới 0).
+        /// Vd Kho nhận vụ 1 (+1) → giao đi (−1) → nhận lại (+1): huỷ lần nhận đầu thì cuối cùng vẫn 0 nhưng lúc giao đi là −1
+        /// = hàng của vụ đã đi tiếp mà không có nguồn → K5 phải chặn (trước: chỉ so số cuối nên lọt, vụ kẹt không gỡ được).</summary>
+        public Dictionary<string, decimal> MinHeld { get; set; } = new();
         public decimal HeldTotal => Held.Values.Sum();
         public decimal DaXuLyTotal => DaXuLy.Values.Sum();
         /// <summary>Phải luôn = 0 (cân vụ).</summary>
@@ -901,7 +907,16 @@ namespace MES.Web.Services
                 return cs;
             }
             void CAdd(Dictionary<string, decimal> d, string g, decimal q) { if (q != 0) d[g] = (d.TryGetValue(g, out var v) ? v : 0m) + q; }
-            void CHold(LedgerCase cs, string g, string cell, decimal q) => CAdd(cs.Held, g + "|" + cell, q);
+            void CHold(LedgerCase cs, string g, string cell, decimal q, DateTime? at)   // [VL8-TIMELINE] + lúc chứng từ
+            {
+                CAdd(cs.Held, g + "|" + cell, q);
+                // [VL8-TIMELINE 29/10] Hàng lỗi cũ chưa có mã vụ (Id 0) KHÔNG xét thứ tự thời gian: NG của nó có thể đến từ WTS cũ
+                //   mà giờ là giờ kết thúc công nhân tự nhập (có thể sau giờ lưu thật) → xét thời gian sẽ chặn oan dữ liệu cũ (rà độc lập 29/10).
+                if (q != 0 && cs.Id != 0) cs.Moves.Add((at ?? DateTime.MinValue, g + "|" + cell, q));
+            }
+            // [VL8-TIMELINE] WTS có vụ: lúc vụ sinh ra (NgCases.CreatedAt, giờ máy chủ) — sửa dòng WTS (huỷ + dòng mới giữ vụ) không đẩy vụ ra sau phiếu đã lấy nó.
+            //   [29/10] Không có lúc sinh vụ (dòng đang nhập trên form, vụ chưa lưu) → coi là sớm nhất: không bao giờ dùng giờ kết thúc WTS người nhập.
+            DateTime WtsCaseAt(InWts w) => w.NgCaseId is long wid && inp.CaseInfo.TryGetValue(wid, out var wci) ? wci.At : DateTime.MinValue;
             void CHop(LedgerCase cs, string kind, string g, string? other, string? cell, decimal q, string doc, long refId, DateTime? at)
             {
                 if (q != 0) cs.Hops.Add(new LedgerCaseHop { Kind = kind, Group = g, Other = other, Cell = cell, Qty = q, Doc = doc, RefId = refId, At = at });
@@ -944,7 +959,7 @@ namespace MES.Web.Services
                 if (back == null)
                 {
                     Add(t.From, "nl", "Nhận Hàng lỗi", r.Ng, new LedgerDoc { Kind = "NHAN", RefId = t.Id, At = r.At, Text = ngText });
-                    CHold(ngCs, t.From, HandoverCell.Loi, r.Ng); CAdd(ngCs.NhanLoi, t.From, r.Ng);   // [VULOI]
+                    CHold(ngCs, t.From, HandoverCell.Loi, r.Ng, r.At); CAdd(ngCs.NhanLoi, t.From, r.Ng);   // [VULOI]
                     CHop(ngCs, "TRA", t.From, t.To, HandoverCell.Loi, r.Ng, $"Phiếu #{t.Id}", t.Id, r.At);
                 }
                 else
@@ -962,7 +977,8 @@ namespace MES.Web.Services
                             Kind = "PHIEU", RefId = back.Id, At = back.At, Text = backText + $" · chờ nhận (phiếu {back.Issued:0.##})"
                         });
                     // [VULOI] vụ của phần NG: đi theo phiếu trả tự lập — đã nhận vào ô Hàng lỗi bên giao, phần chưa nhận đang chuyển
-                    CHold(ngCs, t.From, HandoverCell.Loi, backRec); CAdd(ngCs.NhanLoi, t.From, backRec);
+                    CAdd(ngCs.Held, t.From + "|" + HandoverCell.Loi, backRec); CAdd(ngCs.NhanLoi, t.From, backRec);
+                    foreach (var bx in back.Receives) if (bx.Ok + bx.Ng != 0) ngCs.Moves.Add((bx.At, t.From + "|" + HandoverCell.Loi, bx.Ok + bx.Ng));   // [VL8-TIMELINE] từng lần nhận phiếu trả
                     if (back.Status != "COMPLETED") ngCs.Transit += Math.Max(0, back.Issued - backRec);
                     CHop(ngCs, "TRA", t.From, t.To, HandoverCell.Loi, r.Ng, $"Phiếu trả #{back.Id}", back.Id, back.At);
                 }
@@ -984,7 +1000,7 @@ namespace MES.Web.Services
                     row.TxFromCell[t.Id] = HandoverCell.Loi;   // [GN-NG-TRACE] chỉ ghi lại, không tính
                     {   // [VULOI] vụ ra khỏi PO từ ô Hàng lỗi bên giao
                         var csO = Cs(t.NgCaseId);
-                        CHold(csO, t.From, HandoverCell.Loi, -t.Issued);
+                        CHold(csO, t.From, HandoverCell.Loi, -t.Issued, t.At);
                         if (isScrap) { csO.Huy += t.Issued; CAdd(csO.HuyBy, t.From, t.Issued); }
                         else { csO.TraKhach += t.Issued; CAdd(csO.KhachBy, t.From, t.Issued); }
                         CHop(csO, isScrap ? "HUY" : "KHACH", t.From, null, HandoverCell.Loi, t.Issued, $"Phiếu #{t.Id}", t.Id, t.At);
@@ -1073,7 +1089,7 @@ namespace MES.Web.Services
                         else Add(t.From, "glTu", "Giao Hàng lỗi (tự sửa xong, trả nơi phát hiện)", giao, txDoc);
                         if (!prevNg)
                         {   // [VULOI] vụ rời ô Hàng lỗi bên giao, đang chuyển
-                            CHold(csT!, t.From, HandoverCell.Loi, -giao); csT!.Transit += giao;
+                            CHold(csT!, t.From, HandoverCell.Loi, -giao, t.At); csT!.Transit += giao;
                             if (desig is HandoverCell.Xl or HandoverCell.Moi) csT.TuXuLy.Add(t.From);
                             CHop(csT, "GIAO", t.From, t.To, HandoverCell.Loi, giao, txDocName, t.Id, t.At);
                         }
@@ -1082,7 +1098,7 @@ namespace MES.Web.Services
                         Add(t.From, "gs", "Giao Hàng sửa (sửa hộ xong, trả nơi phát hiện)", giao, txDoc);
                         suaRunning[t.From] -= giao;
                         // [VULOI] vụ rời ô Hàng sửa bên giao, đang chuyển
-                        CHold(csT!, t.From, HandoverCell.Sua, -giao); csT!.Transit += giao;
+                        CHold(csT!, t.From, HandoverCell.Sua, -giao, t.At); csT!.Transit += giao;
                         CHop(csT, "GIAO", t.From, t.To, HandoverCell.Sua, giao, txDocName, t.Id, t.At);
                         break;
                 }
@@ -1133,8 +1149,8 @@ namespace MES.Web.Services
                     if (carry)
                     {
                         csT!.Transit -= q;
-                        if (cell == HandoverCell.Loi) { CHold(csT, t.To, HandoverCell.Loi, q); CAdd(csT.NhanLoi, t.To, q); }
-                        else if (cell == HandoverCell.Sua) { CHold(csT, t.To, HandoverCell.Sua, q - r.Ng); CAdd(csT.NhanSua, t.To, q - r.Ng); }
+                        if (cell == HandoverCell.Loi) { CHold(csT, t.To, HandoverCell.Loi, q, r.At); CAdd(csT.NhanLoi, t.To, q); }
+                        else if (cell == HandoverCell.Sua) { CHold(csT, t.To, HandoverCell.Sua, q - r.Ng, r.At); CAdd(csT.NhanSua, t.To, q - r.Ng); }
                         else CAdd(csT.DaXuLy, t.To, q - r.Ng);
                         CHop(csT, "NHAN", t.To, t.From, cell, q, txDocName, t.Id, r.At);
                         ngCs = csT;
@@ -1143,7 +1159,7 @@ namespace MES.Web.Services
                     {
                         ngCs = Cs(r.NgCaseId);
                         ngCs.SinhRa += q;
-                        CHold(ngCs, t.To, cell, q - (cell == HandoverCell.Sua ? r.Ng : 0));
+                        CHold(ngCs, t.To, cell, q - (cell == HandoverCell.Sua ? r.Ng : 0), r.At);
                         CAdd(cell == HandoverCell.Loi ? ngCs.NhanLoi : ngCs.NhanSua, t.To, q - (cell == HandoverCell.Sua ? r.Ng : 0));
                         CHop(ngCs, "PS", t.To, t.From, cell, q, txDocName, t.Id, r.At);
                     }
@@ -1168,7 +1184,7 @@ namespace MES.Web.Services
                 {
                     Add(g, "ngc", "NG (WTS)", w.Ng, new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w) });
                     var csW = Cs(w.NgCaseId);   // [VULOI] NG làm hỏng: vụ sinh ra, nhóm tự giữ ở ô Hàng lỗi
-                    csW.SinhRa += w.Ng; CHold(csW, g, HandoverCell.Loi, w.Ng); CAdd(csW.NhanLoi, g, w.Ng);
+                    csW.SinhRa += w.Ng; CHold(csW, g, HandoverCell.Loi, w.Ng, WtsCaseAt(w)); CAdd(csW.NhanLoi, g, w.Ng);
                     CHop(csW, "PS", g, null, HandoverCell.Loi, w.Ng, $"WTS #{w.Id}", w.Id, w.At);
                 }
             }
@@ -1181,7 +1197,7 @@ namespace MES.Web.Services
                 Add(nr.Group, "bl", "Báo hàng lỗi phát hiện sau khi nhận", nr.Qty, BDoc());
                 {   // [VULOI] vụ sinh ra, nhóm báo giữ ở ô Hàng lỗi
                     var csB = Cs(nr.NgCaseId);
-                    csB.SinhRa += nr.Qty; CHold(csB, nr.Group, HandoverCell.Loi, nr.Qty); CAdd(csB.NhanLoi, nr.Group, nr.Qty);
+                    csB.SinhRa += nr.Qty; CHold(csB, nr.Group, HandoverCell.Loi, nr.Qty, nr.At); CAdd(csB.NhanLoi, nr.Group, nr.Qty);
                     CHop(csB, "PS", nr.Group, nr.Cause, HandoverCell.Loi, nr.Qty, $"Báo lỗi #{nr.Id}", nr.Id, nr.At);
                 }
                 if (nr.Source == HandoverNgSource.Chua)
@@ -1440,9 +1456,19 @@ namespace MES.Web.Services
             foreach (var k in row.Cases.Keys.ToList())
             {
                 var cs = row.Cases[k];
+                // [VL8-TIMELINE] Chạy lại các lần đổi ô theo thời gian (cùng lúc: số vào trước số ra) → số thấp nhất từng ô
+                {
+                    var run = new Dictionary<string, decimal>();
+                    foreach (var mv in cs.Moves.OrderBy(m => m.At).ThenByDescending(m => m.Q))
+                    {
+                        var v = (run.TryGetValue(mv.Key, out var rv) ? rv : 0m) + mv.Q;
+                        run[mv.Key] = v;
+                        if (v < 0 && (!cs.MinHeld.TryGetValue(mv.Key, out var mn) || v < mn)) cs.MinHeld[mv.Key] = v;
+                    }
+                }
                 foreach (var hk in cs.Held.Where(x => x.Value == 0).Select(x => x.Key).ToList()) cs.Held.Remove(hk);
                 foreach (var hk in cs.DaXuLy.Where(x => x.Value == 0).Select(x => x.Key).ToList()) cs.DaXuLy.Remove(hk);
-                if (cs.IsEmpty) { row.Cases.Remove(k); continue; }
+                if (cs.IsEmpty && cs.MinHeld.Count == 0) { row.Cases.Remove(k); continue; }   // [VL8-TIMELINE] giữ vụ từng âm theo thời gian để K5 thấy
                 cs.Hops = cs.Hops.OrderBy(h => h.At ?? DateTime.MinValue).ToList();
                 var ps = cs.Hops.FirstOrDefault(h => h.Kind == "PS");
                 if (inp.CaseInfo.TryGetValue(k, out var ci))
@@ -2145,10 +2171,14 @@ namespace MES.Web.Services
             //   Khoá "VU|<id>|<nhóm>|<ô>" — HandoverWhy lần ra phiếu đang lấy từ vụ đó.
             foreach (var cs in r.Cases.Values)
             {
-                foreach (var h in cs.Held)
+                // [VL8-TIMELINE] Lấy số thấp hơn giữa số cuối và số thấp nhất theo thời gian (hàng của vụ đã giao đi trước khi có nguồn)
+                foreach (var hkey in cs.Held.Keys.Concat(cs.MinHeld.Keys).Distinct())
                 {
-                    var hp = h.Key.Split('|');
-                    Put($"VU|{cs.Id}|{h.Key}", h.Value, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : "tồn hàng lỗi")}");
+                    var hp = hkey.Split('|');
+                    var fin = cs.Held.TryGetValue(hkey, out var hv) ? hv : 0m;
+                    var low = cs.MinHeld.TryGetValue(hkey, out var mv) ? Math.Min(mv, fin) : fin;
+                    Put($"VU|{cs.Id}|{hkey}", low, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : "tồn hàng lỗi")}"
+                        + (low < fin ? " (theo thứ tự thời gian: hàng của vụ đã giao đi trước khi có chứng từ nguồn)" : ""));
                 }
                 Put($"VU|{cs.Id}|CHUYEN", cs.Transit, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)}: đang chuyển");
             }

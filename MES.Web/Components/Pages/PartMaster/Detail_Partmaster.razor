@@ -3484,6 +3484,14 @@ else
             if (dups.Any())
                 validationErrors.Add($"NC {e.NC}: máy {string.Join(", ", dups)} bị trùng ở 2 dòng (máy đăng ký / máy đồng dạng) — mỗi máy chỉ ở 1 dòng.");
         }
+        // [B6-NC-DUP 2026-10-28] NC / mã CV trống hoặc trùng trong cùng 1 mục → không lưu (trước: trống tự thành "-", trùng vẫn lưu
+        //   → đi vào snapshot mọi PO mới: mã "-" không bao giờ có WTS → OK HTSP = 0 → PO kẹt; 2 dòng cùng NC → WTS chỉ chọn máy dòng đầu).
+        //   Chỉ kiểm dòng mới / đang sửa — dữ liệu cũ không đụng tới thì không chặn oan.
+        if (_canEditB) CheckNcList(_machiningEdits, "Gia công", validationErrors);
+        // [B6-NC-DUP 29/10] Taro: sổ giao nhận / WTS tính theo mã CV (WtsTaskCode, trống thì NC) → kiểm trùng / trống theo đúng mã đó
+        if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }
+        if (_canEditD) CheckNcList(_inspectionEdits, "KCS", validationErrors);
+        if (_canEditE) CheckNcList(_packagingEdits, "Đóng gói", validationErrors);
         if (validationErrors.Count > 0)
         {
             _saveResult = "⚠️ Không thể lưu — giá trị không hợp lệ:\n" + string.Join("\n", validationErrors);
@@ -3818,6 +3826,24 @@ else
         catch (Exception ex)
         {
             errors.Add($"✗ Thêm {type}: {ex.Message}");
+        }
+    }
+
+    /// <summary>[B6-NC-DUP] Dòng mới / đang sửa: NC (mã CV) không trống, không trùng dòng chính khác trong cùng mục.</summary>
+    private static void CheckNcList<T>(List<T> list, string label, List<string> errs, Func<T, string?>? codeOf = null) where T : StepEditBase
+    {
+        // codeOf = mã mà sổ giao nhận / WTS dùng để đếm (mặc định NC; Taro: WtsTaskCode, trống thì NC)
+        string Code(T x) => ((codeOf ?? (y => y.NC))(x) ?? "").Trim();
+        var live = list.Where(x => x.State != EditState.Deleted).ToList();
+        foreach (var e in live.Where(x => x.State is EditState.New or EditState.Modified))
+        {
+            var nc = Code(e);
+            if (nc.Length == 0 || nc == "-")
+            { errs.Add($"{label}: có dòng chưa nhập NC / mã CV — nhập mã hoặc xoá dòng."); continue; }
+            if (e.IsBackup) continue;
+            var same = live.Count(x => !x.IsBackup && string.Equals(Code(x), nc, StringComparison.OrdinalIgnoreCase));
+            if (same > 1)
+                errs.Add($"{label}: NC / mã CV {nc} bị trùng ở {same} dòng — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng).");
         }
     }
 
@@ -4321,4 +4347,4 @@ else
             ParentNC = ParentNC
         };
     }
-}
+}

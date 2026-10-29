@@ -3540,17 +3540,18 @@ else
 
                 {
 
-                    <div class="table-responsive">
+                    @* [TBL-FREEZE 2026-10-28] Báo cáo nhiều dòng / nhiều cột: khung cuộn vừa màn hình + cố định tiêu đề + 2 cột trái (Ngày, Công nhân) *@
+                    <div class="mes-scroll">
 
-                        <table class="table table-sm table-bordered table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0 mes-table" style="font-size: 0.82rem;">
 
                             <thead style="background-color: #f8fafc;">
 
                                 <tr>
 
-                                    <th style="width: 90px;">Ngày</th>
+                                    <th class="mes-fz" style="left:0;width:90px;min-width:90px;max-width:90px;">Ngày</th>
 
-                                    <th style="width: 120px;">Công nhân</th>
+                                    <th class="mes-fz mes-fz-last" style="left:90px;width:120px;min-width:120px;max-width:120px;">Công nhân</th>
 
                                     <th style="width: 80px;" class="text-center">Bắt đầu</th>
 
@@ -3598,9 +3599,9 @@ else
 
                                     <tr style="@rowBg">
 
-                                        <td class="small">@row.WorkDate.ToString("dd/MM/yyyy")</td>
+                                        <td class="small mes-fz" style="left:0;width:90px;min-width:90px;max-width:90px;@rowBg">@row.WorkDate.ToString("dd/MM/yyyy")</td>
 
-                                        <td class="small fw-bold">@row.WorkerName</td>
+                                        <td class="small fw-bold mes-fz mes-fz-last" style="left:90px;width:120px;min-width:120px;max-width:120px;@rowBg" title="@row.WorkerName">@row.WorkerName</td>
 
                                         <td class="text-center small">@row.StartTime.ToString("HH:mm")</td>
 
@@ -4834,64 +4835,8 @@ else
 
     }
 
-    // v0.8: RemoveRow bây giờ async — nếu row có logId (đã lưu DB, đang sửa dở,
-
-    // hoặc user xóa hẳn) thì void ở DB + reload flow. Fix bug: xóa xong NC vẫn
-
-    // hiển thị "ĐÃ ĐỦ SL" vì log cũ chưa được void.
-
-    private async Task RemoveRow(WtsRow row)
-
-    {
-
-        if (row.WtsLogId.HasValue)
-
-        {
-
-            await Db.Database.ExecuteSqlRawAsync(
-
-                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
-
-                _currentUserId, DateTime.Now, row.WtsLogId.Value);
-
-        }
-
-        if (row.ActivityLogId.HasValue)
-
-        {
-
-            await Db.Database.ExecuteSqlRawAsync(
-
-                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
-
-                _currentUserId, DateTime.Now, row.ActivityLogId.Value);
-
-        }
-
-        _rows.Remove(row);
-
-        // Reload flow cho detail này để dropdown NC và cascade cập nhật ngay
-
-        if (row.KhPlanDetailId.HasValue)
-
-        {
-
-            Db.ChangeTracker.Clear();
-
-            await ReloadFlowAsync(row.KhPlanDetailId.Value);
-            MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
-
-            // Reload qty summary luôn để nhất quán
-
-            var summary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId.Value);
-
-            foreach (var kv in summary)
-
-                _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
-
-        }
-
-    }
+    // [W2-REMOVEROW 2026-10-28] Đã bỏ hàm RemoveRow (code chết từ 17/10, không nút nào gọi): huỷ dòng WTS KHÔNG khoá PO, KHÔNG kiểm K5.
+    //   Xoá dòng đã lưu chỉ đi qua VoidSavedRow (khoá PO + K5 + báo gốc rễ).
 
     /// <summary>
 
@@ -4984,7 +4929,7 @@ else
 
         if (string.IsNullOrEmpty(po)) return;
 
-        var detail = _allRows.FirstOrDefault(r => r.PurchaseOrder == po);
+        var detail = _allRows.Where(r => r.PurchaseOrder == po).Select(r => r.KhPlanDetailId).Distinct().Count() > 1 ? null : _allRows.FirstOrDefault(r => r.PurchaseOrder == po);   // [B5-PODUP] PO trùng số (khác dòng KH): không tự chọn dòng đầu
 
         if (detail == null) return;
 
@@ -5187,6 +5132,8 @@ else
     private static string? FirstPart(string? msg) => msg == null ? null : msg.Split("\n\n")[0];
     // [GN-WHY] Lưu WTS bị chặn K5: nhớ PO + thao tác thử để tìm gốc rễ SAU khi nhả khoá (SaveGroupAsync finally)
     private (int DetailId, List<long> RemoveIds, List<InWts> Add)? _pendingWhy;
+    // [B2B3-WTS-TRX] PO cần báo màn Giao nhận — gom trong lúc lưu nhóm (giao dịch), báo sau khi ghi hẳn. null = báo ngay.
+    private HashSet<int>? _notifyDefer;
 
     private bool _voidBusy;   // chặn bấm 2 lần trong lúc chờ khoá PO
     private async Task OnConfirmVoidAsync()
@@ -5209,7 +5156,9 @@ else
 
         // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
         // (vd xoá WTS NC1 khi NC2 / nhóm sau đã làm từ số đó). Trước: xoá luôn, không kiểm.
-        if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue && IsWorkflowOn(row.KhPlanDetailId))
+        // [B4-WF-DB 2026-10-28] Luôn khoá PO và đọc cờ Workflow từ DB (sổ) — trước: lấy từ danh sách PO nạp lúc mở trang
+        //   (KH bật Workflow giữa ca → xoá WTS không kiểm; PO ngoài 1000 dòng đầu → không kiểm).
+        if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue)
         {
             var locks = new List<string>();
             bool blocked = false;   // [GN-WHY] bị chặn K5 → tìm gốc rễ sau khi nhả khoá
@@ -5218,7 +5167,9 @@ else
                 if (!await AcquirePoLockAsync(row.KhPlanDetailId.Value, locks))
                 { _voidBlockMsg = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây."; return false; }
                 var before = await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value);
-                var after  = await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value, new List<long> { row.WtsLogId.Value });
+                var after  = before?.ApplyWorkflow == true
+                    ? await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value, new List<long> { row.WtsLogId.Value })
+                    : null;   // Workflow OFF (N7): không kiểm ô âm
                 if (before != null && after != null)
                 {
                     var bad = HandoverLedgerService.NewNegatives(before, after);
@@ -5261,7 +5212,7 @@ else
 
             await Db.Database.ExecuteSqlRawAsync(
 
-                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
+                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",   // [D8-WTS-VOID] không ghi đè người huỷ trước
 
                 _currentUserId, DateTime.Now, row.WtsLogId.Value);
 
@@ -5269,7 +5220,7 @@ else
 
             await Db.Database.ExecuteSqlRawAsync(
 
-                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
+                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
 
                 _currentUserId, DateTime.Now, row.ActivityLogId.Value);
 
@@ -5526,6 +5477,24 @@ else
         var det = _allRows.FirstOrDefault(r =>
 
             r.PurchaseOrder.Equals(text ?? "", StringComparison.OrdinalIgnoreCase));
+
+        // [B5-PODUP 2026-10-28] Số PO trùng nhiều dòng KH (dữ liệu cũ) → không tự chọn dòng đầu (ghi nhầm PO).
+        //   [29/10] Đếm theo dòng KH khác nhau (danh sách nối Kho có thể lặp 1 dòng KH); nhóm đã có Part No thì lấy đúng dòng cùng Part.
+        var _poCands = _allRows.Where(r => r.PurchaseOrder.Equals(text ?? "", StringComparison.OrdinalIgnoreCase))
+                               .GroupBy(r => r.KhPlanDetailId).Select(g => g.First()).ToList();
+        if (_poCands.Count > 1 && !string.IsNullOrEmpty(grp.PartNo))
+            _poCands = _poCands.Where(r => r.PartNo == grp.PartNo).ToList();
+        if (_poCands.Count > 1)
+        {
+            sub.ErrorMsg = $"Số PO {text} có {_poCands.Count} dòng trong Kế hoạch ({string.Join(", ", _poCands.Select(r => r.PartNo + " · " + r.PlanNo))}) — "
+                         + "nếu dòng khác trong nhóm đã có PO cùng Part thì phần mềm tự chọn đúng; còn không, báo quản trị xử lý PO trùng số (dữ liệu cũ).";
+            det = null;
+        }
+        else
+        {
+            det = _poCands.FirstOrDefault() ?? det;
+            if (sub.ErrorMsg != null && sub.ErrorMsg.Contains("dòng trong Kế hoạch")) sub.ErrorMsg = null;
+        }
 
         if (det != null)
 
@@ -6752,18 +6721,42 @@ else
             if (_capErr != null) { grp.ErrorMsg = _capErr; return; }
 
             // Lưu từng sub-row
-
-            foreach (var sub in grp.SubRows)
-
+            // [B2B3-WTS-TRX 2026-10-28] Cả nhóm lưu trong 1 giao dịch: 1 dòng lỗi → không dòng nào được ghi (kể cả vụ lỗi vừa tạo),
+            //   dòng đang sửa giữ nguyên dòng cũ. Trước: dòng 1 đã lưu, dòng 2 lỗi → bấm Lưu lại ghi dòng 1 lần 2 (số nhân đôi);
+            //   lỗi giữa "huỷ dòng cũ" và "ghi dòng mới" → mất số. Trạng thái từng dòng trên form trả về như trước khi bấm Lưu.
+            var _rowSnap = grp.SubRows.Select(s => (Row: s, s.WtsLogId, s.ActivityLogId, s.IsEditing, s.NgCaseId, s.HasWarning, s.WarningMsg)).ToList();   // [29/10] + cảnh báo (lưu lại không cộng dồn)
+            _notifyDefer = new HashSet<int>();
+            bool _allOk = true;
+            await using (var _wtsTrx = await Db.Database.BeginTransactionAsync())
             {
-
-                await SaveRowAsync(sub);
-
-                if (sub.ErrorMsg != null)
-
-                { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg}"; return; }
-
+                foreach (var sub in grp.SubRows)
+                {
+                    await SaveRowAsync(sub);
+                    if (sub.ErrorMsg != null)
+                    { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg} — chưa dòng nào trong nhóm được lưu, sửa xong bấm Lưu lại."; _allOk = false; break; }
+                }
+                if (_allOk) await _wtsTrx.CommitAsync();
+                else
+                {
+                    await _wtsTrx.RollbackAsync();
+                    Db.ChangeTracker.Clear();
+                    foreach (var sn in _rowSnap)
+                    { sn.Row.WtsLogId = sn.WtsLogId; sn.Row.ActivityLogId = sn.ActivityLogId; sn.Row.IsEditing = sn.IsEditing; sn.Row.NgCaseId = sn.NgCaseId; sn.Row.HasWarning = sn.HasWarning; sn.Row.WarningMsg = sn.WarningMsg; }
+                }
             }
+            var _toNotify = _notifyDefer;
+            _notifyDefer = null;
+            if (!_allOk)
+            {
+                foreach (var id in _toNotify)
+                {
+                    // trần + số đã làm trên form về lại số trong DB (giao dịch đã rollback)
+                    foreach (var kv in await KhSvc.GetWtsQtySummaryAsync(id)) _qtySummaryCache[$"{id}|{kv.Key}"] = kv.Value;
+                    await ReloadFlowAsync(id);
+                }
+                return;
+            }
+            foreach (var id in _toNotify) MES.Web.Services.HandoverChangeNotifier.Notify(id);   // [GN-LIVE] báo sau khi đã ghi hẳn
 
             // Xóa nhóm sau khi lưu xong
 
@@ -6822,7 +6815,13 @@ else
 
         foreach (var id in detIds)
         {
-            var det  = _allRows.FirstOrDefault(r => r.KhPlanDetailId == id);
+            // [B4-WF-DB 2026-10-28] Khoá PO trước, rồi đọc PO + cờ Workflow MỚI từ DB (trước: _allRows nạp lúc mở trang, chỉ 1000 PO mới nhất
+            //   → KH bật Workflow giữa ca thì cả ca lưu không trần / không K5 / không khoá; PO ngoài danh sách bỏ qua mọi kiểm).
+            if (!await AcquirePoLockAsync(id, poLocks))
+                return $"PO {_allRows.FirstOrDefault(r => r.KhPlanDetailId == id)?.PurchaseOrder ?? $"KH#{id}"} đang có người khác lưu WTS / giao nhận. Bấm Lưu lại sau vài giây.";
+            var det  = await Db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == id)
+                .Select(d => new { d.PurchaseOrder, d.Quantity, d.Unit, ApplyWorkflow = d.KhPlan != null && d.KhPlan.ApplyWorkflow })
+                .FirstOrDefaultAsync();
             var po   = det?.PurchaseOrder ?? $"KH#{id}";
             var subs = grp.SubRows.Where(s => s.KhPlanDetailId == id && s.QtyDone > 0 && !IsPrepNoQty(s)).ToList();
 
@@ -6836,9 +6835,6 @@ else
                 }
                 continue;
             }
-
-            if (!await AcquirePoLockAsync(id, poLocks))
-                return $"PO {po} đang có người khác lưu WTS / giao nhận. Bấm Lưu lại sau vài giây.";
 
             var editIds = editLogs.Where(l => l.KhPlanDetailId == id).Select(l => l.WtsLogId).ToList();
             var before  = await LedgerSvc.GetLedgerForDetailAsync(id);
@@ -7322,15 +7318,20 @@ else
 
         {
 
+            // [D8-WTS-VOID 2026-10-28] Chỉ huỷ dòng còn hiệu lực; không huỷ được (tab khác đã sửa / xoá dòng này) thì dừng, không ghi dòng mới
+            //   (trước: 2 tab cùng sửa 1 dòng → cả 2 bản mới cùng hiệu lực, số nhân đôi).
             if (row.WtsLogId.HasValue)
 
             {
 
-                await Db.Database.ExecuteSqlRawAsync(
+                var _nVoid = await Db.Database.ExecuteSqlRawAsync(
 
-                    "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2}",
+                    "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",
 
                     _currentUserId, DateTime.Now, row.WtsLogId.Value);
+
+                if (_nVoid != 1)
+                { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
 
             }
 
@@ -7338,11 +7339,14 @@ else
 
             {
 
-                await Db.Database.ExecuteSqlRawAsync(
+                var _nVoidA = await Db.Database.ExecuteSqlRawAsync(
 
-                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2}",
+                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
 
                     _currentUserId, DateTime.Now, row.ActivityLogId.Value);
+
+                if (_nVoidA != 1)
+                { row.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
 
             }
 
@@ -7629,7 +7633,8 @@ else
                     _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
 
                 await ReloadFlowAsync(row.KhPlanDetailId.Value);
-                MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
+                if (_notifyDefer != null) _notifyDefer.Add(row.KhPlanDetailId.Value);   // [B2B3-WTS-TRX] đang trong giao dịch nhóm: báo sau khi ghi hẳn
+                else MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
 
             }
 

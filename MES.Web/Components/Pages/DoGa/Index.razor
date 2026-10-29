@@ -84,7 +84,8 @@
     }
 
     <!-- Bảng danh sách đồ gá chuẩn định dạng 2 tầng Header -->
-    <div class="table-responsive shadow-sm bg-white rounded border" style="max-height: 720px; overflow-y: auto;">
+    @* [TBL-FREEZE 2026-10-28] Khung cao vừa màn hình (trước: cố định 720px) → thanh cuộn ngang luôn ở đáy; tiêu đề 2 tầng vẫn dính như cũ *@
+    <div class="mes-scroll shadow-sm bg-white rounded border">
         <table class="table table-hover table-bordered mb-0 align-middle table-sm">
             <thead style="background-color: #f1f5f9; position: sticky; top: 0; z-index: 10;">
                 <tr>
@@ -892,4 +893,4 @@
             isExporting = false;
         }
     }
-}
+}
