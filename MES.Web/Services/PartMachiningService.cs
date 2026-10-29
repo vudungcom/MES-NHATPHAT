@@ -184,6 +184,25 @@ public class PartMachiningService
         if (existing == null)
             throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
 
+        // [PM-DEL-BACKUP 2026-10-29] Xoá NC chính = xoá luôn các dòng dự phòng của nó (IsBackup, ParentNC = NC này), mỗi dòng
+        //   xoá đủ như một NC (máy đồng dạng + xác nhận + snapshot vào ChangeLog). Trước: dự phòng ở lại mồ côi → PO tạo sau
+        //   không gộp WTS dự phòng về NC chính (N2), sổ bỏ qua dòng WTS đó.
+        if (!existing.IsBackup)
+        {
+            var backups = await _db.PartMachiningSteps
+                .Where(s => s.PartId == existing.PartId && s.IsActive && s.IsBackup && s.ParentNC == existing.NC)
+                .ToListAsync();
+            foreach (var b in backups)
+                await DeleteStepCoreAsync(b, userId, reason + $" (xoá theo NC chính {existing.NC})");
+        }
+        await DeleteStepCoreAsync(existing, userId, reason);
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>[DEL-NC-FULL][PM-DEL-BACKUP] Thân xoá 1 dòng NC (không SaveChanges): Confirms → Timings → Step + snapshot đủ vào ChangeLog.</summary>
+    private async Task DeleteStepCoreAsync(PartMachiningStep existing, int userId, string reason)
+    {
+        var stepId = existing.StepId;
         // [DEL-NC-FULL] Nghiệp vụ chốt 17/10/2026: xóa dòng chính = xóa luôn toàn bộ máy đồng dạng của NC.
         // DB: FK_PartMachiningTimings_Steps = CASCADE, nhưng FK_TimingConfirms_Step / FK_TimingConfirms_Timing = NO ACTION
         // → nếu NC đã có tích xác nhận, DELETE step bị SQL chặn (lỗi treo "Đang xử lý..." trước đây).
@@ -237,7 +256,6 @@ public class PartMachiningService
         _db.PartMachiningTimingConfirms.RemoveRange(confirms);
         _db.PartMachiningTimings.RemoveRange(timings);
         _db.PartMachiningSteps.Remove(existing);
-        await _db.SaveChangesAsync();
     }
 
     // FieldName constants cho timing confirm

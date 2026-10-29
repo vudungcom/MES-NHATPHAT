@@ -238,6 +238,31 @@ public static class ChuoiScen
             Ok(!r.Ok || (!neg.Any() && row.Balanced && HandoverLedgerService.NegativeCells(row).Count == 0), "Sau khi thử giao theo NC 3 chiếc: hoặc bị chặn, hoặc không ô nào âm", (r.Ok ? "ĐÃ LƯU ĐƯỢC · " : "chặn: " + r.Error + " · ") + string.Join(", ", neg));
         }
 
+        Console.WriteLine("[C11] Xoá NC chính đang có dòng dự phòng → dự phòng xoá kèm (PM-DEL-BACKUP), PO cũ không đổi");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-013", new ChuoiHelp.Shape { Gc = 3, ExclAt = -1, DongDang = true, DuPhong = true, Taro = 1, Bavia = 0, Rua = 0, Kcs = 0, Pkg = 0, Prep = false, HtspDuPhong = true });
+            await ChuoiHelp.CreateKhAsync(db, pid, "P-013", new decimal[] { 5 }, "PO-13");
+            var snap0 = ChuoiHelp.SnapPicture(db, 1).Sig;
+            var gc = new PartMachiningService(db);
+            var main = db.PartMachiningSteps.List.Single(s => s.PartId == pid && s.NC == "NC01");
+            var dp = db.PartMachiningSteps.List.Single(s => s.PartId == pid && s.IsBackup);
+            var tim = db.PartMachiningTimings.List.Count(t => t.StepId == main.StepId && t.IsActive);
+            await gc.SoftDeleteAsync(main.StepId, ChuoiHelp.Admin, "xoa NC01");
+            var logs = db.PartProcessStepChangeLogs.List.Where(l => l.FieldName == "Deleted" && (l.StepId == main.StepId || l.StepId == dp.StepId)).ToList();
+            Ok(!db.PartMachiningSteps.List.Any(s => s.StepId == main.StepId || s.StepId == dp.StepId) && !db.PartMachiningTimings.List.Any(t => t.StepId == main.StepId),
+               $"Xoá NC01 (có {tim} máy đồng dạng + dự phòng NC01-DP-01): cả 2 dòng + máy đồng dạng đã xoá khỏi bảng chính");
+            Ok(logs.Count(l => l.StepId == dp.StepId && l.TimingId == null) == 1 && logs.First(l => l.StepId == dp.StepId && l.TimingId == null).Reason!.Contains("xoá theo NC chính NC01"),
+               "Dòng dự phòng có log Xoá riêng, lý do ghi 'xoá theo NC chính NC01'", string.Join(" | ", logs.Select(l => $"#{l.StepId}:{l.Reason}")));
+            Ok(!db.PartMachiningSteps.List.Any(s => s.PartId == pid && s.IsBackup && !db.PartMachiningSteps.List.Any(m => !m.IsBackup && m.NC == s.ParentNC)), "Không còn dự phòng mồ côi ở Part");
+            Ok(ChuoiHelp.SnapPicture(db, 1).Sig == snap0, "Snapshot PO cũ không đổi (vẫn đủ NC01 + dự phòng)");
+            var taro = new PartTaroService(db);
+            var t1 = db.PartTaroSteps.List.Single(s => s.PartId == pid && s.NC == "T1"); var tdp = db.PartTaroSteps.List.Single(s => s.PartId == pid && s.IsBackup);
+            await taro.SoftDeleteAsync(t1.StepId, ChuoiHelp.Admin, "xoa T1");
+            Ok(!db.PartTaroSteps.List.Any(s => s.StepId == t1.StepId || s.StepId == tdp.StepId) && db.PartProcessStepChangeLogs.List.Any(l => l.StepId == tdp.StepId && l.FieldName == "Deleted"),
+               "Taro: xoá T1 thì T1-DP xoá kèm + có log");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

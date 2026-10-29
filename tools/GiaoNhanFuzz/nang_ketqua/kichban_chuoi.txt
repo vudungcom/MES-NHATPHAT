@@ -1,4 +1,3 @@
-﻿lệnh: GiaoNhanFuzz.dll chuoi 
 [C1] Part Master đầy đủ → tạo KH → snapshot khớp từng ô
   ĐẠT  Part Master dựng đúng: 3 NC + 1 dự phòng, NC01 có máy đồng dạng M1b, NC03 máy H04 (loại trừ), Taro T1(3T)+DP+1T, Bavia B1+1V, Rửa R1+1R, KCS 2, ĐG 1
          → GC
@@ -84,5 +83,12 @@
          → trần=0 · NC NC01 là NC cuối của Gia công (sau nó chỉ còn NC máy loại trừ NC02): hàng OK ở đây là Đã làm chưa giao — giao bằng phân loại Hàng mới.
   ĐẠT  Sau khi thử giao theo NC 3 chiếc: hoặc bị chặn, hoặc không ô nào âm
          → chặn: Giao theo NC: tối đa 0 (Giao theo NC: 0). Không thể giao 3. · 
+[C11] Xoá NC chính đang có dòng dự phòng → dự phòng xoá kèm (PM-DEL-BACKUP), PO cũ không đổi
+  ĐẠT  Xoá NC01 (có 1 máy đồng dạng + dự phòng NC01-DP-01): cả 2 dòng + máy đồng dạng đã xoá khỏi bảng chính
+  ĐẠT  Dòng dự phòng có log Xoá riêng, lý do ghi 'xoá theo NC chính NC01'
+         → #2:xoa NC01 (xoá theo NC chính NC01) | #1:xoa NC01 | #1:xoa NC01
+  ĐẠT  Không còn dự phòng mồ côi ở Part
+  ĐẠT  Snapshot PO cũ không đổi (vẫn đủ NC01 + dự phòng)
+  ĐẠT  Taro: xoá T1 thì T1-DP xoá kèm + có log
 
 KẾT QUẢ: ĐẠT hết

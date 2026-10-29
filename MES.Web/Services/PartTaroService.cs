@@ -151,6 +151,27 @@ public class PartTaroService
             stepId, partId, ProcessStepAction.Deleted,
             oldValue: snapshot, newValue: null, userId, reason));
 
+        // [PM-DEL-BACKUP 2026-10-29] Xoá dòng chính = xoá luôn các dòng dự phòng của nó (IsBackup, ParentNC = NC này).
+        //   Trước: dự phòng ở lại mồ côi → PO tạo sau không gộp WTS dự phòng về NC chính (N2), sổ bỏ qua dòng WTS đó.
+        if (!existing.IsBackup)
+        {
+            var backups = await _db.PartTaroSteps
+                .Where(s => s.PartId == partId && s.IsActive && s.IsBackup && s.ParentNC == existing.NC)
+                .ToListAsync();
+            foreach (var b in backups)
+            {
+                var bSnap = JsonSerializer.Serialize(new
+                {
+                    b.StepOrder, b.NC, b.StepName, b.StandardTime, b.IsBackup, b.ParentNC,
+                    b.CreatedBy, b.CreatedAt, b.UpdatedBy, b.UpdatedAt
+                });
+                _db.PartProcessStepChangeLogs.Add(BuildLog(
+                    b.StepId, partId, ProcessStepAction.Deleted,
+                    oldValue: bSnap, newValue: null, userId, reason + $" (xoá theo NC chính {existing.NC})"));
+                _db.PartTaroSteps.Remove(b);
+            }
+        }
+
         _db.PartTaroSteps.Remove(existing);
         await _db.SaveChangesAsync();
     }

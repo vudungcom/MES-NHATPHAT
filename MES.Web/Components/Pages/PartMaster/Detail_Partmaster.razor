@@ -235,7 +235,7 @@ else
                             {
                                 <tr @key="edit" class="@(edit.IsBackup ? "bg-warning bg-opacity-10" : "") @RowCssClass(edit)" title="@RowTooltip(edit)">
                                     <td class="text-center">
-                                        @(idx + 1)@StateBadge(edit)
+                                        @MainNo(_machiningEdits, edit)@StateBadge(edit)   @* [PM-ORDER] chỉ đánh số NC chính; dự phòng để trống *@
                                         @if (edit.IsBackup) { <span class="badge bg-warning text-dark mt-1" style="font-size: 0.65rem;">Dự phòng</span> }
                                     </td>
                                     @* NC — tự gõ *@
@@ -2477,19 +2477,19 @@ else
             : new List<PartMachiningTiming>();
         var timingsByStep = allTimings.GroupBy(t => t.StepId).ToDictionary(g => g.Key, g => g.ToList());
 
-        _machiningEdits = mSteps.Select(s => {
+        _machiningEdits = OrderWithBackups(mSteps.Select(s => {
             var e = MachiningEdit.FromEntity(s);
             if (timingsByStep.TryGetValue(s.StepId, out var trows))
                 e.TimingRows = trows.Select(TimingRowEdit.FromEntity).ToList();
             return e;
-        }).ToList();
+        }).ToList());   // [PM-ORDER]
         // Load trạng thái xác nhận thời gian chuẩn per-field
         _timingConfirms = await MachiningSvc.GetTimingConfirmsAsync(stepIds);
-        _taroEdits = tSteps.Select(TaroEdit.FromEntity).ToList();
-        _baviaEdits = bSteps.Select(BaviaEdit.FromEntity).ToList();
-        _washingEdits = wSteps.Select(WashingEdit.FromEntity).ToList();
-        _inspectionEdits = iSteps.Select(InspectionEdit.FromEntity).ToList();
-        _packagingEdits = pSteps.Select(PackagingEdit.FromEntity).ToList();
+        _taroEdits = OrderWithBackups(tSteps.Select(TaroEdit.FromEntity).ToList());           // [PM-ORDER]
+        _baviaEdits = OrderWithBackups(bSteps.Select(BaviaEdit.FromEntity).ToList());
+        _washingEdits = OrderWithBackups(wSteps.Select(WashingEdit.FromEntity).ToList());
+        _inspectionEdits = OrderWithBackups(iSteps.Select(InspectionEdit.FromEntity).ToList());
+        _packagingEdits = OrderWithBackups(pSteps.Select(PackagingEdit.FromEntity).ToList());
         // [STD-CONFIRM] Load xác nhận T.Chuẩn của C/D/E — 1 truy vấn cho cả Part
         _stdConfirms = await StdConfirmSvc.GetConfirmsAsync(pid);
     }
@@ -3325,22 +3325,49 @@ else
 
     private void ToggleDelete<T>(T edit, List<T> list) where T : StepEditBase
     {
+        // [PM-DEL-BACKUP 2026-10-29] Xoá NC chính = xoá kèm các dòng dự phòng của nó trên form (bỏ xoá thì khôi phục kèm);
+        //   service SoftDeleteAsync cũng tự xoá dự phòng trong DB — trang chỉ giữ trạng thái hiển thị khớp. Trước: dự phòng ở lại mồ côi.
+        var backups = edit.IsBackup ? new List<T>()
+            : list.Where(x => x.IsBackup && string.Equals(x.ParentNC, edit.OriginalNC ?? edit.NC, StringComparison.OrdinalIgnoreCase)).ToList();
         if (edit.State == EditState.New)
         {
             list.Remove(edit);
+            foreach (var b in backups) list.Remove(b);
         }
         else if (edit.State == EditState.Deleted)
         {
             edit.State = edit.WasActiveInDb ? EditState.Unchanged : EditState.Restored;
+            foreach (var b in backups.Where(x => x.State == EditState.Deleted)) b.State = b.WasActiveInDb ? EditState.Unchanged : EditState.Restored;
         }
         else
         {
             edit.State = EditState.Deleted;
+            foreach (var b in backups) { if (b.State == EditState.New) list.Remove(b); else b.State = EditState.Deleted; }
         }
         _hasChanges = true;
         _isDraftSaved = false;
         _savedSuccessfully = false; 
     }
+
+    // [PM-ORDER 2026-10-29] Thứ tự hiển thị: NC chính theo StepOrder (thứ tự nạp), mỗi dòng dự phòng đi ngay sau NC gốc của nó;
+    //   dự phòng không tìm thấy NC gốc (mồ côi, dữ liệu cũ) xếp cuối. Chỉ đổi hiển thị, không đổi StepOrder trong DB / snapshot.
+    private static List<T> OrderWithBackups<T>(List<T> src) where T : StepEditBase
+    {
+        var result = new List<T>(src.Count);
+        var used = new HashSet<T>();
+        foreach (var m in src.Where(x => !x.IsBackup))
+        {
+            result.Add(m); used.Add(m);
+            foreach (var b in src.Where(x => x.IsBackup && !used.Contains(x) && string.Equals(x.ParentNC, m.NC, StringComparison.OrdinalIgnoreCase)))
+            { result.Add(b); used.Add(b); }
+        }
+        result.AddRange(src.Where(x => !used.Contains(x)));
+        return result;
+    }
+
+    // [PM-ORDER] Số thứ tự chỉ đếm NC chính; dòng dự phòng để trống
+    private static string MainNo<T>(List<T> list, T e) where T : StepEditBase
+        => e.IsBackup ? "" : (list.Where(x => !x.IsBackup).ToList().IndexOf(e) + 1).ToString();
 
     private string RowCssClass(StepEditBase e)
     {
@@ -3870,6 +3897,10 @@ else
                 }
                 else if (e.State == EditState.Deleted && e.StepId > 0 && e.WasActiveInDb)
                 {
+                    // [PM-DEL-BACKUP] dự phòng mà NC chính của nó cũng xoá trong lượt này → service đã xoá kèm, không gọi lại (sẽ báo "không tìm thấy")
+                    if (e.IsBackup && edits.Any(m => !m.IsBackup && m.State == EditState.Deleted && m.StepId > 0
+                                                     && string.Equals(m.OriginalNC ?? m.NC, e.ParentNC, StringComparison.OrdinalIgnoreCase)))
+                    { log.Add($"✓ [{label}] Xóa NC={e.NC} (theo NC chính {e.ParentNC})"); continue; }
                     await deleteFn(e.StepId);
                     log.Add($"✓ [{label}] Xóa NC={e.NC}");
                 }
