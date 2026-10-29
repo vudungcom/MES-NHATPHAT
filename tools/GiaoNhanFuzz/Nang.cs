@@ -34,14 +34,14 @@ public static class Nang
         var dir   = Path.Combine(Environment.CurrentDirectory, "nang_ketqua");
         Directory.CreateDirectory(dir);
 
-        Console.WriteLine($"KIỂM NẶNG: kịch bản kh + loi + vu + chuoi, rồi {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · chạy cùng lúc {par} lượt");
+        Console.WriteLine($"KIỂM NẶNG: kịch bản kh + loi + vu + chuoi + wts, rồi {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · chạy cùng lúc {par} lượt");
         Console.WriteLine($"Kết quả từng lượt: {dir}");
         var sw = Stopwatch.StartNew();
         var results = new List<(string Name, int Seed, int Sai, string Checks, double Sec, string File)>();
         int totalSai = 0;
 
         // 1. Kịch bản cố định (chạy trước, tuần tự)
-        foreach (var sc in new[] { "kh", "loi", "vu", "chuoi" })   // [VULOI] + kịch bản vụ lỗi; [CHUOI] + đi đủ chuỗi
+        foreach (var sc in new[] { "kh", "loi", "vu", "chuoi", "wts" })   // [WTS-SVC] + kịch bản WTS service   // [VULOI] + kịch bản vụ lỗi; [CHUOI] + đi đủ chuỗi
         {
             var (code, outFile, _) = await RunChild(dll, sc, Array.Empty<(string, string)>(), Path.Combine(dir, $"kichban_{sc}.txt"));
             var txt = File.ReadAllText(outFile);

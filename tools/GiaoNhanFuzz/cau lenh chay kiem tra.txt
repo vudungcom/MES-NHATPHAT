@@ -1,4 +1,4 @@
-CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 29/10/2026 — thêm CHUỖI Part Master → KH)
+CÂU LỆNH CHẠY KIỂM TRA GiaoNhanFuzz (cập nhật 29/10/2026 tối — thêm `wts`: WTS lưu bằng service thật)
 Tool chỉ kiểm code, chạy trên database giả trong bộ nhớ, KHÔNG đụng SQL / dữ liệu server.
    dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
    dotnet bin2\GiaoNhanFuzz.dll 300 120 2
@@ -13,7 +13,7 @@ dotnet build GiaoNhanFuzz.csproj -c Release -o bin2
 
 == 0. KIỂM NẶNG — 1 LỆNH CHẠY HẾT (mới 28/10) ==
 dotnet bin2\GiaoNhanFuzz.dll nang
--> chạy 4 kịch bản (kh, loi, vu, chuoi) rồi 10 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
+-> chạy 5 kịch bản (kh, loi, vu, chuoi, wts) rồi 10 lượt ngẫu nhiên, mỗi lượt 60 PO x 120 thao tác, nhiều lượt chạy CÙNG LÚC theo số nhân máy
 -> mỗi lượt xong in 1 dòng ĐẠT / SAI; cuối phải ra: SAI: 0
 -> kết quả từng lượt nằm trong thư mục nang_ketqua\ (có SAI thì gửi file đó)
 Tuỳ chỉnh: dotnet bin2\GiaoNhanFuzz.dll nang <số PO mỗi lượt> <thao tác mỗi PO> <seed đầu>
@@ -29,6 +29,9 @@ dotnet bin2\GiaoNhanFuzz.dll kh
 dotnet bin2\GiaoNhanFuzz.dll loi      (mới 28/10: hàng lỗi qua nhiều nơi — số phải ra từng bước)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll vu       (mới 28/10 tối: VỤ LỖI — Lỗi A/B/C/D theo ví dụ Hùng, K5 theo vụ, hàng lỗi cũ chưa có mã)
+-> cuối phải ra: KẾT QUẢ: ĐẠT hết
+dotnet bin2\GiaoNhanFuzz.dll wts      (mới 29/10 tối [WTS-SVC]: lưu / sửa / xoá WTS bằng HÀM THẬT Services/WtsSaveService — từng lời báo phải y chữ bản cũ,
+                                     1 giao dịch, số chuẩn, vụ lỗi, máy trùng giờ, K5, [RS-E14] mã ngoài snapshot)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll chuoi    (mới 29/10: đi đủ chuỗi Part Master → tạo KH → snapshot → Kho → giao nhận + WTS bằng HÀM THẬT)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết  (bản 29/10 còn 3 SAI ở C9 / C10 = 2 lỗi phần mềm chờ vá — xem REPORT_CHUOI_2026-10-29.md)

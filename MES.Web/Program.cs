@@ -52,6 +52,7 @@ builder.Services.AddScoped<WtsReportService>();
 builder.Services.AddScoped<HandoverService>();
 builder.Services.AddScoped<HandoverLedgerService>(); // [GN-LEDGER 2026-10-22] hàm tính chung Giao nhận
 builder.Services.AddScoped<NgCaseService>();   // [DS-LOI][VULOI 2026-10-28] danh mục lỗi + vụ lỗi
+builder.Services.AddScoped<WtsSaveService>();   // [WTS-SVC 2026-10-29] phần lưu / xoá WTS (tách từ HieuSuat_Index.razor)
 // Đăng ký tiến trình chạy ngầm duy trì bản quyền
 builder.Services.AddHostedService<MES.Web.Services.LicenseBackgroundWorker>();
 // Luot 6B - Part Master process step services

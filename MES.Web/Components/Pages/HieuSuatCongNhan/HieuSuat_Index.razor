@@ -32,6 +32,9 @@
 @inject HandoverService HandoverSvc
 @* [GN-WTS-CAP] Trần nhập WTS lấy từ hàm tính chung của Giao nhận — cùng số với trang Giao nhận *@
 @inject HandoverLedgerService LedgerSvc
+@* [WTS-SVC 2026-10-29] phần lưu / xoá WTS tách ra service *@
+@inject MES.Web.Services.WtsSaveService WtsSaveSvc
+
 @* [VULOI][DS-LOI] danh mục lỗi: NG chọn loại lỗi, lưu tạo / giữ vụ lỗi *@
 @inject NgCaseService NgSvc
 
@@ -5130,10 +5133,6 @@ else
     private string VoidBlockStyle => _voidBlockMsg != null ? "display:block;white-space:pre-line" : "display:none";   // [GN-WHY] + xuống dòng các bước gợi ý
     // [GN-WHY] Dòng báo ngắn (phần trước các bước gợi ý)
     private static string? FirstPart(string? msg) => msg == null ? null : msg.Split("\n\n")[0];
-    // [GN-WHY] Lưu WTS bị chặn K5: nhớ PO + thao tác thử để tìm gốc rễ SAU khi nhả khoá (SaveGroupAsync finally)
-    private (int DetailId, List<long> RemoveIds, List<InWts> Add)? _pendingWhy;
-    // [B2B3-WTS-TRX] PO cần báo màn Giao nhận — gom trong lúc lưu nhóm (giao dịch), báo sau khi ghi hẳn. null = báo ngay.
-    private HashSet<int>? _notifyDefer;
 
     private bool _voidBusy;   // chặn bấm 2 lần trong lúc chờ khoá PO
     private async Task OnConfirmVoidAsync()
@@ -5150,81 +5149,17 @@ else
     private void CloseVoidModal() { _voidConfirmRow = null; _voidBlockMsg = null; }
 
     // [GN-WTS-CAP] Trả true = đã xoá; false = bị chặn (lời báo ở _voidBlockMsg).
+    // [WTS-SVC 2026-10-29] Phần khoá PO + kiểm K5 + 2 câu UPDATE huỷ dòng + [GN-WHY] dời NGUYÊN VĂN sang
+    //   Services/WtsSaveService.VoidRowAsync (chữ báo y cũ; khoá nay LockOwner = Transaction, UPDATE trong cùng giao dịch).
     private async Task<bool> VoidSavedRow(WtsRow row)
-
     {
-
-        // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
-        // (vd xoá WTS NC1 khi NC2 / nhóm sau đã làm từ số đó). Trước: xoá luôn, không kiểm.
-        // [B4-WF-DB 2026-10-28] Luôn khoá PO và đọc cờ Workflow từ DB (sổ) — trước: lấy từ danh sách PO nạp lúc mở trang
-        //   (KH bật Workflow giữa ca → xoá WTS không kiểm; PO ngoài 1000 dòng đầu → không kiểm).
-        if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue)
+        var res = await WtsSaveSvc.VoidRowAsync(new WtsSaveService.WtsVoidRequest
         {
-            var locks = new List<string>();
-            bool blocked = false;   // [GN-WHY] bị chặn K5 → tìm gốc rễ sau khi nhả khoá
-            try
-            {
-                if (!await AcquirePoLockAsync(row.KhPlanDetailId.Value, locks))
-                { _voidBlockMsg = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây."; return false; }
-                var before = await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value);
-                var after  = before?.ApplyWorkflow == true
-                    ? await LedgerSvc.GetLedgerForDetailAsync(row.KhPlanDetailId.Value, new List<long> { row.WtsLogId.Value })
-                    : null;   // Workflow OFF (N7): không kiểm ô âm
-                if (before != null && after != null)
-                {
-                    var bad = HandoverLedgerService.NewNegatives(before, after);
-                    if (bad.Any())
-                    {
-                        _voidBlockMsg = $"Không xoá được: xoá xong sẽ làm sai số ở {string.Join("; ", bad)}. "
-                                      + "Số của dòng này đã được dùng ở NC sau / nhóm sau hoặc đã giao đi — phải xoá / sửa từ cuối dòng ngược lên (K5).";
-                        blocked = true;
-                    }
-                }
-                if (!blocked) await VoidWtsLogRawAsync(row);
-            }
-            finally
-            {
-                await ReleasePoLocksAsync(locks, closeConnection: true);
-            }
-            if (blocked)
-            {
-                // [GN-WHY] chỉ đọc + tính thử, khoá PO đã nhả
-                _voidBlockMsg += await HandoverWhy.ExplainAsync(Db, row.KhPlanDetailId.Value,
-                    HandoverWhy.OpWts(new List<long> { row.WtsLogId.Value }), new HashSet<string> { "W:" + row.WtsLogId.Value });
-                return false;
-            }
-            await LoadSavedRowsAsync();
-            return true;
-        }
-
-        await VoidWtsLogRawAsync(row);
-
+            WtsLogId = row.WtsLogId, ActivityLogId = row.ActivityLogId, KhPlanDetailId = row.KhPlanDetailId, UserId = _currentUserId
+        });
+        if (!res.Ok) { _voidBlockMsg = res.ErrorMsg; return false; }
         await LoadSavedRowsAsync();
         return true;
-
-    }
-
-    private async Task VoidWtsLogRawAsync(WtsRow row)
-
-    {
-
-        if (row.WtsLogId.HasValue)
-
-            await Db.Database.ExecuteSqlRawAsync(
-
-                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",   // [D8-WTS-VOID] không ghi đè người huỷ trước
-
-                _currentUserId, DateTime.Now, row.WtsLogId.Value);
-
-        if (row.ActivityLogId.HasValue)
-
-            await Db.Database.ExecuteSqlRawAsync(
-
-                "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
-
-                _currentUserId, DateTime.Now, row.ActivityLogId.Value);
-
-        if (row.KhPlanDetailId.HasValue) MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (huỷ WTS đổi Đã làm/Chưa làm)
     }
 
     private static string ReportNgCls(decimal? qtyNg)
@@ -6021,54 +5956,6 @@ else
             .Sum(s => s.QtyDone);
     }
 
-    // [MACHINE-LOCK] Khoá ứng dụng theo máy trên SQL Server (sp_getapplock, LockOwner = Session).
-    // Giữ kết nối mở từ lúc khoá đến lúc nhả để mọi lệnh lưu chạy trên cùng kết nối. Chờ tối đa 10 giây.
-    private async Task<bool> AcquireMachineLockAsync(string machine)
-    {
-        await Db.Database.OpenConnectionAsync();
-        var conn = Db.Database.GetDbConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "sp_getapplock";
-        cmd.CommandType = System.Data.CommandType.StoredProcedure;
-        AddLockParam(cmd, "@Resource",    "WTS_MACHINE_" + machine);
-        AddLockParam(cmd, "@LockMode",    "Exclusive");
-        AddLockParam(cmd, "@LockOwner",   "Session");
-        AddLockParam(cmd, "@LockTimeout", 10000);
-        var ret = cmd.CreateParameter();
-        ret.ParameterName = "@RETURN_VALUE";
-        ret.DbType        = System.Data.DbType.Int32;
-        ret.Direction     = System.Data.ParameterDirection.ReturnValue;
-        cmd.Parameters.Add(ret);
-        await cmd.ExecuteNonQueryAsync();
-        return ret.Value is int r && r >= 0;   // 0/1 = đã khoá; âm = hết giờ chờ / lỗi
-    }
-
-    private async Task ReleaseMachineLockAsync(string machine)
-    {
-        try
-        {
-            var conn = Db.Database.GetDbConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "sp_releaseapplock";
-            cmd.CommandType = System.Data.CommandType.StoredProcedure;
-            AddLockParam(cmd, "@Resource",  "WTS_MACHINE_" + machine);
-            AddLockParam(cmd, "@LockOwner", "Session");
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch { /* chưa giữ khoá (khoá thất bại) → bỏ qua */ }
-        finally
-        {
-            await Db.Database.CloseConnectionAsync();
-        }
-    }
-
-    private static void AddLockParam(System.Data.Common.DbCommand cmd, string name, object value)
-    {
-        var p = cmd.CreateParameter();
-        p.ParameterName = name;
-        p.Value         = value;
-        cmd.Parameters.Add(p);
-    }
 
     // [MACHINE-OVERLAP-LIVE] Báo trùng máy NGAY LÚC NHẬP (đổi máy / giờ bắt đầu / giờ kết thúc).
     // Chỉ báo đỏ (OverlapMsg), KHÔNG chặn — chặn thật vẫn ở lúc Lưu (CheckMachineOverlapAsync + khoá máy).
@@ -6132,68 +6019,6 @@ else
         }
     }
 
-    // [MACHINE-OVERLAP] Kiểm tra máy trùng giờ khi lưu nhóm GC.
-    // 1) Các dòng trong cùng form với nhau (cùng máy của nhóm).
-    // 2) Với log đã lưu (chưa void) của MỌI công nhân trên cùng máy — bỏ qua log cũ của dòng đang sửa (sẽ bị void).
-    // So theo DateTime đầy đủ (ngày + giờ). Trả thông báo lỗi hoặc null nếu không trùng.
-    private async Task<string?> CheckMachineOverlapAsync(WtsGroup grp)
-    {
-        var machine = grp.MachineUsed!;
-        var subs = grp.SubRows.Where(s => s.EndTime > s.StartTime).ToList();
-        if (!subs.Any()) return null;
-
-        // 1) Trong cùng form
-        for (int i = 0; i < subs.Count; i++)
-        {
-            for (int j = i + 1; j < subs.Count; j++)
-            {
-                var a = subs[i];
-                var b = subs[j];
-                if (a.StartTime < b.EndTime && b.StartTime < a.EndTime)
-                {
-                    b.ErrorMsg = $"Máy {machine}: trùng giờ với dòng {a.StartTime:HH:mm}–{a.EndTime:HH:mm} trong form.";
-                    return $"Máy {machine} trùng giờ giữa các dòng đang nhập ({a.StartTime:HH:mm}–{a.EndTime:HH:mm} và {b.StartTime:HH:mm}–{b.EndTime:HH:mm}).";
-                }
-            }
-        }
-
-        // 2) Với log đã lưu trong DB
-        var minStart  = subs.Min(s => s.StartTime);
-        var maxEnd    = subs.Max(s => s.EndTime);
-        var skipIds   = subs.Where(s => s.IsEditing && s.WtsLogId.HasValue)
-                            .Select(s => s.WtsLogId!.Value).ToList();
-        var savedLogs = await Db.WtsProductionLogs
-            .AsNoTracking()
-            .Include(l => l.Worker)
-            .Where(l => !l.IsVoided
-                     && l.MachineUsed == machine
-                     && l.StartTime < maxEnd
-                     && l.EndTime   > minStart
-                     && !skipIds.Contains(l.WtsLogId))
-            .ToListAsync();
-        if (!savedLogs.Any()) return null;
-
-        foreach (var sub in subs)
-        {
-            var hit = savedLogs
-                .Where(l => l.StartTime < sub.EndTime && sub.StartTime < l.EndTime)
-                .OrderBy(l => l.StartTime)
-                .FirstOrDefault();
-            if (hit == null) continue;
-
-            var ovStart = hit.StartTime > sub.StartTime ? hit.StartTime : sub.StartTime;
-            var ovEnd   = hit.EndTime   < sub.EndTime   ? hit.EndTime   : sub.EndTime;
-            var po      = _allRows.FirstOrDefault(r => r.KhPlanDetailId == hit.KhPlanDetailId)?.PurchaseOrder
-                          ?? $"KH#{hit.KhPlanDetailId}";
-            var worker  = hit.Worker?.FullName ?? $"#{hit.WorkerId}";
-            var fmt     = hit.StartTime.Date == sub.StartTime.Date ? "HH:mm" : "dd/MM HH:mm";
-            var msg     = $"Máy {machine} đã có log {hit.StartTime.ToString(fmt)}–{hit.EndTime.ToString(fmt)} "
-                        + $"(PO {po}, NC {hit.NC}, {worker}) — trùng {ovStart:HH:mm}–{ovEnd:HH:mm}. Không cho lưu.";
-            sub.ErrorMsg = msg;
-            return msg;
-        }
-        return null;
-    }
 
     // [WF-CEIL-MIN] → [GN-WTS-CAP] Trần SL của 1 NC (GC) / 1 mã CV (HTSP/KCS/PKG) cho 1 PO khi Workflow ON —
     // dùng chung cho realtime + Lưu + nhãn dropdown NC.
@@ -6210,16 +6035,8 @@ else
         public string   Detail    { get; set; } = "";   // phép tính: "Hàng vào 100 − OK 50 − NG 5 = 45"
     }
 
-    // [GN-WTS-CAP] Phép tính có tên từng số hạng: "Hàng vào 60 − OK đã làm 0 − NG đã làm 0 = 60 · <cách tính hàng vào>"
-    private static string CapDetail(HandoverLedgerService.WtsCapInfo cap)
-    {
-        var e = cap.Explain;
-        var detail = e.Terms.Count > 0
-            ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = {e.Result:0.##}"
-            : $"{e.Result:0.##}";
-        // [GN-TEXT] bỏ phần ghi chú công thức (chữ kỹ thuật) — xem đủ ở trang Giao nhận, nút Hiện công thức
-        return detail;
-    }
+    // [GN-WTS-CAP] Phép tính có tên từng số hạng — [WTS-SVC] dời sang WtsSaveService.CapDetail (dùng chung với lúc Lưu)
+    private static string CapDetail(HandoverLedgerService.WtsCapInfo cap) => WtsSaveService.CapDetail(cap);
 
     private WfCeilInfo? GetWfNcCeiling(WtsGroup grp, int? detailId, string? code)
     {
@@ -6618,137 +6435,42 @@ else
     }
 
     // ── Lưu toàn bộ nhóm ─────────────────────────────────────────────────
-
+    // [WTS-SVC 2026-10-29] Toàn bộ phần kiểm thiếu thông tin → khoá máy + trùng giờ → khoá PO + trần + K5 → huỷ dòng cũ + ghi dòng mới
+    //   + vụ lỗi + số chuẩn (1 giao dịch) dời NGUYÊN VĂN sang Services/WtsSaveService.SaveGroupAsync (chữ báo y cũ).
+    //   Trang chỉ còn: (1) gán thuộc tính nhóm xuống dòng + gom ô nhập & số chuẩn đã tra từ snapshot thành WtsSaveGroup (BuildSaveGroup),
+    //   (2) gọi service, (3) đổ lời báo / kết quả về form và nạp lại cache như cũ.
+    //   Cảnh báo chỉ hiển thị (đọc cache trang) vẫn tính ở đây: ApplyLegacySaveWarnings.
     private async Task SaveGroupAsync(WtsGroup grp)
     {
         grp.ErrorMsg = null;
         grp.IsSaving = true;
         StateHasChanged();
-        string? _lockedMachine = null;   // [MACHINE-LOCK] máy đang giữ khoá — nhả trong finally
-        var _poLocks = new List<string>(); // [GN-WTS-CAP] khoá theo PO đang giữ — nhả trong finally
         try
-
         {
-
-            // Validate nhóm
-
-            if (IsGcGroup && string.IsNullOrEmpty(grp.NC))
-
-            { grp.ErrorMsg = "Chưa chọn NC cho nhóm."; return; }
-
-            if (IsGcGroup && string.IsNullOrEmpty(grp.MachineUsed))
-
-            { grp.ErrorMsg = "Chưa chọn máy sử dụng."; return; }
-            // [FIX-NONGC-SUBGROUP] HTSP bắt buộc chọn nhóm nhỏ (Taro/Bavia/Rửa) — không để rơi về mặc định TARO
-            if (IsHtspGroup && string.IsNullOrEmpty(grp.HtspSubGroup))
-            { grp.ErrorMsg = "Chưa chọn nhóm nhỏ (Taro / Bavia / Rửa)."; return; }
-
-            if (!grp.SubRows.Any())
-
-            { grp.ErrorMsg = "Nhóm trống."; return; }
-
-            // Validate từng sub-row
-
+            // Gán thuộc tính nhóm xuống từng dòng (như vòng validate cũ) — cần trước khi tra số chuẩn theo NC / máy
             foreach (var sub in grp.SubRows)
-
             {
-
                 sub.ErrorMsg = null;
-
-                // [FIX-NONGC-NC] Non-GC (HTSP/KCS/PKG): nhóm không có NC (grp.NC = null) → trước đây ghi đè sub.NC = null
-                // → SaveRowAsync coi là "Mã WTS khác" (Loại 2) → lưu vào WorkerActivityLogs, MẤT PO + số lượng.
-                // Sửa: non-GC lấy NC = Mã CV của chính dòng đó (SaveRowAsync lưu row.NC vào cột WtsCode). GC giữ nguyên.
-                sub.NC          = IsGcGroup ? grp.NC : sub.WtsCode;
+                sub.NC          = IsGcGroup ? grp.NC : sub.WtsCode;   // [FIX-NONGC-NC]
                 if (IsHtspGroup) sub.HtspSubGroup = grp.HtspSubGroup;   // [FIX-NONGC-SUBGROUP]
-
                 sub.MachineUsed = grp.MachineUsed;
-
                 sub.ProductionMode = grp.ProductionMode;
-
-                if (!sub.KhPlanDetailId.HasValue)
-
-                { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return; }
-
-                if (sub.QtyDone <= 0 && !IsQtyOptional(sub))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
-
-                { sub.ErrorMsg = "SL (OK+NG) phải > 0."; grp.ErrorMsg = "Có hàng SL = 0."; return; }
-
-                // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
-                var _missSerial = GetMissingSerialTimesMsg(sub);
-                if (_missSerial != null)
-                { sub.ErrorMsg = _missSerial; grp.ErrorMsg = IsGcGroup ? $"Có hàng thiếu thời gian — {_missSerial}" : "Có hàng chưa nhập T.Thực tế."; return; }   // [ACTUAL-REQUIRED-NONGC]   // [TRIAL-PREP-REQUIRED] msg chung Hàng loạt / Chạy thử
-
-                // [VULOI][DS-LOI] NG: bắt buộc CHỌN loại lỗi trong DS Lỗi (trước: gõ lý do). Sửa dòng đã có vụ lỗi đã đi phiếu: không đổi loại lỗi.
-                if (sub.QtyNg > 0 && sub.NgCategoryId == null)
-                { sub.ErrorMsg = "Chọn loại lỗi (DS Lỗi)."; grp.ErrorMsg = "Có hàng NG chưa chọn loại lỗi. " + NgCaseService.MsgPickCategory; return; }
-                if (sub.QtyNg > 0 && (await NgCaseService.GetCategoryForCaseAsync(Db, sub.NgCategoryId, sub.IsEditing ? sub.NgCaseId : null)) == null)
-                { sub.ErrorMsg = "Loại lỗi đã ngưng dùng — chọn loại khác."; grp.ErrorMsg = sub.ErrorMsg; return; }
-                if (sub.QtyNg > 0 && sub.IsEditing && sub.NgCaseId != null && sub.NgCategoryId != null
-                    && await NgCaseService.CategoryChangeBlockedAsync(Db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk)
-                { sub.ErrorMsg = _catBlk; grp.ErrorMsg = _catBlk; return; }
-
-                if (sub.EndTime <= sub.StartTime)
-
-                { sub.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu."; grp.ErrorMsg = "Lỗi thời gian."; return; }
-
-                // OT removed 2026-09: bỏ validate khung giờ ca — CN tự do nhập thời gian
-
-                // if (!grp.IsOvertime && SelectedCa != null) { ... }
-
             }
+            // Trạng thái cảnh báo trước khi bấm Lưu — lưu không qua thì trả về như cũ ([B2B3-WTS-TRX], [29/10])
+            var _warnSnap = grp.SubRows.Select(s => (Row: s, s.HasWarning, s.WarningMsg)).ToList();
 
-            // [MACHINE-OVERLAP] Mục 19: 1 máy không được chạy 2 việc trùng giờ (mọi công nhân, cả Hàng loạt + Chạy thử).
-            // Trùng = Bắt đầu A < Kết thúc B và Bắt đầu B < Kết thúc A (chạm mép 08:15→08:15 không tính). Trùng → chặn lưu.
-            if (IsGcGroup && !string.IsNullOrEmpty(grp.MachineUsed))
-            {
-                // [MACHINE-LOCK] Khoá theo máy (sp_getapplock) trước khi kiểm tra trùng → giữ đến khi ghi xong.
-                // 2 người cùng lưu 1 máy: người sau phải chờ người trước ghi xong rồi mới kiểm tra → thấy log mới → bị chặn.
-                // Máy khác nhau không chờ nhau. Logic lưu bên dưới giữ nguyên.
-                _lockedMachine = grp.MachineUsed;
-                if (!await AcquireMachineLockAsync(_lockedMachine))
-                {
-                    grp.ErrorMsg = $"Máy {grp.MachineUsed} đang có người khác lưu WTS. Vui lòng bấm Lưu lại sau vài giây.";
-                    return;
-                }
-                var _overlapMsg = await CheckMachineOverlapAsync(grp);
-                if (_overlapMsg != null) { grp.ErrorMsg = _overlapMsg; return; }
-            }
+            var req = BuildSaveGroup(grp);
+            var res = await WtsSaveSvc.SaveGroupAsync(req);
 
-            // [GN-WTS-CAP] Kiểm SL theo sổ giao nhận — MỌI nhóm (GC / HTSP / KCS / Đóng gói), từng PO,
-            // TRƯỚC khi void dòng cũ hay lưu dòng nào (trước: non-GC kiểm trong SaveRowAsync SAU khi đã void dòng cũ
-            // → kiểm không qua là mất dòng cũ). Thay khối [WF-QTY-PER-PO] [WF-CEIL-MIN] cũ (chỉ GC, so OK, trần theo PO).
-            var _capErr = await CheckGroupQtyAsync(grp, _poLocks);
-            if (_capErr != null) { grp.ErrorMsg = _capErr; return; }
+            // Lời báo từng dòng (service ghi vào DTO cùng thứ tự với SubRows)
+            for (int i = 0; i < grp.SubRows.Count; i++)
+                grp.SubRows[i].ErrorMsg = req.Rows[i].ErrorMsg;
 
-            // Lưu từng sub-row
-            // [B2B3-WTS-TRX 2026-10-28] Cả nhóm lưu trong 1 giao dịch: 1 dòng lỗi → không dòng nào được ghi (kể cả vụ lỗi vừa tạo),
-            //   dòng đang sửa giữ nguyên dòng cũ. Trước: dòng 1 đã lưu, dòng 2 lỗi → bấm Lưu lại ghi dòng 1 lần 2 (số nhân đôi);
-            //   lỗi giữa "huỷ dòng cũ" và "ghi dòng mới" → mất số. Trạng thái từng dòng trên form trả về như trước khi bấm Lưu.
-            var _rowSnap = grp.SubRows.Select(s => (Row: s, s.WtsLogId, s.ActivityLogId, s.IsEditing, s.NgCaseId, s.HasWarning, s.WarningMsg)).ToList();   // [29/10] + cảnh báo (lưu lại không cộng dồn)
-            _notifyDefer = new HashSet<int>();
-            bool _allOk = true;
-            await using (var _wtsTrx = await Db.Database.BeginTransactionAsync())
+            if (!res.Ok)
             {
-                foreach (var sub in grp.SubRows)
-                {
-                    await SaveRowAsync(sub);
-                    if (sub.ErrorMsg != null)
-                    { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg} — chưa dòng nào trong nhóm được lưu, sửa xong bấm Lưu lại."; _allOk = false; break; }
-                }
-                if (_allOk) await _wtsTrx.CommitAsync();
-                else
-                {
-                    await _wtsTrx.RollbackAsync();
-                    Db.ChangeTracker.Clear();
-                    foreach (var sn in _rowSnap)
-                    { sn.Row.WtsLogId = sn.WtsLogId; sn.Row.ActivityLogId = sn.ActivityLogId; sn.Row.IsEditing = sn.IsEditing; sn.Row.NgCaseId = sn.NgCaseId; sn.Row.HasWarning = sn.HasWarning; sn.Row.WarningMsg = sn.WarningMsg; }
-                }
-            }
-            var _toNotify = _notifyDefer;
-            _notifyDefer = null;
-            if (!_allOk)
-            {
-                foreach (var id in _toNotify)
+                grp.ErrorMsg = res.ErrorMsg;
+                foreach (var sn in _warnSnap) { sn.Row.HasWarning = sn.HasWarning; sn.Row.WarningMsg = sn.WarningMsg; }
+                foreach (var id in res.DetailIds)
                 {
                     // trần + số đã làm trên form về lại số trong DB (giao dịch đã rollback)
                     foreach (var kv in await KhSvc.GetWtsQtySummaryAsync(id)) _qtySummaryCache[$"{id}|{kv.Key}"] = kv.Value;
@@ -6756,7 +6478,16 @@ else
                 }
                 return;
             }
-            foreach (var id in _toNotify) MES.Web.Services.HandoverChangeNotifier.Notify(id);   // [GN-LIVE] báo sau khi đã ghi hẳn
+
+            for (int i = 0; i < grp.SubRows.Count; i++)
+            {
+                var s = grp.SubRows[i]; var r = req.Rows[i];
+                s.WtsLogId = r.WtsLogId; s.ActivityLogId = r.ActivityLogId; s.NgCaseId = r.NgCaseId; s.IsEditing = r.IsEditing;
+                s.Saved = r.Saved; s.HasWarning = r.HasWarning; s.WarningMsg = r.WarningMsg;
+            }
+
+            // Nạp lại danh sách dòng đã lưu + cache (phần đuôi của SaveRowAsync cũ, chạy 1 lần cho cả nhóm)
+            await AfterGroupSavedRefreshAsync();
 
             // Xóa nhóm sau khi lưu xong
 
@@ -6774,161 +6505,100 @@ else
         }
         finally
         {
-            await ReleasePoLocksAsync(_poLocks, closeConnection: _lockedMachine == null);   // [GN-WTS-CAP] nhả khoá PO trước
-            if (_lockedMachine != null) await ReleaseMachineLockAsync(_lockedMachine);   // [MACHINE-LOCK]
-            if (_pendingWhy is { } pw)
-            {
-                // [GN-WHY] Lưu bị chặn K5: chỉ đọc + tính thử sau khi đã nhả khoá
-                _pendingWhy = null;
-                var opDocs = new HashSet<string>(pw.RemoveIds.Select(x => "W:" + x));
-                grp.ErrorMsg += await HandoverWhy.ExplainAsync(Db, pw.DetailId, HandoverWhy.OpWts(pw.RemoveIds, pw.Add), opDocs);
-            }
             grp.IsSaving = false;
             StateHasChanged();
         }
     }
 
-    // ── [GN-WTS-CAP] Kiểm SL 1 nhóm WTS theo sổ giao nhận, từng PO ─────────────────────
-    // Workflow OFF (N7): chỉ chặn mỗi dòng ≤ SL PO (giữ như cũ).
-    // Workflow ON:
-    //   1) Khoá theo PO (sp_getapplock "MES_PO_<id>") đến khi lưu xong — 2 người lưu cùng PO thì người sau chờ,
-    //      rồi kiểm lại trên số mới (K8).
-    //   2) Trần L3: tổng OK + NG trong form của mỗi NC / mã CV ≤ Còn chờ làm (sổ đọc MỚI từ DB, bỏ dòng đang sửa).
-    //   3) K5/K8: thử "lưu xong" (bỏ dòng đang sửa + thêm dòng mới) — ô nào mới âm thì chặn
-    //      (vd sửa giảm OK NC1 khi NC2 / nhóm sau đã dùng số đó).
-    // Trả null = qua; khác null = lời báo, chưa có gì bị void / lưu.
-    private async Task<string?> CheckGroupQtyAsync(WtsGroup grp, List<string> poLocks)
+    // [WTS-SVC] Gom ô nhập của 1 nhóm thành DTO cho WtsSaveService — kèm số chuẩn tra sẵn từ snapshot
+    // (cùng hàm với phần hiển thị: GetStdTiming / GetStdTimeForSubRow / GetStdSourceForSubRow, như SaveWtsLogStdsAsync cũ).
+    private WtsSaveService.WtsSaveGroup BuildSaveGroup(WtsGroup grp)
     {
-        var pg = CurrentPg(grp);
-        string? CodeOf(WtsRow s) => IsGcGroup ? grp.NC : (s.WtsCode ?? s.NC);
-
-        // Dòng đang sửa: lấy PO gốc của log cũ từ DB (người dùng có thể đã đổi PO trên dòng)
-        var editIdsAll = grp.SubRows.Where(s => s.IsEditing && s.WtsLogId.HasValue).Select(s => s.WtsLogId!.Value).ToList();
-        var editLogs = editIdsAll.Any()
-            ? await Db.WtsProductionLogs.AsNoTracking().Where(l => editIdsAll.Contains(l.WtsLogId))
-                      .Select(l => new { l.WtsLogId, l.KhPlanDetailId }).ToListAsync()
-            : new();
-
-        var detIds = grp.SubRows.Where(s => s.KhPlanDetailId.HasValue).Select(s => s.KhPlanDetailId!.Value)
-                        .Concat(editLogs.Select(l => l.KhPlanDetailId))
-                        .Distinct().OrderBy(x => x).ToList();   // thứ tự cố định → khoá không chéo nhau
-
-        foreach (var id in detIds)
+        var g = new WtsSaveService.WtsSaveGroup
         {
-            // [B4-WF-DB 2026-10-28] Khoá PO trước, rồi đọc PO + cờ Workflow MỚI từ DB (trước: _allRows nạp lúc mở trang, chỉ 1000 PO mới nhất
-            //   → KH bật Workflow giữa ca thì cả ca lưu không trần / không K5 / không khoá; PO ngoài danh sách bỏ qua mọi kiểm).
-            if (!await AcquirePoLockAsync(id, poLocks))
-                return $"PO {_allRows.FirstOrDefault(r => r.KhPlanDetailId == id)?.PurchaseOrder ?? $"KH#{id}"} đang có người khác lưu WTS / giao nhận. Bấm Lưu lại sau vài giây.";
-            var det  = await Db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == id)
-                .Select(d => new { d.PurchaseOrder, d.Quantity, d.Unit, ApplyWorkflow = d.KhPlan != null && d.KhPlan.ApplyWorkflow })
-                .FirstOrDefaultAsync();
-            var po   = det?.PurchaseOrder ?? $"KH#{id}";
-            var subs = grp.SubRows.Where(s => s.KhPlanDetailId == id && s.QtyDone > 0 && !IsPrepNoQty(s)).ToList();
-
-            if (det?.ApplyWorkflow != true)
+            IsGc = IsGcGroup, IsHtsp = IsHtspGroup, HandoverGroupCode = HandoverGroupCode,
+            NC = grp.NC, MachineUsed = grp.MachineUsed, ProductionMode = grp.ProductionMode, HtspSubGroup = grp.HtspSubGroup,
+            UserId = _currentUserId, CaId = _selectedCaId, WorkDate = _workDate,
+        };
+        foreach (var sub in grp.SubRows)
+        {
+            ApplyLegacySaveWarnings(sub);
+            var r = new WtsSaveService.WtsSaveRow
             {
-                var over = subs.FirstOrDefault(s => det != null && s.QtyDone > det.Quantity);
-                if (over != null)
-                {
-                    over.ErrorMsg = $"Tổng OK+NG ({over.QtyDone:0.##}) vượt KH ({det!.Quantity:0.##} {det.Unit}).";
-                    return $"PO {po}: dòng {over.QtyDone:0.##} vượt SL PO {det.Quantity:0.##} (Workflow OFF chỉ chặn mỗi dòng ≤ PO).";
-                }
-                continue;
-            }
-
-            var editIds = editLogs.Where(l => l.KhPlanDetailId == id).Select(l => l.WtsLogId).ToList();
-            var before  = await LedgerSvc.GetLedgerForDetailAsync(id);
-            var basis   = editIds.Any() ? await LedgerSvc.GetLedgerForDetailAsync(id, editIds) : before;
-            if (before == null || basis == null) continue;
-
-            // 2) Trần từng NC / mã CV
-            foreach (var g in subs.GroupBy(s => HandoverLedgerService.WtsCap(basis, pg, CodeOf(s)).Code, StringComparer.OrdinalIgnoreCase))
+                WtsLogId = sub.WtsLogId, ActivityLogId = sub.ActivityLogId, KhPlanDetailId = sub.KhPlanDetailId,
+                StartTime = sub.StartTime, EndTime = sub.EndTime, PO = sub.PO, NC = sub.NC, WtsCode = sub.WtsCode, WtsName = sub.WtsName,
+                HtspSubGroup = sub.HtspSubGroup, MachineUsed = sub.MachineUsed,
+                QtyDone = sub.QtyDone, QtyOk = sub.QtyOk, QtyNg = sub.QtyNg, NgCategoryId = sub.NgCategoryId, NgCaseId = sub.NgCaseId,
+                Notes = sub.Notes, IsOvertime = sub.IsOvertime,
+                SetupTime_Actual = sub.SetupTime_Actual, MachiningTime_Actual = sub.MachiningTime_Actual, InspectionTime_Actual = sub.InspectionTime_Actual,
+                PreparationTime_Actual = sub.PreparationTime_Actual, TrialRunTime_Actual = sub.TrialRunTime_Actual,
+                ActualTimePerPc = sub.ActualTimePerPc, ProductionMode = sub.ProductionMode, IsEditing = sub.IsEditing,
+                HasWarning = sub.HasWarning, WarningMsg = sub.WarningMsg,
+            };
+            foreach (var ei in sub.ExtraItems)
+                r.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = ei.WtsCode, WtsName = ei.WtsName, Minutes = ei.Minutes, Notes = ei.Notes });
+            if (IsGcGroup)
             {
-                var cap = HandoverLedgerService.WtsCap(basis, pg, CodeOf(g.First()));
-                if (cap.Max == null) continue;   // mã chuẩn bị
-                var tot = g.Sum(s => s.QtyDone);
-                var what = IsGcGroup ? $"NC {cap.Code}" : $"mã {cap.Code}";
-                if (cap.Locked || tot > cap.Max.Value)
-                {
-                    var msg = cap.Locked
-                        ? $"PO {po} · {what}: chưa nhận hàng — chưa nhập số lượng được."   // [GN-TEXT]
-                        : $"PO {po} · {what}: nhập {tot:0.##} (OK + NG) vượt Chưa làm {cap.Max.Value:0.##}.";   // [GN-TEXT]
-                    msg += $" ({CapDetail(cap)})";
-                    foreach (var s in g) s.ErrorMsg = msg;
-                    return msg;
-                }
+                var std = sub.KhPlanDetailId.HasValue ? GetStdTiming(sub.KhPlanDetailId.Value, sub.NC, sub.MachineUsed) : null;
+                if (std != null)
+                    r.GcStd = new WtsSaveService.WtsSaveStd
+                    {
+                        SetupTime = std.SetupTime, MachiningTime = std.MachiningTime, InspectionTime = std.InspectionTime,
+                        PreparationTime = std.PreparationTime, TrialRunTime = std.TrialRunTime, SrcTable = std.SrcTable, SrcRowId = std.SrcRowId,
+                    };
             }
-
-            // 3) Thử lưu xong — ô nào mới âm thì chặn (K5, K8)
-            // [VULOI] dòng sửa giữ vụ cũ (NG giảm mà vụ đã đi phiếu → ô vụ âm → chặn); dòng mới = vụ mới (Id âm)
-            var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, IsGcGroup ? grp.NC : null, IsGcGroup ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
-                                                   s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null)).ToList();
-            var after = await LedgerSvc.GetLedgerForDetailAsync(id, editIds, extra);
-            if (after == null) continue;
-            var bad = HandoverLedgerService.NewNegatives(before, after);
-            if (bad.Any())
+            else
             {
-                _pendingWhy = (id, editIds.ToList(), extra);   // [GN-WHY] tìm gốc rễ sau khi nhả khoá (SaveGroupAsync finally)
-                return $"PO {po}: lưu xong sẽ làm sai số ở {string.Join("; ", bad)}. Kiểm lại số lượng (nhóm sau / NC sau có thể đã dùng số này — K5).";
+                r.StdTimePerPc = GetStdTimeForSubRow(sub);
+                var src = GetStdSourceForSubRow(sub);
+                if (src != null) { r.StdSrcTable = src.Value.Table; r.StdSrcRowId = src.Value.RowId; }
             }
+            g.Rows.Add(r);
         }
-        return null;
+        return g;
     }
 
-    // [GN-WTS-CAP] Khoá theo PO (sp_getapplock, LockOwner = Session) — cùng kiểu [MACHINE-LOCK].
-    // Tên khoá "MES_PO_<KhPlanDetailId>" dùng chung cho WTS và Giao nhận. Chờ tối đa 10 giây.
-    private async Task<bool> AcquirePoLockAsync(int khPlanDetailId, List<string> held)
+    // [WTS-SVC] Cảnh báo CHỈ HIỂN THỊ của SaveRowAsync cũ (Loại 1: có NC + PO), đọc cache trang (_allRows, _ncFlowCache) nên giữ ở trang.
+    // Nguyên văn 3 khối: "Chưa chọn máy" → tổng giờ thực tế vượt ca → CheckQtyWarning → NC máy loại trừ. Không ảnh hưởng dữ liệu ghi DB.
+    private void ApplyLegacySaveWarnings(WtsRow row)
     {
-        var res = "MES_PO_" + khPlanDetailId;
-        if (held.Contains(res)) return true;
-        var conn = Db.Database.GetDbConnection();
-        if (conn.State != System.Data.ConnectionState.Open) { await Db.Database.OpenConnectionAsync(); _poConnOpened = true; }
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "sp_getapplock";
-        cmd.CommandType = System.Data.CommandType.StoredProcedure;
-        AddLockParam(cmd, "@Resource",    res);
-        AddLockParam(cmd, "@LockMode",    "Exclusive");
-        AddLockParam(cmd, "@LockOwner",   "Session");
-        AddLockParam(cmd, "@LockTimeout", 10000);
-        var ret = cmd.CreateParameter();
-        ret.ParameterName = "@RETURN_VALUE";
-        ret.DbType        = System.Data.DbType.Int32;
-        ret.Direction     = System.Data.ParameterDirection.ReturnValue;
-        cmd.Parameters.Add(ret);
-        await cmd.ExecuteNonQueryAsync();
-        var ok = ret.Value is int r && r >= 0;
-        if (ok) held.Add(res);
-        return ok;
-    }
+        if (string.IsNullOrEmpty(row.NC) || row.KhPlanDetailId == null) return;
 
-    // Kết nối do khoá PO tự mở (không có khoá máy) → phải tự đóng, kể cả khi lấy khoá thất bại.
-    private bool _poConnOpened;
+        // Khuyến nghị chọn máy — cảnh báo nhưng vẫn cho save
 
-    private async Task ReleasePoLocksAsync(List<string> held, bool closeConnection)
-    {
-        if (!held.Any())
+        // [FIX-NONGC-MACHINE] Chỉ GC mới có máy — non-GC không cảnh báo "Chưa chọn máy"
+        if (IsGcGroup && string.IsNullOrEmpty(row.MachineUsed))
+
         {
-            if (closeConnection && _poConnOpened) { _poConnOpened = false; await Db.Database.CloseConnectionAsync(); }
-            return;
+
+            row.HasWarning = true;
+
+            row.WarningMsg = (row.WarningMsg ?? "") + " Chưa chọn máy sử dụng.";
+
         }
-        try
+
+        // Cảnh báo tổng thời gian thực tế — dùng đúng công thức: T.Gá + max(T.GC, T.Ktra)
+
+        var _actualSum = (row.SetupTime_Actual ?? 0)
+
+                       + Math.Max(row.MachiningTime_Actual ?? 0, row.InspectionTime_Actual ?? 0);
+
+        if (_actualSum > row.Minutes && row.Minutes > 0)
+
+            row.WarningMsg = (row.WarningMsg ?? "") + $" Tổng thời gian thực tế ({_actualSum} phút) vượt quá thời gian ca ({row.Minutes} phút).";
+
+        CheckQtyWarning(row);
+
+        // Warn thêm nếu NC loại trừ (không block)
+
+        if (GetFlowItem(row.KhPlanDetailId, row.NC)?.IsExcluded == true)
+
         {
-            var conn = Db.Database.GetDbConnection();
-            foreach (var res in held)
-            {
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = "sp_releaseapplock";
-                cmd.CommandType = System.Data.CommandType.StoredProcedure;
-                AddLockParam(cmd, "@Resource",  res);
-                AddLockParam(cmd, "@LockOwner", "Session");
-                await cmd.ExecuteNonQueryAsync();
-            }
-        }
-        catch { /* khoá đã mất theo kết nối → bỏ qua */ }
-        finally
-        {
-            held.Clear();
-            if (closeConnection && _poConnOpened) { _poConnOpened = false; await Db.Database.CloseConnectionAsync(); }
+
+            row.HasWarning = true;
+
+            row.WarningMsg = (row.WarningMsg ?? "") + $" NC {row.NC} dùng máy loại trừ — thường do nhóm HTSP thực hiện.";
+
         }
     }
 
@@ -7281,471 +6951,9 @@ else
 
     }
 
-    // ── Lưu 1 dòng ───────────────────────────────────────────
-
-    private async Task SaveRowAsync(WtsRow row)
-
+    // [WTS-SVC] Phần đuôi của SaveRowAsync cũ (nạp lại dòng đã lưu + cache) — giữ nguyên văn, nay chạy 1 lần sau khi service lưu xong cả nhóm
+    private async Task AfterGroupSavedRefreshAsync()
     {
-
-        row.ErrorMsg = null;
-
-        if (!IsToday)
-
-        { row.ErrorMsg = "Chỉ được nhập WTS cho ngày hôm nay. Ngày cũ cần quyền cao hơn."; return; }
-
-        // Validate chung
-
-        if (row.Minutes <= 0)
-
-        { row.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu"; return; }
-
-        if (string.IsNullOrEmpty(row.NC) && string.IsNullOrEmpty(row.WtsCode))
-
-        { row.ErrorMsg = "Chọn NC (nếu có PO) hoặc Mã WTS khác"; return; }
-
-        // Validate SL > 0 — áp dụng cho TẤT CẢ nhóm (GC, HTSP, KCS, PKG)
-        if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue && !IsQtyOptional(row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
-        { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
-
-        // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế — kiểm tra TRƯỚC khi void bản ghi cũ
-        var _missSerialRow = GetMissingSerialTimesMsg(row);
-        if (_missSerialRow != null)
-        { row.ErrorMsg = _missSerialRow; return; }
-
-        // Nếu đang sửa dòng cũ → void record cũ trước
-
-        if (row.IsEditing)
-
-        {
-
-            // [D8-WTS-VOID 2026-10-28] Chỉ huỷ dòng còn hiệu lực; không huỷ được (tab khác đã sửa / xoá dòng này) thì dừng, không ghi dòng mới
-            //   (trước: 2 tab cùng sửa 1 dòng → cả 2 bản mới cùng hiệu lực, số nhân đôi).
-            if (row.WtsLogId.HasValue)
-
-            {
-
-                var _nVoid = await Db.Database.ExecuteSqlRawAsync(
-
-                    "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",
-
-                    _currentUserId, DateTime.Now, row.WtsLogId.Value);
-
-                if (_nVoid != 1)
-                { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
-
-            }
-
-            if (row.ActivityLogId.HasValue)
-
-            {
-
-                var _nVoidA = await Db.Database.ExecuteSqlRawAsync(
-
-                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
-
-                    _currentUserId, DateTime.Now, row.ActivityLogId.Value);
-
-                if (_nVoidA != 1)
-                { row.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
-
-            }
-
-            row.WtsLogId      = null;
-
-            row.ActivityLogId = null;
-
-            row.IsEditing     = false;
-
-        }
-
-        // ── Loại 1: Có NC → link PO → WtsProductionLog ──────
-
-        if (!string.IsNullOrEmpty(row.NC))
-
-        {
-
-            if (row.KhPlanDetailId == null)
-
-            { row.ErrorMsg = "Chọn PO để link với NC"; return; }
-
-            // Khuyến nghị chọn máy — cảnh báo nhưng vẫn cho save
-
-            // [FIX-NONGC-MACHINE] Chỉ GC mới có máy — non-GC không cảnh báo "Chưa chọn máy"
-            if (IsGcGroup && string.IsNullOrEmpty(row.MachineUsed))
-
-            {
-
-                row.HasWarning = true;
-
-                row.WarningMsg = (row.WarningMsg ?? "") + " Chưa chọn máy sử dụng.";
-
-            }
-
-            // Cảnh báo tổng thời gian thực tế — dùng đúng công thức: T.Gá + max(T.GC, T.Ktra)
-
-            var _actualSum = (row.SetupTime_Actual ?? 0)
-
-                           + Math.Max(row.MachiningTime_Actual ?? 0, row.InspectionTime_Actual ?? 0);
-
-            if (_actualSum > row.Minutes && row.Minutes > 0)
-
-                row.WarningMsg = (row.WarningMsg ?? "") + $" Tổng thời gian thực tế ({_actualSum} phút) vượt quá thời gian ca ({row.Minutes} phút).";
-
-            CheckQtyWarning(row);
-
-            // v0.8b: Không block theo cascade. Chỉ block khi QtyDone > PlanQty.
-
-            if (row.QtyDone <= 0 && !IsQtyOptional(row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
-
-            { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
-
-            if (row.QtyNg > 0 && row.NgCategoryId == null)   // [VULOI][DS-LOI] trước: kiểm lý do NG gõ tay
-            { row.ErrorMsg = "Chọn loại lỗi (DS Lỗi) khi có số lượng NG."; return; }
-
-            // [GN-WTS-CAP] Đã bỏ 2 khối kiểm SL ở đây ([BUG2 FIX] dòng ≤ PO, [WORKFLOW Phase 3] non-GC ≤ SL nhận):
-            // chúng chạy SAU khi dòng cũ đã bị void (sửa dòng) → kiểm không qua là mất dòng cũ.
-            // Nay kiểm 1 lần trong SaveGroupAsync → CheckGroupQtyAsync, trước khi void / lưu bất kỳ dòng nào
-            // (Workflow OFF vẫn chặn dòng ≤ PO; Workflow ON chặn theo Còn chờ làm của sổ giao nhận).
-
-            // Warn thêm nếu NC loại trừ (không block)
-
-            if (GetFlowItem(row.KhPlanDetailId, row.NC)?.IsExcluded == true)
-
-            {
-
-                row.HasWarning = true;
-
-                row.WarningMsg = (row.WarningMsg ?? "") + $" NC {row.NC} dùng máy loại trừ — thường do nhóm HTSP thực hiện.";
-
-            }
-
-            try
-
-            {
-
-                // Xác định ProcessGroup và NC/WtsCode theo nhóm công nhân
-
-                string processGroup;
-
-                string? ncValue;
-
-                string? wtsCodeValue;
-
-                if (IsGcGroup)
-
-                {
-
-                    processGroup  = "GC";
-
-                    ncValue       = row.NC;
-
-                    wtsCodeValue  = null;
-
-                }
-
-                else if (IsHtspGroup)
-
-                {
-
-                    processGroup = row.HtspSubGroup switch
-
-                    {
-
-                        "Taro"  => "TARO",
-
-                        "Bavia" => "BAVIA",
-
-                        "Rua"   => "WASHING",
-
-                        _       => "TARO"
-
-                    };
-
-                    ncValue      = null;
-
-                    wtsCodeValue = row.NC;  // NC chọn từ WtsItem lưu vào WtsCode
-
-                }
-
-                else if (HandoverGroupCode == "KCS")
-
-                {
-
-                    processGroup  = "KCS";
-
-                    ncValue       = null;
-
-                    wtsCodeValue  = row.NC;
-
-                }
-
-                else // PKG
-
-                {
-
-                    processGroup  = "PKG";
-
-                    ncValue       = null;
-
-                    wtsCodeValue  = row.NC;
-
-                }
-
-                // [VULOI 2026-10-28] NG → vụ lỗi: dòng mới tạo vụ (nơi phát hiện = nơi gây lỗi = nhóm này);
-                //   sửa dòng (void + dòng mới) thì GIỮ vụ cũ (đổi loại lỗi chỉ khi vụ chưa đi phiếu — đã kiểm ở SaveGroupAsync).
-                string? _ngLabel = null; long? _ngCaseId = null;
-                if (row.QtyNg > 0)
-                {
-                    var _cat = await NgCaseService.GetCategoryForCaseAsync(Db, row.NgCategoryId, row.NgCaseId);
-                    if (_cat == null) { row.ErrorMsg = NgCaseService.MsgPickCategory; return; }
-                    _ngLabel = _cat.Label;
-                    if (row.NgCaseId != null)
-                    {
-                        var _chg = await NgCaseService.ChangeCaseCategoryAsync(Db, row.NgCaseId.Value, _cat.NgCategoryId);
-                        if (_chg != null) { row.ErrorMsg = _chg; return; }
-                        _ngCaseId = row.NgCaseId;
-                    }
-                    else
-                    {
-                        var _ngGrp = processGroup switch { "GC" => "GC", "TARO" or "BAVIA" or "WASHING" => "HTSP", "KCS" => "KCS", _ => "PKG" };
-                        var _vu = await NgCaseService.CreateCaseAsync(Db, row.KhPlanDetailId!.Value, _cat, NgOrigin.Wts,
-                            _ngGrp, ncValue ?? wtsCodeValue, _ngGrp, _currentUserId);
-                        _ngCaseId = _vu.NgCaseId;
-                    }
-                }
-
-                var log = new WtsProductionLog
-
-                {
-
-                    KhPlanDetailId          = row.KhPlanDetailId.Value,
-
-                    ProcessGroup            = processGroup,
-
-                    NC                      = ncValue,
-
-                    WtsCode                 = wtsCodeValue,
-
-                    HtspSubGroup            = IsHtspGroup ? row.HtspSubGroup : null,
-
-                    WorkerId                = _currentUserId,
-
-                    // [FIX-NONGC-MACHINE] Non-GC (HTSP/KCS/PKG) chưa có khái niệm máy → để NULL, cột Máy hiện "—".
-                    // Nếu sau này cột này dùng cho thông tin khác của non-GC (bàn, trạm, dụng cụ…) → sửa tại đây.
-                    MachineUsed             = IsGcGroup ? row.MachineUsed : null,
-
-                    QtyDone                 = row.QtyDone,
-
-                    QtyOk                   = row.QtyOk,
-
-                    QtyNg                   = row.QtyNg,
-
-                    NgReason                = row.QtyNg > 0 ? _ngLabel : null,   // [VULOI] tên loại lỗi (DS Lỗi)
-                    NgCaseId                = row.QtyNg > 0 ? _ngCaseId : null,  // [VULOI] vụ lỗi (sửa dòng: giữ vụ cũ)
-
-                    StartTime               = row.StartTime,
-
-                    EndTime                 = row.EndTime,
-
-                    Notes                   = row.Notes,
-
-                    ExtraMinutes            = row.ExtraMinutes > 0 ? row.ExtraMinutes : (int?)null,
-
-                    CaId                    = _selectedCaId,  // Ca làm việc — dùng cho báo cáo
-
-                    IsOvertime              = row.IsOvertime,  // Tăng ca flag
-
-                    SetupTime_Actual        = row.SetupTime_Actual,
-
-                    MachiningTime_Actual    = row.MachiningTime_Actual,
-
-                    InspectionTime_Actual   = row.InspectionTime_Actual,
-
-                    PreparationTime_Actual  = row.PreparationTime_Actual,
-
-                    TrialRunTime_Actual     = row.TrialRunTime_Actual,
-                    // [SERIAL-TIME-REQUIRED] Lưu chế độ Hàng loạt / Chạy thử (chỉ GC; non-GC = NULL)
-                    ProductionMode          = IsGcGroup ? row.ProductionMode : null,
-                    // [ACTUAL-PC] Non-GC: lưu T.Thực tế/pc + đánh dấu có khác chuẩn không (GC: NULL)
-                    ActualTimePerPc         = IsGcGroup ? null : row.ActualTimePerPc,
-                    IsActualManual          = IsGcGroup || !row.ActualTimePerPc.HasValue ? null
-                                              : row.ActualTimePerPc != GetStdTimeForSubRow(row),
-
-                    CreatedAt               = DateTime.Now,
-
-                    IsVoided                = false,
-
-                };
-
-                Db.WtsProductionLogs.Add(log);
-
-                await Db.SaveChangesAsync();
-
-                row.WtsLogId = log.WtsLogId;
-                row.NgCaseId = log.NgCaseId;   // [VULOI]
-
-                // Lưu từng dòng phát sinh chi tiết vào WtsExtraItems
-
-                if (row.ExtraItems.Any())
-
-                {
-
-                    foreach (var ei in row.ExtraItems.Where(e => e.Minutes > 0))
-
-                    {
-
-                        Db.WtsExtraItems.Add(new WtsExtraItemLog
-
-                        {
-
-                            WtsLogId   = log.WtsLogId,
-
-                            WtsCode    = ei.WtsCode,
-
-                            WtsName    = ei.WtsName,
-
-                            Minutes    = ei.Minutes,
-
-                            Notes      = ei.Notes,
-
-                            CreatedAt  = DateTime.Now,
-
-                        });
-
-                    }
-
-                    await Db.SaveChangesAsync();
-
-                }
-
-                // [STD-UPDATE] Đóng băng số chuẩn + trạng thái xác nhận (theo snapshot phiếu KH) cho dòng WTS vừa lưu.
-                // Lỗi ở bước này KHÔNG làm hỏng dòng WTS (đã lưu) — chỉ báo cảnh báo, chạy lại SQL backfill để bù.
-                await SaveWtsLogStdsAsync(log, row);
-
-                Db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
-
-                // Reload qty cache + flow (v0.8)
-
-                var summary = await KhSvc.GetWtsQtySummaryAsync(row.KhPlanDetailId.Value);
-
-                foreach (var kv in summary)
-
-                    _qtySummaryCache[$"{row.KhPlanDetailId}|{kv.Key}"] = kv.Value;
-
-                await ReloadFlowAsync(row.KhPlanDetailId.Value);
-                if (_notifyDefer != null) _notifyDefer.Add(row.KhPlanDetailId.Value);   // [B2B3-WTS-TRX] đang trong giao dịch nhóm: báo sau khi ghi hẳn
-                else MES.Web.Services.HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (WTS đổi Đã làm/Chưa làm)
-
-            }
-
-            catch (Exception ex)
-
-            {
-
-                var inner = ex.InnerException?.Message ?? ex.Message;
-
-                row.ErrorMsg = "Lỗi khi lưu: " + inner;
-
-                return;
-
-            }
-
-        }
-
-        // ── Loại 2: Mã WTS khác (không link PO) → WorkerActivityLog ──
-
-        else
-
-        {
-
-            try
-
-            {
-
-                var actLog = new WorkerActivityLog
-
-                {
-
-                    WorkerId  = _currentUserId,
-
-                    WorkDate  = DateOnly.FromDateTime(_workDate),
-
-                    StartTime = row.StartTime,
-
-                    EndTime   = row.EndTime,
-
-                    WtsCode   = row.WtsCode,
-
-                    WtsName   = row.WtsName,
-
-                    Notes     = row.Notes,
-
-                    CreatedAt = DateTime.Now,
-
-                    IsVoided  = false,
-
-                };
-
-                Db.WorkerActivityLogs.Add(actLog);
-
-                await Db.SaveChangesAsync();
-
-                row.ActivityLogId = actLog.ActivityLogId;
-
-                // Lưu từng dòng phát sinh chi tiết
-
-                if (row.ExtraItems.Any())
-
-                {
-
-                    foreach (var ei in row.ExtraItems.Where(e => e.Minutes > 0))
-
-                    {
-
-                        Db.WtsExtraItems.Add(new WtsExtraItemLog
-
-                        {
-
-                            ActivityLogId = actLog.ActivityLogId,
-
-                            WtsCode       = ei.WtsCode,
-
-                            WtsName       = ei.WtsName,
-
-                            Minutes       = ei.Minutes,
-
-                            Notes         = ei.Notes,
-
-                            CreatedAt     = DateTime.Now,
-
-                        });
-
-                    }
-
-                    await Db.SaveChangesAsync();
-
-                }
-
-                Db.ChangeTracker.Clear();
-
-            }
-
-            catch (Exception ex)
-
-            {
-
-                var inner = ex.InnerException?.Message ?? ex.Message;
-
-                row.ErrorMsg = "Lỗi khi lưu: " + inner;
-
-                return;
-
-            }
-
-        }
-
-        row.Saved = true;
-
         // Reload lại toàn bộ: danh sách dòng đã lưu + qty summary cho tất cả PO
 
         var unsavedRows = _rows.Where(r => !r.Saved).ToList();
@@ -7802,7 +7010,6 @@ else
             }
 
         }
-
     }
 
     // ── Classes ───────────────────────────────────────────────
@@ -7965,72 +7172,6 @@ else
     // [STD-UPDATE] Xác nhận T.Chuẩn theo SNAPSHOT phiếu KH — helpers
     // ════════════════════════════════════════════════════════════════════════
 
-    // Ghi WtsProductionLogStds cho 1 dòng WTS vừa lưu — dùng ĐÚNG số + xác nhận đang hiện trên form
-    // (cùng GetStdTiming / GetStdTimeForSubRow / GetStdSourceForSubRow như phần hiển thị).
-    private async Task SaveWtsLogStdsAsync(WtsProductionLog log, WtsRow row)
-    {
-        try
-        {
-            var detailId = log.KhPlanDetailId;
-            if (!_snapStdConfirmCache.ContainsKey(detailId))
-                await EnsureSnapStdConfirmsAsync(detailId);
-
-            var now  = DateTime.Now;
-            var list = new List<WtsProductionLogStd>();
-
-            WtsProductionLogStd Make(string field, decimal? value, string? table, long? rowId, string? note)
-            {
-                var cf = GetSnapConfirm(detailId, table, rowId, field);
-                var ok = cf?.IsConfirmed == true;
-                return new WtsProductionLogStd
-                {
-                    WtsLogId        = log.WtsLogId,
-                    KhPlanDetailId  = detailId,
-                    FieldName       = field,
-                    StdValue        = value,
-                    IsConfirmed     = ok,
-                    ConfirmedBy     = ok ? cf!.ConfirmedBy     : null,
-                    ConfirmedByName = ok ? cf!.ConfirmedByName : null,
-                    ConfirmedAt     = ok ? cf!.ConfirmedAt     : null,
-                    SnapshotTable   = table,
-                    SnapshotRowId   = rowId,
-                    SyncSource      = StdTrack.Source.Save,
-                    SyncedAt        = now,
-                    SyncedBy        = _currentUserId,
-                    Note            = note,
-                };
-            }
-
-            if (IsGcGroup)
-            {
-                var std  = GetStdTiming(detailId, row.NC, row.MachineUsed);
-                var note = std == null                       ? "Không tìm thấy chuẩn trong snapshot phiếu KH"
-                         : string.IsNullOrEmpty(std.SrcTable) ? "Chuẩn lấy từ Part Master live (không có trong snapshot)"
-                         : null;
-                list.Add(Make(StdTrack.Field.Setup,       std?.SetupTime,       std?.SrcTable, std?.SrcRowId, note));
-                list.Add(Make(StdTrack.Field.Machining,   std?.MachiningTime,   std?.SrcTable, std?.SrcRowId, note));
-                list.Add(Make(StdTrack.Field.Inspection,  std?.InspectionTime,  std?.SrcTable, std?.SrcRowId, note));
-                list.Add(Make(StdTrack.Field.Preparation, std?.PreparationTime, std?.SrcTable, std?.SrcRowId, note));
-                list.Add(Make(StdTrack.Field.TrialRun,    std?.TrialRunTime,    std?.SrcTable, std?.SrcRowId, note));
-            }
-            else
-            {
-                var src = GetStdSourceForSubRow(row);
-                list.Add(Make(StdTrack.Field.Standard, GetStdTimeForSubRow(row), src?.Table, src?.RowId,
-                    src == null ? "Không tìm thấy chuẩn trong snapshot phiếu KH" : null));
-            }
-
-            Db.WtsProductionLogStds.AddRange(list);
-            await Db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            Db.ChangeTracker.Clear();
-            row.HasWarning = true;
-            row.WarningMsg = (row.WarningMsg ?? "") + " Đã lưu WTS nhưng chưa ghi được số chuẩn: "
-                           + (ex.InnerException?.Message ?? ex.Message);
-        }
-    }
 
     // Nạp (luôn đọc mới) trạng thái xác nhận từng ô snapshot của 1 phiếu KH
     private async Task EnsureSnapStdConfirmsAsync(int detailId)

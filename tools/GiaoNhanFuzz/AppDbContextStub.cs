@@ -92,8 +92,12 @@ namespace MES.Web.Data
                 if (txById.TryGetValue(r.HandoverTxId, out var t)) { r.Transaction = t; t.Receives.Add(r); }
                 if (users.TryGetValue(r.ReceivedBy, out var u)) r.ReceivedByUser = u;
             }
+            var dets = KhPlanDetails.List.ToDictionary(d => d.KhPlanDetailId);   // [WTS-SVC] WtsSaveService.CheckMachineOverlapAsync Include(l => l.KhPlanDetail) đọc số PO
             foreach (var w in WtsProductionLogs.List)
+            {
                 if (users.TryGetValue(w.WorkerId, out var u)) w.Worker = u;
+                if (dets.TryGetValue(w.KhPlanDetailId, out var d)) w.KhPlanDetail = d;
+            }
             // [CHUOI] Part Master → snapshot bằng hàm thật:
             //  - User.Group theo GroupId (Part*Service.EnsurePermissionAsync đọc user.Group)
             //  - PartMachiningStep.Timings = máy đồng dạng ĐANG DÙNG (CopyRouteSnapshotAsync thật Include(t => t.IsActive))

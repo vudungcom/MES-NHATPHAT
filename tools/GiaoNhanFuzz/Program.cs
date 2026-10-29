@@ -17,6 +17,7 @@ if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
+if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -46,6 +47,7 @@ for (int po = startPo; po < startPo + poCount; po++)
 {
     var rnd = new Random(seed0 * 100000 + po);
     var db = new AppDbContext();
+    WtsSvcHelp.Reset();   // [WTS-SVC] khung giờ WTS bắt đầu lại từng PO
     double exclP = Environment.GetEnvironmentVariable("EXCL") is string exv ? double.Parse(exv) : 0.3;
     bool excl;
     string[] ncs; Dictionary<string, (string pg, string[] codes)> codeOf;
@@ -278,7 +280,19 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var bad = HandoverLedgerService.NewNegatives(row, after);
                     desc = $"wts {pg} {code} ok={q - ng} ng={ng} cap={cap.Max}";
                     if (bad.Any()) { if (Environment.GetEnvironmentVariable("DUMP") == "1") { Console.WriteLine("BEFORE " + desc); Dbg.Dump(row); foreach (var t in db.HandoverTransactions.List) Console.WriteLine($"   tx#{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} {t.FromCell}->{t.ToCell} q={t.QtyIssued} cl={t.QtyClosed} st={t.Status} void={t.IsVoided} fnc={t.FromNC} tnc={t.ToNC} src={t.SourceReceiveId} rec={string.Join(",", t.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); foreach (var w in db.WtsProductionLogs.List) Console.WriteLine($"   wts#{w.WtsLogId} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.QtyOk}/{w.QtyNg} void={w.IsVoided}"); Console.WriteLine("AFTER"); Dbg.Dump(after); } Inc("rej.wts.k5"); fails.Add($"[WTS bị chặn oan dù trong trần] PO{po} op{op} {desc} → {string.Join("; ", bad)}"); continue; }
-                    await VuHelp.Wts(db, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), rnd.Next(1, 6));   // [VULOI] NG → vụ mới (như trang WTS)
+                    // [WTS-SVC] lưu bằng HÀM THẬT WtsSaveService.SaveGroupAsync (trần + K5 + ghi dòng + vụ lỗi + số chuẩn, 1 giao dịch);
+                    //   bộ kiểm đã tự tính trần + K5 ở trên → service phải cho lưu, không thì "chặn oan"
+                    var catW = rnd.Next(1, 6);
+                    var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), catW);
+                    if (!sv.Ok) { Inc("rej.wts.svc"); fails.Add($"[WtsSaveService chặn oan dù trong trần + qua K5] PO{po} op{op} {desc} → {sv.Err}"); continue; }
+                    {
+                        var wNew = db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId);
+                        if (wNew.QtyOk != q - ng || wNew.QtyNg != ng || wNew.IsVoided) fails.Add($"[WtsSaveService ghi sai số] PO{po} op{op} {desc} → ok={wNew.QtyOk} ng={wNew.QtyNg}");
+                        if (ng > 0 && (wNew.NgCaseId == null || db.NgCases.List.First(x => x.NgCaseId == wNew.NgCaseId).NgCategoryId != catW)) fails.Add($"[WtsSaveService không tạo vụ / sai loại lỗi] PO{po} op{op} {desc}");
+                        if (ng == 0 && wNew.NgCaseId != null) fails.Add($"[WtsSaveService gắn vụ cho dòng không NG] PO{po} op{op} {desc}");
+                        var nStd = db.WtsProductionLogStds.List.Count(x => x.WtsLogId == wNew.WtsLogId);
+                        if (nStd != (g == "GC" ? 5 : 1)) fails.Add($"[WtsSaveService số dòng chuẩn sai] PO{po} op{op} {desc} → {nStd}");
+                    }
                     ok = true;
                     break;
                 }
@@ -294,11 +308,20 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         Inc("rej.wtsvoid");
                         var wid = w.WtsLogId;
+                        // [WTS-SVC] service cũng phải chặn (K5) — chặn + lời báo có gợi ý gỡ [GN-WHY]
+                        var vb = await WtsSvcHelp.VoidAsync(db, wid, 1, w.WorkerId);
+                        if (vb.Ok) fails.Add($"[WtsSaveService cho xoá dù K5 âm] PO{po} op{op} {desc} → {string.Join("; ", bad)}");
+                        else if (!vb.Err!.StartsWith("Không xoá được")) fails.Add($"[WtsSaveService chặn xoá sai lời] PO{po} op{op} {desc} → {vb.Err}");
                         await WhyCheck(db, svc, led, HandoverWhy.OpWts(new List<long> { wid }), new HashSet<string> { "W:" + wid },
                             async () => await WtsVoid(db, led, wid), null, rnd, po, op, desc, null);
                         continue;
                     }
-                    w.IsVoided = true; ok = true;
+                    {   // [WTS-SVC] xoá bằng hàm thật
+                        var vd = await WtsSvcHelp.VoidAsync(db, w.WtsLogId, 1, w.WorkerId);
+                        if (!vd.Ok) { Inc("rej.wtsvoid.svc"); fails.Add($"[WtsSaveService chặn xoá oan] PO{po} op{op} {desc} → {vd.Err}"); continue; }
+                        if (!w.IsVoided || w.VoidReason != "Xóa dòng") fails.Add($"[WtsSaveService xoá không ghi cờ] PO{po} op{op} {desc}");
+                    }
+                    ok = true;
                     break;
                 }
                 case "vrecv":
@@ -391,6 +414,17 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var bad = HandoverLedgerService.NewNegatives(row, after);
                     desc = $"wtsedit #{w.WtsLogId} {w.ProcessGroup} {w.NC ?? w.WtsCode} NG {w.QtyNg}->{ng2} vu={w.NgCaseId}";
                     if (bad.Any()) { Inc("rej.wtsedit"); if (w.NgCaseId != null && bad.Any(b => b.Contains("VL"))) Inc("vu.k5.wtsedit"); continue; }
+                    {   // [WTS-SVC] trần L3 khi sửa như trang: sổ bỏ dòng đang sửa, OK + NG mới ≤ Chưa làm (dòng mồ côi do lần nhận đã huỷ → "chưa nhận hàng")
+                        var basis = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }))!;
+                        var capE = HandoverLedgerService.WtsCap(basis, w.ProcessGroup, w.NC ?? w.WtsCode);
+                        if (capE.Max != null && (capE.Locked || tot > capE.Max.Value))
+                        {
+                            var seB = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, w.NgCaseId != null ? db.NgCases.List.First(x => x.NgCaseId == w.NgCaseId).NgCategoryId : 1, keep, w.WtsLogId);
+                            if (seB.Ok) fails.Add($"[WtsSaveService cho sửa vượt trần L3] PO{po} op{op} {desc} cap={capE.Max} locked={capE.Locked}");
+                            else if (!seB.Err!.StartsWith("PO ")) fails.Add($"[WtsSaveService chặn sửa sai lời] PO{po} op{op} {desc} → {seB.Err}");
+                            Inc("rej.wtsedit.cap"); continue;
+                        }
+                    }
                     // 30%: đổi loại lỗi của vụ cũ (chỉ được khi vụ chưa đi phiếu nào)
                     if (keep != null && rnd.NextDouble() < 0.3)
                     {
@@ -402,8 +436,19 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (!moved && (err != null || cs0.NgCategoryId != newCat)) fails.Add($"[Không đổi được loại lỗi vụ chưa đi] PO{po} op{op} {desc}: {err}");
                         if (err == null) Inc("vu.doiloai");
                     }
-                    w.IsVoided = true;
-                    await VuHelp.Wts(db, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? rnd.Next(1, 6), keep);
+                    {   // [WTS-SVC] sửa dòng bằng hàm thật: huỷ dòng cũ (Sửa lại) + ghi dòng mới giữ vụ, cùng giao dịch
+                        var catE = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? rnd.Next(1, 6);
+                        var oldId = w.WtsLogId;
+                        var se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId);
+                        if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5] PO{po} op{op} {desc} → {se.Err}"); continue; }
+                        var wOld = db.WtsProductionLogs.List.First(x => x.WtsLogId == oldId);
+                        var wNew = db.WtsProductionLogs.List.First(x => x.WtsLogId == se.LogId);
+                        if (!wOld.IsVoided || wOld.VoidReason != "Sửa lại") fails.Add($"[WtsSaveService sửa không huỷ dòng cũ] PO{po} op{op} {desc}");
+                        if (wNew.QtyOk != tot - ng2 || wNew.QtyNg != ng2) fails.Add($"[WtsSaveService sửa ghi sai số] PO{po} op{op} {desc}");
+                        if (ng2 > 0 && keep != null && wNew.NgCaseId != keep) fails.Add($"[WtsSaveService sửa không giữ vụ] PO{po} op{op} {desc} → {wNew.NgCaseId}");
+                        if (ng2 > 0 && keep == null && wNew.NgCaseId == null) fails.Add($"[WtsSaveService sửa thêm NG không tạo vụ] PO{po} op{op} {desc}");
+                        if (ng2 == 0 && wNew.NgCaseId != null) fails.Add($"[WtsSaveService sửa hết NG vẫn gắn vụ] PO{po} op{op} {desc}");
+                    }
                     ok = true;
                     break;
                 }
@@ -775,6 +820,7 @@ async Task<bool> WtsVoid(AppDbContext db, HandoverLedgerService led, long wid)
     var after = (await led.GetLedgerForDetailAsync(1, new List<long> { wid }))!;
     var bad = HandoverLedgerService.NewNegatives(before, after);
     if (bad.Any()) { lastErr = string.Join("; ", bad); return false; }
-    w.IsVoided = true;
+    var vr = await WtsSvcHelp.VoidAsync(db, wid, 1, w.WorkerId);   // [WTS-SVC] xoá bằng hàm thật
+    if (!vr.Ok) { lastErr = vr.Err ?? "?"; return false; }
     return true;
 }

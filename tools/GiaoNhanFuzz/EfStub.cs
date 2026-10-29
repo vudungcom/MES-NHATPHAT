@@ -123,7 +123,10 @@ namespace Microsoft.EntityFrameworkCore
             {
                 if (s.Pending.Count == 0) continue;
                 var keyName = KeyName.TryGetValue(s.ElementType.Name, out var k) ? k
-                    : new[] { "SnapshotId", "TimingSnapshotId", "ChangeId", s.ElementType.Name + "Id", "Id" }.FirstOrDefault(n => s.ElementType.GetProperty(n) != null && s.ElementType.GetProperty(n)!.PropertyType != typeof(string));
+                    : new[] { "SnapshotId", "TimingSnapshotId", "ChangeId", s.ElementType.Name + "Id", "Id" }.FirstOrDefault(n => s.ElementType.GetProperty(n) != null && s.ElementType.GetProperty(n)!.PropertyType != typeof(string))
+                      // [WTS-SVC] bảng chưa khai KeyName: lấy thuộc tính [Key] (hoặc *Id số đầu tiên) — ActivityLogId, GroupId, CaId… khi chạy cả web trên EF giả
+                      ?? s.ElementType.GetProperties().FirstOrDefault(p => p.Name.EndsWith("Id") && (p.PropertyType == typeof(int) || p.PropertyType == typeof(long)) && p.GetCustomAttributes(typeof(System.ComponentModel.DataAnnotations.KeyAttribute), true).Length > 0)?.Name
+                      ?? s.ElementType.GetProperties().FirstOrDefault(p => p.Name.EndsWith("Id") && (p.PropertyType == typeof(int) || p.PropertyType == typeof(long)))?.Name;
                 var keyProp = keyName == null ? null : s.ElementType.GetProperty(keyName);
                 foreach (var e in s.Pending)
                 {
@@ -240,6 +243,31 @@ namespace Microsoft.EntityFrameworkCore
                     foreach (var it in set.Items.Cast<object>().ToList())
                         if (Convert.ToInt32(pk.GetValue(it)) == id) { set.Items.Remove(it); n++; }
                     _c.Fixup();
+                    return Task.FromResult(n);
+                }
+            }
+            // [WTS-SVC] Làm thật câu huỷ dòng WTS / hoạt động của WtsSaveService (trước ở trang HieuSuat_Index):
+            //   "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'…', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0"
+            //   → trả số dòng đổi (1 / 0) như SQL Server, để kiểm được [D8-WTS-VOID] (dòng đã huỷ ở nơi khác thì không ghi dòng mới).
+            var mv = System.Text.RegularExpressions.Regex.Match(sql, @"^UPDATE\s+(WtsProductionLogs|WorkerActivityLogs)\s+SET\s+IsVoided=1,\s*VoidReason=N'([^']*)',\s*VoidedBy=\{0\},\s*VoidedAt=\{1\}\s+WHERE\s+(WtsLogId|ActivityLogId)=\{2\}\s+AND\s+IsVoided=0");
+            if (mv.Success && args.Length == 3)
+            {
+                var set = _c.AllSets().FirstOrDefault(s => s.ElementType.Name + "s" == mv.Groups[1].Value);
+                var keyP = set?.ElementType.GetProperty(mv.Groups[3].Value);
+                if (set != null && keyP != null)
+                {
+                    var id = Convert.ToInt64(args[2]); int n = 0;
+                    foreach (var it in set.Items)
+                    {
+                        if (Convert.ToInt64(keyP.GetValue(it)) != id) continue;
+                        var t = it.GetType();
+                        if ((bool)t.GetProperty("IsVoided")!.GetValue(it)!) continue;
+                        t.GetProperty("IsVoided")!.SetValue(it, true);
+                        t.GetProperty("VoidReason")?.SetValue(it, mv.Groups[2].Value);
+                        t.GetProperty("VoidedBy")?.SetValue(it, Convert.ToInt32(args[0]));
+                        t.GetProperty("VoidedAt")?.SetValue(it, (DateTime)args[1]);
+                        n++;
+                    }
                     return Task.FromResult(n);
                 }
             }

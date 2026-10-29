@@ -62,18 +62,32 @@ namespace MES.Web.Services
         /// <summary>[GN-K8] Khoá PO trong giao dịch đang mở (cùng tên khoá với WTS + Giao nhận). null = khoá được.</summary>
         public static async Task<string?> LockAsync(AppDbContext db, int khPlanDetailId)
         {
+            // [WTS-SVC 2026-10-29] Phần sp_getapplock tách ra TryLockInTransactionAsync để trang WTS (WtsSaveService) khoá máy
+            //   "WTS_MACHINE_<máy>" cùng kiểu LockOwner = Transaction. Cách khoá PO ở đây giữ nguyên.
+            if (!await TryLockInTransactionAsync(db, "MES_PO_" + khPlanDetailId))
+                return "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.";
+            db.ChangeTracker.Clear();   // [B1-STALE 2026-10-28] có khoá rồi mới đọc: bỏ bản cũ EF đang giữ (như HandoverService.LockPoAsync)
+            return null;
+        }
+
+        /// <summary>
+        /// [WTS-SVC 2026-10-29] Khoá 1 tài nguyên bất kỳ (sp_getapplock, LockOwner = Transaction, chờ tối đa 10 giây) trong giao dịch
+        /// đang mở — tự nhả khi Commit / Rollback. true = khoá được; false = hết giờ chờ (người khác đang giữ).
+        /// Dùng cho khoá PO "MES_PO_&lt;id&gt;" (LockAsync) và khoá máy "WTS_MACHINE_&lt;máy&gt;" của WtsSaveService.
+        /// </summary>
+        public static async Task<bool> TryLockInTransactionAsync(AppDbContext db, string resource)
+        {
             try
             {
                 await db.Database.ExecuteSqlRawAsync(
                     "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
                     "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
-                    "MES_PO_" + khPlanDetailId);
-                db.ChangeTracker.Clear();   // [B1-STALE 2026-10-28] có khoá rồi mới đọc: bỏ bản cũ EF đang giữ (như HandoverService.LockPoAsync)
-                return null;
+                    resource);
+                return true;
             }
             catch (Exception ex) when (ex.Message.Contains("PO đang có người khác lưu"))
             {
-                return "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.";
+                return false;
             }
         }
 
