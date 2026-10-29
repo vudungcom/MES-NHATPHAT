@@ -1,0 +1,79 @@
+﻿lệnh: GiaoNhanFuzz.dll 25 120 52 LOI=1 EXCL=0.7
+  đã chạy 1/25 PO · sai 0 · 12 giây · còn khoảng 293 giây
+  đã chạy 2/25 PO · sai 0 · 27 giây · còn khoảng 312 giây
+  đã chạy 3/25 PO · sai 0 · 37 giây · còn khoảng 268 giây
+  đã chạy 4/25 PO · sai 0 · 45 giây · còn khoảng 237 giây
+  đã chạy 5/25 PO · sai 0 · 53 giây · còn khoảng 211 giây
+  đã chạy 6/25 PO · sai 0 · 62 giây · còn khoảng 195 giây
+  đã chạy 7/25 PO · sai 0 · 69 giây · còn khoảng 178 giây
+  đã chạy 8/25 PO · sai 0 · 81 giây · còn khoảng 172 giây
+  đã chạy 9/25 PO · sai 0 · 91 giây · còn khoảng 162 giây
+  đã chạy 10/25 PO · sai 0 · 98 giây · còn khoảng 147 giây
+  đã chạy 11/25 PO · sai 0 · 106 giây · còn khoảng 136 giây
+  đã chạy 12/25 PO · sai 0 · 117 giây · còn khoảng 127 giây
+  đã chạy 13/25 PO · sai 0 · 127 giây · còn khoảng 117 giây
+  đã chạy 14/25 PO · sai 0 · 135 giây · còn khoảng 106 giây
+  đã chạy 15/25 PO · sai 0 · 146 giây · còn khoảng 97 giây
+  đã chạy 16/25 PO · sai 0 · 153 giây · còn khoảng 86 giây
+  đã chạy 17/25 PO · sai 0 · 161 giây · còn khoảng 76 giây
+  đã chạy 18/25 PO · sai 0 · 170 giây · còn khoảng 66 giây
+  đã chạy 19/25 PO · sai 0 · 175 giây · còn khoảng 55 giây
+  đã chạy 20/25 PO · sai 0 · 181 giây · còn khoảng 45 giây
+  đã chạy 21/25 PO · sai 0 · 190 giây · còn khoảng 36 giây
+  đã chạy 22/25 PO · sai 0 · 196 giây · còn khoảng 27 giây
+  đã chạy 23/25 PO · sai 0 · 205 giây · còn khoảng 18 giây
+  đã chạy 24/25 PO · sai 0 · 212 giây · còn khoảng 9 giây
+  đã chạy 25/25 PO · sai 1 · 221 giây
+PO: 25 · thao tác/PO: 120 · seed 52
+  [GN-WHY] tìm gốc rễ: 103 lần · trung bình 1.3 ms · lâu nhất 12.1 ms · số lần tính sổ TB 7.2 / lớn nhất 44
+  ng.events            1037
+  ng.transit           636
+  ng.vesx              220
+  ok.close             14
+  ok.issue             314
+  ok.ngrep             45
+  ok.recv              362
+  ok.vissue            41
+  ok.vissue.auto       3
+  ok.vngrep            18
+  ok.vrecv             40
+  ok.wts               175
+  ok.wtsedit           43
+  ok.wtsvoid           35
+  rej.close            1
+  rej.issue            22
+  rej.ngrep            4
+  rej.recv             9
+  rej.vissue           67
+  rej.vngrep           10
+  rej.vrecv            49
+  rej.wtsedit          7
+  rej.wtsvoid          6
+  skip.close           105
+  skip.issue           384
+  skip.ngrep           192
+  skip.recv            301
+  skip.vissue          28
+  skip.vngrep          68
+  skip.vrecv           39
+  skip.wts             520
+  skip.wtsedit         51
+  skip.wtsvoid         50
+  vu.count             3597
+  vu.doiloai           1
+  vu.k5.wtsedit        1
+  vu.recv.doio         36
+  vu.tachnhanh         161
+  why.complete         103
+  why.retry.ok         102
+  why.step             177
+Phép kiểm: 50348
+SAI: 1
+  [GN-WHY huỷ lần nhận của chính phiếu bị chặn] × 1
+     [GN-WHY huỷ lần nhận của chính phiếu bị chặn] PO24 op99 vissue #3 GC->HTSP REPAIR_RETURN st=COMPLETED auto=: auto-recv #4: Không lưu: làm xong sẽ sai số ở Gia công: tồn hàng lỗi = -1; VL000001 ở Gia công · tồn hàng lỗi = -1. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8).
+
+Số này đang được dùng ở bước sau. Nếu chắc chắn thao tác này cần làm, nên kiểm tra theo các bước sau (từ chứng từ mới nhất ngược lên):
+1. Kiểm tra Lần nhận #7 của phiếu #5 · Gia công → HTSP · nhận 1 (NG 1) · 29/10 04:39 · U3 nhận — nếu nhận sai thì huỷ lần nhận này ở Lịch sử phiếu
+2. Kiểm tra Phiếu #5 · Gia công → HTSP · 1 chiếc · 29/10 04:39 · U2 lập — nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu
+3. Sau đó thử lại thao tác này.
+Đây chỉ là gợi ý để kiểm tra, phần mềm không tự xoá gì; mỗi bước vẫn được kiểm khi lưu.

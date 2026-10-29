@@ -16,6 +16,7 @@ if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
+if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -36,11 +37,54 @@ var startPo = args.Length > 3 ? int.Parse(args[3]) : 0;
 // nhiều phiếu Hàng lỗi / Hàng sửa hơn, không sửa phôi (trừ khi đặt PHOI). Không đặt LOI thì giữ nguyên như cũ (cùng seed ra cùng kết quả).
 bool smart = Environment.GetEnvironmentVariable("LOI") == "1";
 bool VuStrict = Environment.GetEnvironmentVariable("VU") != "0";   // [VULOI] mọi chứng từ lỗi mới đều phải gắn vụ (VU=0 để tắt)
+// [CHUOI 2026-10-29] CHUOI=1: PO dựng bằng HÀM THẬT đi đủ chuỗi Part Master (ngẫu nhiên) → KhPlanService.CreateAsync + CopyRouteSnapshotAsync
+//   → KhoVatLieuService.SaveKhoInputAsync, mã WTS đọc từ snapshot; thêm thao tác `pmedit` (sửa Part Master giữa chừng → PO cũ phải y nguyên)
+//   và 1 PO "hàng xóm" cùng phiếu KH có sẵn chứng từ → sổ PO đó không được đổi. Không đặt CHUOI thì y như cũ (cùng seed ra cùng kết quả).
+bool chuoi = Environment.GetEnvironmentVariable("CHUOI") == "1";
 var swProg = System.Diagnostics.Stopwatch.StartNew(); double lastProg = 0; // [FUZZ-UX] đồng hồ báo tiến độ
 for (int po = startPo; po < startPo + poCount; po++)
 {
     var rnd = new Random(seed0 * 100000 + po);
     var db = new AppDbContext();
+    double exclP = Environment.GetEnvironmentVariable("EXCL") is string exv ? double.Parse(exv) : 0.3;
+    bool excl;
+    string[] ncs; Dictionary<string, (string pg, string[] codes)> codeOf;
+    int pmId = 0; string snapSig0 = ""; string sigNb = ""; int nbId = 0; int nbDocs = 0;   // [CHUOI] Part Master, chữ ký snapshot PO 1, PO hàng xóm
+    if (chuoi)
+    {
+        excl = rnd.NextDouble() < exclP;
+        ChuoiHelp.SeedBase(db, exclH04: true);
+        var shape = ChuoiHelp.Shape.Random(rnd, excl);
+        pmId = await ChuoiHelp.BuildPartAsync(db, "P" + po, shape);
+        var pic = ChuoiHelp.Picture(db, pmId);
+        var twoPo = rnd.NextDouble() < 0.3;
+        var q1 = rnd.Next(8, 40);
+        var ids = await ChuoiHelp.CreateKhAsync(db, pmId, "P" + po, twoPo ? new decimal[] { q1, rnd.Next(5, 30) } : new decimal[] { q1 }, "PO" + po);
+        if (ids[0] != 1) { fails.Add($"[CHUOI] PO{po} dòng KH đầu có Id {ids[0]} ≠ 1"); continue; }
+        var dchk = ChuoiHelp.Diff(db, 1, pic, pmId);
+        if (dchk != null) fails.Add($"[Snapshot ≠ Part Master] PO{po}: {dchk}");
+        var kr = await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(1, DateTime.Now, q1, "OVL", "A1", null, null, null, "nhan phoi", 1);
+        if (!kr.Success) { fails.Add($"[CHUOI] PO{po} Kho nhận phôi lỗi: {kr.Error}"); continue; }
+        if (twoPo)
+        {   // PO hàng xóm: nhận phôi + giao Kho→GC + nhận có NG + 1 dòng WTS, rồi chụp chữ ký sổ — suốt lượt không được đổi
+            nbId = ids[1]; var q2 = (int)db.KhPlanDetails.List.First(d => d.KhPlanDetailId == nbId).Quantity;
+            await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(nbId, DateTime.Now, q2, "OVL", "A2", null, null, null, "nhan phoi", 1);
+            var nsvc = new HandoverService(db);
+            var nc0 = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == nbId && !s.IsBackup).OrderBy(s => s.StepOrder).First().NC;
+            var gi = await nsvc.IssueByCellAsync(nbId, "KHO", "GC", q2, 1, "MOI", false, "MOI", null, nc0);
+            if (gi.Ok) await nsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, q2 - 1, 1, "loi", 2, null, null, null, 2);
+            db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = nbId, ProcessGroup = "GC", NC = nc0, WorkerId = 2, QtyDone = 2, QtyOk = 2, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now });
+            await db.SaveChangesAsync();
+            sigNb = ChuoiHelp.LedgerSig((await new HandoverLedgerService(db).GetLedgerForDetailAsync(nbId))!);
+            nbDocs = db.HandoverTransactions.List.Count(t => t.KhPlanDetailId == nbId) + db.HandoverReceives.List.Count(r => r.Transaction.KhPlanDetailId == nbId) + db.WtsProductionLogs.List.Count(w => w.KhPlanDetailId == nbId) + db.NgCases.List.Count(x => x.KhPlanDetailId == nbId) + db.HandoverNgReports.List.Count(b => b.KhPlanDetailId == nbId);
+        }
+        snapSig0 = ChuoiHelp.SnapPicture(db, 1).Sig;
+        (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, 1);
+        if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] PO{po} SL={q1} Part Master:\n   " + snapSig0.Replace("\n", "\n   "));
+        Inc("chuoi.po"); if (twoPo) Inc("chuoi.2po"); if (shape.ExclAt >= 0) Inc("chuoi.excl"); if (shape.DuPhong) Inc("chuoi.duphong"); if (shape.DongDang) Inc("chuoi.dongdang");
+    }
+    else
+    {
     // ── Dữ liệu gốc 1 PO ──
     var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };
     for (int u = 1; u <= 6; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : null, GroupId = u == 1 ? 1 : null });
@@ -52,8 +96,8 @@ for (int po = startPo; po < startPo + poCount; po++)
     var det = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO" + po, Quantity = qty };
     db.KhPlanDetails.List.Add(det);
     db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = qty, NgayNhanPhoi = DateTime.Now, SoPO = "PO", PartNo = "P" });
-    bool excl = rnd.NextDouble() < (Environment.GetEnvironmentVariable("EXCL") is string exv ? double.Parse(exv) : 0.3);
-    var ncs = new[] { "NC1", "NC2", "NC3" };
+    excl = rnd.NextDouble() < exclP;   // (giữ đúng thứ tự rút số ngẫu nhiên như bản cũ)
+    ncs = new[] { "NC1", "NC2", "NC3" };
     for (int i = 0; i < 3; i++)
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining
         { SnapshotId = i + 1, KhPlanDetailId = 1, StepOrder = i + 1, NC = ncs[i], MachineRegistered = excl && i == 1 ? "H04" : "M" + i });
@@ -67,21 +111,23 @@ for (int po = startPo; po < startPo + poCount; po++)
     db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "P1" });
     VuHelp.SeedCats(db);   // [VULOI] 5 loại lỗi đang dùng + 1 đã ngưng (Id 6)
     db.Fixup();
-
-    var svc = new HandoverService(db);
-    var led = new HandoverLedgerService(db);
-    var kho = new KhoVatLieuService(db, new UserService(null));
-    var codeOf = new Dictionary<string, (string pg, string[] codes)>
+    codeOf = new Dictionary<string, (string pg, string[] codes)>
     {
         ["GC"] = ("GC", ncs), ["HTSP"] = ("", new[] { "TARO|T1", "BAVIA|B1", "WASHING|R1" }),
         ["KCS"] = ("KCS", new[] { "K1", "K2" }), ["PKG"] = ("PKG", new[] { "P1" }),
     };
+    }
+
+    var svc = new HandoverService(db);
+    var led = new HandoverLedgerService(db);
+    var kho = new KhoVatLieuService(db, new UserService(null));
 
     for (int op = 0; op < opsPerPo; op++)
     {
         var row = (await led.GetLedgerForDetailAsync(1))!;
         var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : smart ? 0 : 6),
-            ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4), ("wtsedit", int.TryParse(Environment.GetEnvironmentVariable("WTSEDIT"), out var we) ? we : 5));   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
+            ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4), ("wtsedit", int.TryParse(Environment.GetEnvironmentVariable("WTSEDIT"), out var we) ? we : 5),
+            ("pmedit", chuoi ? 5 : 0));   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
         string desc = kind;
         bool ok = false;
         try
@@ -97,8 +143,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var p = Pick(rnd, (HandoverPurpose.Scrap, 3), (HandoverPurpose.CustReturn, 2), (HandoverPurpose.HelpSend, 3), (HandoverPurpose.HelpReturn, 3));
                         var to = p == HandoverPurpose.HelpReturn ? "GC" : groups[rnd.Next(groups.Length)];
                         if (p == HandoverPurpose.HelpSend) from = "GC";
-                        var fnc = p == HandoverPurpose.HelpSend ? ncs[rnd.Next(3)] : null;
-                        var tnc = p == HandoverPurpose.HelpReturn ? ncs[rnd.Next(3)] : null;
+                        var fnc = p == HandoverPurpose.HelpSend ? ncs[rnd.Next(ncs.Length)] : null;
+                        var tnc = p == HandoverPurpose.HelpReturn ? ncs[rnd.Next(ncs.Length)] : null;
                         // [VULOI] Huỷ / Trả khách: chọn 1 vụ đang giữ ở ô Hàng lỗi bên giao (trần theo vụ)
                         long? vu = null;
                         if (p is HandoverPurpose.Scrap or HandoverPurpose.CustReturn)
@@ -135,7 +181,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (prev && from == "GC")
                             {
                                 var cands = smart ? row.G("GC").Steps.Where(x => !x.IsExcluded && (x.Waiting ?? 0) > 0).Select(x => x.Code).ToList() : new List<string>();
-                                fnc = cands.Any() ? cands[rnd.Next(cands.Count)] : ncs[rnd.Next(3)];
+                                fnc = cands.Any() ? cands[rnd.Next(cands.Count)] : ncs[rnd.Next(ncs.Length)];
                             }
                             vu = null;
                             if (takes)
@@ -169,7 +215,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "recv":
                 {
-                    var pend = db.HandoverTransactions.List.Where(t => !t.IsVoided && t.Status != "COMPLETED" && !HandoverPurpose.IsOut(t.Purpose)).ToList();
+                    var pend = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status != "COMPLETED" && !HandoverPurpose.IsOut(t.Purpose)).ToList();   // [CHUOI] chỉ chứng từ của PO 1 (PO hàng xóm không đụng)
                     if (!pend.Any()) { Inc("skip.recv"); continue; }
                     var t = pend[rnd.Next(pend.Count)];
                     var rem = t.QtyIssued - t.Receives.Where(x => !x.IsVoided).Sum(x => x.QtyOk + x.QtyNg);
@@ -207,6 +253,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 {
                     var g = new[] { "GC", "HTSP", "KCS", "PKG" }[rnd.Next(4)];
                     var cs = codeOf[g].codes;
+                    if (cs.Length == 0) { Inc("skip.wts"); continue; }   // [CHUOI] Part Master không có mã cho nhóm này
                     var c = cs[rnd.Next(cs.Length)];
                     string pg = codeOf[g].pg, code = c;
                     if (g == "HTSP") { pg = c.Split('|')[0]; code = c.Split('|')[1]; }
@@ -237,7 +284,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "wtsvoid":
                 {
-                    var ws = db.WtsProductionLogs.List.Where(w => !w.IsVoided).ToList();
+                    var ws = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();   // [CHUOI] chỉ PO 1
                     if (!ws.Any()) { Inc("skip.wtsvoid"); continue; }
                     var w = ws[rnd.Next(ws.Count)];
                     var after = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }))!;
@@ -256,7 +303,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "vrecv":
                 {
-                    var rs = db.HandoverReceives.List.Where(r => !r.IsVoided && !r.Transaction.IsVoided).ToList();
+                    var rs = db.HandoverReceives.List.Where(r => r.Transaction.KhPlanDetailId == 1 && !r.IsVoided && !r.Transaction.IsVoided).ToList();   // [CHUOI] chỉ PO 1
                     if (!rs.Any()) { Inc("skip.vrecv"); continue; }
                     var r0 = rs[rnd.Next(rs.Count)];
                     desc = $"vrecv #{r0.ReceiveId} (phiếu #{r0.HandoverTxId} {r0.Transaction.FromGroupCode}->{r0.Transaction.ToGroupCode} ok={r0.QtyOk} ng={r0.QtyNg})";
@@ -282,7 +329,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "vissue":
                 {
-                    var ts = db.HandoverTransactions.List.Where(t => !t.IsVoided).ToList();
+                    var ts = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided).ToList();   // [CHUOI] chỉ PO 1
                     if (!ts.Any()) { Inc("skip.vissue"); continue; }
                     var t = ts[rnd.Next(ts.Count)];
                     desc = $"vissue #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} st={t.Status} auto={t.SourceReceiveId}";
@@ -334,7 +381,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "wtsedit":   // [VULOI] sửa dòng WTS (void + dòng mới, tổng OK + NG giữ nguyên): dòng mới giữ vụ cũ; NG giảm mà vụ đã đi tiếp → K5 chặn
                 {
-                    var ws = db.WtsProductionLogs.List.Where(w => !w.IsVoided && w.QtyDone > 0).ToList();
+                    var ws = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided && w.QtyDone > 0).ToList();   // [CHUOI] chỉ PO 1
                     if (!ws.Any()) { Inc("skip.wtsedit"); continue; }
                     var w = ws[rnd.Next(ws.Count)];
                     var tot = w.QtyDone; var ng2 = (decimal)rnd.Next(0, (int)tot + 1);
@@ -404,7 +451,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                 }
                 case "vngrep":   // [GN-NG-AFTER] huỷ báo lỗi
                 {
-                    var bs = db.HandoverNgReports.List.Where(b => !b.IsVoided).ToList();
+                    var bs = db.HandoverNgReports.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided).ToList();   // [CHUOI] chỉ PO 1
                     if (!bs.Any()) { Inc("skip.vngrep"); continue; }
                     var b = bs[rnd.Next(bs.Count)];
                     desc = $"vngrep #{b.HandoverNgReportId} {b.GroupCode} {b.SourceCell} {b.NC} q={b.Qty}";
@@ -437,10 +484,24 @@ for (int po = startPo; po < startPo + poCount; po++)
                             async () => (await kho.SaveKhoInputAsync(1, DateTime.Now, nq, null, null, null, null, null, "thu lai", 1)).Success, null, rnd, po, op, desc, res.Error);
                     break;
                 }
+                case "pmedit":   // [CHUOI] sửa Part Master giữa chừng bằng hàm thật: snapshot + sổ PO đang chạy KHÔNG được đổi
+                {
+                    var before = ChuoiHelp.LedgerSig(row);
+                    var pmBefore = ChuoiHelp.Picture(db, pmId).Sig;
+                    var what = await ChuoiHelp.MutateAsync(db, rnd, pmId);
+                    desc = "pmedit " + what;
+                    if (what == "bỏ qua") { Inc("skip.pmedit"); continue; }
+                    if (ChuoiHelp.Picture(db, pmId).Sig == pmBefore) fails.Add($"[Sửa Part Master không có tác dụng] PO{po} op{op} {desc}");
+                    if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Sửa Part Master làm đổi snapshot PO] PO{po} op{op} {desc}");
+                    var after = ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!);
+                    if (after != before) fails.Add($"[Sửa Part Master làm đổi sổ PO] PO{po} op{op} {desc}\n   {before}\n   {after}");
+                    ok = true;
+                    break;
+                }
                 case "close":
                 {
 #if NEWAPI
-                    var ts = db.HandoverTransactions.List.Where(t => !t.IsVoided && t.Status == "PARTIAL").ToList();
+                    var ts = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status == "PARTIAL").ToList();   // [CHUOI] chỉ PO 1
                     if (!ts.Any()) { Inc("skip.close"); continue; }
                     var t = ts[rnd.Next(ts.Count)];
                     desc = $"close #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} issued={t.QtyIssued} auto={t.SourceReceiveId}";
@@ -472,6 +533,23 @@ for (int po = startPo; po < startPo + poCount; po++)
         Inc("ok." + kind);
     if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] op{op} {desc}");   // [FIX-1028] in từng thao tác thành công của 1 PO để tái hiện lỗi
         await CheckAll(db, led, po, op, desc);
+        if (chuoi)
+        {   // [CHUOI] snapshot PO đang chạy không đổi; PO hàng xóm cùng phiếu KH: sổ + số chứng từ y nguyên; chứng từ mới chỉ thuộc PO 1
+            checks++;
+            if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Snapshot PO đổi giữa chừng] PO{po} op{op} sau «{desc}»");
+            if (nbId > 0)
+            {
+                checks++;
+                var nbRow = (await led.GetLedgerForDetailAsync(nbId))!;
+                if (ChuoiHelp.LedgerSig(nbRow) != sigNb) fails.Add($"[Sổ PO hàng xóm đổi] PO{po} op{op} sau «{desc}»: {ChuoiHelp.LedgerSig(nbRow)} ≠ {sigNb}");
+                checks++;
+                var nbNow = db.HandoverTransactions.List.Count(t => t.KhPlanDetailId == nbId) + db.HandoverReceives.List.Count(r => r.Transaction.KhPlanDetailId == nbId) + db.WtsProductionLogs.List.Count(w => w.KhPlanDetailId == nbId) + db.NgCases.List.Count(x => x.KhPlanDetailId == nbId) + db.HandoverNgReports.List.Count(b => b.KhPlanDetailId == nbId);
+                if (nbNow != nbDocs) fails.Add($"[Chứng từ lẫn sang PO hàng xóm] PO{po} op{op} sau «{desc}»: {nbNow} ≠ {nbDocs}");
+                checks++;
+                if (db.HandoverNgReports.List.Any(b => b.KhPlanDetailId != 1) || db.NgCases.List.Any(c => c.KhPlanDetailId != 1 && c.KhPlanDetailId != nbId))
+                    fails.Add($"[Báo lỗi / vụ lỗi sai PO] PO{po} op{op} sau «{desc}»");
+            }
+        }
     }
     // [FUZZ-UX] 27/10/2026: báo tiến độ ~5 giây một lần + khi xong, để biết tool đang chạy (không đổi phép kiểm nào)
     var poDone = po - startPo + 1;
@@ -612,7 +690,7 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         }
     }
     // Trạng thái phiếu khớp số nhận; phiếu tự lập khớp lần nhận gốc
-    foreach (var t in db.HandoverTransactions.List.Where(t => !t.IsVoided))
+    foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided))   // [CHUOI] chỉ PO 1
     {
         checks++;
         var rec = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
@@ -629,7 +707,7 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
             else if (src.QtyNg != t.QtyIssued) F("Phiếu tự lập lệch NG", $"#{t.HandoverTxId} {t.QtyIssued} ≠ NG {src.QtyNg}");
         }
     }
-    foreach (var r in db.HandoverReceives.List.Where(r => !r.IsVoided && !r.Transaction.IsVoided && r.QtyNg > 0))
+    foreach (var r in db.HandoverReceives.List.Where(r => r.Transaction.KhPlanDetailId == 1 && !r.IsVoided && !r.Transaction.IsVoided && r.QtyNg > 0))   // [CHUOI] chỉ PO 1
     {
         var cell = r.ToCell;
         if (cell == HandoverCell.Loi || r.Transaction.SourceReceiveId != null) continue;

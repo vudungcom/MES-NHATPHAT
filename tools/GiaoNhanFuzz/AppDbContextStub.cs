@@ -94,6 +94,20 @@ namespace MES.Web.Data
             }
             foreach (var w in WtsProductionLogs.List)
                 if (users.TryGetValue(w.WorkerId, out var u)) w.Worker = u;
+            // [CHUOI] Part Master → snapshot bằng hàm thật:
+            //  - User.Group theo GroupId (Part*Service.EnsurePermissionAsync đọc user.Group)
+            //  - PartMachiningStep.Timings = máy đồng dạng ĐANG DÙNG (CopyRouteSnapshotAsync thật Include(t => t.IsActive))
+            //  - KhPlanRouteSnapshotMachining.TimingRows nối thêm dòng theo MachiningSnapshotId (không bỏ dòng seed sẵn)
+            var groups = UserGroups.List.ToDictionary(g => g.GroupId);
+            foreach (var u in Users.List)
+                if (u.Group == null && u.GroupId != null && groups.TryGetValue(u.GroupId.Value, out var g)) u.Group = g;
+            var timByStep = PartMachiningTimings.List.Where(t => t.IsActive).GroupBy(t => t.StepId).ToDictionary(g => g.Key, g => g.ToList());
+            foreach (var s in PartMachiningSteps.List)
+                s.Timings = timByStep.TryGetValue(s.StepId, out var ts) ? ts.ToList() : new List<PartMachiningTiming>();
+            var snapTim = KhPlanRouteSnapshotMachiningTimings.List.GroupBy(t => t.MachiningSnapshotId).ToDictionary(g => g.Key, g => g.ToList());
+            foreach (var m in KhPlanRouteSnapshotMachining.List)
+                if (snapTim.TryGetValue(m.SnapshotId, out var ts))
+                    foreach (var t in ts) if (!m.TimingRows.Contains(t)) m.TimingRows.Add(t);
         }
     }
 }

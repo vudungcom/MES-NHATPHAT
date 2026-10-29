@@ -54,3 +54,22 @@ VU=0 ...                             # tắt kiểm "không còn hàng lỗi ch�
 ```
 
 Sau mỗi thao tác kiểm thêm sổ theo từng vụ (`LedgerRow.Cases`): cân từng vụ, Σ vụ = ô Tồn hàng lỗi / Tồn hàng sửa từng nhóm, khớp đường đi hàng lỗi, dòng B cuối = sổ vụ, không vụ nào âm, mọi chứng từ lỗi mới đều gắn vụ. Thao tác mới `wtsedit` (sửa dòng WTS như trang WTS: dòng mới giữ vụ cũ, NG giảm mà vụ đã đi phiếu thì K5 chặn, đổi loại lỗi chỉ khi vụ chưa đi phiếu). Nhận / báo lỗi / hàng lỗi công đoạn trước thử bỏ trống loại lỗi hoặc loại đã ngưng → phải bị chặn. Danh mục lỗi giả: `VuHelp.SeedCats` (5 loại + 1 đã ngưng).
+
+
+Thêm (CHUOI, 29/10/2026 — đi đủ chuỗi bằng hàm thật):
+
+```
+dotnet bin2/GiaoNhanFuzz.dll chuoi   # C1..C10: Part Master (hàm thật) → CreateAsync + CopyRouteSnapshotAsync → Kho nhận phôi → giao nhận + WTS
+CHUOI=1 dotnet bin2/GiaoNhanFuzz.dll 60 120 5   # lượt ngẫu nhiên: PO dựng qua chuỗi thật (Part Master ngẫu nhiên: 1–5 NC, máy đồng dạng,
+                                                 # dự phòng, máy loại trừ, Taro mã CV / NC, mã chuẩn bị, KCS/ĐG 0–2) + thao tác `pmedit`
+                                                 # (sửa Part Master giữa chừng → snapshot + sổ PO không được đổi) + 30% có PO hàng xóm cùng phiếu KH
+                                                 # (sổ + chứng từ + vụ lỗi của PO đó không được đổi). Không đặt CHUOI thì y như cũ.
+```
+
+Kịch bản `chuoi` kiểm: snapshot = Part Master lúc tạo (đủ cột 7 bảng, máy đồng dạng, cột nối nguồn, xác nhận TG chuẩn trỏ đúng dòng);
+sửa Part Master sau không đổi PO cũ, PO mới theo Part Master mới; sổ / trần WTS đọc snapshot cũ; K6 làm mới quy trình (chặn PO đã chạy,
+PO trắng = Part Master hiện tại); N2 dự phòng gộp NC chính; B5 PO trùng; rollback 1 giao dịch; 2 PO cùng phiếu cách ly; Workflow OFF.
+C9 (đổi tên NC chính có dòng dự phòng) và C10 (NC máy loại trừ đứng cuối chuỗi GC) hiện SAI = 2 lỗi phần mềm chờ vá (xem REPORT_CHUOI_2026-10-29.md).
+`nang` nay chạy thêm kịch bản `chuoi` + 3 lượt `chuoi_loi` / `chuoi_loaitru` / `chuoi_thuong`.
+Stub thêm: khoá chính StepId / TimingId / PartId, KhPlans.Add chèn cả Details, Timings chỉ dòng IsActive (như Include thật),
+câu `DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId` được làm thật (các câu raw khác vẫn chỉ ghi log).

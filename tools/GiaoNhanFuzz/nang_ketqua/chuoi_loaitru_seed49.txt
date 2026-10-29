@@ -1,0 +1,84 @@
+﻿lệnh: GiaoNhanFuzz.dll 25 120 49 CHUOI=1 LOI=1 EXCL=0.7
+  đã chạy 1/25 PO · sai 0 · 13 giây · còn khoảng 301 giây
+  đã chạy 3/25 PO · sai 0 · 28 giây · còn khoảng 207 giây
+  đã chạy 4/25 PO · sai 0 · 37 giây · còn khoảng 194 giây
+  đã chạy 5/25 PO · sai 0 · 44 giây · còn khoảng 177 giây
+  đã chạy 6/25 PO · sai 0 · 51 giây · còn khoảng 163 giây
+  đã chạy 7/25 PO · sai 0 · 60 giây · còn khoảng 154 giây
+  đã chạy 8/25 PO · sai 0 · 72 giây · còn khoảng 153 giây
+  đã chạy 9/25 PO · sai 0 · 82 giây · còn khoảng 145 giây
+  đã chạy 10/25 PO · sai 0 · 90 giây · còn khoảng 134 giây
+  đã chạy 11/25 PO · sai 0 · 97 giây · còn khoảng 124 giây
+  đã chạy 12/25 PO · sai 6 · 109 giây · còn khoảng 118 giây
+  đã chạy 13/25 PO · sai 6 · 123 giây · còn khoảng 114 giây
+  đã chạy 14/25 PO · sai 6 · 138 giây · còn khoảng 109 giây
+  đã chạy 15/25 PO · sai 6 · 150 giây · còn khoảng 100 giây
+  đã chạy 16/25 PO · sai 6 · 166 giây · còn khoảng 93 giây
+  đã chạy 17/25 PO · sai 6 · 177 giây · còn khoảng 83 giây
+  đã chạy 18/25 PO · sai 6 · 186 giây · còn khoảng 72 giây
+  đã chạy 19/25 PO · sai 6 · 197 giây · còn khoảng 62 giây
+  đã chạy 20/25 PO · sai 6 · 211 giây · còn khoảng 53 giây
+  đã chạy 21/25 PO · sai 6 · 220 giây · còn khoảng 42 giây
+  đã chạy 22/25 PO · sai 6 · 228 giây · còn khoảng 31 giây
+  đã chạy 23/25 PO · sai 6 · 235 giây · còn khoảng 20 giây
+  đã chạy 24/25 PO · sai 6 · 246 giây · còn khoảng 10 giây
+  đã chạy 25/25 PO · sai 6 · 256 giây
+PO: 25 · thao tác/PO: 120 · seed 49
+  [GN-WHY] tìm gốc rễ: 125 lần · trung bình 2.4 ms · lâu nhất 131.6 ms · số lần tính sổ TB 7.6 / lớn nhất 44
+  chuoi.2po            6
+  chuoi.dongdang       8
+  chuoi.duphong        8
+  chuoi.excl           14
+  chuoi.po             25
+  ng.events            1104
+  ng.transit           660
+  ng.vesx              69
+  ok.close             20
+  ok.issue             297
+  ok.ngrep             40
+  ok.pmedit            111
+  ok.recv              363
+  ok.vissue            35
+  ok.vissue.auto       4
+  ok.vngrep            17
+  ok.vrecv             47
+  ok.wts               212
+  ok.wtsedit           39
+  ok.wtsvoid           33
+  rej.close            4
+  rej.issue            26
+  rej.ngrep            4
+  rej.recv             5
+  rej.vissue           68
+  rej.vngrep           6
+  rej.vrecv            49
+  rej.wts.k5           1
+  rej.wtsedit          13
+  rej.wtsvoid          19
+  skip.close           93
+  skip.issue           352
+  skip.ngrep           168
+  skip.pmedit          17
+  skip.recv            264
+  skip.vissue          31
+  skip.vngrep          63
+  skip.vrecv           47
+  skip.wts             451
+  skip.wtsedit         60
+  skip.wtsvoid         45
+  vu.count             3506
+  vu.doiloai           1
+  vu.k5.wtsedit        1
+  vu.recv.doio         24
+  vu.tachnhanh         35
+  why.complete         125
+  why.retry.ok         125
+  why.step             234
+Phép kiểm: 55625
+SAI: 6
+  [Đang ở đâu âm] × 5
+     [Đang ở đâu âm] PO11 op13 sau «special HELP_SEND GC->PKG 3 max=17 vu= fnc=NC01 tnc=»: GC/chờ giao theo NC (máy loại trừ)=-3
+     [Đang ở đâu âm] PO11 op15 sau «wtsedit #2 GC NC01 NG 0->10 vu=»: GC/chờ giao theo NC (máy loại trừ)=-3
+     [Đang ở đâu âm] PO11 op16 sau «recv #5 GC->PKG cell= ok=1 ng=2 rem=3 cat=3 carry=False»: GC/chờ giao theo NC (máy loại trừ)=-3
+  [WTS bị chặn oan dù trong trần] × 1
+     [WTS bị chặn oan dù trong trần] PO11 op14 wts GC NC01-DP-01 ok=6 ng=1 cap=7 → Gia công: Chưa làm = -3

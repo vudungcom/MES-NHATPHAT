@@ -2268,6 +2268,13 @@ namespace MES.Web.Services
                     if (next == null)
                         return (0, new LedgerExplain { Title = "Giao theo NC", Rule = "N1, N4",
                             Note = $"NC {fromNC} là NC cuối của Gia công: hàng OK ở đây là Đã làm chưa giao — giao bằng phân loại Hàng mới." });
+                    // [HELP-LAST-EXCL 2026-10-29] Sau NC nguồn chỉ còn NC máy loại trừ (vd NC01, NC02 = H04): chuỗi NC thường kết thúc ở NC nguồn
+                    //   → OK của nó đã là "Đã làm chưa giao" (như NC cuối). Trước: next = NC loại trừ ≠ null nên vẫn cho giao theo NC
+                    //   → 1 chiếc vừa nằm ở Đã làm chưa giao vừa bị trừ khỏi Chưa GC → ô "chờ giao theo NC (máy loại trừ)" âm, WTS dự phòng bị chặn oan
+                    //   (bộ kiểm chuỗi C10; fuzz CHUOI=1 LOI=1 EXCL=0.7 seed 49 PO11). Luật: giao bằng Hàng mới cho nhóm làm NC loại trừ đó.
+                    if (!G.Steps.SkipWhile(s => s.Code != fromNC).Skip(1).Any(s => !s.IsExcluded))
+                        return (0, new LedgerExplain { Title = "Giao theo NC", Rule = "N1, N3, N4",
+                            Note = $"NC {fromNC} là NC cuối của Gia công (sau nó chỉ còn NC máy loại trừ {next.Code}): hàng OK ở đây là Đã làm chưa giao — giao bằng phân loại Hàng mới." });
                     // Hàng OK ở NC nguồn đi tiếp theo 2 đường: NC sau (nếu NC sau không phải máy loại trừ) hoặc gửi làm hộ.
                     var usedNext = next != null && !next.IsExcluded ? next.Ok + next.Ng : 0;
                     var e = new LedgerExplain

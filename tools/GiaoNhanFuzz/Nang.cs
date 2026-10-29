@@ -1,4 +1,4 @@
-// [GN-NG-TRACE 2026-10-28] Lệnh "nang": kiểm nặng — chạy 3 kịch bản cố định (kh, loi, vu — [VULOI]) rồi nhiều lượt ngẫu nhiên
+// [GN-NG-TRACE 2026-10-28] Lệnh "nang": kiểm nặng — chạy 4 kịch bản cố định (kh, loi, vu — [VULOI], chuoi — [CHUOI]) rồi nhiều lượt ngẫu nhiên
 // với các cấu hình khác nhau, SONG SONG theo số nhân máy. Mỗi lượt là một tiến trình riêng (chính tool này),
 // kết quả từng lượt ghi vào thư mục nang_ketqua\ để gửi lại khi có SAI.
 //
@@ -18,6 +18,10 @@ public static class Nang
         ("vu_suawts",   "hàng lỗi + nhiều sửa dòng WTS (giữ vụ lỗi)",  new[] { ("LOI", "1"), ("WTSEDIT", "20") }),   // [VULOI]
         ("thuong",      "như lệnh thường (không đặt biến)",            Array.Empty<(string, string)>()),
         ("loaitru",     "lệnh thường + 70% PO có máy loại trừ",        new[] { ("EXCL", "0.7") }),
+        // [CHUOI 2026-10-29] PO dựng bằng hàm thật đi đủ chuỗi Part Master → KH → snapshot → Kho; sửa Part Master giữa chừng; PO hàng xóm
+        ("chuoi_loi",   "đi đủ chuỗi Part Master → KH + hàng lỗi",      new[] { ("CHUOI", "1"), ("LOI", "1") }),
+        ("chuoi_loaitru", "đi đủ chuỗi + 70% PO có máy loại trừ",       new[] { ("CHUOI", "1"), ("LOI", "1"), ("EXCL", "0.7") }),
+        ("chuoi_thuong", "đi đủ chuỗi, lệnh thường",                    new[] { ("CHUOI", "1") }),
     };
 
     public static async Task<int> Run(string[] args)
@@ -30,14 +34,14 @@ public static class Nang
         var dir   = Path.Combine(Environment.CurrentDirectory, "nang_ketqua");
         Directory.CreateDirectory(dir);
 
-        Console.WriteLine($"KIỂM NẶNG: kịch bản kh + loi + vu, rồi {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · chạy cùng lúc {par} lượt");
+        Console.WriteLine($"KIỂM NẶNG: kịch bản kh + loi + vu + chuoi, rồi {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · chạy cùng lúc {par} lượt");
         Console.WriteLine($"Kết quả từng lượt: {dir}");
         var sw = Stopwatch.StartNew();
         var results = new List<(string Name, int Seed, int Sai, string Checks, double Sec, string File)>();
         int totalSai = 0;
 
         // 1. Kịch bản cố định (chạy trước, tuần tự)
-        foreach (var sc in new[] { "kh", "loi", "vu" })   // [VULOI] + kịch bản vụ lỗi
+        foreach (var sc in new[] { "kh", "loi", "vu", "chuoi" })   // [VULOI] + kịch bản vụ lỗi; [CHUOI] + đi đủ chuỗi
         {
             var (code, outFile, _) = await RunChild(dll, sc, Array.Empty<(string, string)>(), Path.Combine(dir, $"kichban_{sc}.txt"));
             var txt = File.ReadAllText(outFile);
@@ -84,7 +88,7 @@ public static class Nang
         }
 
         Console.WriteLine();
-        Console.WriteLine($"TỔNG: {Configs.Length} lượt × {po} PO × {ops} thao tác + 3 kịch bản · {sw.Elapsed.TotalMinutes:0.0} phút");
+        Console.WriteLine($"TỔNG: {Configs.Length} lượt × {po} PO × {ops} thao tác + 4 kịch bản · {sw.Elapsed.TotalMinutes:0.0} phút");
         Console.WriteLine(totalSai == 0 ? "SAI: 0" : $"SAI: {totalSai} — gửi lại các file ghi 'SAI' ở trên");
         return totalSai == 0 ? 0 : 1;
     }
@@ -96,7 +100,7 @@ public static class Nang
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
-        foreach (var k in new[] { "LOI", "EXCL", "NGREP", "PHOI", "DUMP", "WHYDBG" }) psi.Environment.Remove(k);   // không lẫn biến của cửa sổ cmd
+        foreach (var k in new[] { "LOI", "EXCL", "NGREP", "PHOI", "DUMP", "WHYDBG", "CHUOI", "WTSEDIT", "VU", "TRACEPO" }) psi.Environment.Remove(k);   // không lẫn biến của cửa sổ cmd
         foreach (var (k, v) in env) psi.Environment[k] = v;
         var sw = Stopwatch.StartNew();
         using var proc = Process.Start(psi)!;

@@ -33,6 +33,7 @@ namespace Microsoft.EntityFrameworkCore
         public void Add(T e) => Added.Add(e);
         public void AddRange(IEnumerable<T> es) => Added.AddRange(es);
         public void Remove(T e) { List.Remove(e); }
+        public void RemoveRange(IEnumerable<T> es) { foreach (var e in es.ToList()) List.Remove(e); }   // [CHUOI] Part Master xoá NC: Confirms → Timings → Step
         public ValueTask<T?> FindAsync(params object?[] k) { var pk = typeof(T).GetProperties().First(p => p.Name.EndsWith("Id")); return ValueTask.FromResult(List.FirstOrDefault(x => Equals(pk.GetValue(x), k[0]))); }
     }
 
@@ -102,6 +103,16 @@ namespace Microsoft.EntityFrameworkCore
             ["NgCategory"]          = "NgCategoryId",         // [VULOI]
             ["NgCase"]              = "NgCaseId",
             ["NgCategoryChangeLog"] = "ChangeId",
+            // [CHUOI] Part Master → KH → snapshot bằng hàm thật
+            ["PartMaster"]          = "PartId",
+            ["PartMachiningStep"]   = "StepId",
+            ["PartTaroStep"]        = "StepId",
+            ["PartBaviaStep"]       = "StepId",
+            ["PartWashingStep"]     = "StepId",
+            ["PartInspectionStep"]  = "StepId",
+            ["PartPackagingStep"]   = "StepId",
+            ["PartMachiningTiming"] = "TimingId",
+            ["KhoVatLieuChangeLog"] = "LogId",   // (rà độc lập 29/10: trước đó LogId luôn 0, không bảng nào đọc ngược nên vô hại)
         };
 
         public int SaveChanges() => SaveChangesAsync().GetAwaiter().GetResult();
@@ -125,6 +136,17 @@ namespace Microsoft.EntityFrameworkCore
                     }
                     s.Items.Add(e);
                     n++;
+                    // [CHUOI] giống EF: KhPlans.Add(plan) chèn luôn plan.Details (KhPlanService.CreateAsync)
+                    if (e is MES.Web.Data.Entities.KhPlan kp)
+                    {
+                        var ds = Set<MES.Web.Data.Entities.KhPlanDetail>();
+                        foreach (var d in kp.Details)
+                        {
+                            if (ds.List.Contains(d)) continue;
+                            if (d.KhPlanDetailId == 0) d.KhPlanDetailId = ds.List.Count == 0 ? 1 : ds.List.Max(x => x.KhPlanDetailId) + 1;
+                            d.KhPlanId = kp.KhPlanId; d.KhPlan = kp; ds.List.Add(d);
+                        }
+                    }
                     // giống EF: chèn cả con trong navigation (máy đồng dạng của snapshot GC)
                     if (e is MES.Web.Data.Entities.KhPlanRouteSnapshotMachining pm)
                     {
@@ -204,6 +226,23 @@ namespace Microsoft.EntityFrameworkCore
             RawCalls++; RawLog.Add(sql);
             if (Current == null && sql.Contains("sp_getapplock") && sql.Contains("'Transaction'"))
                 throw new InvalidOperationException("sp_getapplock LockOwner=Transaction gọi ngoài giao dịch");
+            // [CHUOI] Làm thật câu "DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId = {0}" (RefreshRouteSnapshotAsync / WriteSnapshotStdConfirmsAsync)
+            //   để kiểm được "làm mới quy trình = Part Master hiện tại". Các câu raw khác vẫn chỉ ghi log như cũ.
+            var m = System.Text.RegularExpressions.Regex.Match(sql, @"DELETE\s+(?:\w+\s+)?FROM\s+(KhPlanRouteSnapshot\w+)");
+            if (m.Success && args.Length > 0 && sql.Contains("KhPlanDetailId"))
+            {
+                var table = m.Groups[1].Value;
+                var set = _c.AllSets().FirstOrDefault(s => s.ElementType.Name == table || s.ElementType.Name + "s" == table);
+                var pk = set?.ElementType.GetProperty("KhPlanDetailId");
+                if (set != null && pk != null)
+                {
+                    var id = Convert.ToInt32(args[0]); int n = 0;
+                    foreach (var it in set.Items.Cast<object>().ToList())
+                        if (Convert.ToInt32(pk.GetValue(it)) == id) { set.Items.Remove(it); n++; }
+                    _c.Fixup();
+                    return Task.FromResult(n);
+                }
+            }
             return Task.FromResult(-1);
         }
     }

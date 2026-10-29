@@ -1,0 +1,88 @@
+﻿lệnh: GiaoNhanFuzz.dll chuoi 
+[C1] Part Master đầy đủ → tạo KH → snapshot khớp từng ô
+  ĐẠT  Part Master dựng đúng: 3 NC + 1 dự phòng, NC01 có máy đồng dạng M1b, NC03 máy H04 (loại trừ), Taro T1(3T)+DP+1T, Bavia B1+1V, Rửa R1+1R, KCS 2, ĐG 1
+         → GC
+           1|NC01|M1|0||10|5|1|2|3|DWG-NC01|VJ1|D10|M1|1:M1b:11:6:1:2:3:VJ-M1b:D8
+           2|NC01-DP-01|D1|1|NC01|12|6||||||||
+           3|NC02|M2|0||11|6|1|2|3|DWG-NC02|VJ2|D10|M2|
+           4|NC03|H04|0||12|7|1|2|3|DWG-NC03|VJ3|D10|H04|
+           TARO
+           1|T1|Taro 1|1.5|0||3T
+           2|T1-DP|Taro DP|2|1|T1|3T-DP
+           3|1T|Chuẩn bị taro|5|0||1T
+           BAVIA
+           1|B1|Bavia 1|1|0|
+           2|1V|Chuẩn bị bavia|4|0|
+           RUA
+           1|R1|Rửa 1|0.5|0|
+           2|1R|Chuẩn bị rửa|3|0|
+           KCS
+           1|K1|KCS 1|2|0|
+           2|K2|KCS 2|2|0|
+           PKG
+           1|P1|Đóng gói 1|1|0|
+           EXCL
+           H04
+  ĐẠT  Tạo KH bằng CreateAsync: 1 phiếu, số KH đúng dạng, 1 dòng PO-1
+  ĐẠT  CopyRouteSnapshotAsync: snapshot = Part Master lúc tạo (đủ cột 7 bảng + máy đồng dạng + cột nối nguồn + xác nhận TG chuẩn trỏ đúng dòng)
+  ĐẠT  Kho nhận 40 phôi bằng SaveKhoInputAsync (tự tạo dòng Kho): sổ Phôi = 40, cân
+  ĐẠT  Sổ GC đọc từ snapshot: 3 NC, NC03 là máy loại trừ, dòng dự phòng không thành NC riêng
+         → NC01,NC02,NC03(X)
+  ĐẠT  HTSP: Taro tính theo mã CV 3T (không phải NC T1), Bavia B1, Rửa R1
+         → TARO.3T,TARO.1T,BAVIA.B1,BAVIA.1V,WASHING.R1,WASHING.1R
+[C2] Sửa Part Master SAU khi tạo PO → PO cũ y nguyên; PO mới theo Part Master mới
+  ĐẠT  Đã sửa Part Master 9 kiểu bằng hàm thật: đổi tên NC, thêm NC, xoá NC, thêm/bỏ máy đồng dạng, bỏ máy loại trừ, Taro đổi mã, thêm dự phòng, thêm KCS/ĐG
+         → PM đổi tên NC NC02→NC02X · PM thêm NC NC05N · PM xoá NC NC05N · PM thêm máy đồng dạng cho NC02X · PM bỏ máy đồng dạng M1b · bỏ máy loại trừ H04 · PM Taro đổi mã T1-DP · PM thêm dự phòng cho NC03 · PM thêm KCS K9
+  ĐẠT  PO cũ: snapshot KHÔNG đổi sau mọi kiểu sửa Part Master
+  ĐẠT  PO mới tạo sau: snapshot = Part Master MỚI
+  ĐẠT  Tạo PO mới xong, PO cũ vẫn y nguyên
+  ĐẠT  Máy loại trừ chụp theo bảng chung lúc tạo: PO cũ vẫn có H04, PO mới (đã bỏ H04) không có
+[C3] Sổ / WTS của PO cũ đọc snapshot cũ, không đọc Part Master hiện tại
+  ĐẠT  PO cũ: sổ vẫn NC01, NC02 (Part Master đã thành NC01X); M1 vào bảng loại trừ sau cũng không làm NC01 thành máy loại trừ
+         → NC01,NC02
+  ĐẠT  Trần WTS theo snapshot cũ: NC01 = 20 (vừa nhận), NC02 khoá (chưa có hàng)
+         → NC01 max=20 · NC02 max=0 locked=True
+         (ghi nhận) WTS mã NC01X (tên MỚI, không có trong snapshot PO): Max=20 Locked=False — Mã NC01X không có trong snapshot quy trình của PO — tạm chặn theo Chưa làm của cả nhóm.
+  ĐẠT  WTS NC01 = 10 → trần NC02 = 10, sổ cân
+         → max=10
+         (ghi nhận) sau WTS NC01X=3: GC Chưa làm=20 Σchờ NC=20 ĐãLàmChưaGiao=0 cân=True cảnh báo=[]
+  ĐẠT  Dòng WTS mã lạ không làm lệch cân PO (phần mềm vẫn cân, chỉ cảnh báo)
+[C4] Cập nhật quy trình (K6): PO đã chạy thì chặn; PO trắng thì làm mới = Part Master hiện tại
+  ĐẠT  PO A đã có phiếu giao: K6 chặn, snapshot A giữ nguyên
+         → PO đã chạy (phôi Kho đã nhận 10, 1 phiếu giao nhận) — không cập nhật quy trình được (K6): số đã ghi theo NC / mã CV hiện tại sẽ lệch. Quy trình mới chỉ áp cho PO tạo sau. Nếu bắt buộc phải đổi: huỷ hết WTS + phiếu giao nhận của PO trước.
+  ĐẠT  PO B trắng: làm mới được, snapshot B = Part Master hiện tại (xoá sạch cũ + chép mới, xác nhận TG chuẩn viết lại)
+  ĐẠT  Làm mới PO B không đụng snapshot PO A
+  ĐẠT  Có dòng log RouteSnapshot cho PO B
+[C5] Dòng dự phòng (N2): WTS ghi NC dự phòng gộp vào NC chính
+  ĐẠT  Trần WTS của NC01-DP-01 = trần NC01 (12), mã chính = NC01
+         → max=12 code=NC01
+  ĐẠT  WTS 5 (dự phòng) + 4 (NC01) → NC01 OK 9, chờ 3; NC02 chờ 9; cân
+         → NC01 ok=9 chờ=3 NC02 chờ=9
+  ĐẠT  Trần còn lại của NC01-DP-01 = 3 (đã gộp 9)
+         → max=3
+[C6] Tạo KH: số PO trùng bị chặn (B5), lỗi giữa chừng không để lại PO nửa vời (E1)
+  ĐẠT  PO-6 đã có: CreateAsync chặn, không sinh phiếu / dòng / snapshot nào
+         → Số PO đã có trong hệ thống: PO-6 — mỗi số PO chỉ 1 dòng.
+  ĐẠT  Cùng phiếu 2 dòng PO-7 / po-7: chặn (không phân biệt hoa thường)
+         → Số PO bị trùng trong phiếu: PO-7
+  ĐẠT  Khuôn gọi như trang (1 giao dịch: CreateAsync + CopyRouteSnapshot) gặp lỗi thì rollback sạch phiếu + dòng + snapshot + xác nhận (chứng minh giao dịch bọc đủ các bước; stub mô phỏng rollback)
+         → giả lỗi lúc lưu IsPlanConfirmed
+[C7] 2 PO cùng phiếu KH: thao tác trên PO này không đổi sổ PO kia
+  ĐẠT  Giao / nhận / WTS trên PO A: sổ PO B không đổi, vẫn cân
+  ĐẠT  Sổ PO A đổi đúng (NC01 OK 4, phôi 10), cân
+  ĐẠT  Hàng lỗi PO B (2) không lẫn sang PO A (0)
+[C8] Workflow OFF từ lúc tạo KH + Part Master không có HTSP / KCS
+  ĐẠT  Sổ đọc ApplyWorkflow=OFF từ phiếu; HTSP / KCS không có mã, ĐG 1 mã; cân
+[C9] Đổi tên NC chính khi đã có dòng dự phòng → dự phòng phải vẫn gộp vào NC chính (N2)
+         (ghi nhận) sau đổi tên NC01 → NC01X: dòng dự phòng NC01-DP-01 có ParentNC = «NC01X»
+  ĐẠT  PO tạo sau đổi tên: trần WTS của dự phòng NC01-DP-01 phải gộp về NC01X (=10)
+         → code=NC01X max=10 locked=False
+[C10] NC máy loại trừ đứng CUỐI chuỗi GC: giao theo NC từ NC trước nó không được làm Chưa GC âm
+  ĐẠT  Chuỗi GC = NC01, NC02(H04 loại trừ, cuối): OK NC01 = 6 đã là Đã làm chưa giao của Gia công
+         → NC01=6/4,NC02(X)=0/ ConGiao=6
+  ĐẠT  Giao theo NC từ NC01 (NC cuối thật, sau nó chỉ còn máy loại trừ) phải bị chặn như [GN-HELP-LAST] — 1 chiếc không thể vừa là Đã làm chưa giao vừa giao theo NC
+         → trần=0 · NC NC01 là NC cuối của Gia công (sau nó chỉ còn NC máy loại trừ NC02): hàng OK ở đây là Đã làm chưa giao — giao bằng phân loại Hàng mới.
+  ĐẠT  Sau khi thử giao theo NC 3 chiếc: hoặc bị chặn, hoặc không ô nào âm
+         → chặn: Giao theo NC: tối đa 0 (Giao theo NC: 0). Không thể giao 3. · 
+
+KẾT QUẢ: ĐẠT hết

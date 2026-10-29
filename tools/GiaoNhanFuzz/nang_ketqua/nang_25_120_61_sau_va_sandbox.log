@@ -1,0 +1,54 @@
+KIỂM NẶNG: kịch bản kh + loi + vu + chuoi, rồi 10 lượt ngẫu nhiên × 25 PO × 120 thao tác · chạy cùng lúc 2 lượt
+Kết quả từng lượt: /tmp/mes/tools/GiaoNhanFuzz/nang_ketqua
+  ĐẠT  kịch bản kh
+  ĐẠT  kịch bản loi
+  ĐẠT  kịch bản vu
+  ĐẠT  kịch bản chuoi
+  … đang chạy · xong 0/10 lượt · 40 giây
+  … đang chạy · xong 0/10 lượt · 70 giây
+  … đang chạy · xong 0/10 lượt · 100 giây
+  … đang chạy · xong 0/10 lượt · 130 giây
+  ĐẠT  [1/10] chuoi_thuong (CHUOI=1) · seed 70 · 17849 phép kiểm · SAI 0 · 140 giây
+  … đang chạy · xong 1/10 lượt · 160 giây
+  … đang chạy · xong 1/10 lượt · 190 giây
+  … đang chạy · xong 1/10 lượt · 220 giây
+  … đang chạy · xong 1/10 lượt · 250 giây
+  ĐẠT  [2/10] loi_loaitru (LOI=1 EXCL=0.7) · seed 62 · 53690 phép kiểm · SAI 0 · 253 giây
+  … đang chạy · xong 2/10 lượt · 280 giây
+  … đang chạy · xong 2/10 lượt · 310 giây
+  … đang chạy · xong 2/10 lượt · 340 giây
+  … đang chạy · xong 2/10 lượt · 370 giây
+  … đang chạy · xong 2/10 lượt · 400 giây
+  ĐẠT  [3/10] loi (LOI=1) · seed 61 · 53601 phép kiểm · SAI 0 · 255 giây
+  … đang chạy · xong 3/10 lượt · 430 giây
+  … đang chạy · xong 3/10 lượt · 460 giây
+  … đang chạy · xong 3/10 lượt · 490 giây
+  ĐẠT  [4/10] vu_suawts (LOI=1 WTSEDIT=20) · seed 65 · 53429 phép kiểm · SAI 0 · 241 giây
+  ĐẠT  [5/10] thuong · seed 66 · 12610 phép kiểm · SAI 0 · 107 giây
+  … đang chạy · xong 5/10 lượt · 520 giây
+  … đang chạy · xong 5/10 lượt · 550 giây
+  … đang chạy · xong 5/10 lượt · 580 giây
+  … đang chạy · xong 5/10 lượt · 610 giây
+  ĐẠT  [6/10] loaitru (EXCL=0.7) · seed 67 · 12966 phép kiểm · SAI 0 · 110 giây
+  … đang chạy · xong 6/10 lượt · 640 giây
+  … đang chạy · xong 6/10 lượt · 670 giây
+  … đang chạy · xong 6/10 lượt · 700 giây
+  … đang chạy · xong 6/10 lượt · 730 giây
+  ĐẠT  [7/10] chuoi_loi (CHUOI=1 LOI=1) · seed 68 · 47955 phép kiểm · SAI 0 · 237 giây
+  … đang chạy · xong 7/10 lượt · 760 giây
+  … đang chạy · xong 7/10 lượt · 790 giây
+  … đang chạy · xong 7/10 lượt · 820 giây
+  … đang chạy · xong 7/10 lượt · 850 giây
+  ĐẠT  [8/10] chuoi_loaitru (CHUOI=1 LOI=1 EXCL=0.7) · seed 69 · 54302 phép kiểm · SAI 0 · 253 giây
+  … đang chạy · xong 8/10 lượt · 880 giây
+  … đang chạy · xong 8/10 lượt · 910 giây
+  … đang chạy · xong 8/10 lượt · 940 giây
+  ĐẠT  [9/10] loi_baoloi (LOI=1 NGREP=40) · seed 63 · 44095 phép kiểm · SAI 0 · 214 giây
+  … đang chạy · xong 9/10 lượt · 970 giây
+  … đang chạy · xong 9/10 lượt · 1000 giây
+  … đang chạy · xong 9/10 lượt · 1030 giây
+  … đang chạy · xong 9/10 lượt · 1060 giây
+  ĐẠT  [10/10] loi_phoi (LOI=1 PHOI=8) · seed 64 · 34716 phép kiểm · SAI 0 · 194 giây
+
+TỔNG: 10 lượt × 25 PO × 120 thao tác + 4 kịch bản · 17.7 phút
+SAI: 0

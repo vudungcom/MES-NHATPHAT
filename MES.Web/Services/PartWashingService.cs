@@ -86,6 +86,7 @@ public class PartWashingService
         var pid = existing.PartId;
         var changedCount = 0;
         var now = DateTime.Now;
+        var oldNc = existing.NC;   // [PM-PARENT 2026-10-29] tên NC trước khi sửa — để dò dòng dự phòng đang trỏ về nó
 
         changedCount += LogStringDiff("NC",           existing.NC,           updated.NC,           stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("StepName",     existing.StepName,     updated.StepName,     stepId, pid, userId, reason, now);
@@ -101,6 +102,23 @@ public class PartWashingService
         existing.ParentNC = updated.ParentNC;
         existing.UpdatedBy = userId;
         existing.UpdatedAt = now;
+
+        // [PM-PARENT 2026-10-29] Đổi tên NC / mã chính → dòng dự phòng (IsBackup, ParentNC = tên cũ) phải trỏ theo tên mới.
+        //   Trước: ParentNC con giữ tên cũ → PO tạo sau chép nguyên, sổ gộp dự phòng về mã không còn (N2 không gộp),
+        //   WTS ghi NC dự phòng bị sổ bỏ qua → Chưa làm không giảm (bộ kiểm chuỗi C9). Snapshot PO cũ không đổi (đúng luật).
+        if (!existing.IsBackup && !string.Equals(oldNc, updated.NC, StringComparison.Ordinal))
+        {
+            var children = await _db.PartWashingSteps
+                .Where(s => s.PartId == pid && s.IsActive && s.IsBackup && s.ParentNC == oldNc)
+                .ToListAsync();
+            foreach (var child in children)
+            {
+                LogStringDiff("ParentNC", child.ParentNC, updated.NC, child.StepId, pid, userId, reason + " (theo NC chính đổi tên)", now);
+                child.ParentNC = updated.NC;
+                child.UpdatedBy = userId;
+                child.UpdatedAt = now;
+            }
+        }
 
         await _db.SaveChangesAsync();
     }

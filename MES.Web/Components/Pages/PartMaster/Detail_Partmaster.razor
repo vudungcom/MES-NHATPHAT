@@ -3849,6 +3849,13 @@ else
 
     private async Task SaveStepListAsync<T>(List<T> edits, Func<T, Task<long>> addFn, Func<long, T, Task> updateFn, Func<long, Task> deleteFn, Func<long, Task> restoreFn, string label, List<string> log, List<string> errors) where T : StepEditBase
     {
+        // [PM-PARENT 2026-10-29] NC chính đổi tên trong lượt lưu này → dòng dự phòng trên form trỏ theo tên MỚI trước khi lưu.
+        //   Service đã tự sửa ParentNC trong DB cho các con, nhưng dòng con Modified / New lưu SAU sẽ mang ParentNC cũ từ form
+        //   → ghi đè ngược về tên cũ (con mồ côi, sổ không gộp N2). Đồng bộ ở đây bịt cả 2 đường (con sửa + con thêm mới).
+        foreach (var m in edits.Where(x => !x.IsBackup && x.StepId > 0 && x.State == EditState.Modified
+                                           && !string.IsNullOrWhiteSpace(x.OriginalNC) && !string.Equals(x.OriginalNC, x.NC, StringComparison.Ordinal)))
+            foreach (var c in edits.Where(x => x.IsBackup && string.Equals(x.ParentNC, m.OriginalNC, StringComparison.OrdinalIgnoreCase)))
+                c.ParentNC = m.NC;
         foreach (var e in edits.ToList())
         {
             try
@@ -4058,6 +4065,7 @@ else
     {
         public long StepId { get; set; }
         public string NC { get; set; } = "";
+        public string? OriginalNC { get; set; }   // [PM-PARENT 2026-10-29] tên NC lúc nạp từ DB — để đồng bộ ParentNC dòng dự phòng khi NC chính đổi tên trong cùng lượt lưu
         public bool IsBackup { get; set; }
         public string? ParentNC { get; set; }
         public EditState State { get; set; } = EditState.Unchanged;
@@ -4133,6 +4141,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             Drawing = s.Drawing,
             MachineRegistered = s.MachineRegistered,
             FixtureType = s.FixtureType,
@@ -4207,6 +4216,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             WtsTaskCode = s.WtsTaskCode,
             StepName = s.StepName,
             StandardTime = s.StandardTime,
@@ -4238,6 +4248,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,
@@ -4267,6 +4278,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,
@@ -4296,6 +4308,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,
@@ -4325,6 +4338,7 @@ else
         {
             StepId = s.StepId,
             NC = s.NC,
+            OriginalNC = s.NC,   // [PM-PARENT]
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,

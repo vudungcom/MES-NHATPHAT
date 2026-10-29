@@ -18,6 +18,15 @@
     <Compile Include="../../MES.Web/Services/NgCaseService.cs" />
     <Compile Include="../../MES.Web/Services/KhPlanService.cs" />
     <Compile Include="../../MES.Web/Services/KhoVatLieuService.cs" />
+    <!-- [CHUOI] Part Master bằng hàm thật: NC / máy dự phòng, Taro / Bavia / Rửa / KCS / Đóng gói -->
+    <Compile Include="../../MES.Web/Services/PartMasterService.cs" />
+    <Compile Include="../../MES.Web/Services/PartMasterPermissionHelper.cs" />
+    <Compile Include="../../MES.Web/Services/PartMachiningService.cs" />
+    <Compile Include="../../MES.Web/Services/PartTaroService.cs" />
+    <Compile Include="../../MES.Web/Services/PartBaviaService.cs" />
+    <Compile Include="../../MES.Web/Services/PartWashingService.cs" />
+    <Compile Include="../../MES.Web/Services/PartInspectionService.cs" />
+    <Compile Include="../../MES.Web/Services/PartPackagingService.cs" />
     <Compile Include="../../MES.Web/Constants/*.cs" />
     <Compile Include="*.cs" />
   </ItemGroup>
