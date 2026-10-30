@@ -6324,6 +6324,21 @@ else
         return (double)(sub.ActualTimePerPc.Value * mult);
     }
 
+    // [ALLOC-GC 2026-10-30] Mục 23 — GC: chia thời gian theo KHỐI LƯỢNG từng dòng bằng số thực tế (cùng công thức Dự kiến mục 25):
+    //   Hàng loạt = (T.Gá + max(T.GC, T.Ktra)) × SL; Chạy thử = T.CB + T.Chạy (không nhân SL).
+    //   Trước: chia theo tỉ lệ SL → Chạy thử SL 0 trong nhóm nhiều dòng được 0 phút → lưu bị chặn "T.Kết thúc phải sau T.Bắt đầu".
+    //   null = dòng chưa đủ số → cả nhóm giữ cách chia theo SL như cũ.
+    private static double? GetGcAllocWeight(WtsRow sub, string mode)
+    {
+        if (mode == "trial")
+        {
+            var t = (sub.PreparationTime_Actual ?? 0) + (sub.TrialRunTime_Actual ?? 0);
+            return t > 0 ? (double)t : null;
+        }
+        var cyc = (sub.SetupTime_Actual ?? 0) + Math.Max(sub.MachiningTime_Actual ?? 0, sub.InspectionTime_Actual ?? 0);
+        return cyc > 0 && sub.QtyDone > 0 ? (double)(cyc * sub.QtyDone) : null;
+    }
+
     private void RecalcGroupTimeline(WtsGroup grp)
 
     {
@@ -6348,9 +6363,11 @@ else
         // Lấy từ ô T.Thực tế (Tham khảo chuẩn chỉ điền sẵn). Trước: chia theo tỉ lệ SL → mã nhanh/chậm chia như nhau.
         // An toàn: dòng nào chưa có T.Thực tế → giữ cách chia theo SL như cũ. GC giữ nguyên cách cũ.
         List<double>? allocWeights = null;
-        if (!IsGcGroup)
         {
-            var ws = grp.SubRows.Select(GetNonGcAllocWeight).ToList();
+            // [ALLOC-GC] GC cũng chia theo khối lượng thực tế (trước: GC chỉ theo SL)
+            var ws = IsGcGroup
+                ? grp.SubRows.Select(s => GetGcAllocWeight(s, grp.ProductionMode)).ToList()
+                : grp.SubRows.Select(GetNonGcAllocWeight).ToList();
             if (ws.All(w => w.HasValue) && ws.Sum(w => w!.Value) > 0)
                 allocWeights = ws.Select(w => w!.Value).ToList();
         }
@@ -6406,17 +6423,10 @@ else
 
             // End hàng này = cursor + sản xuất thuần + T.Phát sinh hàng này + nghỉ trong khoảng
 
-            var subEnd = cursor.AddMinutes(subPureMin + sub.ExtraMinutes);
-
-            for (int j = 0; j < 3; j++) // hội tụ 3 vòng
-
-            {
-
-                var br = CalcBreakMinutes(cursor, subEnd, SelectedCa);
-
-                subEnd = cursor.AddMinutes(subPureMin + sub.ExtraMinutes + br);
-
-            }
+            // [ALLOC-BREAK 2026-10-30] Mục 23 — cộng phút làm việc nhảy qua giờ nghỉ bằng AddEffectiveMinutes (như Dự kiến).
+            //   Trước: vòng "hội tụ 3 vòng" không hội tụ khi giờ kết thúc tạm rơi vào ~⅓ đầu giờ nghỉ → dòng giữa thiếu tới ~20 phút,
+            //   giờ kết thúc nằm trong giờ nghỉ, dòng cuối ăn phần dư.
+            var subEnd = AddEffectiveMinutes(cursor, subPureMin + (double)sub.ExtraMinutes, SelectedCa);
 
             sub.EndTime = subEnd;
 

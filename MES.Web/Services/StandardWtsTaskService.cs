@@ -184,6 +184,8 @@ public class StandardWtsTaskService
         CheckAndLog("Đơn vị tính", task.DefaultUnit, updatedModel.DefaultUnit);
         CheckAndLog("Thời gian chuẩn (s)", task.StandardTimeSec?.ToString(), updatedModel.StandardTimeSec?.ToString());
         CheckAndLog("Ghi chú", task.GhiChu, updatedModel.GhiChu);
+        // [WTS-ORDER-SAVE 2026-10-30] Mục 14: chỉ đổi Thứ tự hiển thị trước đây không lưu mà vẫn báo thành công (không có log → bỏ qua cả lượt)
+        CheckAndLog("Thứ tự hiển thị", task.DisplayOrder.ToString(), updatedModel.DisplayOrder.ToString());
         // Log thay đổi IsProductiveTask
         CheckAndLog("Phân loại có ích",
             task.IsProductiveTask ? "Có ích" : "Vô ích",

@@ -269,7 +269,8 @@ else
             </span>
             <div class="d-flex align-items-center gap-3">
                 <small class="text-muted" style="font-size:0.75rem;">
-                    Snapshot tại thời điểm tạo phiếu — không tự thay đổi theo Part Master.
+                    @* [K6-NOTRUN 2026-10-30] chữ cũ: "Snapshot tại thời điểm tạo phiếu — không tự thay đổi theo Part Master." *@
+                    Quy trình chụp lúc tạo phiếu. PO chưa chạy (chưa có WTS; chỉ mới cấp phôi Kho → Gia công) tự lấy quy trình mới khi Part Master "Lưu &amp; Xác nhận OK"; PO đã chạy giữ nguyên.
                 </small>
                 @if (_partId.HasValue)
                 {

@@ -94,25 +94,121 @@ public static class ChuoiScen
             Ok(row.Balanced, "Dòng WTS mã lạ không làm lệch cân PO (phần mềm vẫn cân, chỉ cảnh báo)");
         }
 
-        Console.WriteLine("[C4] Cập nhật quy trình (K6): PO đã chạy thì chặn; PO trắng thì làm mới = Part Master hiện tại");
+        Console.WriteLine("[C4] Cập nhật quy trình (K6, luật [K6-NOTRUN] 30/10): PO chỉ mới cấp phôi Kho → GC vẫn làm mới được; có WTS thì chặn");
         {
             var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
             var pid = await ChuoiHelp.BuildPartAsync(db, "P-004", Full());
             var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-004", new decimal[] { 10, 10 }, "PO-4");
             var kh = new KhPlanService(db); var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db);
-            var snapA = ChuoiHelp.SnapPicture(db, ids[0]).Sig;
             await ChuoiHelp.MutateAsync(db, new Random(3), pid, 1);   // thêm NC mới ở Part Master
             await ChuoiHelp.MutateAsync(db, new Random(3), pid, 3);   // thêm máy đồng dạng
             var picNow = ChuoiHelp.Picture(db, pid);
             await kho.SaveKhoInputAsync(ids[0], DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
             await svc.IssueByCellAsync(ids[0], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
+            var ledA0 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]);
             string? err = null; try { await kh.RefreshRouteSnapshotAsync(ids[0], pid, 1, "cap nhat"); } catch (Exception ex) { err = ex.Message; }
-            Ok(err != null && err.Contains("K6") && ChuoiHelp.SnapPicture(db, ids[0]).Sig == snapA, "PO A đã có phiếu giao: K6 chặn, snapshot A giữ nguyên", err);
+            var diffA = ChuoiHelp.Diff(db, ids[0], picNow, pid);
+            Ok(err == null && diffA == null, "PO A mới có phiếu Kho → GC (NC01 vẫn còn): làm mới được, snapshot A = Part Master hiện tại", err ?? diffA);
+            var ledA1 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]);
+            Ok(ledA1!.Balanced && ledA1.G("GC").ChoNhan == ledA0!.G("GC").ChoNhan && ledA1.G("KHO").ConGiao == ledA0.G("KHO").ConGiao, "PO A: sổ giữ nguyên (Gia công chờ nhận 10, Kho còn giao như trước), cân");
+            var snapA = ChuoiHelp.SnapPicture(db, ids[0]).Sig;
+            var txA = db.HandoverTransactions.List.Last(t => t.KhPlanDetailId == ids[0]).HandoverTxId;
+            await svc.ReceiveAsync(txA, 10, 0, null, 2);
+            var w = await WtsSvcHelp.SaveAsync(db, ids[0], "GC", "NC01", null, 3, 0, 2);
+            Ok(w.Ok, "PO A: GC nhận 10 + ghi WTS NC01 = 3", w.Err);
+            await ChuoiHelp.MutateAsync(db, new Random(5), pid, 1);
+            err = null; try { await kh.RefreshRouteSnapshotAsync(ids[0], pid, 1, "cap nhat"); } catch (Exception ex) { err = ex.Message; }
+            Ok(err != null && err.Contains("K6") && err.Contains("WTS") && ChuoiHelp.SnapPicture(db, ids[0]).Sig == snapA, "PO A đã có WTS: K6 chặn, snapshot A giữ nguyên", err);
+            var picNow2 = ChuoiHelp.Picture(db, pid);
             err = null; try { await kh.RefreshRouteSnapshotAsync(ids[1], pid, 1, "cap nhat"); } catch (Exception ex) { err = ex.Message; }
-            var diffB = ChuoiHelp.Diff(db, ids[1], picNow, pid);
+            var diffB = ChuoiHelp.Diff(db, ids[1], picNow2, pid);
             Ok(err == null && diffB == null, "PO B trắng: làm mới được, snapshot B = Part Master hiện tại (xoá sạch cũ + chép mới, xác nhận TG chuẩn viết lại)", err ?? diffB);
             Ok(ChuoiHelp.SnapPicture(db, ids[0]).Sig == snapA, "Làm mới PO B không đụng snapshot PO A");
             Ok(db.KhPlanDetailChangeLogs.List.Any(l => l.KhPlanDetailId == ids[1] && l.FieldName == "RouteSnapshot" && l.Reason == "cap nhat"), "Có dòng log RouteSnapshot cho PO B");
+        }
+
+        Console.WriteLine("[C12] [K6-NOTRUN] Lưu Part Master → PO chưa chạy tự lấy quy trình mới (Master list mục 13)");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-012", Full());
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-012", new decimal[] { 10, 10, 10, 10, 10 }, "PO-12");
+            var kh = new KhPlanService(db); var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db);
+            // A trắng · B Kho → GC NC01 đã nhận · C có WTS · D Kho → GC vào NC02 (sẽ bị xoá ở Part Master) · E nhận có NG (phát sinh chứng từ lỗi)
+            foreach (var i in new[] { 1, 2, 3, 4 }) await kho.SaveKhoInputAsync(ids[i], DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            await svc.IssueByCellAsync(ids[1], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
+            await svc.IssueByCellAsync(ids[2], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
+            var wc = await WtsSvcHelp.SaveAsync(db, ids[2], "GC", "NC01", null, 2, 0, 2);
+            await svc.IssueByCellAsync(ids[3], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02");
+            await svc.IssueByCellAsync(ids[4], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
+            var re = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 9, 1, null, 2, ngCategoryId: db.NgCategories.List.First().NgCategoryId);
+            Ok(wc.Ok && re.Ok, "Dựng 5 PO (C ghi WTS, E nhận có 1 NG)", wc.Err ?? re.Error);
+            var ledB0 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[1]);
+            var snapC = ChuoiHelp.SnapPicture(db, ids[2]).Sig; var snapD = ChuoiHelp.SnapPicture(db, ids[3]).Sig; var snapE = ChuoiHelp.SnapPicture(db, ids[4]).Sig;
+            // Part Master: thêm NC mới + xoá NC02
+            await ChuoiHelp.MutateAsync(db, new Random(1), pid, 1);
+            var nc02 = db.PartMachiningSteps.List.First(s => s.PartId == pid && s.IsActive && !s.IsBackup && s.NC == "NC02");
+            foreach (var b in db.PartMachiningSteps.List.Where(x => x.PartId == pid && x.IsActive && x.IsBackup && x.ParentNC == "NC02").ToList()) await new PartMachiningService(db).SoftDeleteAsync(b.StepId, 1, "xoa NC02");
+            await new PartMachiningService(db).SoftDeleteAsync(nc02.StepId, 1, "xoa NC02"); db.Fixup();
+            var picNow = ChuoiHelp.Picture(db, pid);
+            var logs0 = db.KhPlanDetailChangeLogs.List.Count;
+            // quy trình chưa chốt (mục B còn NG) → không đẩy
+            var pmC = db.PartMasters.List.First(x => x.PartId == pid);
+            pmC.IsMachiningConfirmed = false;
+            var res0 = await kh.AutoRefreshRoutesForPartAsync(pid, 1, "luu nhap");
+            Ok(res0.All(r => r.Status == KhPlanService.AutoRouteResult.Kept && (r.Note ?? "").Contains("chưa Xác nhận OK")) && ChuoiHelp.Diff(db, ids[0], picNow, pid) != null,
+               "Mục B Part Master chưa Xác nhận OK: không đẩy quy trình sang PO nào", res0.FirstOrDefault()?.Note);
+            pmC.IsPlanConfirmed = pmC.IsMachiningConfirmed = pmC.IsHtspConfirmed = pmC.IsKcsConfirmed = pmC.IsPkgConfirmed = true;   // như bấm "Lưu & Xác nhận OK"
+            var res = await kh.AutoRefreshRoutesForPartAsync(pid, 1, "luu part master");
+            string St(int i) => res.First(r => r.KhPlanDetailId == ids[i]).Status;
+            string? Nt(int i) => res.First(r => r.KhPlanDetailId == ids[i]).Note;
+            Ok(St(0) == KhPlanService.AutoRouteResult.Updated && ChuoiHelp.Diff(db, ids[0], picNow, pid) == null, "A trắng: tự cập nhật = Part Master mới", St(0));
+            Ok(St(1) == KhPlanService.AutoRouteResult.Updated && ChuoiHelp.Diff(db, ids[1], picNow, pid) == null, "B mới cấp phôi Kho → GC NC01 (đã nhận, chưa WTS): tự cập nhật (khách: vẫn là PO chưa chạy)", St(1) + " " + Nt(1));
+            var ledB1 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[1]);
+            Ok(ledB1!.Balanced && ledB1.G("GC").ChuaLam == ledB0!.G("GC").ChuaLam && ledB1.G("GC").ChuaLam == 10, "B: sổ giữ nguyên (GC chưa làm 10), cân", $"{ledB0.G("GC").ChuaLam} → {ledB1.G("GC").ChuaLam}");
+            Ok(St(2) == KhPlanService.AutoRouteResult.Kept && (Nt(2) ?? "").Contains("WTS") && ChuoiHelp.SnapPicture(db, ids[2]).Sig == snapC, "C có WTS: giữ quy trình cũ, báo lý do", Nt(2));
+            Ok(St(3) == KhPlanService.AutoRouteResult.Kept && (Nt(3) ?? "").Contains("NC02") && ChuoiHelp.SnapPicture(db, ids[3]).Sig == snapD, "D đã cấp phôi vào NC02 mà Part Master xoá NC02: giữ quy trình cũ, báo NC02", Nt(3));
+            Ok(St(4) == KhPlanService.AutoRouteResult.Kept && ChuoiHelp.SnapPicture(db, ids[4]).Sig == snapE, "E nhận có NG (đã có chứng từ lỗi): giữ quy trình cũ", Nt(4));
+            Ok(db.KhPlanDetailChangeLogs.List.Count(l => l.FieldName == "RouteSnapshot") - 0 >= 2 && db.KhPlanDetailChangeLogs.List.Any(l => l.KhPlanDetailId == ids[1] && l.FieldName == "RouteSnapshot" && (l.Reason ?? "").StartsWith("Tự cập nhật")), "Có log RouteSnapshot 'Tự cập nhật theo Part Master' cho A, B");
+            var logs1 = db.KhPlanDetailChangeLogs.List.Count;
+            var res2 = await kh.AutoRefreshRoutesForPartAsync(pid, 1, "luu lai");
+            Ok(res2.Where(r => r.KhPlanDetailId == ids[0] || r.KhPlanDetailId == ids[1]).All(r => r.Status == KhPlanService.AutoRouteResult.Same) && db.KhPlanDetailChangeLogs.List.Count == logs1,
+               "Lưu lại Part Master không đổi gì: A, B 'không đổi', không ghi log thừa", string.Join(",", res2.Select(r => r.Status)));
+            foreach (var i in Enumerable.Range(0, 5))
+            {
+                var l = await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[i]);
+                Ok(l!.Balanced, $"PO {i + 1}: sổ cân sau tự cập nhật");
+            }
+        }
+
+        Console.WriteLine("[C13] [K6-NOTRUN] phiếu Kho → GC không chỉ định NC (mặc định NC đầu) + NC chỉ định đổi sang máy loại trừ");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-013", new ChuoiHelp.Shape { Gc = 3, ExclAt = -1, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 1, Prep = false });
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-013", new decimal[] { 10, 10 }, "PO-13");
+            var kh = new KhPlanService(db); var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db);
+            foreach (var i in new[] { 0, 1 }) await kho.SaveKhoInputAsync(ids[i], DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            var g0 = await svc.IssueByCellAsync(ids[0], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, null);   // mặc định NC đầu
+            var g1 = await svc.IssueByCellAsync(ids[1], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
+            Ok(g0.Ok && g1.Ok, "PO A: Kho → GC mặc định NC đầu (chờ nhận) · PO B: Kho → GC vào NC02 (đã nhận)", g0.Error ?? g1.Error);
+            var ledA0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]))!; var ledB0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[1]))!;
+            var snapB = ChuoiHelp.SnapPicture(db, ids[1]).Sig;
+            // Part Master: thêm NC + NC02 đổi máy đăng ký sang máy loại trừ H04
+            await ChuoiHelp.MutateAsync(db, new Random(2), pid, 1);
+            db.PartMachiningSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "NC02").MachineRegistered = "H04"; db.Fixup();
+            var pm = db.PartMasters.List.First(x => x.PartId == pid); pm.IsPlanConfirmed = pm.IsMachiningConfirmed = pm.IsHtspConfirmed = pm.IsKcsConfirmed = pm.IsPkgConfirmed = true;
+            var picNow = ChuoiHelp.Picture(db, pid);
+            var res = await kh.AutoRefreshRoutesForPartAsync(pid, 1, "luu part master");
+            var rA = res.First(r => r.KhPlanDetailId == ids[0]); var rB = res.First(r => r.KhPlanDetailId == ids[1]);
+            Ok(rA.Status == KhPlanService.AutoRouteResult.Updated && ChuoiHelp.Diff(db, ids[0], picNow, pid) == null, "A (phiếu mặc định NC đầu): tự cập nhật", rA.Status + " " + rA.Note);
+            var ledA1 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]))!;
+            Ok(ledA1.Balanced && ledA1.G("GC").ChoNhan == ledA0.G("GC").ChoNhan && ledA1.G("KHO").ConGiao == ledA0.G("KHO").ConGiao, "A: sổ giữ nguyên, cân");
+            Ok(rB.Status == KhPlanService.AutoRouteResult.Kept && (rB.Note ?? "").Contains("NC02") && ChuoiHelp.SnapPicture(db, ids[1]).Sig == snapB,
+               "B (hàng đã ở NC02, NC02 thành máy loại trừ): giữ quy trình cũ, không dời hàng", rB.Note);
+            var ledB1 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[1]))!;
+            Ok(ChuoiHelp.LedgerSig(ledB1) == ChuoiHelp.LedgerSig(ledB0), "B: sổ không đổi");
         }
 
         Console.WriteLine("[C5] Dòng dự phòng (N2): WTS ghi NC dự phòng gộp vào NC chính");

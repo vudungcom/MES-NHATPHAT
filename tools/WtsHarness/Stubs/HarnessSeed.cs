@@ -121,6 +121,16 @@ public static class HarnessSeed
         db.PartBaviaSteps.Add(new PartBaviaStep { PartId = pe2.PartId, StepOrder = 1, NC = "B1", StepName = "Bavia", StandardTime = 0.5m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
         db.PartWashingSteps.Add(new PartWashingStep { PartId = pe2.PartId, StepOrder = 1, NC = "R1", StepName = "Rửa", StandardTime = 0.2m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
         await db.SaveChangesAsync();
+        // [SUBROW-DEL-UNDO 30/10] Part PART-30: NC 1 máy M1 + 1 dòng máy đồng dạng M3 (thử xoá / khôi phục dòng đồng dạng)
+        var p30 = new PartMaster { PartNo = "PART-30", PartName = "Thử mục 30", IsActive = true, CustomerId = cust.CustomerId };
+        db.PartMasters.Add(p30); await db.SaveChangesAsync();
+        var s30 = new PartMachiningStep { PartId = p30.PartId, StepOrder = 1, NC = "1", MachineRegistered = "M1", SetupTime = 1, MachiningTime = 7, InspectionTime = 6, PreparationTime = 10, TrialRunTime = 20, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 };
+        db.PartMachiningSteps.Add(s30); await db.SaveChangesAsync();
+        db.PartMachiningTimings.Add(new PartMachiningTiming { StepId = s30.StepId, SoMay = "M3", DisplayOrder = 1, SetupTime = 1, MachiningTime = 6, InspectionTime = 5, PreparationTime = 10, TrialRunTime = 20, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        await db.SaveChangesAsync();
+        // [K6-NOTRUN 30/10] PO30 của PART-30 tạo TRƯỚC khi có quy trình (snapshot rỗng) — lưu Part Master OK thì phải tự có quy trình
+        db.KhPlanDetails.Add(new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 99, PartNo = "PART-30", PurchaseOrder = "PO30", Quantity = 5, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 });
+        await db.SaveChangesAsync();
 
         db.ChangeTracker.Clear();
         db.Fixup();
@@ -152,6 +162,9 @@ public static class HarnessSeed
             parts = db.PartMasters.List.OrderBy(p => p.PartId).Select(p => new { p.PartNo, p.IsPlanConfirmed, p.IsMachiningConfirmed, p.IsHtspConfirmed, p.IsKcsConfirmed, p.IsPkgConfirmed }),
             bavia = db.PartBaviaSteps.List.OrderBy(b => b.StepId).Select(b => new { b.PartId, b.NC, b.StepName, b.IsActive }),
             thietbi = db.ThietBis.List.Where(t => t.IsActive).Select(t => t.SoMay),
+            timings = db.PartMachiningTimings.List.OrderBy(t => t.TimingId).Select(t => new { t.StepId, t.SoMay, t.IsActive }),
+            snapm = db.KhPlanRouteSnapshotMachining.List.Select(m => new { m.KhPlanDetailId, m.NC, m.MachineRegistered }),
+            podet = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }),
         };
     }
 }

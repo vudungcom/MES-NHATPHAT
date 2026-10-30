@@ -804,17 +804,199 @@ public class KhPlanService
     /// Ghi log vào KhPlanDetailChangeLog để truy vết.
     /// </summary>
     public async Task RefreshRouteSnapshotAsync(int khPlanDetailId, int partId, int userId, string reason)
+        => await RefreshRouteCoreAsync(khPlanDetailId, partId, userId, reason, auto: false);
+
+    // =====================================================================
+    // [K6-NOTRUN 2026-10-30] Master list mục 13 — "PO chưa chạy" theo khách: chưa có WTS, kể cả GC đã nhận phôi.
+    //   Luật mới của K6 (thay "có bất kỳ WTS / phiếu chưa huỷ là chặn"): làm mới quy trình được khi
+    //     (1) không có dòng WTS chưa huỷ (mọi nhóm),
+    //     (2) phiếu giao nhận chưa huỷ CHỈ là phiếu Kho → GC Hàng mới, lần nhận chưa huỷ chỉ nhận OK vào ô Hàng mới (không NG, không ô lỗi / sửa),
+    //     (3) không có phiếu báo hàng lỗi chưa huỷ,
+    //     (4) mọi phiếu Kho → GC đó nhận vào NC vẫn còn là NC chính (không dự phòng) trong quy trình Part Master mới,
+    //   rồi sau khi chép lại, sổ không có ô âm mới (K5). Vì phiếu Kho → GC chỉ tham chiếu NC nhận, giữ đủ 4 điều trên thì số không lệch.
+    //   null = làm mới được; còn lại = lý do (chữ hiện cho người dùng).
+    // =====================================================================
+    public async Task<string?> RouteRefreshBlockAsync(int khPlanDetailId, int partId)
+    {
+        if (await _db.WtsProductionLogs.AnyAsync(w => w.KhPlanDetailId == khPlanDetailId && !w.IsVoided))
+            return "PO đã có WTS (đã bắt đầu làm)";
+        if (await _db.HandoverNgReports.AnyAsync(b => b.KhPlanDetailId == khPlanDetailId && !b.IsVoided))
+            return "PO đã có phiếu báo hàng lỗi";
+        var txs = await _db.HandoverTransactions.AsNoTracking()
+            .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided)
+            .Select(t => new { t.HandoverTxId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.FromCell, t.ToCell, t.ToNC, t.FromNC })
+            .ToListAsync();
+        var other = txs.FirstOrDefault(t => !(t.FromGroupCode == "KHO" && t.ToGroupCode == "GC" && t.Purpose == HandoverPurpose.New
+                                              && string.IsNullOrEmpty(t.FromNC)
+                                              && (t.ToCell == null || t.ToCell == HandoverCell.Moi)));
+        if (other != null)
+            return $"PO đã có phiếu giao nhận #{other.HandoverTxId} ({HandoverLedgerService.GroupLabel(other.FromGroupCode)} → {HandoverLedgerService.GroupLabel(other.ToGroupCode)}) ngoài phiếu Kho → Gia công cấp phôi";
+        if (txs.Count == 0) return null;
+        var txIds = txs.Select(t => t.HandoverTxId).ToList();
+        var badRecv = await _db.HandoverReceives.AsNoTracking()
+            .Where(r => txIds.Contains(r.HandoverTxId) && !r.IsVoided && (r.QtyNg > 0 || (r.ToCell != null && r.ToCell != HandoverCell.Moi)))
+            .Select(r => r.HandoverTxId).FirstOrDefaultAsync();
+        if (badRecv != 0)
+            return $"Gia công nhận phiếu #{badRecv} có hàng lỗi / nhận vào ô Hàng lỗi — đã phát sinh chứng từ lỗi";
+        // [K6-NOTRUN] so CHÍNH XÁC như sổ (khoá "in:"+ToNC); phiếu không chỉ định NC (mặc định "NC đầu") không phụ thuộc tên NC → bỏ qua ở đây,
+        //   phần còn lại (máy loại trừ, NC đầu mới, số chờ từng NC) kiểm bằng sổ sau khi chép lại (RefreshRouteCoreAsync).
+        var mainNcs = (await _db.PartMachiningSteps.AsNoTracking()
+                .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => s.NC).ToListAsync())
+            .ToHashSet(StringComparer.Ordinal);
+        if (mainNcs.Count == 0)
+            return "PO đã cấp phôi cho Gia công mà quy trình Part Master mới không còn NC Gia công nào";
+        var lost = txs.Where(t => !string.IsNullOrEmpty(t.ToNC) && !mainNcs.Contains(t.ToNC!)).ToList();
+        if (lost.Any())
+            return $"phiếu Kho → Gia công #{string.Join(", #", lost.Select(t => t.HandoverTxId))} đã cấp phôi vào NC {string.Join(", ", lost.Select(t => t.ToNC ?? "(trống)").Distinct())} — quy trình Part Master mới không còn NC đó";
+        return null;
+    }
+
+    private static string Cut(string s, int n) => s.Length <= n ? s : s.Substring(0, n);
+
+    /// <summary>
+    /// [K6-NOTRUN] Sau khi chép quy trình mới (trong giao dịch): hàng Gia công đã nhận / chờ nhận không được "trôi" sang NC khác.
+    ///   - phiếu chỉ định NC (ToNC): NC đó phải còn trong chuỗi mới (đúng tên, không thành máy loại trừ) với số chờ y như trước;
+    ///   - tổng Chưa làm của Gia công + hàng chờ nhận giữ nguyên; chuỗi mới phải còn NC đầu không loại trừ để nhận hàng mặc định.
+    /// null = giữ nguyên; còn lại = lời báo.
+    /// </summary>
+    private async Task<string?> GcWaitingMovedAsync(int khPlanDetailId, LedgerRow before)
+    {
+        var after = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+        if (after == null) return null;
+        var gb = before.G("GC"); var ga = after.G("GC");
+        if (ga.ChuaLam != gb.ChuaLam || ga.ChoNhan != gb.ChoNhan)
+            return $"số Gia công đổi (Chưa làm {gb.ChuaLam:0.##} → {ga.ChuaLam:0.##}, chờ nhận {gb.ChoNhan:0.##} → {ga.ChoNhan:0.##}) — giữ quy trình cũ";
+        var pinned = await _db.HandoverTransactions.AsNoTracking()
+            .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided && t.ToGroupCode == "GC" && t.ToNC != null && t.ToNC != "")
+            .Select(t => t.ToNC!).Distinct().ToListAsync();
+        foreach (var nc in pinned)
+        {
+            var sa = ga.Steps.FirstOrDefault(s => s.Pg == "GC" && s.Code == nc);
+            var sb = gb.Steps.FirstOrDefault(s => s.Pg == "GC" && s.Code == nc);
+            if (sa == null || sa.IsExcluded)
+                return $"hàng đã cấp vào NC {nc}; quy trình mới {(sa == null ? "không còn NC đó" : "đổi NC đó sang máy loại trừ")} — hàng sẽ bị dời, giữ quy trình cũ";
+            if ((sa.Waiting ?? 0) != (sb?.Waiting ?? 0) || (sa.In ?? 0) != (sb?.In ?? 0))
+                return $"số chờ ở NC {nc} đổi ({sb?.Waiting ?? 0:0.##} → {sa.Waiting ?? 0:0.##}) — giữ quy trình cũ";
+        }
+        if ((gb.ChuaLam > 0 || gb.ChoNhan > 0) && !ga.Steps.Any(s => s.Pg == "GC" && !s.IsExcluded))
+            return "quy trình mới không còn NC Gia công thường nào để nhận hàng — giữ quy trình cũ";
+        return null;
+    }
+
+    /// <summary>[K6-NOTRUN] Kết quả tự cập nhật quy trình 1 PO sau khi lưu Part Master.</summary>
+    public sealed record AutoRouteResult(int KhPlanDetailId, string PurchaseOrder, string Status, string? Note)
+    {
+        public const string Updated = "UPDATED", Same = "SAME", Kept = "KEPT", Error = "ERR";
+    }
+
+    /// <summary>
+    /// [K6-NOTRUN 2026-10-30] Master list mục 13: lưu Part Master (Lưu &amp; Xác nhận OK, không lỗi) → mọi PO của Part này còn "chưa chạy"
+    /// tự lấy quy trình mới nhất. Mỗi PO một giao dịch + khoá PO + K5 như nút "Cập nhật từ Part Master"; quy trình không đổi gì thì bỏ qua
+    /// (không ghi log). PO đã chạy giữ quy trình cũ, trả lý do để trang báo (số chuẩn thì dùng "Update TG chuẩn").
+    /// </summary>
+    public async Task<List<AutoRouteResult>> AutoRefreshRoutesForPartAsync(int partId, int userId, string reason)
+    {
+        var res = new List<AutoRouteResult>();
+        var part = await _db.PartMasters.AsNoTracking().FirstOrDefaultAsync(p => p.PartId == partId);
+        if (part == null || !part.IsActive || part.IsObsolete) return res;
+        var dets = await _db.KhPlanDetails.AsNoTracking().Where(d => d.PartNo == part.PartNo)
+            .Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }).ToListAsync();
+        // [K6-NOTRUN] chỉ đẩy quy trình đã CHỐT: mục nào có công đoạn mà chưa Xác nhận OK → không đẩy (vd người sửa mục E bấm OK khi mục B còn nháp)
+        var ngSec = new List<string>();
+        if (!part.IsMachiningConfirmed && await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("B Gia công");
+        if (!part.IsHtspConfirmed && (await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive))) ngSec.Add("C HTSP");
+        if (!part.IsKcsConfirmed && await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("D KCS");
+        if (!part.IsPkgConfirmed && await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("E Đóng gói");
+        if (ngSec.Any())
+        {
+            var note = $"Part Master còn mục {string.Join(", ", ngSec)} chưa Xác nhận OK — chưa đẩy quy trình sang PO";
+            return dets.Select(d => new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, note)).ToList();
+        }
+        foreach (var d in dets.OrderBy(x => x.KhPlanDetailId))
+        {
+            var why = await RouteRefreshBlockAsync(d.KhPlanDetailId, partId);
+            if (why != null) { res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, why)); continue; }
+            try
+            {
+                var changed = await RefreshRouteCoreAsync(d.KhPlanDetailId, partId, userId, reason, auto: true);
+                res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, changed ? AutoRouteResult.Updated : AutoRouteResult.Same, null));
+            }
+            catch (InvalidOperationException ex) when (ex.Message.StartsWith("PO ") || ex.Message.StartsWith("Không lưu") || ex.Message.StartsWith("Part "))
+            {
+                res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, ex.Message));   // luật chặn (K6 / K5 / RS-E15 / khoá PO)
+            }
+            catch (Exception ex)
+            {
+                // [K6-NOTRUN] lỗi khác (SQL / deadlock …): PO này giữ nguyên (giao dịch đã rollback), chạy tiếp PO sau
+                res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Error, ex.GetBaseException().Message));
+            }
+            finally { _db.ChangeTracker.Clear(); }
+        }
+        return res;
+    }
+
+    /// <summary>[K6-NOTRUN] Chữ ký quy trình (snapshot) của 1 PO để biết làm mới có đổi gì không: mọi cột trừ khoá / giờ chụp / người chụp.</summary>
+    private async Task<string> RouteSignatureAsync(int khPlanDetailId)
+    {
+        static string Row(object o)
+        {
+            var ps = o.GetType().GetProperties()
+                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0
+                         && (p.PropertyType.IsValueType || p.PropertyType == typeof(string))
+                         && p.Name is not ("SnapshotId" or "TimingSnapshotId" or "MachiningSnapshotId" or "KhPlanDetailId" or "Id"
+                                           or "SnapshotAt" or "SnapshotBy" or "SnapshotRowId" or "SyncedAt" or "SyncedBy" or "SyncBatchId" or "SyncSource"
+                                           or "ConfirmedAt" or "CreatedAt" or "UpdatedAt"))
+                .OrderBy(p => p.Name);
+            return string.Join("|", ps.Select(p => p.Name + "=" + Convert.ToString(p.GetValue(o), System.Globalization.CultureInfo.InvariantCulture)));
+        }
+        var sb = new System.Text.StringBuilder();
+        var m  = await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var mt = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var ta = await _db.KhPlanRouteSnapshotTaro.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var bv = await _db.KhPlanRouteSnapshotBavia.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var wa = await _db.KhPlanRouteSnapshotWashing.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var ins = await _db.KhPlanRouteSnapshotInspection.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var pk = await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var ex = await _db.KhPlanRouteSnapshotMachineExclude.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var cf = await _db.KhPlanRouteSnapshotStdConfirms.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        // dòng snapshot → chữ ký của dòng (thay khoá SnapshotRowId của xác nhận bằng nội dung dòng nó trỏ tới)
+        var rowSig = new Dictionary<(string, long), string>();
+        void Tab(string name, IEnumerable<object> rows, Func<object, long> key)
+        {
+            var list = rows.Select(r => (Sig: Row(r), Key: key(r))).OrderBy(x => x.Sig, StringComparer.Ordinal).ToList();
+            foreach (var x in list) { rowSig[(name, x.Key)] = x.Sig; sb.Append(name).Append('#').Append(x.Sig).Append('\n'); }
+        }
+        Tab(StdTrack.Table.Machining, m, o => ((KhPlanRouteSnapshotMachining)o).SnapshotId);
+        var mSig = m.ToDictionary(x => x.SnapshotId, x => Row(x));
+        Tab(StdTrack.Table.MachiningTiming, mt.Select(t => (object)new { Parent = mSig.GetValueOrDefault(t.MachiningSnapshotId), T = Row(t), t.TimingSnapshotId }),
+            o => (long)o.GetType().GetProperty("TimingSnapshotId")!.GetValue(o)!);
+        Tab(StdTrack.Table.Taro, ta, o => ((KhPlanRouteSnapshotTaro)o).SnapshotId);
+        Tab(StdTrack.Table.Bavia, bv, o => ((KhPlanRouteSnapshotBavia)o).SnapshotId);
+        Tab(StdTrack.Table.Washing, wa, o => ((KhPlanRouteSnapshotWashing)o).SnapshotId);
+        Tab(StdTrack.Table.Inspection, ins, o => ((KhPlanRouteSnapshotInspection)o).SnapshotId);
+        Tab(StdTrack.Table.Packaging, pk, o => ((KhPlanRouteSnapshotPackaging)o).SnapshotId);
+        foreach (var x in ex.Select(Row).OrderBy(s => s, StringComparer.Ordinal)) sb.Append("EX#").Append(x).Append('\n');
+        foreach (var x in cf.Select(c => $"{c.SnapshotTable}|{rowSig.GetValueOrDefault((c.SnapshotTable, c.SnapshotRowId))}|{c.FieldName}|{c.IsConfirmed}|{c.ConfirmedBy}")
+                            .OrderBy(s => s, StringComparer.Ordinal))
+            sb.Append("CF#").Append(x).Append('\n');
+        return sb.ToString();
+    }
+
+    /// <summary>[K6-NOTRUN] Làm mới quy trình 1 PO. auto = gọi từ lưu Part Master: quy trình không đổi gì thì rollback, trả false (không ghi log).</summary>
+    private async Task<bool> RefreshRouteCoreAsync(int khPlanDetailId, int partId, int userId, string reason, bool auto)
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("Bắt buộc nhập lý do cập nhật quy trình");
 
-        // [KH-GUARD 2026-10-27] K6: PO đã chạy (WTS / phiếu giao nhận chưa huỷ) thì không làm mới quy trình —
-        //   đổi NC / mã CV giữa chừng làm WTS cũ treo ở NC không còn, Chưa làm theo NC tính sai.
-        var docs = await PoGuard.CountDocsAsync(_db, khPlanDetailId);
-        if (docs.HasActiveFlow)
+        // [K6-NOTRUN 2026-10-30] K6 theo định nghĩa "PO chưa chạy" của khách (xem RouteRefreshBlockAsync).
+        //   Trước [KH-GUARD]: có bất kỳ WTS / phiếu chưa huỷ là chặn — kể cả phiếu Kho → GC cấp phôi (khách: vẫn là chưa chạy).
+        var why0 = await RouteRefreshBlockAsync(khPlanDetailId, partId);
+        if (why0 != null)
             throw new InvalidOperationException(
-                $"PO đã chạy ({docs.Text()}) — không cập nhật quy trình được (K6): số đã ghi theo NC / mã CV hiện tại sẽ lệch. "
-                + "Quy trình mới chỉ áp cho PO tạo sau. Nếu bắt buộc phải đổi: huỷ hết WTS + phiếu giao nhận của PO trước.");
+                $"PO đã chạy ({why0}) — không cập nhật quy trình được (K6): số đã ghi theo NC / mã CV hiện tại sẽ lệch. "
+                + "Quy trình mới chỉ áp cho PO chưa chạy / PO tạo sau; số chuẩn thì dùng \"Update TG chuẩn\" ở Part Master.");
 
         using var tx = await _db.Database.BeginTransactionAsync();
         try
@@ -822,9 +1004,13 @@ public class KhPlanService
             // [D3-LOCK 2026-10-28] K6 kiểm lại dưới khoá PO (trước: kiểm ngoài khoá, WTS / phiếu chen vào giữa vẫn làm mới quy trình được)
             var lockRf = await PoGuard.LockAsync(_db, khPlanDetailId);
             if (lockRf != null) throw new InvalidOperationException(lockRf);
-            var docsRf = await PoGuard.CountDocsAsync(_db, khPlanDetailId);
-            if (docsRf.HasActiveFlow)
-                throw new InvalidOperationException($"PO vừa có số chạy ({docsRf.Text()}) — không cập nhật quy trình được (K6).");
+            var whyRf = await RouteRefreshBlockAsync(khPlanDetailId, partId);
+            if (whyRf != null)
+                throw new InvalidOperationException($"PO vừa có số chạy ({whyRf}) — không cập nhật quy trình được (K6).");
+            // [K6-NOTRUN] sổ trước khi làm mới — chỉ cần khi PO đã có phiếu Kho → GC (PO trắng không có số nào để lệch)
+            var hasTx = await _db.HandoverTransactions.AnyAsync(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided);
+            var ledgerBefore = hasTx ? await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId) : null;
+            var sigBefore = auto ? await RouteSignatureAsync(khPlanDetailId) : null;
             // [RS-E15 2026-10-29] Part không còn công đoạn nào (B→E đều trống / đã xoá) → không làm mới:
             //   trước đây vẫn xoá hết snapshot cũ rồi chép "rỗng" và commit → PO mất hẳn quy trình (log GC:0 …), WTS không có NC / mã CV để ghi.
             //   Kiểm TRƯỚC khi xoá, cùng điều kiện CopyRouteSnapshotAsync chép (bước đang dùng của Part).
@@ -865,6 +1051,21 @@ public class KhPlanService
             // 3. Copy lại từ Part Master hiện tại
             await CopyRouteSnapshotAsync(khPlanDetailId, partId, userId);
 
+            // [K6-NOTRUN] tự cập nhật: quy trình không đổi gì → bỏ (không ghi log, không đổi id snapshot)
+            if (auto && sigBefore == await RouteSignatureAsync(khPlanDetailId))
+            {
+                await tx.RollbackAsync();
+                return false;
+            }
+            // [K6-NOTRUN] K5: phiếu Kho → GC đã cấp phôi vào NC — sau khi chép lại sổ không được có ô âm mới
+            if (ledgerBefore != null)
+            {
+                var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, ledgerBefore);
+                if (k5 != null) throw new InvalidOperationException(k5);
+                var moved = await GcWaitingMovedAsync(khPlanDetailId, ledgerBefore);
+                if (moved != null) throw new InvalidOperationException("PO đã cấp phôi cho Gia công — " + moved);
+            }
+
             // 4. Đếm snapshot mới
             var newCountMachining  = await _db.KhPlanRouteSnapshotMachining .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
             var newCountTaro       = await _db.KhPlanRouteSnapshotTaro      .CountAsync(s => s.KhPlanDetailId == khPlanDetailId);
@@ -882,12 +1083,13 @@ public class KhPlanService
                 NewValue       = $"GC:{newCountMachining} Taro:{newCountTaro} Bavia:{newCountBavia} Rửa:{newCountWashing} KCS:{newCountInspection} ĐG:{newCountPackaging}",
                 ChangedBy      = userId,
                 ChangedAt      = DateTime.Now,
-                ChangeSource   = "Manual",
-                Reason         = reason
+                ChangeSource   = "Manual",   // [K6-NOTRUN] tự cập nhật ghi rõ ở lý do (giữ giá trị cột như cũ)
+                Reason         = Cut(auto ? "Tự cập nhật theo Part Master (PO chưa chạy) — " + reason : reason, 500)
             });
             await _db.SaveChangesAsync();
 
             await tx.CommitAsync();
+            return true;
         }
         catch
         {

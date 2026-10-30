@@ -12,6 +12,7 @@
 @inject PartStepStdTimeConfirmService StdConfirmSvc
 @* [STD-UPDATE] Service nút Update TG chuẩn *@
 @inject StdUpdateService StdUpdSvc
+@inject KhPlanService KhSvc
 @inject PartTaroService TaroSvc
 @inject PartBaviaService BaviaSvc
 @inject PartWashingService WashingSvc
@@ -386,10 +387,11 @@ else
                                 </tr>
 
                                 @* ── Timing sub-rows: col order = #, NC, MáyĐK, MáyĐD, Đồgá, Dao, Gálắp, GiaCông, KTra, ChuẩnBị, ChạyThử, TT ── *@
-                                @foreach (var tr in edit.TimingRows.Where(t => t.State != EditState.Deleted))
+                                @* [SUBROW-DEL-UNDO 2026-10-30] Mục 30: dòng máy đồng dạng đã lưu bấm Xoá → gạch ngang + nút khôi phục, Lưu mới xoá (giống dòng chính). Trước: biến mất ngay *@
+                                @foreach (var tr in edit.TimingRows.Where(t => t.State != EditState.Deleted || t.TimingId > 0))
                                 {
                                     @* [DEL-NC-FULL] NC chính bị xóa → máy đồng dạng cũng gạch ngang (sẽ bị xóa cùng khi Lưu) *@
-                                    <tr @key="@($"tr-{edit.NC}-{edit.StepId}-{tr.TimingId}-{tr.DisplayOrder}")" class="@TimingSubRowCss(edit)" title="@TimingSubRowTitle(edit)">
+                                    <tr @key="@($"tr-{edit.NC}-{edit.StepId}-{tr.TimingId}-{tr.DisplayOrder}")" class="@TimingSubRowCss(edit, tr)" title="@TimingSubRowTitle(edit, tr)">
                                         <td></td>
                                         <td></td>
                                         <td></td>
@@ -452,31 +454,31 @@ else
                                         <td class="@TrSetupCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
                                                 <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
-                                                @if (tr.TimingId > 0) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
+                                                @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrMachiningCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
                                                 <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
-                                                @if (tr.TimingId > 0) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
+                                                @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrInspectionCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
                                                 <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
-                                                @if (tr.TimingId > 0) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
+                                                @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrPreparationCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
                                                 <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
-                                                @if (tr.TimingId > 0) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
+                                                @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrTrialRunCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
                                                 <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
-                                                @if (tr.TimingId > 0) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
+                                                @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="text-center text-nowrap">
@@ -488,7 +490,7 @@ else
                                                 </button>
                                             }
                                             @* [TIMING-PENCIL] Bút chì riêng cho dòng máy đồng dạng (dòng đã lưu) — không dùng chung bút chì NC cha *@
-                                            @if (CanEditTimings(edit) && tr.TimingId > 0 && tr.State != EditState.New)
+                                            @if (CanEditTimings(edit) && tr.TimingId > 0 && tr.State != EditState.New && tr.State != EditState.Deleted)
                                             {
                                                 <button class="btn btn-sm @TimingPencilCss(tr) p-0 px-1 me-1" title="@TimingPencilTitle(tr)"
                                                         @onclick="() => ToggleTimingEdit(tr)">
@@ -498,7 +500,7 @@ else
                                             @* [SUBROW-DEL] Nút xóa máy đồng dạng luôn hiện cạnh bút chì (không cần bấm bút chì trước) *@
                                             @if (CanEditTimings(edit))
                                             {
-                                                <button class="btn btn-sm btn-outline-danger p-0 px-1" title="Xóa máy đồng dạng này" @onclick="() => RemoveTimingRow(edit, tr)"><i class="bi bi-trash"></i></button>
+                                                <button class="@TimingDelBtnCss(tr)" title="@TimingDelBtnTitle(tr)" @onclick="() => RemoveTimingRow(edit, tr)"><i class="@TimingDelIconCss(tr)"></i></button>
                                             }
                                         </td>
                                     </tr>
@@ -2223,7 +2225,7 @@ else
     // [TIMING-PENCIL] Dòng máy đồng dạng: đã lưu → khóa, bấm bút chì riêng mới sửa; dòng mới thêm → mở sẵn.
     // Vòng tích xác nhận ✓/○ KHÔNG khóa theo bút chì (thao tác riêng, có trạng thái chờ lưu màu vàng).
     private bool CanEditTimingRow(MachiningEdit edit, TimingRowEdit tr)
-        => CanEditTimings(edit) && (tr.TimingId == 0 || tr.State == EditState.New || tr.IsEditing);
+        => CanEditTimings(edit) && tr.State != EditState.Deleted && (tr.TimingId == 0 || tr.State == EditState.New || tr.IsEditing);   // [SUBROW-DEL-UNDO] dòng chờ xoá: khoá ô
 
     private void ToggleTimingEdit(TimingRowEdit tr)
     {
@@ -2234,10 +2236,15 @@ else
     private static string TimingPencilCss(TimingRowEdit tr) => tr.IsEditing ? "btn-warning" : "btn-outline-primary";
 
     // [DEL-NC-FULL] CSS/tooltip dòng máy đồng dạng khi NC chính đang đánh dấu xóa
-    private static string TimingSubRowCss(MachiningEdit edit)
-        => edit.State == EditState.Deleted ? "table-secondary text-muted text-decoration-line-through" : "";
-    private static string TimingSubRowTitle(MachiningEdit edit)
-        => edit.State == EditState.Deleted ? "NC chính đã bị xóa (chưa lưu) — máy đồng dạng này sẽ bị xóa cùng." : "";
+    // [SUBROW-DEL-UNDO] gạch ngang khi NC chính bị xoá HOẶC chính dòng này bấm Xoá (chưa lưu)
+    private static string TimingSubRowCss(MachiningEdit edit, TimingRowEdit tr)
+        => edit.State == EditState.Deleted || tr.State == EditState.Deleted ? "table-secondary text-muted text-decoration-line-through" : "";
+    private static string TimingSubRowTitle(MachiningEdit edit, TimingRowEdit tr)
+        => edit.State == EditState.Deleted ? "NC chính đã bị xóa (chưa lưu) — máy đồng dạng này sẽ bị xóa cùng."
+         : tr.State == EditState.Deleted ? "Đã đánh dấu xoá (chưa lưu) — bấm nút khôi phục để giữ lại, Lưu thì xoá hẳn." : "";
+    private static string TimingDelBtnCss(TimingRowEdit tr) => tr.State == EditState.Deleted ? "btn btn-sm btn-outline-success p-0 px-1" : "btn btn-sm btn-outline-danger p-0 px-1";
+    private static string TimingDelBtnTitle(TimingRowEdit tr) => tr.State == EditState.Deleted ? "Khôi phục máy đồng dạng này" : "Xóa máy đồng dạng này";
+    private static string TimingDelIconCss(TimingRowEdit tr) => tr.State == EditState.Deleted ? "bi bi-arrow-counterclockwise" : "bi bi-trash";
     private static string TimingPencilTitle(TimingRowEdit tr) => tr.IsEditing ? "Đang sửa — click để khóa lại" : "Sửa dòng máy đồng dạng này";
 
     private IEnumerable<ThietBi> GetTimingMachineOptions(MachiningEdit edit)
@@ -2274,7 +2281,12 @@ else
 
     private void RemoveTimingRow(MachiningEdit edit, TimingRowEdit tr)
     {
-        if (tr.TimingId > 0) tr.State = EditState.Deleted;
+        // [SUBROW-DEL-UNDO 2026-10-30] dòng đã lưu: bấm lần 1 = đánh dấu xoá (gạch ngang), bấm lần 2 = khôi phục trạng thái trước; dòng mới chưa lưu: bỏ luôn
+        if (tr.TimingId > 0)
+        {
+            if (tr.State == EditState.Deleted) { tr.State = tr.StateBeforeDelete; }
+            else { tr.StateBeforeDelete = tr.State; tr.State = EditState.Deleted; tr.IsEditing = false; }
+        }
         else edit.TimingRows.Remove(tr);
         MarkAsModified(edit);
     }
@@ -2561,6 +2573,7 @@ else
         "InspectionTime"  => "T.Kiểm tra",
         "PreparationTime" => "T.Chuẩn bị",
         "TrialRunTime"    => "T.Chạy thử",
+        "StandardTime"    => "T.Chuẩn",   // [CONFIRM-LOG-FIELD]
         "SoMay"           => "Máy đồng dạng",
         "NC"              => "Mã NC",
         "MachineRegistered" => "Máy đăng ký",
@@ -2590,7 +2603,12 @@ else
         // Với field TimingConfirmed — value là chuỗi log dạng 'Confirmed by userId=X at ...' 
         if (field == "TimingConfirmed")
         {
-            return value.StartsWith("Confirmed") ? "✓ Đã xác nhận" : value;
+            // [CONFIRM-LOG-FIELD 2026-10-30] "Confirmed [SetupTime] …" → "✓ Đã xác nhận · T.Gá lắp"; bản ghi cũ không có [ô] → như cũ
+            var ob = value.IndexOf('['); var cb = ob >= 0 ? value.IndexOf(']', ob) : -1;
+            var cell = ob >= 0 && cb > ob ? " · " + FriendlyFieldName(value.Substring(ob + 1, cb - ob - 1)) : "";
+            if (value.StartsWith("Confirmed")) return "✓ Đã xác nhận" + cell;
+            if (value.StartsWith("Unconfirmed")) return "✗ Chưa xác nhận" + cell;
+            return value;
         }
         return value;
     }
@@ -2733,8 +2751,9 @@ else
                         StepId = key.StepId,
                         PartId = _part!.PartId,
                         FieldName = "TimingConfirmed",
-                        OldValue = before ? $"Confirmed by userId={_currentUserId}" : null,
-                        NewValue = after ? $"Confirmed by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed",
+                        // [CONFIRM-LOG-FIELD 2026-10-30] Mục 10: ghi rõ ô T.Chuẩn
+                        OldValue = before ? "Confirmed [StandardTime]" : "Unconfirmed [StandardTime]",
+                        NewValue = after ? $"Confirmed [StandardTime] by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed [StandardTime]",
                         ChangedBy = _currentUserId,
                         ChangedAt = now,
                         Reason = string.IsNullOrWhiteSpace(_reason) ? "Lưu quy trình" : _reason
@@ -3064,7 +3083,7 @@ else
                 .ToList();
             foreach (var tr in toDelete)
             {
-                if (tr.TimingId > 0) tr.State = EditState.Deleted;
+                if (tr.TimingId > 0 && tr.State != EditState.Deleted) { tr.StateBeforeDelete = tr.State; tr.State = EditState.Deleted; tr.IsEditing = false; }   // [SUBROW-DEL-UNDO] nhớ trạng thái để nút khôi phục trả đúng
                 else _currentEditingAltMachining.TimingRows.Remove(tr);
             }
             // Thêm 1 row mới với tất cả máy được chọn + copy đồ gá/dao/thời gian từ dòng chính
@@ -3817,6 +3836,32 @@ else
                 }
             }
 
+            // [K6-NOTRUN 2026-10-30] Master list mục 13: Lưu & Xác nhận OK không lỗi → PO chưa chạy của Part này tự lấy quy trình mới.
+            //   Lưu nháp / có lỗi: không đẩy sang PO (quy trình chưa chốt). PO đã chạy giữ quy trình cũ, báo lý do.
+            if (confirmOk && errors.Count == 0 && _part != null && (_canEditB || _canEditC || _canEditD || _canEditE))
+            {
+                try
+                {
+                    var auto = await KhSvc.AutoRefreshRoutesForPartAsync(_part.PartId, _currentUserId, reason);
+                    var upd  = auto.Where(a => a.Status == KhPlanService.AutoRouteResult.Updated).ToList();
+                    var kept = auto.Where(a => a.Status == KhPlanService.AutoRouteResult.Kept).ToList();
+                    var errA = auto.Where(a => a.Status == KhPlanService.AutoRouteResult.Error).ToList();
+                    if (errA.Any())
+                        log.Add($"⚠ {errA.Count} PO cập nhật quy trình bị lỗi hệ thống (giữ quy trình cũ, thử lưu lại hoặc bấm \"Cập nhật từ Part Master\" ở Sửa phiếu KH): "
+                                + string.Join("; ", errA.Take(5).Select(a => $"{a.PurchaseOrder} — {a.Note}")));
+                    if (upd.Any())
+                        log.Add($"✓ Tự cập nhật quy trình mới cho {upd.Count} PO chưa chạy: {string.Join(", ", upd.Take(10).Select(a => a.PurchaseOrder))}{(upd.Count > 10 ? $" … (+{upd.Count - 10})" : "")}");
+                    if (kept.Any())
+                        log.Add($"ℹ {kept.Count} PO giữ quy trình cũ (PO đã chạy / chưa đủ điều kiện; số chuẩn dùng \"Update TG chuẩn\"): "
+                                + string.Join("; ", kept.Take(5).Select(a => $"{a.PurchaseOrder} — {a.Note}")) + (kept.Count > 5 ? $" … (+{kept.Count - 5})" : ""));
+                }
+                catch (Exception exA)
+                {
+                    // ghi vào log (không vào errors): Part Master đã lưu + đã Xác nhận OK đúng, chỉ phần đẩy sang PO lỗi
+                    log.Add("⚠ Tự cập nhật quy trình cho PO chưa chạy bị lỗi: " + exA.GetBaseException().Message + " — Part Master đã lưu; vào Sửa phiếu KH bấm \"Cập nhật từ Part Master\" nếu cần.");
+                }
+            }
+
             if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
             {
                 // [RS-E2] có lỗi thì không báo "Xác nhận OK" — nói rõ mục nào vẫn NG
@@ -4099,8 +4144,9 @@ else
                         TimingId = timingId,
                         PartId = _part!.PartId,
                         FieldName = "TimingConfirmed",
-                        OldValue = currentInDb ? $"Confirmed by userId={_currentUserId}" : null,
-                        NewValue = actualState ? $"Confirmed by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed",
+                        // [CONFIRM-LOG-FIELD 2026-10-30] Mục 10: ghi rõ Ô nào được xác nhận / bỏ xác nhận (trước: chỉ "Xác nhận TG chuẩn", không biết ô nào)
+                        OldValue = currentInDb ? $"Confirmed [{field}]" : $"Unconfirmed [{field}]",
+                        NewValue = actualState ? $"Confirmed [{field}] by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : $"Unconfirmed [{field}]",
                         ChangedBy = _currentUserId,
                         ChangedAt = now,
                         Reason = _reason ?? "Lưu quy trình"
@@ -4273,6 +4319,8 @@ else
         public string? ToolType { get; set; }
         /// <summary>[TIMING-PENCIL] Đang mở sửa bằng bút chì riêng của dòng máy đồng dạng (chỉ UI, không lưu DB)</summary>
         public bool IsEditing { get; set; }
+        /// <summary>[SUBROW-DEL-UNDO] trạng thái trước khi bấm Xoá — khôi phục về đúng trạng thái này (chỉ UI)</summary>
+        public EditState StateBeforeDelete { get; set; } = EditState.Unchanged;
 
         private static decimal? R(decimal? v) => v.HasValue ? Math.Round(v.Value, 1) : null;
         private decimal? _setup; public decimal? SetupTime { get => _setup; set => _setup = R(value); }

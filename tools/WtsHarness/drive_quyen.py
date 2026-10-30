@@ -98,6 +98,30 @@ async def main():
             ok("unhandled error" not in body.lower() and "Giao nhận" in body, f"{u}: trang Giao nhận mở bình thường")
             await pg.context.close()
 
+        print("[30] Part Master: xoá dòng máy đồng dạng = gạch ngang + khôi phục, Lưu mới xoá (giống dòng chính)")
+        pg = await login(b, "admin", "admin123")
+        await goto(pg, "/part-master/detail?partNo=PART-30", 3000)
+        btn = pg.locator("button[title='Xóa máy đồng dạng này']")
+        ok(await btn.count() == 1, "Có nút xoá dòng máy đồng dạng M3")
+        await btn.first.click(); await pg.wait_for_timeout(500)
+        strike = pg.locator("tr.text-decoration-line-through")
+        rest = pg.locator("button[title='Khôi phục máy đồng dạng này']")
+        ok(await strike.count() == 1 and await rest.count() == 1, "Bấm xoá: dòng còn hiện, gạch ngang, có nút khôi phục (trước: biến mất ngay)",
+           f"gạch={await strike.count()} khôiphục={await rest.count()}")
+        await rest.first.click(); await pg.wait_for_timeout(500)
+        ok(await pg.locator("tr.text-decoration-line-through").count() == 0 and await pg.locator("button[title='Xóa máy đồng dạng này']").count() == 1, "Bấm khôi phục: dòng trở lại bình thường")
+        await pg.locator("button[title='Xóa máy đồng dạng này']").first.click(); await pg.wait_for_timeout(400)
+        await pg.locator("textarea").last.fill("xoa may dong dang M3"); await pg.wait_for_timeout(300)
+        await pg.click("button:has-text('Lưu & Xác nhận OK')"); await pg.wait_for_timeout(3000)
+        tm = [t for t in dump()["timings"] if t["soMay"] == "M3"]
+        ok(tm and not tm[0]["isActive"], "Bấm xoá rồi Lưu: dòng M3 xoá trong DB", tm)
+        d = dump(); po30 = [x["khPlanDetailId"] for x in d["podet"] if x["purchaseOrder"] == "PO30"][0]
+        body = await pg.inner_text("body")
+        ok([m["nc"] for m in d["snapm"] if m["khPlanDetailId"] == po30] == ["1"] and "Tự cập nhật quy trình mới cho 1 PO chưa chạy: PO30" in body,
+           "[13] PO30 tạo trước khi có quy trình: Lưu & Xác nhận OK Part Master → PO30 tự có quy trình NC 1, lời báo nêu PO30",
+           [l for l in body.split("\n") if "Tự cập nhật" in l or "PO đã chạy" in l][:3])
+        await pg.context.close()
+
         print("[E2] Part Master: lưu lỗi giữa chừng không được 'Xác nhận OK' (2 người mở cùng Part)")
         pa = await login(b, "admin", "admin123"); pb = await login(b, "admin", "admin123")
         await goto(pa, "/part-master/detail?partNo=PART-E2", 3000); await goto(pb, "/part-master/detail?partNo=PART-E2", 3000)

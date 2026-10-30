@@ -390,8 +390,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 {
                                     foreach (var b in db.HandoverTransactions.List.Where(b => !b.IsVoided && b.SourceReceiveId == rr).ToList())
                                         foreach (var br in b.Receives.Where(x => !x.IsVoided).OrderByDescending(x => x.ReceivedAt).Select(x => x.ReceiveId).ToList())
-                                        { var vr = await svc.VoidReceiveAsync(br, "goi y", 1, All); if (!vr.Ok) { lastErr = "auto-recv #" + br + ": " + vr.Error; if (Environment.GetEnvironmentVariable("WHYDBG") == "1") { foreach (var tt in db.HandoverTransactions.List) Console.WriteLine($"   tx#{tt.HandoverTxId} {tt.FromGroupCode}->{tt.ToGroupCode} {tt.Purpose} {tt.FromCell}->{tt.ToCell} q={tt.QtyIssued} void={tt.IsVoided} src={tt.SourceReceiveId} rec={string.Join(",", tt.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); Console.WriteLine("   phoi=" + db.KhoVatLieus.List.First().SoLuongThucNhan); } return false; } }
-                                    var rv = await svc.VoidReceiveAsync(rr, "goi y", 1, All);
+                                        { var vr = await VoidRecvDeep(db, svc, led, br, 0); if (!vr.Ok) { lastErr = "auto-recv #" + br + ": " + vr.Error; if (Environment.GetEnvironmentVariable("WHYDBG") == "1") { foreach (var tt in db.HandoverTransactions.List) Console.WriteLine($"   tx#{tt.HandoverTxId} {tt.FromGroupCode}->{tt.ToGroupCode} {tt.Purpose} {tt.FromCell}->{tt.ToCell} q={tt.QtyIssued} void={tt.IsVoided} src={tt.SourceReceiveId} rec={string.Join(",", tt.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); Console.WriteLine("   phoi=" + db.KhoVatLieus.List.First().SoLuongThucNhan); } return false; } }
+                                    var rv = await VoidRecvDeep(db, svc, led, rr, 0);   // [FUZZ-PRE-DEEP] bị chặn thì làm theo gợi ý gỡ của phần mềm (đệ quy) rồi thử lại
                                     if (!rv.Ok) { lastErr = rv.Error; return false; }
                                 }
                                 return true;
@@ -541,6 +541,45 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Sửa Part Master làm đổi snapshot PO] PO{po} op{op} {desc}");
                     var after = ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!);
                     if (after != before) fails.Add($"[Sửa Part Master làm đổi sổ PO] PO{po} op{op} {desc}\n   {before}\n   {after}");
+                    // [K6-NOTRUN 30/10] như bấm "Lưu & Xác nhận OK": PO chưa chạy tự lấy quy trình mới (Master list mục 13)
+                    if (Environment.GetEnvironmentVariable("AUTORT") != "0")
+                    {
+                        var rowB = (await led.GetLedgerForDetailAsync(1))!;
+                        var pmF = db.PartMasters.List.First(x => x.PartId == pmId);   // như bấm "Lưu & Xác nhận OK"
+                        pmF.IsPlanConfirmed = pmF.IsMachiningConfirmed = pmF.IsHtspConfirmed = pmF.IsKcsConfirmed = pmF.IsPkgConfirmed = true;
+                        var ar = await new KhPlanService(db).AutoRefreshRoutesForPartAsync(pmId, 1, "fuzz luu part master");
+                        if (ar.Any(r => r.Status == KhPlanService.AutoRouteResult.Error)) fails.Add($"[Tự cập nhật lỗi hệ thống] PO{po} op{op}: {string.Join("; ", ar.Where(r => r.Status == KhPlanService.AutoRouteResult.Error).Select(r => r.Note))}");
+                        db.Fixup();
+                        var a1 = ar.FirstOrDefault(r => r.KhPlanDetailId == 1);
+                        var hasWts = db.WtsProductionLogs.List.Any(w => w.KhPlanDetailId == 1 && !w.IsVoided);
+                        if (a1 != null && a1.Status == KhPlanService.AutoRouteResult.Updated)
+                        {
+                            Inc("pmedit.auto.upd");
+                            if (hasWts) fails.Add($"[Tự cập nhật quy trình PO đã có WTS] PO{po} op{op} {desc}");
+                            var dd = ChuoiHelp.Diff(db, 1, ChuoiHelp.Picture(db, pmId), pmId);
+                            if (dd != null) fails.Add($"[Tự cập nhật: snapshot ≠ Part Master] PO{po} op{op} {desc}: {dd}");
+                            var rowA = (await led.GetLedgerForDetailAsync(1))!;
+                            var neg = HandoverLedgerService.NewNegatives(rowB, rowA);
+                            if (!rowA.Balanced || neg.Any() || rowA.G("GC").ChuaLam != rowB.G("GC").ChuaLam || rowA.G("KHO").ConGiao != rowB.G("KHO").ConGiao || rowA.TonTong != rowB.TonTong)
+                                fails.Add($"[Tự cập nhật làm đổi sổ PO] PO{po} op{op} {desc}: GC chưa {rowB.G("GC").ChuaLam}→{rowA.G("GC").ChuaLam} · Kho còn {rowB.G("KHO").ConGiao}→{rowA.G("KHO").ConGiao} · âm {string.Join(";", neg)}");
+                            // [K6-NOTRUN] hàng đã cấp vào NC chỉ định không được trôi sang NC khác
+                            foreach (var pin in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.ToGroupCode == "GC" && !string.IsNullOrEmpty(t.ToNC)).Select(t => t.ToNC!).Distinct())
+                            {
+                                var sb = rowB.G("GC").Steps.FirstOrDefault(x => x.Pg == "GC" && x.Code == pin); var sa = rowA.G("GC").Steps.FirstOrDefault(x => x.Pg == "GC" && x.Code == pin);
+                                if (sa == null || sa.IsExcluded || (sa.Waiting ?? 0) != (sb?.Waiting ?? 0))
+                                    fails.Add($"[Tự cập nhật dời hàng NC {pin}] PO{po} op{op} {desc}: chờ {sb?.Waiting} → {sa?.Waiting}{(sa?.IsExcluded == true ? " (loại trừ)" : "")}");
+                            }
+                            snapSig0 = ChuoiHelp.SnapPicture(db, 1).Sig;
+                            (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, 1);
+                        }
+                        else
+                        {
+                            Inc(a1?.Status == KhPlanService.AutoRouteResult.Same ? "pmedit.auto.same" : "pmedit.auto.kept");
+                            if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Tự cập nhật bị chặn mà snapshot vẫn đổi] PO{po} op{op} {desc}");
+                        }
+                        if (nbId > 0 && ar.Any(r => r.KhPlanDetailId == nbId && r.Status == KhPlanService.AutoRouteResult.Updated))
+                            fails.Add($"[Tự cập nhật PO hàng xóm đã chạy] PO{po} op{op}");
+                    }
                     ok = true;
                     break;
                 }
@@ -810,6 +849,29 @@ async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService 
     if (!await retry()) { fails.Add($"[GN-WHY làm theo gợi ý vẫn không lưu được] PO{po} op{opIdx} {desc}"); return; }
     Inc("why.retry.ok");
     await CheckAll(db, led, po, opIdx, desc + " (sau khi làm theo gợi ý)");
+}
+
+// [FUZZ-PRE-DEEP 30/10] Huỷ 1 lần nhận; bị K5 chặn thì làm theo gợi ý gỡ của [GN-WHY] (lần nhận / phiếu / WTS / báo lỗi mới hơn đang dùng số),
+//   mỗi bước NHAN cũng đệ quy như vậy (tối đa 4 tầng), rồi thử lại. Trước: bước pre không đệ quy → báo "huỷ lần nhận của chính phiếu bị chặn"
+//   dù phần mềm đã chỉ đúng đường gỡ (loi_loaitru seed 52, chuoi_loaitru seed 129) — giới hạn của bộ kiểm, không phải lỗi phần mềm.
+async Task<(bool Ok, string Error)> VoidRecvDeep(AppDbContext db, HandoverService svc, HandoverLedgerService led, long rid, int depth)
+{
+    var r0 = await svc.VoidReceiveAsync(rid, "goi y", 1, All);
+    if (r0.Ok || depth >= 4 || !r0.Error.StartsWith("Không lưu")) return r0;
+    var input = (await led.GetInputForDetailAsync(1))!;
+    var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), new HashSet<string> { "R:" + rid });
+    if (!plan.Complete || plan.Steps.Count == 0) return r0;
+    foreach (var st in plan.Steps)
+    {
+        (bool Ok, string Error) rs;
+        if (st.Kind == "WTS") { var okW = await WtsVoid(db, led, st.Id); rs = (okW, lastErr ?? ""); }
+        else if (st.Kind == "NHAN") rs = await VoidRecvDeep(db, svc, led, st.Id, depth + 1);
+        else if (st.Kind == "BAOLOI") rs = await svc.VoidNgReportAsync(st.Id, "goi y", 1, All);
+        else rs = await svc.VoidIssueAsync(st.Id, "goi y", 1, All);
+        if (!rs.Ok) return rs;
+        Inc("why.pre.deep");
+    }
+    return await svc.VoidReceiveAsync(rid, "goi y", 1, All);
 }
 
 // Mô phỏng xoá dòng WTS đúng như trang WTS (K5)
