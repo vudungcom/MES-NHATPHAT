@@ -153,6 +153,155 @@ public static class KhScen
                "Sửa WTS gây âm rồi bật: được + ghi lịch sử OFF→ON", e3);
         }
 
+        // ── [KHE-6][KHE-3][KHE-7 2026-10-30] Sửa phiếu KH: Workflow dưới khoá PO, chỉ ghi ô người dùng đổi, lịch sử Ghi chú / Ngày nhận ──
+        static KhPlanService.KhEditValues EV(AppDbContext db, int detId)
+        {
+            var d = db.KhPlanDetails.List.First(x => x.KhPlanDetailId == detId); var p = db.KhPlans.List.First(x => x.KhPlanId == d.KhPlanId);
+            return new KhPlanService.KhEditValues { PlanNotes = p.Notes, ReceivedDate = p.ReceivedDate, ApplyWorkflow = p.ApplyWorkflow,
+                Quantity = d.Quantity, Unit = d.Unit, STD = d.STD, Type = d.Type, Priority = d.Priority, Material = d.Material,
+                MaterialConfig = d.MaterialConfig, Location = d.Location, MaterialNotes = d.MaterialNotes, OrderVL = d.OrderVL,
+                MaterialCondition = d.MaterialCondition, PartNotes = d.PartNotes };
+        }
+        static void AddPo2(AppDbContext db)
+        {
+            var plan = db.KhPlans.List[0];
+            var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
+            db.KhPlanDetails.List.Insert(0, d2); plan.Details.Add(d2); db.Fixup();   // chèn ĐẦU danh sách → DB trả 2,1: kiểm được khoá có sắp tăng dần
+        }
+        Console.WriteLine("[A6] KHE-6: bật Workflow kiểm K7 SAU khi khoá mọi PO của phiếu (tăng dần, trong giao dịch)");
+        {
+            var db = Seed(workflow: false, phoi: 10); AddPo2(db); var svc = new HandoverService(db); var kh = new KhPlanService(db);
+            await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            await svc.ReceiveAsync(1, 10, 0, null, 2);
+            Wts(db, "NC1", 10);
+            Ok(await kh.CheckWorkflowOnAsync(1) == null, "Lúc bấm Lưu (kiểm trước, ngoài khoá): chưa âm");
+            // người khác lưu WTS lúc còn OFF, xong ngay trước khi mình lấy được khoá PO1 → vượt 5
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            bool fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (!fired && n == "MES_PO_1") { fired = true; Wts(db, "NC1", 5); db.Fixup(); } };
+            var e = await kh.SetApplyWorkflowAsync(1, true, 1, "bat");
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(e != null && e.Contains("K7") && !db.KhPlans.List[0].ApplyWorkflow, "WTS chen vào trước khoá: K7 đọc sau khoá → chặn, vẫn OFF", e);
+            Ok(string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == "MES_PO_1,MES_PO_2", "Khoá đủ 2 PO của phiếu theo thứ tự tăng dần",
+               string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+            Ok(!db.KhPlanDetailChangeLogs.List.Any(l => l.FieldName == "ApplyWorkflow") && db.Database.Current == null, "Bị chặn: không ghi log, giao dịch đã đóng");
+        }
+        {
+            var db = Seed(workflow: false, phoi: 10); AddPo2(db); var svc = new HandoverService(db); var kh = new KhPlanService(db);
+            await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            await svc.ReceiveAsync(1, 10, 0, null, 2);
+            Wts(db, "NC1", 10);
+            var o = EV(db, 1); var n = EV(db, 1); n.ApplyWorkflow = true; n.Location = "B9";
+            bool fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = nm => { if (!fired && nm == "MES_PO_1") { fired = true; Wts(db, "NC1", 5); db.Fixup(); } };
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "bat wf");
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(e != null && e.Contains("K7") && !db.KhPlans.List[0].ApplyWorkflow && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).Location != "B9",
+               "Trang Sửa phiếu: WTS chen trước khoá → chặn cả phiếu (Workflow + ô khác không lưu)", e);
+        }
+        {
+            var db = Seed(workflow: false, phoi: 10); AddPo2(db); var svc = new HandoverService(db); var kh = new KhPlanService(db);
+            await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            await svc.ReceiveAsync(1, 10, 0, null, 2);
+            Wts(db, "NC1", 10);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var o = EV(db, 1); var n = EV(db, 1); n.ApplyWorkflow = true;
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "bat wf");
+            Ok(e == null && db.KhPlans.List[0].ApplyWorkflow
+               && db.KhPlanDetailChangeLogs.List.Count(l => l.FieldName == "ApplyWorkflow" && l.OldValue == "OFF" && l.NewValue == "ON") == 2
+               && string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == "MES_PO_1,MES_PO_2",
+               "Không âm: bật được, log OFF→ON cả 2 PO, khoá 2 PO", e);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var o2 = EV(db, 2); var n2 = EV(db, 2); n2.Quantity = 25;
+            var e2 = await kh.SaveEditAsync(1, 2, o2, n2, 1, "sua sl");
+            Ok(e2 == null && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 2).Quantity == 25 && string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == "MES_PO_2",
+               "Sửa SL không đổi Workflow: chỉ khoá đúng PO đang sửa", e2);
+        }
+        Console.WriteLine("[A7] KHE-3: chỉ ghi ô người dùng đổi; người khác vừa sửa cùng ô → không lưu");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 45;
+            db.KhPlanDetails.List[0].Location = "KHAC";      // người khác lưu Vị trí sau khi mình mở trang
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "sua sl");
+            Ok(e == null && db.KhPlanDetails.List[0].Quantity == 45 && db.KhPlanDetails.List[0].Location == "KHAC",
+               "Mình sửa SL, người khác sửa Vị trí: giữ cả 2 (trước: Vị trí bị ghi đè về giá trị cũ)", e);
+            Ok(db.KhPlanDetailChangeLogs.List.Count(l => l.FieldName == "Quantity" && l.NewValue == "45") == 1
+               && !db.KhPlanDetailChangeLogs.List.Any(l => l.FieldName == "Location"), "Log chỉ ô SL");
+        }
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 45; n.PlanNotes = "ghi chu moi";
+            db.KhPlanDetails.List[0].Quantity = 50;            // người khác đổi SL sang số khác
+            var logs0 = db.KhPlanDetailChangeLogs.List.Count;
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "sua sl");
+            Ok(e != null && e.Contains("SL") && e.Contains("50") && db.KhPlanDetails.List[0].Quantity == 50 && db.KhPlans.List[0].Notes == null
+               && db.KhPlanDetailChangeLogs.List.Count == logs0 && db.Database.Current == null,
+               "Cùng ô SL, người khác đã đổi 40→50: không lưu gì (cả Ghi chú), báo ô SL", e);
+        }
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 45;
+            db.KhPlanDetails.List[0].Quantity = 45;            // người khác đổi đúng số mình định đổi
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "sua sl");
+            Ok(e == null && db.KhPlanDetails.List[0].Quantity == 45 && !db.KhPlanDetailChangeLogs.List.Any(l => l.FieldName == "Quantity"),
+               "Người khác đã đổi đúng giá trị mình định đổi: không báo xung đột, không ghi log trùng", e);
+        }
+        {
+            var db = Seed(workflow: false); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.Location = "X1";
+            db.KhPlans.List[0].ApplyWorkflow = true;             // người khác bật Workflow; mình không đụng công tắc
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "sua vi tri");
+            Ok(e == null && db.KhPlans.List[0].ApplyWorkflow && db.KhPlanDetails.List[0].Location == "X1",
+               "Người khác bật Workflow, mình chỉ sửa Vị trí: giữ Workflow ON (trước: trang tắt lại về OFF)", e);
+        }
+        Console.WriteLine("[A8] KHE-7: Ghi chú phiếu / Ngày nhận PO có lịch sử ở mọi PO của phiếu");
+        {
+            var db = Seed(); AddPo2(db); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.PlanNotes = "giao gap"; n.ReceivedDate = new DateTime(2026, 10, 30);
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "cap nhat");
+            var L = db.KhPlanDetailChangeLogs.List;
+            Ok(e == null && db.KhPlans.List[0].Notes == "giao gap" && db.KhPlans.List[0].ReceivedDate == new DateTime(2026, 10, 30)
+               && L.Count(l => l.FieldName == "PlanNotes" && l.OldValue == null && l.NewValue == "giao gap" && l.Reason == "cap nhat") == 2
+               && L.Count(l => l.FieldName == "ReceivedDate" && l.OldValue == null && l.NewValue == "2026-10-30") == 2,
+               "Lưu Ghi chú + Ngày nhận: ghi phiếu + 2 dòng log mỗi trường (PO1, PO2)", e);
+            var o2 = EV(db, 1); var n2 = EV(db, 1);
+            var c0 = L.Count;
+            var e2 = await kh.SaveEditAsync(1, 1, o2, n2, 1, "khong doi gi");
+            Ok(e2 == null && db.KhPlanDetailChangeLogs.List.Count == c0, "Không đổi gì: không ghi log", e2);
+        }
+        {   // [rà độc lập] Ghi chú phiếu dùng chung → sửa từ PO2 cũng khoá mọi PO; chỉ sửa ô của PO → chỉ khoá PO đó
+            var db = Seed(); AddPo2(db); var kh = new KhPlanService(db);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var o = EV(db, 2); var n = EV(db, 2); n.PlanNotes = "tu PO2";
+            var e = await kh.SaveEditAsync(1, 2, o, n, 1, "ghi chu");
+            Ok(e == null && string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == "MES_PO_1,MES_PO_2",
+               "Đổi Ghi chú phiếu: khoá cả 2 PO (2 người sửa 2 PO không ghi đè Ghi chú của nhau)", string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+            // PO mới chen vào phiếu trong lúc chờ khoá → không lưu
+            bool fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = nm => { if (!fired) { fired = true;
+                var p3 = new KhPlanDetail { KhPlanDetailId = 3, KhPlanId = 1, KhPlan = db.KhPlans.List[0], PartNo = "P", PurchaseOrder = "PO3", Quantity = 5, LineNo = 3 };
+                db.KhPlanDetails.List.Add(p3); db.Fixup(); } };
+            var o2 = EV(db, 1); var n2 = EV(db, 1); n2.PlanNotes = "lan 2";
+            var e2 = await kh.SaveEditAsync(1, 1, o2, n2, 1, "ghi chu 2");
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(e2 != null && e2.Contains("thêm / bớt PO") && db.KhPlans.List[0].Notes == "tu PO2", "PO thêm vào phiếu lúc đang chờ khoá: không lưu, báo bấm Lưu lại", e2);
+        }
+        {   // null / "" và STD có giờ: không báo xung đột oan, không ghi log thừa
+            var db = Seed(); var kh = new KhPlanService(db);
+            db.KhPlanDetails.List[0].STD = new DateTime(2026, 11, 5, 14, 30, 0); db.KhPlanDetails.List[0].Type = null;
+            var o = EV(db, 1); var n = EV(db, 1); n.Type = ""; n.STD = new DateTime(2026, 11, 5); n.PlanNotes = "";
+            var c0 = db.KhPlanDetailChangeLogs.List.Count;
+            var e = await kh.SaveEditAsync(1, 1, o, n, 1, "khong doi");
+            Ok(e == null && db.KhPlanDetailChangeLogs.List.Count == c0, "Ô trống null ↔ \"\" và STD cùng ngày khác giờ: coi như không đổi", e);
+        }
+        Console.WriteLine("[A9] SaveEditAsync không có quyền Sửa Kế hoạch: chặn ở máy chủ");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 41;
+            var e = await kh.SaveEditAsync(1, 1, o, n, 5, "x");
+            Ok(e != null && db.KhPlanDetails.List[0].Quantity == 40, "u5 (xưởng, không có Sửa KE_HOACH) bị chặn", e);
+        }
+
         // ── [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận ─────────────
         var all = new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" };
         Console.WriteLine("[B1] Kho nhận 40 phôi, sau phát hiện 3 phôi lỗi → báo lỗi → trả khách");

@@ -480,6 +480,8 @@ else
     private bool _applyWorkflow = true;
     private int? _partId;
     private RouteSnapshotData? _snapshot;
+    // [KHE-3 2026-10-30] Giá trị lúc mở trang — gửi kèm khi lưu để máy chủ chỉ ghi ô người dùng đổi và phát hiện người khác vừa sửa
+    private KhPlanService.KhEditValues? _orig;
 
     private Dictionary<string, PartMaster> _partLookup = new();
     private Dictionary<string, Dictionary<string, List<PartMasterAttribute>>> _attrsCache = new();
@@ -556,6 +558,31 @@ else
         };
 
         _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
+        _orig = CurrentEditValues();   // [KHE-3]
+    }
+
+    // [KHE-3 2026-10-30] Gom giá trị trên form (phiếu + dòng PO) để gửi service
+    private KhPlanService.KhEditValues CurrentEditValues()
+    {
+        var d = _detailForm!;
+        return new KhPlanService.KhEditValues
+        {
+            PlanNotes         = _planNotes,
+            ReceivedDate      = _receivedDate,
+            ApplyWorkflow     = _applyWorkflow,
+            Quantity          = d.Quantity,
+            Unit              = d.Unit,
+            STD               = d.STD,
+            Type              = d.Type,
+            Priority          = d.Priority,
+            Material          = d.Material,
+            MaterialConfig    = d.MaterialConfig,
+            Location          = d.Location,
+            MaterialNotes     = d.MaterialNotes,
+            OrderVL           = d.OrderVL,
+            MaterialCondition = d.MaterialCondition,
+            PartNotes         = d.PartNotes
+        };
     }
 
     private List<PartMasterAttribute>? GetAttrsFor(string partNo, string attrType)
@@ -661,40 +688,13 @@ else
     {
         try
         {
-            if (_plan != null)
-            {
-                var planEntity = await Db.KhPlans.FirstAsync(x => x.KhPlanId == _plan.KhPlanId);
-                if (planEntity.Notes != _planNotes)             planEntity.Notes         = _planNotes;
-                if (planEntity.ReceivedDate != _receivedDate)   planEntity.ReceivedDate  = _receivedDate;
-                // [WORKFLOW] Lưu thay đổi ApplyWorkflow vào DB
-                // [KH-GUARD 2026-10-27] Qua service: kiểm lại K7 khi bật + ghi lịch sử từng PO (trước đây đổi thẳng, không log)
-                if (planEntity.ApplyWorkflow != _applyWorkflow)
-                {
-                    var wfErr = await KhSvc.SetApplyWorkflowAsync(_plan.KhPlanId, _applyWorkflow, _currentUserId, _reason.Trim());
-                    if (wfErr != null) throw new InvalidOperationException(wfErr);
-                }
-            }
-
+            // [KHE-6][KHE-3][KHE-7 2026-10-30] Cả phiếu (Ghi chú / Ngày nhận / Workflow) + dòng PO lưu trong 1 giao dịch ở service:
+            //   khoá PO rồi mới kiểm K7 (trước kiểm ngoài khoá), chỉ ghi ô người dùng đổi + báo khi người khác vừa sửa cùng ô,
+            //   Ghi chú / Ngày nhận có lịch sử. Trước: trang tự gán planEntity (bản EF cũ lúc mở trang) + SetApplyWorkflowAsync + UpdateFullAsync.
+            if (_plan == null || _orig == null) throw new InvalidOperationException("Chưa tải xong phiếu — tải lại trang.");
             var d = _detailForm!;
-
-            var newValues = new KhPlanDetail
-            {
-                Quantity          = d.Quantity,
-                Unit              = d.Unit,
-                STD               = d.STD,
-                Type              = d.Type,
-                Priority          = d.Priority,
-                Material          = d.Material,
-                MaterialConfig    = d.MaterialConfig,
-                Location          = d.Location,
-                MaterialNotes     = d.MaterialNotes,
-                OrderVL           = d.OrderVL,
-                MaterialCondition = d.MaterialCondition,
-                PartNotes         = d.PartNotes
-            };
-            await KhSvc.UpdateFullAsync(d.KhPlanDetailId, newValues, _currentUserId, _reason.Trim());
-
-            await Db.SaveChangesAsync();
+            var saveErr = await KhSvc.SaveEditAsync(_plan.KhPlanId, d.KhPlanDetailId, _orig, CurrentEditValues(), _currentUserId, _reason.Trim());
+            if (saveErr != null) throw new InvalidOperationException(saveErr);
             _savedSuccessfully = true;
 
             // [KHE-SAVE 2026-10-30] Thêm giá trị gợi ý (vật liệu / cấu hình / ghi chú VL) vào Part Master SAU khi phiếu đã lưu, lỗi thì bỏ qua:

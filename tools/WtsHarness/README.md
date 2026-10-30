@@ -22,3 +22,9 @@ bước E14 khác có chủ đích (bản cũ ghi dòng "XYZ" sổ bỏ qua, b�
 
 `mk.sh` chép MES.Web, bỏ PackageReference, thêm stub, chèn `HarnessSeed` (3 PO cố định, người dùng admin / gc01 / htsp01 / kcs01 / pkg01, mật khẩu 123456 — admin/admin123)
 và endpoint `/harness/dump` (JSON các bảng WTS).
+
+## drive_khe.py — trang "Sửa phiếu KH" ([KHE-6][KHE-3][KHE-7] 30/10/2026)
+2 người Kế hoạch `khe01` / `khe02` (PIN 1111, thêm cuối HarnessSeed) cùng mở 1 PO: sửa khác ô thì giữ cả 2, cùng ô thì người sau bị báo,
+không đụng công tắc Workflow thì không ghi đè, Ghi chú chung có lịch sử ở mọi PO, đổi Workflow có khoá PO.
+`python3 drive_khe.py 5101 new` → 30/10: bản mới ĐẠT hết, bản master 70d59ac 7 SAI. (Harness 1 DbContext dùng chung, chạy tuần tự:
+không đo được khoá chen nhau thật — phần đó kiểm ở `GiaoNhanFuzz kh` A6 bằng móc OnAppLock.)

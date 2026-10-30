@@ -767,20 +767,48 @@ public class KhPlanService
               + "\nNên sửa / huỷ các WTS hoặc phiếu gây âm trước rồi mới bật.";
     }
 
-    /// <summary>Đổi ApplyWorkflow của phiếu KH (kiểm K7 khi bật) + ghi lịch sử vào từng dòng PO. Trả null = đã đổi (chưa SaveChanges của trang).</summary>
+    /// <summary>
+    /// Đổi ApplyWorkflow của phiếu KH (kiểm K7 khi bật) + ghi lịch sử vào từng dòng PO. Trả null = đã đổi và đã lưu.
+    /// [KHE-6 2026-10-30] Trước: kiểm K7 rồi để trang SaveChanges, KHÔNG giữ khoá PO — giữa lúc kiểm và lúc ghi, 1 dòng WTS / phiếu
+    ///   lưu lúc còn OFF có thể tạo ô âm → PO bật ON với số âm (khoá cứng mọi thao tác). Nay tự mở giao dịch, khoá mọi PO của phiếu
+    ///   (tăng dần, cùng thứ tự WtsSaveService), kiểm K7 SAU khi khoá, ghi cờ + log, lưu, commit. Bị chặn thì không ghi gì.
+    /// </summary>
     public async Task<string?> SetApplyWorkflowAsync(int khPlanId, bool on, int changedBy, string reason)
     {
         if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
             return PermCheck.NoEdit("Kế hoạch");
-        var plan = await _db.KhPlans.FirstOrDefaultAsync(p => p.KhPlanId == khPlanId);
-        if (plan == null) return "Không tìm thấy phiếu KH.";
+        var ids = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanId == khPlanId)
+                           .Select(d => d.KhPlanDetailId).ToListAsync();
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;   // [KHE-6]
+        try
+        {
+            var lockErr = await LockPlanPosAsync(ids);   // [KHE-6]
+            if (lockErr != null) { await RollbackOwnAsync(ownTx); return lockErr; }
+            if (!await SamePlanPosAsync(khPlanId, ids))   // [KHE-6 rà độc lập] PO thêm / bớt trong lúc chờ khoá → PO mới chưa khoá
+            { await RollbackOwnAsync(ownTx); return "Phiếu vừa thêm / bớt PO trong lúc lưu — bấm Lưu lại."; }
+            var plan = await _db.KhPlans.FirstOrDefaultAsync(p => p.KhPlanId == khPlanId);
+            if (plan == null) { await RollbackOwnAsync(ownTx); return "Không tìm thấy phiếu KH."; }
+            var err = await ApplyWorkflowCoreAsync(plan, ids, on, changedBy, reason);
+            if (err != null) { await RollbackOwnAsync(ownTx); return err; }
+            await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
+            return null;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
+    }
+
+    // [KHE-6 2026-10-30] Phần đổi cờ Workflow (gọi khi ĐÃ giữ khoá mọi PO của phiếu, trong giao dịch): K7 khi bật + log từng PO. Chưa SaveChanges.
+    private async Task<string?> ApplyWorkflowCoreAsync(KhPlan plan, List<int> ids, bool on, int changedBy, string reason)
+    {
         if (plan.ApplyWorkflow == on) return null;
         if (on)
         {
-            var err = await CheckWorkflowOnAsync(khPlanId);
+            var err = await CheckWorkflowOnAsync(plan.KhPlanId);   // đọc sổ SAU khi khoá → không ai chen ghi được giữa lúc kiểm và lúc lưu
             if (err != null) return err;
         }
-        var ids = await _db.KhPlanDetails.Where(d => d.KhPlanId == khPlanId).Select(d => d.KhPlanDetailId).ToListAsync();
         foreach (var id in ids)
             _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
             {
@@ -795,6 +823,168 @@ public class KhPlanService
             });
         plan.ApplyWorkflow = on;
         return null;
+    }
+
+    // [KHE-6 2026-10-30] Khoá "MES_PO_<id>" các PO theo thứ tự tăng dần (cùng thứ tự WtsSaveService → không khoá chéo). Phải đang trong giao dịch.
+    //   PoGuard.LockAsync xoá ChangeTracker sau mỗi lần khoá → mọi thứ đọc sau đây là số mới nhất của DB.
+    private async Task<string?> LockPlanPosAsync(IEnumerable<int> ids)
+    {
+        foreach (var id in ids.Distinct().OrderBy(x => x))
+        {
+            var e = await PoGuard.LockAsync(_db, id);
+            if (e != null) return e;
+        }
+        return null;
+    }
+
+    // [KHE-6 rà độc lập 30/10] Đọc lại danh sách PO của phiếu SAU khi khoá: khác danh sách đã khoá (vừa tách / xoá PO) → không lưu.
+    private async Task<bool> SamePlanPosAsync(int khPlanId, List<int> lockedIds)
+    {
+        var now = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanId == khPlanId).Select(d => d.KhPlanDetailId).ToListAsync();
+        return now.Count == lockedIds.Count && !now.Except(lockedIds).Any();
+    }
+
+    // Tự mở giao dịch thì rollback + bỏ thay đổi đang theo dõi; giao dịch của người gọi thì để người gọi quyết (không xoá tracker của họ).
+    private async Task RollbackOwnAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? ownTx)
+    {
+        if (ownTx == null) return;
+        await ownTx.RollbackAsync();
+        _db.ChangeTracker.Clear();
+    }
+
+    // =====================================================================
+    // [KHE-6][KHE-3][KHE-7 2026-10-30] Lưu trang "Sửa phiếu KH" (Edit_Khplan) trong 1 giao dịch — trước trang tự ghi từng phần rồi SaveChanges.
+    //   KHE-6: đổi Workflow kiểm K7 dưới khoá mọi PO của phiếu (xem SetApplyWorkflowAsync); dòng PO đang sửa cũng được khoá
+    //          (SL PO là trần của WTS khi Workflow OFF — không đổi chen giữa lúc WTS đang kiểm).
+    //   KHE-3: trang gửi giá trị lúc mở (orig) và giá trị đang có trên form (now). Chỉ ghi ô người dùng đã đổi; ô người dùng
+    //          không đổi giữ nguyên số trong DB (trước: ghi đè lại bằng giá trị cũ của trang → mất thay đổi người khác vừa lưu).
+    //          Ô người dùng đổi mà DB đã bị người khác đổi sang giá trị khác → không lưu gì, báo ô nào để tải lại trang.
+    //   KHE-7: Ghi chú phiếu / Ngày nhận PO ghi lịch sử vào từng PO của phiếu (FieldName PlanNotes / ReceivedDate) như ApplyWorkflow.
+    //   null = đã lưu; khác null = lời báo (đã rollback, không ghi gì).
+    // =====================================================================
+    public sealed class KhEditValues
+    {
+        public string?   PlanNotes         { get; set; }
+        public DateTime? ReceivedDate      { get; set; }
+        public bool      ApplyWorkflow     { get; set; }
+        public decimal   Quantity          { get; set; }
+        public string    Unit              { get; set; } = "";
+        public DateTime  STD               { get; set; }
+        public string?   Type              { get; set; }
+        public string?   Priority          { get; set; }
+        public string?   Material          { get; set; }
+        public string?   MaterialConfig    { get; set; }
+        public string?   Location          { get; set; }
+        public string?   MaterialNotes     { get; set; }
+        public string?   OrderVL           { get; set; }
+        public string?   MaterialCondition { get; set; }
+        public string?   PartNotes         { get; set; }
+    }
+
+    public async Task<string?> SaveEditAsync(int khPlanId, int khPlanDetailId, KhEditValues orig, KhEditValues now, int changedBy, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return "Bắt buộc nhập lý do sửa";
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))
+            return PermCheck.NoEdit("Kế hoạch");
+
+        var ids = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanId == khPlanId)
+                           .Select(d => d.KhPlanDetailId).ToListAsync();
+        if (!ids.Contains(khPlanDetailId)) return "Dòng không tồn tại";
+        bool wfChanged = orig.ApplyWorkflow != now.ApplyWorkflow;
+        // [KHE-3 rà độc lập 30/10] Ghi chú / Ngày nhận nằm trên dòng phiếu dùng chung cho mọi PO → đổi 2 ô này cũng khoá mọi PO của phiếu,
+        //   để 2 người sửa 2 PO khác nhau của cùng phiếu không cùng qua bước so rồi người sau ghi đè người trước.
+        bool planChanged = wfChanged
+            || (orig.PlanNotes ?? "") != (now.PlanNotes ?? "")
+            || orig.ReceivedDate?.Date != now.ReceivedDate?.Date;
+        var lockIds = planChanged ? ids : new List<int> { khPlanDetailId };
+
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            var lockErr = await LockPlanPosAsync(lockIds);
+            if (lockErr != null) { await RollbackOwnAsync(ownTx); return lockErr; }
+            if (planChanged && !await SamePlanPosAsync(khPlanId, ids))   // [KHE-6 rà độc lập] PO thêm / bớt trong lúc chờ khoá → PO mới chưa khoá
+            { await RollbackOwnAsync(ownTx); return "Phiếu vừa thêm / bớt PO trong lúc lưu — bấm Lưu lại."; }
+
+            var plan = await _db.KhPlans.FirstOrDefaultAsync(p => p.KhPlanId == khPlanId);
+            var d    = await _db.KhPlanDetails.FirstOrDefaultAsync(x => x.KhPlanDetailId == khPlanDetailId);
+            if (plan == null || d == null) { await RollbackOwnAsync(ownTx); return "Dòng không tồn tại"; }
+
+            // ── [KHE-3] ô người dùng đổi mà người khác cũng vừa đổi (sang giá trị khác) → không lưu ──
+            var conflicts = new List<string>();
+            bool Mine<T>(string label, T o, T n, T cur, Func<T, string> fmt)
+            {
+                bool userChanged = !Equals(o, n);
+                if (userChanged && !Equals(cur, o) && !Equals(cur, n))
+                    conflicts.Add($"{label}: lúc mở trang \"{fmt(o)}\" → người khác vừa lưu \"{fmt(cur)}\"");
+                return userChanged && !Equals(cur, n);   // true = cần ghi
+            }
+            static string S(string? s) => s ?? "";
+            static string Dt(DateTime? v) => v.HasValue ? v.Value.ToString("yyyy-MM-dd") : "";
+            static string? DtLog(DateTime? v) => v?.ToString("yyyy-MM-dd");   // log: ô trống ghi NULL như UpdateFullAsync
+
+            bool wNotes = Mine("Ghi chú phiếu", S(orig.PlanNotes), S(now.PlanNotes), S(plan.Notes), x => x);
+            bool wRecv  = Mine("Ngày nhận PO", orig.ReceivedDate?.Date, now.ReceivedDate?.Date, plan.ReceivedDate?.Date, Dt);
+            bool wWf    = Mine("Áp dụng Workflow", orig.ApplyWorkflow, now.ApplyWorkflow, plan.ApplyWorkflow, b => b ? "ON" : "OFF");
+
+            var nv = new KhPlanDetail   // bắt đầu = số hiện tại trong DB, chỉ thay ô người dùng đổi
+            {
+                Quantity = d.Quantity, Unit = d.Unit, STD = d.STD, Type = d.Type, Priority = d.Priority,
+                Material = d.Material, MaterialConfig = d.MaterialConfig, Location = d.Location, MaterialNotes = d.MaterialNotes,
+                OrderVL = d.OrderVL, MaterialCondition = d.MaterialCondition, PartNotes = d.PartNotes
+            };
+            if (Mine("SL", orig.Quantity, now.Quantity, d.Quantity, x => x.ToString(QtyFormat)))                     nv.Quantity = now.Quantity;
+            if (Mine("Đơn vị", S(orig.Unit), S(now.Unit), S(d.Unit), x => x))                                         nv.Unit = now.Unit;
+            if (Mine("STD", orig.STD.Date, now.STD.Date, d.STD.Date, x => x.ToString("yyyy-MM-dd")))                  nv.STD = now.STD;
+            if (Mine("Loại", S(orig.Type), S(now.Type), S(d.Type), x => x))                                           nv.Type = now.Type;
+            if (Mine("Ưu tiên", S(orig.Priority), S(now.Priority), S(d.Priority), x => x))                            nv.Priority = now.Priority;
+            if (Mine("Vật liệu", S(orig.Material), S(now.Material), S(d.Material), x => x))                           nv.Material = now.Material;
+            if (Mine("Cấu hình VL", S(orig.MaterialConfig), S(now.MaterialConfig), S(d.MaterialConfig), x => x))      nv.MaterialConfig = now.MaterialConfig;
+            if (Mine("Vị trí", S(orig.Location), S(now.Location), S(d.Location), x => x))                             nv.Location = now.Location;
+            if (Mine("Ghi chú VL", S(orig.MaterialNotes), S(now.MaterialNotes), S(d.MaterialNotes), x => x))          nv.MaterialNotes = now.MaterialNotes;
+            if (Mine("Order VL", S(orig.OrderVL), S(now.OrderVL), S(d.OrderVL), x => x))                              nv.OrderVL = now.OrderVL;
+            if (Mine("Tình trạng VL", S(orig.MaterialCondition), S(now.MaterialCondition), S(d.MaterialCondition), x => x)) nv.MaterialCondition = now.MaterialCondition;
+            if (Mine("Ghi chú Part", S(orig.PartNotes), S(now.PartNotes), S(d.PartNotes), x => x))                   nv.PartNotes = now.PartNotes;
+
+            if (conflicts.Count > 0)
+            {
+                await RollbackOwnAsync(ownTx);
+                return "Không lưu: phiếu vừa được người khác sửa sau khi bạn mở trang —\n" + string.Join("\n", conflicts)
+                     + "\nTải lại trang (F5) để xem số mới rồi sửa lại.";
+            }
+
+            // ── phần phiếu (Ghi chú / Ngày nhận) + [KHE-7] lịch sử từng PO ──
+            void PlanLog(string field, string? oldV, string? newV)
+            {
+                foreach (var id in ids)
+                    _db.KhPlanDetailChangeLogs.Add(new KhPlanDetailChangeLog
+                    {
+                        KhPlanDetailId = id, FieldName = field, OldValue = oldV, NewValue = newV,
+                        ChangedBy = changedBy, ChangedAt = DateTime.Now, ChangeSource = "Manual", Reason = reason
+                    });
+            }
+            if (wNotes) { PlanLog("PlanNotes", string.IsNullOrEmpty(plan.Notes) ? null : plan.Notes, string.IsNullOrEmpty(now.PlanNotes) ? null : now.PlanNotes); plan.Notes = now.PlanNotes; }
+            if (wRecv)  { PlanLog("ReceivedDate", DtLog(plan.ReceivedDate), DtLog(now.ReceivedDate)); plan.ReceivedDate = now.ReceivedDate; }
+
+            // ── [KHE-6] Workflow dưới khoá ──
+            if (wWf)
+            {
+                var wfErr = await ApplyWorkflowCoreAsync(plan, ids, now.ApplyWorkflow, changedBy, reason);
+                if (wfErr != null) { await RollbackOwnAsync(ownTx); return wfErr; }
+            }
+
+            // ── dòng PO (dùng lại UpdateFullAsync: so từng ô + log, SaveChanges trong giao dịch này) ──
+            try { await UpdateFullAsync(khPlanDetailId, nv, changedBy, reason); }
+            catch (InvalidOperationException ex) { await RollbackOwnAsync(ownTx); return ex.Message; }
+
+            await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
+            return null;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
     public async Task<List<KhPlanDetailChangeLog>> GetChangeHistoryAsync(int khPlanDetailId, string? fieldName = null)

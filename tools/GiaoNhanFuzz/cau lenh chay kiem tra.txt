@@ -24,7 +24,7 @@ Tuỳ chỉnh: dotnet bin2\GiaoNhanFuzz.dll nang <số PO mỗi lượt> <thao t
 Máy 2 nhân (sandbox): 6 lượt x 25 PO mất khoảng 8 phút.
 
 == 1. KỊCH BẢN CỐ ĐỊNH (vài giây) ==
-dotnet bin2\GiaoNhanFuzz.dll kh
+dotnet bin2\GiaoNhanFuzz.dll kh      (30/10 thêm A6–A9 [KHE-6][KHE-3][KHE-7]: bật Workflow kiểm K7 dưới khoá PO, Sửa phiếu KH chỉ ghi ô người dùng đổi)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết
 dotnet bin2\GiaoNhanFuzz.dll loi      (mới 28/10: hàng lỗi qua nhiều nơi — số phải ra từng bước)
 -> cuối phải ra: KẾT QUẢ: ĐẠT hết

@@ -225,11 +225,18 @@ namespace Microsoft.EntityFrameworkCore
             return Task.FromResult(Current);
         }
         public static int RawCalls; public static List<string> RawLog = new();
+        public static List<string> LockNames = new(); public static Action<string>? OnAppLock;   // [KHE-6]
         public Task<int> ExecuteSqlRawAsync(string sql, params object[] args)
         {
             RawCalls++; RawLog.Add(sql);
             if (Current == null && sql.Contains("sp_getapplock") && sql.Contains("'Transaction'"))
                 throw new InvalidOperationException("sp_getapplock LockOwner=Transaction gọi ngoài giao dịch");
+            // [KHE-6] ghi tên khoá theo thứ tự + móc để kịch bản giả "người khác vừa lưu xong, mình mới lấy được khoá"
+            if (sql.Contains("sp_getapplock") && args.Length > 0)
+            {
+                LockNames.Add(Convert.ToString(args[0]) ?? "");
+                OnAppLock?.Invoke(Convert.ToString(args[0]) ?? "");
+            }
             // [CHUOI] Làm thật câu "DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId = {0}" (RefreshRouteSnapshotAsync / WriteSnapshotStdConfirmsAsync)
             //   để kiểm được "làm mới quy trình = Part Master hiện tại". Các câu raw khác vẫn chỉ ghi log như cũ.
             var m = System.Text.RegularExpressions.Regex.Match(sql, @"DELETE\s+(?:\w+\s+)?FROM\s+(KhPlanRouteSnapshot\w+)");

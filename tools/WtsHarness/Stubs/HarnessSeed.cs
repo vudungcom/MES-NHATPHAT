@@ -132,6 +132,13 @@ public static class HarnessSeed
         db.KhPlanDetails.Add(new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 99, PartNo = "PART-30", PurchaseOrder = "PO30", Quantity = 5, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 });
         await db.SaveChangesAsync();
 
+        // ── [KHE-3][KHE-6 30/10] 2 người Kế hoạch có PIN cho drive_khe.py (thêm CUỐI → không đổi id / kết quả các kịch bản trước) ──
+        var gKh = new UserGroup { GroupCode = "KHTEST", GroupName = "Kế hoạch", IsActive = true, Permissions = PermsVE((SystemPermissions.KeHoach, true, true)) };
+        db.UserGroups.Add(gKh); await db.SaveChangesAsync();
+        db.Users.AddRange(
+            new User { Username = "khe01", FullName = "Kế hoạch A", PasswordHash = hash, GroupId = gKh.GroupId, IsActive = true, PIN = "1111" },
+            new User { Username = "khe02", FullName = "Kế hoạch B", PasswordHash = hash, GroupId = gKh.GroupId, IsActive = true, PIN = "1111" });
+        await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         db.Fixup();
         Console.WriteLine($"[HARNESS] seed xong: {db.KhPlanDetails.List.Count} PO, {db.WtsProductionLogs.List.Count} WTS, {db.HandoverTransactions.List.Count} phiếu");
@@ -165,6 +172,10 @@ public static class HarnessSeed
             timings = db.PartMachiningTimings.List.OrderBy(t => t.TimingId).Select(t => new { t.StepId, t.SoMay, t.IsActive }),
             snapm = db.KhPlanRouteSnapshotMachining.List.Select(m => new { m.KhPlanDetailId, m.NC, m.MachineRegistered }),
             podet = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }),
+            // [KHE-3][KHE-6][KHE-7 30/10] phiếu KH + dòng PO + lịch sử (drive_khe.py)
+            khplan = db.KhPlans.List.Select(p => new { p.KhPlanId, p.Notes, Recv = D(p.ReceivedDate), p.ApplyWorkflow }),
+            khdet  = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.KhPlanId, d.Quantity, d.Location, d.PartNotes, d.Priority }),
+            khlog  = db.KhPlanDetailChangeLogs.List.Select(l => new { l.KhPlanDetailId, l.FieldName, l.OldValue, l.NewValue, l.ChangedBy, l.Reason }),
         };
     }
 }
