@@ -1556,7 +1556,27 @@ namespace MES.Web.Services
                 .Select(r => new { r.ReceiveId, Who = r.ReceivedByUser != null ? (r.ReceivedByUser.FullName ?? r.ReceivedByUser.Username) : null })
                 .AsNoTracking().ToListAsync();
             foreach (var r in rw) extra.RecvWho[r.ReceiveId] = r.Who;
-            return HandoverNgTrace.Build(inp, extra);
+            var trace = HandoverNgTrace.Build(inp, extra);
+            // [ML16-ACT 2026-10-30] Master list 11: giờ sửa hàng ("Việc không ra sản phẩm" ghi PO / vụ) — chỉ đọc thêm để hiển thị,
+            //   không đổi phép tính hàng lỗi (L6). Dòng đã huỷ không tính.
+            var gs = await _db.WorkerActivityLogs
+                .Where(a => a.RefKhPlanDetailId == khPlanDetailId && !a.IsVoided)
+                .Select(a => new { a.NgCaseId, a.StartTime, a.EndTime, a.WtsCode, Who = a.Worker != null ? (a.Worker.FullName ?? a.Worker.Username) : null })
+                .AsNoTracking().ToListAsync();
+            if (gs.Count > 0)
+            {
+                int Min(DateTime s0, DateTime e0) => e0 > s0 ? (int)Math.Round((e0 - s0).TotalMinutes) : 0;
+                trace.GioSuaPo      = gs.Sum(a => Min(a.StartTime, a.EndTime));
+                trace.GioSuaKhongVu = gs.Where(a => a.NgCaseId == null).Sum(a => Min(a.StartTime, a.EndTime));
+                foreach (var c in trace.Cases)
+                {
+                    var mine = gs.Where(a => a.NgCaseId == c.Id).OrderBy(a => a.StartTime).ToList();
+                    if (mine.Count == 0) continue;
+                    c.GioSua     = mine.Sum(a => Min(a.StartTime, a.EndTime));
+                    c.GioSuaText = string.Join(" | ", mine.Select(a => $"{a.StartTime:dd/MM HH:mm}–{a.EndTime:HH:mm} {a.WtsCode} {a.Who}"));
+                }
+            }
+            return trace;
         }
 
         public static List<LedgerStepRow> ComputeSteps(LedgerInput inp)

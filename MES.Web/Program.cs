@@ -3,6 +3,8 @@ using MES.Web.Data;
 using MES.Web.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,7 +15,7 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddServerSideBlazor(options =>
 {
-    options.DetailedErrors = true;
+    options.DetailedErrors = builder.Environment.IsDevelopment();   // [RS-E11 2026-10-30] chỉ bật khi Development — trước: luôn bật, lỗi hiện chi tiết code cho người dùng
 });
 
 // ==== EF Core / SQL Server ====
@@ -30,11 +32,34 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.AccessDeniedPath = "/access-denied";
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
+        options.Cookie.HttpOnly = true;                                   // [RS-E11] JS không đọc được cookie đăng nhập
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;   // [RS-E11] chạy sau Caddy (HTTPS) → cookie Secure (nhờ UseForwardedHeaders)
+        // [RS-C3 2026-10-30] Mỗi request kiểm lại DB: tài khoản / nhóm bị khoá, đổi nhóm → đăng xuất ngay (trước: giữ quyền tới hết 8 giờ)
+        options.Events.OnValidatePrincipal = async ctx =>
+        {
+            var db = ctx.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+            bool ok;
+            try { ok = await AuthGuard.IsStillValidAsync(db, ctx.Principal); } catch { ok = true; }   // DB lỗi tạm thời: không đá ra
+            if (!ok)
+            {
+                ctx.RejectPrincipal();
+                await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
     });
+
+// [RS-E11 2026-10-30] Chạy sau Caddy / proxy cùng máy: nhận X-Forwarded-Proto (https) + IP thật → cookie Secure đúng, giới hạn đăng nhập theo IP thật.
+//   Chỉ tin proxy chạy trên chính máy này (mặc định KnownProxies = 127.0.0.1 / ::1). HTTPS + chuyển http→https do Caddy làm.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+});
 
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddHttpContextAccessor();
+// [RS-C3 2026-10-30] Mạch Blazor đang mở kiểm lại tài khoản mỗi 1 phút (khoá / đổi nhóm → về đăng nhập)
+builder.Services.AddScoped<AuthenticationStateProvider, MesRevalidatingAuthStateProvider>();
 
 // ==== Services ====
 builder.Services.AddScoped<AuthService>();
@@ -96,6 +121,7 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/error", createScopeForErrors: true);
 }
 
+app.UseForwardedHeaders();   // [RS-E11] trước mọi middleware khác
 app.UseStaticFiles();
 app.UseAntiforgery();
 app.UseAuthentication();
@@ -112,8 +138,22 @@ app.MapPost("/login-submit", async (HttpContext ctx, AuthService auth) =>
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
 
+    // [RS-C4 2026-10-30] Giới hạn đăng nhập sai (5 lần / 15 phút / tên + máy; 20 lần / IP) — trước: thử không giới hạn
+    var ip  = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
+    var now = DateTime.Now;
+    var safeReturn = AuthGuard.SafeReturnUrl(returnUrl);
+    string Back(string q) => "/login?" + q + (safeReturn != "/" ? "&returnUrl=" + Uri.EscapeDataString(safeReturn) : "");
+    if (LoginThrottle.LockedMinutes(username, ip, now) is int waitMin)
+        return Results.Redirect(Back("error=2&wait=" + waitMin));
     var user = await auth.VerifyCredentialsAsync(username, password);
-    if (user == null) return Results.Redirect("/login?error=1");
+    if (user == null)
+    {
+        LoginThrottle.Fail(username, ip, now);
+        return LoginThrottle.LockedMinutes(username, ip, now) is int w2 ? Results.Redirect(Back("error=2&wait=" + w2)) : Results.Redirect(Back("error=1"));
+    }
+    LoginThrottle.Success(username, ip);
+    // [RS-C3] Nhóm của tài khoản đang khoá / chưa có nhóm → báo rõ (trước bản này vào được; nay phiên bị kiểm nhóm nên không cho vào rồi đá ra im lặng)
+    if (!AuthGuard.AccountUsable(user)) return Results.Redirect(Back("error=3"));
 
     var claims = new List<System.Security.Claims.Claim>
     {
@@ -127,7 +167,7 @@ app.MapPost("/login-submit", async (HttpContext ctx, AuthService auth) =>
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
 
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
-    return Results.Redirect(string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl);
+    return Results.Redirect(safeReturn);   // [RS-C4] chỉ đường dẫn nội bộ — trước: returnUrl bất kỳ (chuyển sang trang lạ sau đăng nhập)
 }).DisableAntiforgery();
 
 app.MapGet("/logout", async (HttpContext ctx) =>
@@ -149,8 +189,7 @@ app.MapGet("/download/std-update-template.xlsx", () =>
 Console.WriteLine("");
 Console.WriteLine("========================================");
 Console.WriteLine(" MES đang chạy tại http://localhost:5000");
-Console.WriteLine(" Login lần đầu: admin / admin123");
-Console.WriteLine(" (Đổi password ngay sau khi login)");
+Console.WriteLine(" (Tài khoản mặc định: đổi mật khẩu ngay sau lần đăng nhập đầu)");   // [RS-C4] không in mật khẩu mặc định
 Console.WriteLine("========================================");
 Console.WriteLine("");
 

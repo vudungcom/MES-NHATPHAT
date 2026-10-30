@@ -62,12 +62,24 @@ public class WtsReportService
             .ToListAsync();
 
         // ── 3. Danh sách mã WTS để biết IsProductiveTask ─────────────────
+        // [RPT-ACTIVE 2026-10-30] Đọc cả mã đã NGƯNG dùng + so mã không phân biệt hoa thường (như SQL Server).
+        //   Trước: chỉ mã đang dùng → mã "vô ích" bị ngưng dùng thì mọi dòng cũ của mã đó thành "Có ích" (hiệu suất các tháng trước đổi).
+        //   Trùng mã (1 mã đang dùng + 1 bản cũ đã ngưng) → lấy bản đang dùng.
         var allWtsTasks = await _db.StandardWtsTasks
-            .Where(t => t.IsActive)
             .AsNoTracking()
             .ToListAsync();
 
-        var wtsLookup = allWtsTasks.ToDictionary(t => t.TaskCode, t => t);
+        var wtsLookup = allWtsTasks
+            .GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First(), StringComparer.OrdinalIgnoreCase);
+
+        // [ML16-ACT 2026-10-30] Dòng "Việc không ra sản phẩm" có PO tham chiếu (giờ sửa hàng) + vụ lỗi → hiện PO / Part / loại lỗi của vụ
+        var actRefIds = actLogs.Where(a => a.RefKhPlanDetailId != null).Select(a => a.RefKhPlanDetailId!.Value).Distinct().ToList();
+        var actRefPo  = actRefIds.Count == 0 ? new Dictionary<int, (string Po, string Part)>()
+            : (await _db.KhPlanDetails.AsNoTracking().Where(d => actRefIds.Contains(d.KhPlanDetailId))
+                   .Select(d => new { d.KhPlanDetailId, d.PurchaseOrder, d.PartNo }).ToListAsync())
+              .ToDictionary(x => x.KhPlanDetailId, x => (x.PurchaseOrder ?? "", x.PartNo ?? ""));
+        var actCaseLbl = await NgCaseService.GetCaseLabelsAsync(_db, actLogs.Select(a => a.NgCaseId));
 
         // ── 4. Gộp thành WtsReportRow ─────────────────────────────────────
         var rows = new List<WtsReportRow>();
@@ -88,7 +100,7 @@ public class WtsReportService
                 PurchaseOrder   = p.KhPlanDetail?.PurchaseOrder ?? "",
                 PartNo          = p.KhPlanDetail?.PartNo ?? "",
                 NC              = p.NC ?? "",
-                WtsCode         = "",
+                WtsCode         = p.NC == null ? (p.WtsCode ?? "") : "",   // [RS-E7 2026-10-30] HTSP / KCS / Đóng gói: mã CV nằm ở WtsCode (trước: luôn "", báo cáo mất mã)
                 WtsName         = "",
                 MachineUsed     = p.MachineUsed ?? "",
                 QtyDone         = p.QtyDone,
@@ -110,6 +122,7 @@ public class WtsReportService
             if (a.WtsCode != null && wtsLookup.TryGetValue(a.WtsCode, out var task))
                 isProductive = task.IsProductiveTask;
 
+            var refPo = a.RefKhPlanDetailId != null && actRefPo.TryGetValue(a.RefKhPlanDetailId.Value, out var rp) ? rp : ("", "");
             rows.Add(new WtsReportRow
             {
                 WorkDate        = a.WorkDate,
@@ -118,8 +131,13 @@ public class WtsReportService
                 StartTime       = a.StartTime,
                 EndTime         = a.EndTime,
                 Minutes         = minutes,
-                PurchaseOrder   = "",
-                PartNo          = "",
+                PurchaseOrder   = refPo.Item1,   // [ML16-ACT] PO tham chiếu (giờ sửa) — "" = việc chung
+                PartNo          = refPo.Item2,
+                NgReason        = a.NgCaseId != null
+                    ? NgCaseNo.Format(a.NgCaseId.Value) + (actCaseLbl.TryGetValue(a.NgCaseId.Value, out var cl) ? " · " + cl : "")
+                    : null,                       // [ML16-ACT] vụ lỗi đang sửa
+                RefKhPlanDetailId = a.RefKhPlanDetailId,
+                NgCaseId        = a.NgCaseId,
                 NC              = "",
                 WtsCode         = a.WtsCode ?? "",
                 WtsName         = a.WtsName ?? "",
@@ -220,6 +238,8 @@ public class WtsReportRow
     public bool      IsOvertime       { get; set; }  // Tăng ca
     public bool      IsProductiveTask { get; set; }
     public WtsRowType RowType         { get; set; }
+    public int?      RefKhPlanDetailId { get; set; }   // [ML16-ACT] dòng việc không ra SP: PO tham chiếu (giờ sửa)
+    public long?     NgCaseId          { get; set; }   // [ML16-ACT] vụ lỗi đang sửa
 }
 
 public class WtsReportResult
@@ -229,4 +249,12 @@ public class WtsReportResult
     public int                ProductiveMin { get; set; }
     public int                WasteMin      { get; set; }
     public double EfficiencyPct => TotalMinutes == 0 ? 0 : Math.Round((double)ProductiveMin / TotalMinutes * 100, 1);
+
+    /// <summary>[ML16-ACT 2026-10-30] Master list 11: cộng giờ "Việc không ra sản phẩm" có ghi PO (giờ sửa hàng) theo từng PO.</summary>
+    public List<(string Po, string Part, int Minutes, int Lines, int Cases)> RepairByPo => Rows
+        .Where(r => r.RowType == WtsRowType.Activity && r.RefKhPlanDetailId != null)
+        .GroupBy(r => r.RefKhPlanDetailId!.Value)
+        .Select(g => (g.First().PurchaseOrder, g.First().PartNo, g.Sum(x => x.Minutes), g.Count(), g.Where(x => x.NgCaseId != null).Select(x => x.NgCaseId).Distinct().Count()))
+        .OrderByDescending(x => x.Item3)
+        .ToList();
 }

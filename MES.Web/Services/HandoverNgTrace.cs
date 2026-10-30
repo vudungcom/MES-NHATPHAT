@@ -86,6 +86,9 @@ namespace MES.Web.Services
         public decimal DangChuyen { get; set; }
         public bool    Balanced => PhatSinh - VeSx - DaHuy - TraKhach == DangGiu + DangChuyen && Problems.Count == 0;
         public bool    HasAny => Events.Count > 0;
+        /// <summary>[ML16-ACT 2026-10-30] Tổng phút "Việc không ra sản phẩm" ghi PO này (giờ sửa, có / không gắn vụ) — chỉ hiển thị.</summary>
+        public int     GioSuaPo   { get; set; }
+        public int     GioSuaKhongVu { get; set; }
         /// <summary>Chỗ khung lỗi không khớp sổ (không được xảy ra — báo lại để kiểm).</summary>
         public List<string> Problems { get; set; } = new();
         /// <summary>[VULOI 2026-10-28] Bảng theo từng vụ lỗi (mỗi dòng 1 vụ, cột = chặng). Đọc từ LedgerRow.Cases của sổ.</summary>
@@ -124,6 +127,9 @@ namespace MES.Web.Services
         public List<LedgerCaseHop> Hops { get; set; } = new();
         /// <summary>Mọi nơi vụ đi qua (để lọc theo nơi).</summary>
         public HashSet<string> Places { get; set; } = new();
+        /// <summary>[ML16-ACT 2026-10-30] Phút "Việc không ra sản phẩm" ghi vụ này (giờ sửa) — chỉ hiển thị, không vào cân số lượng.</summary>
+        public int      GioSua     { get; set; }
+        public string   GioSuaText { get; set; } = "";
     }
 
     public static class HandoverNgTrace

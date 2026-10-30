@@ -49,6 +49,9 @@
     </main>
 </div>
 
+@* [RS-C3 2026-10-30] Canh phiên: tài khoản bị khoá / đổi nhóm → về trang đăng nhập (kiểm lại mỗi 1 phút) *@
+<MES.Web.Components.Shared.AuthWatch @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
+
 @* JS helper: download file từ Blazor (dùng cho xuất Excel, PDF...) *@
 <script src="/js/downloadHelper.js"></script>
 
@@ -56,7 +59,8 @@
     private bool _isBlocked = false;
     
     // Kiểm tra xem User có đang ở trang About không
-    private bool IsAboutPage => Nav.Uri.Contains("/about", StringComparison.OrdinalIgnoreCase);
+    // [RS-E11 2026-10-30] So ĐÚNG đường dẫn /about — trước: Uri.Contains("/about") nên thêm "?x=/about" vào bất kỳ trang nào là qua khoá bản quyền
+    private bool IsAboutPage => string.Equals(new Uri(Nav.Uri).AbsolutePath.TrimEnd('/'), "/about", StringComparison.OrdinalIgnoreCase);
 
     // Sự kiện này tự động chạy mỗi khi người dùng chuyển trang hoặc tải lại Layout
     protected override void OnParametersSet()

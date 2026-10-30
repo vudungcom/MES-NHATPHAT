@@ -21,7 +21,9 @@ public class MachineEfficiencyService
         CaLamViec? selectedCa = null)
     {
         var dayStart = date.ToDateTime(fromTime);
-        var dayEnd   = date.ToDateTime(toTime);
+        // [RPT-3 2026-10-30] Ca vắt đêm (vd 20:00–05:00): giờ kết thúc sang ngày hôm sau — trước: chỉ queryEnd được nới,
+        //   dayEnd vẫn cùng ngày → tổng phút âm, mọi đoạn WTS bị cắt hết, hiệu suất 0 %.
+        var dayEnd   = toTime < fromTime ? date.AddDays(1).ToDateTime(toTime) : date.ToDateTime(toTime);
 
         // ── 1. Danh sách máy active ─────────────────────────────────────
         var machines = await _db.ThietBis

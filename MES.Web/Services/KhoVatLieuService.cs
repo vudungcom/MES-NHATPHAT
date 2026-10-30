@@ -56,7 +56,7 @@ public class KhoVatLieuService
                 join p in _db.KhPlans on d.KhPlanId equals p.KhPlanId
                 join c in _db.Customers on p.CustomerId equals c.CustomerId into cGroup
                 from c in cGroup.DefaultIfEmpty()
-                join k in _db.KhoVatLieus on d.KhPlanDetailId equals k.PlanDetailId into kGroup
+                join k in _db.KhoVatLieus.Where(x => x.IsActive) on d.KhPlanDetailId equals k.PlanDetailId into kGroup   // [KHO-ACTIVE 2026-10-30] chỉ dòng Kho đang dùng (như sổ)
                 from k in kGroup.DefaultIfEmpty()
                 orderby p.PlanDate descending, d.LineNo ascending
                 select new KhoVatLieuViewItem
@@ -100,7 +100,7 @@ public class KhoVatLieuService
                 join p in _db.KhPlans on d.KhPlanId equals p.KhPlanId
                 join c in _db.Customers on p.CustomerId equals c.CustomerId into cGroup
                 from c in cGroup.DefaultIfEmpty()
-                join k in _db.KhoVatLieus on d.KhPlanDetailId equals (int?)k.PlanDetailId into kGroup
+                join k in _db.KhoVatLieus.Where(x => x.IsActive) on d.KhPlanDetailId equals (int?)k.PlanDetailId into kGroup   // [KHO-ACTIVE 2026-10-30]
                 from k in kGroup.DefaultIfEmpty()
                 where d.KhPlanDetailId == khPlanDetailId
                 select new KhoVatLieuViewItem
@@ -144,10 +144,15 @@ public class KhoVatLieuService
         DateTime? ngayCap,
         int? slCap,
         string reason,
-        int userId)
+        int userId,
+        bool expectFirstEntry = false)   // [KHO-STALE 2026-10-30] trang đang ở chế độ "nhập lần đầu" (không hỏi lý do / xác nhận)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
             return (false, "Lý do thay đổi là bắt buộc (tối thiểu 3 ký tự).");
+        // [KHO-LEN 2026-10-30] Máy chủ kiểm độ dài (cột DB) — trước: chữ dài quá làm lỗi SQL, trang sập "An unhandled error"
+        if ((orderVl?.Trim().Length ?? 0) > 100) return (false, "Order vật liệu dài quá 100 ký tự.");
+        if ((viTri?.Trim().Length ?? 0) > 100)   return (false, "Vị trí để phôi dài quá 100 ký tự.");
+        if ((tinhTrang?.Trim().Length ?? 0) > 50) return (false, "Tình trạng phôi dài quá 50 ký tự.");
 
         // [E4-KHO-NEG 2026-10-28] Máy chủ chặn số âm (trước chỉ form chặn)
         if (slNhan < 0 || slCap < 0)
@@ -171,6 +176,12 @@ public class KhoVatLieuService
 
         var existing = await _db.KhoVatLieus.FirstOrDefaultAsync(k => k.PlanDetailId == khPlanDetailId && k.IsActive);   // [KHO-ACTIVE] sổ chỉ đọc dòng đang dùng
         var now = DateTime.Now;
+        // [KHO-STALE 2026-10-30] Trang mở từ lúc dòng còn trống (nhập lần đầu, không lý do / xác nhận) nhưng người khác đã nhập trước
+        //   → không ghi đè lặng lẽ (trước: ghi đè với lý do "Nhập lần đầu").
+        if (expectFirstEntry && existing != null
+            && (existing.NgayNhanPhoi != null || existing.SoLuongThucNhan != null || !string.IsNullOrEmpty(existing.OrderVatLieu)
+                || !string.IsNullOrEmpty(existing.ViTriDePhoi) || !string.IsNullOrEmpty(existing.TinhTrangPhoi)))
+            return (false, "Dòng Kho của PO này vừa được người khác nhập — đóng cửa sổ, tải lại trang rồi sửa (cần lý do + xác nhận).");
 
         if (existing == null)
         {

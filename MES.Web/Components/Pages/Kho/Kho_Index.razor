@@ -12,6 +12,7 @@
 @inject AppDbContext Db
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
 
 <PageTitle>Quản lý Kho Phôi & Vật Tư - MES</PageTitle>
 
@@ -267,7 +268,7 @@ else
                         @* Trạng thái — tính từ giao nhận *@
                         <td>
                             @{
-                                var _issued = _khoIssuedOut.TryGetValue(row.KhPlanDetailId, out var _ioSt) ? _ioSt : 0m;
+                                var _issued = KhoGiaoMoi(row.KhPlanDetailId);   // [KHO-LEDGER 2026-10-30] phôi đã lập phiếu Hàng mới đi (kể cả chờ nhận) — đọc sổ (trước: chỉ số GC đã xác nhận OK)
                                 var _rcv    = row.SoLuongThucNhan ?? 0;
                                 var _con    = KhoCon(row.KhPlanDetailId, _rcv);   // [GN-NG-AFTER][V7]
                             }
@@ -400,16 +401,16 @@ else
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Order vật liệu (Cột K)</label>
-                            <input class="form-control form-control-sm font-monospace" @bind="_editOrderVl" placeholder="VD: 0003488452, E054697..." />
+                            <input class="form-control form-control-sm font-monospace" maxlength="100" @bind="_editOrderVl" placeholder="VD: 0003488452, E054697..." />
                         </div>
 
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Vị trí để phôi (Cột L)</label>
-                            <input class="form-control form-control-sm" @bind="_editViTri" placeholder="VD: C6, A3-5, Hướng 22..." />
+                            <input class="form-control form-control-sm" maxlength="100" @bind="_editViTri" placeholder="VD: C6, A3-5, Hướng 22..." />
                         </div>
                         <div class="col-md-8">
                             <label class="form-label small fw-bold">Tình trạng phôi (Cột M)</label>
-                            <input class="form-control form-control-sm" @bind="_editTinhTrang" placeholder="VD: OK, NG, có bvxn, cắt đạt..." />
+                            <input class="form-control form-control-sm" maxlength="50" @bind="_editTinhTrang" placeholder="VD: OK, NG, có bvxn, cắt đạt..." />
                         </div>
 
                         @* Cột N (Ngày giao) và O (SL đã giao) ẨN khỏi form sửa — lấy tự động từ Giao nhận *@
@@ -585,6 +586,10 @@ else
     private Dictionary<int, LedgerRow> _khoLedger = new();
     private decimal KhoCon(int detailId, decimal fallback) => _khoLedger.TryGetValue(detailId, out var r) ? r.G("KHO").ConGiao : fallback;
     private decimal KhoLoi(int detailId) => _khoLedger.TryGetValue(detailId, out var r) ? r.G("KHO").LoiGiu : 0m;
+    // [KHO-LEDGER 2026-10-30] Trạng thái + lọc Đã cấp / Chưa cấp đọc sổ chung (L6): phôi đã lập phiếu Hàng mới (kể cả chờ GC nhận).
+    //   Trước: tự cộng số GC đã xác nhận OK → phiếu chờ nhận vẫn "Sẵn sàng giao", GC nhận có NG thì số lệch sổ.
+    private decimal KhoGiaoMoi(int detailId) => _khoLedger.TryGetValue(detailId, out var r) ? r.G("KHO").GiaoMoi
+        : (_khoIssuedOut.TryGetValue(detailId, out var io) ? io : 0m) + (_khoIssuedPending.TryGetValue(detailId, out var ip) ? ip : 0m);
     private Dictionary<int, DateTime?> _khoIssuedAt = new();
 
     // ================================================================
@@ -612,6 +617,8 @@ else
             _canViewKho = perms.TryGetValue(SystemPermissions.Kho, out var pv) && pv.CanView;
             _canEditKho = perms.TryGetValue(SystemPermissions.Kho, out var pe) && pe.CanEdit;
         }
+        // [KHO-VIEW 2026-10-30] Không có quyền Xem KHO (ma trận) → về trang chủ (trước: tính _canViewKho nhưng không dùng — ai đăng nhập cũng xem được)
+        if (!_canViewKho) { Nav.NavigateTo("/"); return; }
 
         await LoadDataAsync();
         _loading = false;
@@ -763,12 +770,12 @@ else
                     // DaCap = đã giao hết cho GC (từ HandoverTransactions)
                     // [GN-NG-AFTER][V7] "hết" = không còn phôi tốt chưa giao theo sổ (phôi lỗi không tính là còn để giao)
                     "DaCap"    => q.Where(k =>
-                        _khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io) && io > 0
+                        KhoGiaoMoi(k.KhPlanDetailId) > 0   // [KHO-LEDGER]
                         && KhoCon(k.KhPlanDetailId, k.SoLuongThucNhan ?? 0) <= 0),
                     // ChuaCap = đã nhận phôi nhưng chưa giao hết
                     "ChuaCap"  => q.Where(k =>
                         k.NgayNhanPhoi.HasValue &&
-                        (!_khoIssuedOut.TryGetValue(k.KhPlanDetailId, out var io2) || io2 <= 0 || KhoCon(k.KhPlanDetailId, k.SoLuongThucNhan ?? 0) > 0)),
+                        (KhoGiaoMoi(k.KhPlanDetailId) <= 0 || KhoCon(k.KhPlanDetailId, k.SoLuongThucNhan ?? 0) > 0)),   // [KHO-LEDGER]
                     _ => q
                 };
             }
@@ -926,12 +933,18 @@ else
                 _editNgayNhan, _editSlNhan, _editOrderVl,
                 _editViTri, _editTinhTrang,
                 _editNgayCap, _editSlCap,
-                reason, _currentUserId);
+                reason, _currentUserId, IsFirstEntry);   // [KHO-STALE]
 
             if (!ok) { _errorMessage = err; return; }
 
             _showEditModal = false;
             await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            // [KHO-LEN 2026-10-30] lỗi lưu hiện trong cửa sổ (trước: không bắt → trang sập "An unhandled error", mất phiên)
+            _errorMessage = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message);
+            Db.ChangeTracker.Clear();
         }
         finally { _saving = false; }
     }

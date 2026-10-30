@@ -12,6 +12,7 @@
 @inject PartStepStdTimeConfirmService StdConfirmSvc
 @* [STD-UPDATE] Service nút Update TG chuẩn *@
 @inject StdUpdateService StdUpdSvc
+@inject HandoverLedgerService LedgerSvc
 @inject KhPlanService KhSvc
 @inject PartTaroService TaroSvc
 @inject PartBaviaService BaviaSvc
@@ -412,6 +413,11 @@ else
                                                     </button>
                                                 }
                                             </div>
+                                            @if (TimingRowDup(edit, tr) is string dupT)
+                                            {
+                                                @* [ML9-DUP 2026-10-30] dữ liệu cũ: máy của dòng đồng dạng này trùng máy đăng ký / dòng đồng dạng khác trong NC *@
+                                                <div class="small text-danger fw-semibold" style="font-size:0.72rem;">Trùng máy trong NC: @dupT — sửa / xoá 1 dòng</div>
+                                            }
                                         </td>
                                         @* Col 5: Đồ gá — copy y hệt dòng chính *@
                                         <td>
@@ -1680,12 +1686,24 @@ else
     private int StdUpdApplyWtsCount  => _stdUpdPreview?.Changes.Count(c => c.Target == StdTrack.Target.WtsLog   && StdUpdIsApplied(c)) ?? 0;
 
     // Sau mỗi lần Xem trước: chọn tất cả PO có thay đổi
-    private void StdUpdSelectAllAfterPreview()
+    // [STD-UPD 2026-10-30] Tick sẵn mọi PO có thay đổi TRỪ PO đã xong (sổ Giao nhận: thành phẩm nhập Kho đủ SL PO — "DU");
+    //   PO đã xong vẫn tick tay được. Trước: tick sẵn cả PO đã xong → dễ đổi số chuẩn của hàng đã giao.
+    private HashSet<int> _stdUpdDonePlans = new();
+    private async Task StdUpdSelectAllAfterPreviewAsync()
     {
         _stdUpdSelected.Clear();
         _stdUpdOpenPlan.Clear();
+        _stdUpdDonePlans.Clear();
         if (_stdUpdPreview == null) return;
-        foreach (var id in _stdUpdPreview.Changes.Select(c => c.KhPlanDetailId).Distinct()) _stdUpdSelected.Add(id);
+        var ids = _stdUpdPreview.Changes.Select(c => c.KhPlanDetailId).Distinct().ToList();
+        try
+        {
+            var led = await LedgerSvc.GetLedgerForDetailsAsync(ids);
+            foreach (var kv in led)
+                if (HandoverLedgerService.WhereIs(kv.Value).Status == "DU") _stdUpdDonePlans.Add(kv.Key);
+        }
+        catch { /* không đọc được sổ → giữ cách cũ (tick hết) */ }
+        foreach (var id in ids.Where(i => !_stdUpdDonePlans.Contains(i))) _stdUpdSelected.Add(id);
     }
 
     private void StdUpdSelectSection(bool hasWts, bool on)
@@ -1761,7 +1779,7 @@ else
                                            checked="@_stdUpdSelected.Contains(p.KhPlanDetailId)"
                                            @onchange="e => OnStdUpdPlanToggled(p.KhPlanDetailId, e)" />
                                 </td>
-                                <td><code>@p.PurchaseOrder</code></td>
+                                <td><code>@p.PurchaseOrder</code>@if (_stdUpdDonePlans.Contains(p.KhPlanDetailId)) { <span class="badge bg-secondary ms-1" title="Thành phẩm đã nhập Kho đủ SL PO — mặc định không chọn (tick tay nếu vẫn muốn Update)">đã xong</span> }</td>   @* [STD-UPD] *@
                                 <td class="text-center">@p.WtsTotal</td>
                                 <td class="text-center">@p.WtsLogCount</td>
                                 <td class="text-center fw-bold">@StdUpdCnt(pv, p.KhPlanDetailId, StdTrack.Target.WtsLog)</td>
@@ -1818,7 +1836,7 @@ else
         _stdUpdSelected.Clear();   // xem trước mới → chọn lại từ đầu (sau khi có kết quả: chọn tất cả)
         _stdUpdOpenPlan.Clear();
         _stdUpdBusy = true;
-        try { _stdUpdPreview = await StdUpdSvc.PreviewAsync(_part.PartId, _stdUpdFrom); StdUpdSelectAllAfterPreview(); }
+        try { _stdUpdPreview = await StdUpdSvc.PreviewAsync(_part.PartId, _stdUpdFrom); await StdUpdSelectAllAfterPreviewAsync(); }
         catch (Exception ex) { _stdUpdPreview = null; _stdUpdError = ex.InnerException?.Message ?? ex.Message; }
         finally { _stdUpdBusy = false; }
     }
@@ -2121,6 +2139,45 @@ else
         var main = edit.MachineRegistered?.Trim();
         if (string.IsNullOrEmpty(main)) return null;
         return edit.TimingRows.Any(t => t.State != EditState.Deleted && SplitMay(t.SoMay).Contains(main, StringComparer.OrdinalIgnoreCase)) ? main : null;
+    }
+
+    /// <summary>[ML9-DUP 2026-10-30] Máy của dòng đồng dạng <paramref name="tr"/> trùng máy đăng ký / dòng đồng dạng KHÁC còn hiệu lực
+    /// (null = không trùng). Hiện đỏ ngay trên dòng — kể cả dữ liệu cũ chưa sửa (trước: chỉ báo khi Lưu NC đang sửa).</summary>
+    private static string? TimingRowDup(MachiningEdit edit, TimingRowEdit tr)
+    {
+        if (tr.State == EditState.Deleted) return null;
+        var mine = SplitMay(tr.SoMay).ToList();
+        if (mine.Count == 0) return null;
+        var others = new List<string>();
+        if (!string.IsNullOrWhiteSpace(edit.MachineRegistered)) others.Add(edit.MachineRegistered.Trim());
+        foreach (var t in edit.TimingRows.Where(t => t != tr && t.State != EditState.Deleted)) others.AddRange(SplitMay(t.SoMay));
+        var dup = mine.Where(m => others.Contains(m, StringComparer.OrdinalIgnoreCase))
+                      .Concat(mine.GroupBy(m => m, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key))
+                      .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return dup.Count == 0 ? null : string.Join(", ", dup);
+    }
+
+    /// <summary>[ML9-DUP 2026-10-30] Chốt ở chỗ GHI DB (máy chủ): máy định ghi cho dòng đồng dạng của step đã có ở máy đăng ký /
+    /// dòng đồng dạng khác ĐANG HIỆU LỰC TRONG DB (đọc lại DB, không tin form — 2 tab / 2 người cùng sửa 1 Part).
+    /// Trả danh sách máy trùng (rỗng = ghi được).</summary>
+    private async Task<List<string>> DbMachineDupAsync(long stepId, string soMay, long? exceptTimingId, MachiningEdit? edit = null)
+    {
+        var mine = SplitMay(soMay).ToList();
+        if (mine.Count == 0) return new();
+        var main = await Db.PartMachiningSteps.AsNoTracking().Where(x => x.StepId == stepId).Select(x => x.MachineRegistered).FirstOrDefaultAsync();
+        var dbRows = await Db.PartMachiningTimings.AsNoTracking()
+            .Where(t => t.StepId == stepId && t.IsActive && (exceptTimingId == null || t.TimingId != exceptTimingId.Value))
+            .Select(t => new { t.TimingId, t.SoMay }).ToListAsync();
+        // dòng khác CÙNG lượt lưu này còn chờ ghi (Sửa / Xoá) → lấy máy MỚI trên form thay giá trị DB (đổi chéo M3 ↔ M4 không bị báo trùng oan)
+        var pending = edit?.TimingRows.Where(t => t.TimingId > 0 && (t.State == EditState.Modified || t.State == EditState.Deleted))
+                          .ToDictionary(t => t.TimingId, t => t.State == EditState.Deleted ? "" : (t.SoMay ?? "")) ?? new();
+        var others = dbRows.Select(t => pending.TryGetValue(t.TimingId, out var nv) ? nv : t.SoMay).ToList();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(main)) used.Add(main.Trim());
+        foreach (var o in others) foreach (var m in SplitMay(o)) used.Add(m);
+        return mine.Where(m => used.Contains(m))
+                   .Concat(mine.GroupBy(m => m, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key))
+                   .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>[PM-DUP] Liệt kê máy trùng trong NC (máy đăng ký + các dòng đồng dạng còn hiệu lực).</summary>
@@ -4026,10 +4083,22 @@ else
         var now = DateTime.Now;
         foreach (var edit in edits.Where(e => e.State != EditState.Deleted && e.StepId > 0))
         {
-            foreach (var tr in edit.TimingRows)
+            // [ML9-DUP 2026-10-30] Xoá dòng đồng dạng TRƯỚC rồi mới thêm / sửa (đổi máy M3 → dòng mới M3 cùng lượt không bị báo trùng oan);
+            //   thứ tự dòng trên form không đổi (chỉ thứ tự ghi DB).
+            foreach (var tr in edit.TimingRows.Where(t => t.State == EditState.Deleted).Concat(edit.TimingRows.Where(t => t.State != EditState.Deleted)).ToList())
             {
                 try
                 {
+                    // [ML9-DUP] Chốt chặn ở chỗ ghi: đọc lại DB (máy đăng ký + dòng đồng dạng đang hiệu lực) — trùng thì không ghi dòng này
+                    if ((tr.State == EditState.New || (tr.State == EditState.Modified && tr.TimingId > 0)) && !string.IsNullOrWhiteSpace(tr.SoMay))
+                    {
+                        var dupDb = await DbMachineDupAsync(edit.StepId, tr.SoMay, tr.State == EditState.Modified ? tr.TimingId : null, edit);
+                        if (dupDb.Count > 0)
+                        {
+                            errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: máy {string.Join(", ", dupDb)} đã có trong NC này (máy đăng ký / dòng đồng dạng khác — có thể vừa được người khác lưu). Tải lại trang rồi chọn máy khác.");
+                            continue;
+                        }
+                    }
                     if (tr.State == EditState.New)
                     {
                         if (string.IsNullOrWhiteSpace(tr.SoMay)) continue;
@@ -4491,4 +4560,4 @@ else
             ParentNC = ParentNC
         };
     }
-}
+}

@@ -24,6 +24,10 @@
                 <span><strong>Trả khách</strong> @Trace.TraKhach.ToString("0.##")</span>
                 <span title="Tồn hàng lỗi + Tồn hàng sửa của mọi nhóm (đúng ô trên trang Giao nhận)"><strong>Đang giữ</strong> <span class="@HeldClass(Trace.DangGiu)">@Trace.DangGiu.ToString("0.##")</span></span>
                 <span title="Phiếu giao hàng lỗi / hàng sửa đã lập, bên nhận chưa bấm Nhận"><strong>Đang chuyển</strong> @Trace.DangChuyen.ToString("0.##")</span>
+                @if (Trace.GioSuaPo > 0)
+                {
+                    <span title="Phút &quot;Việc không ra sản phẩm&quot; công nhân ghi PO này trên WTS (giờ sửa hàng) — chỉ để tra, không vào số lượng"><strong>Giờ sửa</strong> @Trace.GioSuaPo ph@(Trace.GioSuaKhongVu > 0 ? $" (chưa gắn {NgCaseNo.Term} {Trace.GioSuaKhongVu} ph)" : "")</span>   @* [ML16-ACT] *@
+                }
                 @if (Trace.Balanced)
                 {
                     <span class="badge bg-success" title="Phát sinh − đã xử lý − đã huỷ − trả khách = đang giữ + đang chuyển">cân hàng lỗi</span>
@@ -55,6 +59,7 @@
                             <th style="width:62px" class="text-center">Trả khách</th>
                             <th title="Còn nằm ở đâu (ô Hàng lỗi / Hàng sửa) · phiếu chưa nhận">Đang giữ / chuyển</th>
                             <th style="width:46px" class="text-center" title="Sinh ra = đã xử lý + huỷ + trả khách + đang giữ + đang chuyển">Cân</th>
+                            <th style="width:56px" class="text-center" title="Phút &quot;Việc không ra sản phẩm&quot; ghi vụ này trên WTS (giờ sửa hàng) — chỉ để tra, không vào số lượng">Giờ sửa</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -193,11 +198,12 @@
             <td class="@NumClass(v.TraKhach)" title="@v.KhachText">@Num(v.TraKhach)</td>
             <td class="@HeldClass(v.DangGiuQty + v.DangChuyen)">@HeldText(v)</td>
             <td class="text-center">@(v.Balanced ? "✓" : "lệch")</td>
+            <td class="@NumClass(v.GioSua)" title="@v.GioSuaText">@(v.GioSua > 0 ? v.GioSua + " ph" : "—")</td>   @* [ML16-ACT] *@
         </tr>
         @if (_openCases.Contains(v.Id))
         {
             <tr @key="-v.Id - 1">
-                <td colspan="11" class="bg-light">
+                <td colspan="12" class="bg-light">
                     @foreach (var h in v.Hops)
                     {
                         <div><span class="text-muted">@(h.At?.ToString("dd/MM HH:mm") ?? "—")</span> · @HopText(h) <span class="text-muted font-monospace">@h.Doc</span></div>

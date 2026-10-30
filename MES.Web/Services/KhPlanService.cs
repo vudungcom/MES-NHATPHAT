@@ -231,6 +231,8 @@ public class KhPlanService
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("Bắt buộc nhập lý do sửa");
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
 
         var d = await _db.KhPlanDetails.FirstOrDefaultAsync(x => x.KhPlanDetailId == khPlanDetailId);
         if (d == null) throw new InvalidOperationException("Dòng không tồn tại");
@@ -291,6 +293,8 @@ public class KhPlanService
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("Bắt buộc nhập lý do tách");
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
         if (newRows == null || newRows.Count < 2)
             throw new InvalidOperationException("Cần ít nhất 2 dòng mới để tách");
 
@@ -517,6 +521,8 @@ public class KhPlanService
         int changedBy,
         string batchReason)
     {
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
         var batchId = DateTime.Now.Ticks;
         var result = new BulkUpdateResult { BatchId = batchId };
 
@@ -567,6 +573,8 @@ public class KhPlanService
     /// </summary>
     public async Task<(bool Success, string? Error)> DeleteDetailAsync(int khPlanDetailId, int deletedBy)
     {
+        if (!await PermCheck.CanEditAsync(_db, deletedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
+            return (false, PermCheck.NoEdit("Kế hoạch"));
         var detail = await _db.KhPlanDetails
             .Include(d => d.KhPlan)
             .FirstOrDefaultAsync(d => d.KhPlanDetailId == khPlanDetailId);
@@ -762,6 +770,8 @@ public class KhPlanService
     /// <summary>Đổi ApplyWorkflow của phiếu KH (kiểm K7 khi bật) + ghi lịch sử vào từng dòng PO. Trả null = đã đổi (chưa SaveChanges của trang).</summary>
     public async Task<string?> SetApplyWorkflowAsync(int khPlanId, bool on, int changedBy, string reason)
     {
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
+            return PermCheck.NoEdit("Kế hoạch");
         var plan = await _db.KhPlans.FirstOrDefaultAsync(p => p.KhPlanId == khPlanId);
         if (plan == null) return "Không tìm thấy phiếu KH.";
         if (plan.ApplyWorkflow == on) return null;
@@ -1692,4 +1702,4 @@ public class SnapshotSummary
     // HTSP = Taro + Bavia + Rửa
     public int HTSP => Taro + Bavia + Rua;
     public bool HasAny => GC + HTSP + KCS + DG > 0;
-}
+}

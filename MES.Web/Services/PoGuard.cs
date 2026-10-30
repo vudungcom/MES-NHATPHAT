@@ -23,9 +23,10 @@ namespace MES.Web.Services
             public int     PhieuActive { get; set; }
             public int     BaoLoiAll    { get; set; }   // [E3-NGREP 2026-10-28] phiếu báo hàng lỗi sau nhận (HandoverNgReports)
             public int     BaoLoiActive { get; set; }
+            public int     GioSuaAll    { get; set; }   // [ML16-DOCS 2026-10-30] dòng "Việc không ra sản phẩm" ghi PO này (kể cả đã huỷ) — có khoá ngoại, không xoá PO được
 
             /// <summary>Có bất kỳ chứng từ nào (kể cả đã huỷ) — dùng cho Xoá / Tách PO.</summary>
-            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0;   // [E3-NGREP] + báo lỗi
+            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0 || GioSuaAll > 0;   // [E3-NGREP] + báo lỗi · [ML16-DOCS] + giờ việc không ra SP
             /// <summary>Đang có số chạy (WTS / phiếu chưa huỷ) — dùng cho Cập nhật quy trình (K6).</summary>
             public bool HasActiveFlow => WtsActive > 0 || PhieuActive > 0 || BaoLoiActive > 0;   // [E3-NGREP] + báo lỗi
 
@@ -36,6 +37,7 @@ namespace MES.Web.Services
                 if (WtsAll > 0)   parts.Add($"{WtsAll} dòng WTS" + (WtsAll != WtsActive ? $" ({WtsAll - WtsActive} dòng đã huỷ)" : ""));
                 if (PhieuAll > 0) parts.Add($"{PhieuAll} phiếu giao nhận" + (PhieuAll != PhieuActive ? $" ({PhieuAll - PhieuActive} phiếu đã huỷ)" : ""));
                 if (BaoLoiAll > 0) parts.Add($"{BaoLoiAll} phiếu báo hàng lỗi" + (BaoLoiAll != BaoLoiActive ? $" ({BaoLoiAll - BaoLoiActive} phiếu đã huỷ)" : ""));   // [E3-NGREP]
+                if (GioSuaAll > 0) parts.Add($"{GioSuaAll} dòng việc không ra sản phẩm (giờ sửa) ghi PO này");   // [ML16-DOCS]
                 return string.Join(", ", parts);
             }
         }
@@ -56,6 +58,7 @@ namespace MES.Web.Services
                 PhieuActive = await db.HandoverTransactions.CountAsync(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided),
                 BaoLoiAll    = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId),                 // [E3-NGREP]
                 BaoLoiActive = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId && !b.IsVoided),
+                GioSuaAll    = await db.WorkerActivityLogs.CountAsync(a => a.RefKhPlanDetailId == khPlanDetailId),   // [ML16-DOCS]
             };
         }
 

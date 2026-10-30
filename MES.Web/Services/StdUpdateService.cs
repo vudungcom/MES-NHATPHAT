@@ -115,15 +115,26 @@ public class StdUpdateService
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("Bắt buộc nhập lý do Update TG chuẩn.");
+        // [STD-UPD 2026-10-30] Máy chủ tự kiểm quyền ma trận (trước: chỉ trang ẩn nút, trang lại tin claim ADMIN)
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.PartStdUpdate))
+            throw new InvalidOperationException(PermCheck.NoEdit("Part Master: Update TG chuẩn"));
 
+        var selected  = new HashSet<int>(selectedPlans ?? Array.Empty<int>());
         using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // [STD-UPD 2026-10-30] Khoá các PO được chọn (cùng khoá MES_PO_<id> với WTS / Giao nhận), theo id tăng dần, TRƯỚC khi tính:
+            //   WTS lưu chen giữa lúc tính và lúc ghi sẽ phải chờ → không bị bỏ sót / ghi đè số chuẩn. Trước: không khoá.
+            foreach (var pid in selected.OrderBy(x => x))
+            {
+                var lockErr = await PoGuard.LockAsync(_db, pid);
+                if (lockErr != null) throw new InvalidOperationException(lockErr);
+            }
             var pv  = await ComputeAsync(partId, effectiveFrom);
 
             // [STD-UPDATE-V3] Chỉ giữ thay đổi của các phiếu ĐƯỢC TÍCH CHỌN (cả đang dở dang lẫn chưa có WTS — mặc định chọn tất cả ở UI)
-            var selected  = new HashSet<int>(selectedPlans ?? Array.Empty<int>());
             pv.Changes = pv.Changes.Where(c => selected.Contains(c.KhPlanDetailId)).ToList();
+            pv.Plans   = pv.Plans.Where(p => selected.Contains(p.KhPlanDetailId)).ToList();   // [STD-UPD] số phiếu / ô / WTS trong lời báo + lịch sử chỉ tính PO được chọn (RS-E13 · STD-4)
             if (pv.Changes.Count == 0)
                 throw new InvalidOperationException("Không có ô nào để Update (chưa chọn PO nào?).");
             var now = DateTime.Now;

@@ -676,12 +676,6 @@ else
             }
 
             var d = _detailForm!;
-            if (_partLookup.TryGetValue(d.PartNo, out var pm))
-            {
-                await MaybeAddNewValue(pm.PartId, AttrMaterial,      d.Material);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
-                await MaybeAddNewValue(pm.PartId, AttrMaterialNote,   d.MaterialNotes);
-            }
 
             var newValues = new KhPlanDetail
             {
@@ -703,6 +697,20 @@ else
             await Db.SaveChangesAsync();
             _savedSuccessfully = true;
 
+            // [KHE-SAVE 2026-10-30] Thêm giá trị gợi ý (vật liệu / cấu hình / ghi chú VL) vào Part Master SAU khi phiếu đã lưu, lỗi thì bỏ qua:
+            //   trước làm TRƯỚC khi lưu phiếu — người chỉ có quyền Kế hoạch (không có quyền tạo Part) gõ vật liệu mới là cả phiếu không lưu được,
+            //   và SaveChanges của hàm gợi ý ghi sớm một phần phiếu (Ghi chú / Workflow) trước khi phần sau bị lỗi.
+            if (_partLookup.TryGetValue(d.PartNo, out var pm))
+            {
+                try
+                {
+                    await MaybeAddNewValue(pm.PartId, AttrMaterial,      d.Material);
+                    await MaybeAddNewValue(pm.PartId, AttrMaterialConfig, d.MaterialConfig);
+                    await MaybeAddNewValue(pm.PartId, AttrMaterialNote,   d.MaterialNotes);
+                }
+                catch { Db.ChangeTracker.Clear(); /* gợi ý không thêm được — phiếu đã lưu xong */ }
+            }
+
             await Task.Delay(1500);
             Nav.NavigateTo($"/kh-plan/{Id}/detail/{DetailId}");
         }
@@ -710,10 +718,14 @@ else
         {
             _error = "Lỗi khi lưu: " + ex.Message;
             _savedSuccessfully = false;
+            Db.ChangeTracker.Clear();   // [KHE-SAVE] bỏ thay đổi dở (lưu lại không ghi kèm phần cũ)
         }
         finally
         {
             _saving = false;
+            // [KHE-SAVE 2026-10-30] DoSaveAsync chạy sau khi đóng hộp PIN (không chờ) → phải tự vẽ lại, nếu không lời báo lỗi
+            //   không hiện và nút đứng "Đang lưu" mãi.
+            await InvokeAsync(StateHasChanged);
         }
     }
 

@@ -624,6 +624,7 @@ namespace MES.Web.Services
                         }
                     }
 
+                    await RefreshStdFromSnapshotAsync(grp, row, row.KhPlanDetailId.Value);   // [STD-SNAP] số chuẩn mới nhất trước khi tính IsActualManual + ghi số chuẩn
                     var log = new WtsProductionLog
                     {
                         KhPlanDetailId          = row.KhPlanDetailId.Value,
@@ -751,6 +752,45 @@ namespace MES.Web.Services
         // Dùng ĐÚNG số + dòng snapshot trang đã tra (GcStd / StdTimePerPc + StdSrc) — cùng GetStdTiming / GetStdTimeForSubRow /
         // GetStdSourceForSubRow như phần hiển thị. Trạng thái xác nhận đọc mới từ KhPlanRouteSnapshotStdConfirms
         // (trước: cache _snapStdConfirmCache của trang, nạp bằng cùng câu đọc KhPlanService.GetSnapshotStdConfirmsAsync).
+        // [STD-SNAP 2026-10-30] Gọi TRƯỚC khi dựng dòng WTS (IsActualManual so với số chuẩn mới) và trước SaveWtsLogStdsAsync.
+        private async Task RefreshStdFromSnapshotAsync(WtsSaveGroup grp, WtsSaveRow row, int dId)
+        {
+                // [STD-SNAP 2026-10-30] SỐ chuẩn đọc lại từ đúng dòng snapshot (bảng + id trang đã tra) trong giao dịch lưu — trước: số lấy từ
+                //   cache trang (nạp lúc chọn PO). Trang mở từ trước khi "Update TG chuẩn" chạy sẽ lưu số CŨ kèm trạng thái xác nhận MỚI
+                //   (đã đọc DB từ [WTS-SVC]) và Update đã chạy xong không ai sửa lại. Không tìm thấy dòng snapshot → giữ số trang như cũ.
+                if (grp.IsGc && row.GcStd is { } gs0 && !string.IsNullOrEmpty(gs0.SrcTable) && gs0.SrcRowId.HasValue)
+                {
+                    var sid = gs0.SrcRowId.Value;
+                    if (gs0.SrcTable == StdTrack.Table.Machining)
+                    {
+                        var m = await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(x => x.SnapshotId == sid && x.KhPlanDetailId == dId)
+                            .Select(x => new { x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
+                        if (m != null) row.GcStd = new WtsSaveStd { SetupTime = m.SetupTime, MachiningTime = m.MachiningTime, InspectionTime = m.InspectionTime, PreparationTime = m.PreparationTime, TrialRunTime = m.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId };
+                    }
+                    else if (gs0.SrcTable == StdTrack.Table.MachiningTiming)
+                    {
+                        var t = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking().Where(x => x.TimingSnapshotId == sid && x.KhPlanDetailId == dId)
+                            .Select(x => new { x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
+                        if (t != null) row.GcStd = new WtsSaveStd { SetupTime = t.SetupTime, MachiningTime = t.MachiningTime, InspectionTime = t.InspectionTime, PreparationTime = t.PreparationTime, TrialRunTime = t.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId };
+                    }
+                }
+                else if (!grp.IsGc && !string.IsNullOrEmpty(row.StdSrcTable) && row.StdSrcRowId.HasValue)
+                {
+                    var sid = row.StdSrcRowId.Value;
+                    decimal? v = null; bool found = false;
+                    switch (row.StdSrcTable)
+                    {
+                        case StdTrack.Table.Taro:       { var x = await _db.KhPlanRouteSnapshotTaro.AsNoTracking().FirstOrDefaultAsync(r => r.SnapshotId == sid && r.KhPlanDetailId == dId);       if (x != null) { v = x.StandardTime; found = true; } break; }
+                        case StdTrack.Table.Bavia:      { var x = await _db.KhPlanRouteSnapshotBavia.AsNoTracking().FirstOrDefaultAsync(r => r.SnapshotId == sid && r.KhPlanDetailId == dId);      if (x != null) { v = x.StandardTime; found = true; } break; }
+                        case StdTrack.Table.Washing:    { var x = await _db.KhPlanRouteSnapshotWashing.AsNoTracking().FirstOrDefaultAsync(r => r.SnapshotId == sid && r.KhPlanDetailId == dId);    if (x != null) { v = x.StandardTime; found = true; } break; }
+                        case StdTrack.Table.Inspection: { var x = await _db.KhPlanRouteSnapshotInspection.AsNoTracking().FirstOrDefaultAsync(r => r.SnapshotId == sid && r.KhPlanDetailId == dId); if (x != null) { v = x.StandardTime; found = true; } break; }
+                        case StdTrack.Table.Packaging:  { var x = await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().FirstOrDefaultAsync(r => r.SnapshotId == sid && r.KhPlanDetailId == dId);  if (x != null) { v = x.StandardTime; found = true; } break; }
+                    }
+                    if (found) row.StdTimePerPc = v;
+                }
+
+        }
+
         private async Task SaveWtsLogStdsAsync(WtsSaveGroup grp, WtsProductionLog log, WtsSaveRow row)
         {
             try
@@ -823,6 +863,159 @@ namespace MES.Web.Services
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════════════════════════════════
+        // [ML16-ACT 2026-10-30] Master list 16 + 11 — "Việc không ra sản phẩm" (Hùng duyệt kế hoạch 30/10, cách B)
+        //   1 dòng = Mã CV (WTS tiêu chuẩn, theo cấu hình nhóm của người nhập — không gõ tự do) + Bắt đầu + Kết thúc + Ghi chú,
+        //   tuỳ chọn PO + vụ lỗi khi là giờ sửa hàng. Ghi vào bảng có sẵn WorkerActivityLogs (append-only: sửa = huỷ + dòng mới).
+        //   KHÔNG mang số lượng, KHÔNG đụng sổ Giao nhận / trần WTS / K5 → không cần khoá PO. Hiệu suất theo cờ Có ích / Vô ích
+        //   của mã (WtsReportService đọc sẵn). Xoá dòng: VoidRowAsync (ActivityLogId) có sẵn.
+        //   Kiểm ở máy chủ: người nhập đang hoạt động; mã đang dùng + thuộc nhóm WTS người đó được nhập (Admin: mọi mã);
+        //   chỉ ngày hôm nay; Kết thúc sau Bắt đầu, trong cùng ngày; không trùng giờ với dòng WTS / việc khác CỦA CHÍNH NGƯỜI ĐÓ;
+        //   PO phải có thật; vụ lỗi phải thuộc đúng PO; sửa dòng: dòng cũ phải của người đó, còn hiệu lực, của hôm nay.
+        // ════════════════════════════════════════════════════════════════════════════════════════════════
+        public sealed class WtsActivityRequest
+        {
+            /// <summary>Đang sửa dòng nào (null = dòng mới).</summary>
+            public long?    ActivityLogId     { get; set; }
+            public int      UserId            { get; set; }
+            public string?  WtsCode           { get; set; }
+            public DateTime StartTime         { get; set; }
+            public DateTime EndTime           { get; set; }
+            public string?  Notes             { get; set; }
+            public int?     RefKhPlanDetailId { get; set; }
+            public long?    NgCaseId          { get; set; }
+        }
+
+        public const int ActivityNotesMax = 500;
+
+        public async Task<WtsSaveResult> SaveActivityAsync(WtsActivityRequest req)
+        {
+            var result = new WtsSaveResult();
+            WtsSaveResult Fail(string msg) { result.Ok = false; result.ErrorMsg = msg; return result; }
+
+            var code = (req.WtsCode ?? "").Trim();
+            if (code.Length == 0) return Fail("Chưa chọn Mã CV.");
+            var today = DateTime.Now.Date;   // giờ máy chủ (CLAUDE-RULES 8.5)
+            if (req.StartTime.Date != today)
+                return Fail("Việc không ra sản phẩm chỉ nhập cho ngày hôm nay.");
+            if (req.EndTime <= req.StartTime)
+                return Fail("T.Kết thúc phải sau T.Bắt đầu.");
+            if (req.EndTime > today.AddDays(1))
+                return Fail("T.Kết thúc phải trong ngày hôm nay.");
+            var notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
+            if (notes != null && notes.Length > ActivityNotesMax)
+                return Fail($"Ghi chú dài quá {ActivityNotesMax} ký tự.");
+            if (req.NgCaseId != null && req.RefKhPlanDetailId == null)
+                return Fail($"Chọn PO trước khi chọn {NgCaseNo.Term}.");
+
+            // Quyền + mã: cùng luật danh sách mã trên trang (WtsTasksForGroup), đọc từ DB
+            var wg = await PermCheck.WtsProcessGroupsAsync(_db, req.UserId);
+            if (wg == null) return Fail("Tài khoản không hoạt động — đăng nhập lại.");
+            var task = (await _db.StandardWtsTasks.AsNoTracking().Where(t => t.IsActive).ToListAsync())
+                .FirstOrDefault(t => string.Equals((t.TaskCode ?? "").Trim(), code, StringComparison.OrdinalIgnoreCase));   // so mã không phân biệt hoa thường (như SQL Server)
+            if (task == null) return Fail($"Mã CV {code} không có trong WTS tiêu chuẩn hoặc đã ngưng dùng.");
+            if (task.TaskCode.Trim().Length > 20) return Fail($"Mã CV {task.TaskCode} dài quá 20 ký tự (cột WtsCode) — nhờ Admin đặt mã ngắn hơn.");
+            if (!wg.Value.IsAdmin)
+            {
+                var allowed = wg.Value.Groups.Count > 0 && await _db.WtsCategoryGroupMappings.AsNoTracking()
+                    .AnyAsync(m => m.CategoryCode == task.CategoryCode && wg.Value.Groups.Contains(m.ProcessGroup));
+                if (!allowed)
+                    return Fail($"Mã CV {code} không thuộc nhóm WTS của bạn (WTS tiêu chuẩn → Cấu hình nhóm) — nhờ Admin thêm.");
+            }
+
+            // PO + vụ lỗi (tuỳ chọn) — chỉ nhãn tra cứu
+            if (req.RefKhPlanDetailId != null
+                && !await _db.KhPlanDetails.AsNoTracking().AnyAsync(d => d.KhPlanDetailId == req.RefKhPlanDetailId.Value))
+                return Fail("PO đã chọn không còn trong Kế hoạch — chọn lại.");
+            if (req.NgCaseId != null
+                && !await _db.NgCases.AsNoTracking().AnyAsync(c => c.NgCaseId == req.NgCaseId.Value && c.KhPlanDetailId == req.RefKhPlanDetailId!.Value))
+                return Fail($"{NgCaseNo.TermCap} {NgCaseNo.Format(req.NgCaseId.Value)} không thuộc PO đã chọn — chọn lại.");
+
+            await using var trx = await _db.Database.BeginTransactionAsync();
+            // Khoá theo người nhập: 2 tab cùng lưu không lọt trùng giờ (LockOwner = Transaction, nhả khi Commit / Rollback)
+            if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + req.UserId))
+                return Fail("Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây.");
+
+            if (req.ActivityLogId != null)
+            {
+                var old = await _db.WorkerActivityLogs.AsNoTracking().FirstOrDefaultAsync(a => a.ActivityLogId == req.ActivityLogId.Value);
+                if (old == null || old.WorkerId != req.UserId)
+                    return Fail("Không tìm thấy dòng cần sửa của bạn — tải lại trang.");
+                if (old.IsVoided)
+                    return Fail("Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại.");
+                if (old.WorkDate != DateOnly.FromDateTime(today))
+                    return Fail("Chỉ sửa được dòng của ngày hôm nay.");
+            }
+
+            // Trùng giờ với dòng WTS / việc khác của chính người này (chạm mép không tính)
+            var s0 = req.StartTime; var e0 = req.EndTime;
+            var prodHit = await _db.WtsProductionLogs.AsNoTracking()
+                .Where(w => w.WorkerId == req.UserId && !w.IsVoided && w.StartTime < e0 && w.EndTime > s0)
+                .OrderBy(w => w.StartTime)
+                .Select(w => new { w.StartTime, w.EndTime, Code = w.NC ?? w.WtsCode, w.KhPlanDetailId })
+                .FirstOrDefaultAsync();
+            if (prodHit != null)
+            {
+                var po = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == prodHit.KhPlanDetailId)
+                    .Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
+                return Fail($"Trùng giờ với dòng WTS của bạn {prodHit.StartTime:HH:mm}–{prodHit.EndTime:HH:mm} (PO {po} · {prodHit.Code}) — sửa giờ cho khỏi chồng nhau.");
+            }
+            var actHit = await _db.WorkerActivityLogs.AsNoTracking()
+                .Where(a => a.WorkerId == req.UserId && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0
+                         && (req.ActivityLogId == null || a.ActivityLogId != req.ActivityLogId.Value))
+                .OrderBy(a => a.StartTime)
+                .Select(a => new { a.StartTime, a.EndTime, a.WtsCode })
+                .FirstOrDefaultAsync();
+            if (actHit != null)
+                return Fail($"Trùng giờ với việc {actHit.WtsCode} {actHit.StartTime:HH:mm}–{actHit.EndTime:HH:mm} đã lưu — sửa giờ cho khỏi chồng nhau.");
+
+            if (req.ActivityLogId != null)
+            {
+                var n = await _db.Database.ExecuteSqlRawAsync(
+                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0}",
+                    req.UserId, DateTime.Now, req.ActivityLogId.Value);
+                if (n != 1)
+                    return Fail("Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại.");
+            }
+
+            var log = new WorkerActivityLog
+            {
+                WorkerId          = req.UserId,
+                WorkDate          = DateOnly.FromDateTime(req.StartTime),
+                StartTime         = req.StartTime,
+                EndTime           = req.EndTime,
+                WtsCode           = task.TaskCode.Trim(),
+                WtsName           = task.TaskName.Length > 250 ? task.TaskName[..250] : task.TaskName,
+                Notes             = notes,
+                RefKhPlanDetailId = req.RefKhPlanDetailId,
+                NgCaseId          = req.NgCaseId,
+                CreatedAt         = DateTime.Now,
+                IsVoided          = false,
+            };
+            try
+            {
+                _db.WorkerActivityLogs.Add(log);
+                await _db.SaveChangesAsync();
+                if (req.ActivityLogId != null)
+                {
+                    // dòng cũ (Loại 2 bản trước) có mục phát sinh → chép sang dòng mới (dòng cũ đã huỷ, không mất dữ liệu)
+                    var oldExtras = await _db.WtsExtraItems.AsNoTracking().Where(e => e.ActivityLogId == req.ActivityLogId.Value).ToListAsync();
+                    foreach (var e in oldExtras)
+                        _db.WtsExtraItems.Add(new WtsExtraItemLog { ActivityLogId = log.ActivityLogId, WtsCode = e.WtsCode, WtsName = e.WtsName, Minutes = e.Minutes, Notes = e.Notes, CreatedAt = DateTime.Now });
+                    if (oldExtras.Count > 0) await _db.SaveChangesAsync();
+                }
+                await trx.CommitAsync();
+            }
+            catch (Exception ex)
+            {
+                _db.ChangeTracker.Clear();   // không để dòng lỗi ở lại DbContext dùng chung với trang
+                return Fail("Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message));
+            }
+            _db.ChangeTracker.Clear();
+            result.Ok = true;
+            return result;
+        }
+
         // ── Xoá dòng đã lưu (nguyên văn VoidSavedRow + VoidWtsLogRawAsync của trang) ─────────────────
         // Trả Ok = đã xoá; Ok = false = bị chặn (lời báo ở ErrorMsg). Trang gọi LoadSavedRowsAsync khi Ok.
         public async Task<WtsSaveResult> VoidRowAsync(WtsVoidRequest row)
@@ -874,6 +1067,18 @@ namespace MES.Web.Services
                 return result;
             }
 
+            if (row.ActivityLogId.HasValue && !row.WtsLogId.HasValue)
+            {
+                // [ML16-ACT 2026-10-30] Xoá dòng "Việc không ra sản phẩm": chỉ dòng của chính người đó, còn hiệu lực (trước: không kiểm,
+                //   0 dòng đổi vẫn báo xoá xong). Không số lượng → không khoá PO / K5.
+                var nA = await _db.Database.ExecuteSqlRawAsync(
+                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0}",
+                    row.UserId, DateTime.Now, row.ActivityLogId.Value);
+                if (nA != 1)
+                { result.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
+                result.Ok = true;
+                return result;
+            }
             await VoidWtsLogRawAsync(row);
             if (row.KhPlanDetailId.HasValue) HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE]
             result.Ok = true;

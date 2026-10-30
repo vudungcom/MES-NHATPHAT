@@ -1,0 +1,27 @@
+@* =====================================================================
+   [RS-C3 2026-10-30] Canh phiên đăng nhập trong mạch Blazor đang mở.
+   MesRevalidatingAuthStateProvider kiểm lại DB mỗi 1 phút; tài khoản / nhóm bị khoá hoặc đổi nhóm → trạng thái thành "chưa đăng nhập".
+   Router + layout chạy tĩnh (chỉ từng trang tương tác) nên không tự chuyển trang → thành phần nhỏ này (đặt trong MainLayout)
+   nghe sự kiện đó và đưa về trang đăng nhập. Không hiển thị gì.
+   ===================================================================== *@
+@using Microsoft.AspNetCore.Components.Authorization
+@implements IDisposable
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized() => Auth.AuthenticationStateChanged += OnChanged;
+
+    private async void OnChanged(Task<AuthenticationState> task)
+    {
+        try
+        {
+            var st = await task;
+            if (st.User.Identity?.IsAuthenticated != true)
+                await InvokeAsync(() => Nav.NavigateTo("/login", forceLoad: true));
+        }
+        catch { /* mạch đã đóng */ }
+    }
+
+    public void Dispose() => Auth.AuthenticationStateChanged -= OnChanged;
+}

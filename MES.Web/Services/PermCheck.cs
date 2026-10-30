@@ -56,6 +56,27 @@ public static class PermCheck
         ("PKG",  SystemPermissions.HandoverPkg),
     };
 
+    /// <summary>[ML16-ACT 2026-10-30] Nhóm WTS người dùng được nhập (GC / HTSP / KCS / PKG theo quyền Xem WTS_GC … WTS_DONG_GOI,
+    /// cùng luật trang WTS WtsTasksForGroup). IsAdmin = thấy mọi mã. null = tài khoản / nhóm không hoạt động.</summary>
+    public static async Task<(bool IsAdmin, HashSet<string> Groups)?> WtsProcessGroupsAsync(AppDbContext db, int userId)
+    {
+        var p = await ReadAsync(db, userId);
+        if (p == null) return null;
+        var res = new HashSet<string>();
+        foreach (var (grp, key) in WtsGroupKey)
+            if (p.Value.Perms.Any(x => x.SectionCode == key && (x.CanView || x.CanEdit))) res.Add(grp);
+        return (p.Value.IsAdmin, res);
+    }
+
+    /// <summary>[ML16-ACT] ProcessGroup của cấu hình nhóm WTS → mục quyền nhập WTS.</summary>
+    public static readonly (string Group, string Key)[] WtsGroupKey =
+    {
+        ("GC",   SystemPermissions.WtsGc),
+        ("HTSP", SystemPermissions.WtsHtsp),
+        ("KCS",  SystemPermissions.WtsKcs),
+        ("PKG",  SystemPermissions.WtsDongGoi),
+    };
+
     /// <summary>Lời báo khi không có quyền sửa (tên mục theo chữ trên menu).</summary>
     public static string NoEdit(string ten) => $"Bạn không có quyền Sửa mục {ten} (ma trận phân quyền) — nhờ Admin cấp quyền.";
 

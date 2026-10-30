@@ -314,9 +314,10 @@ else
 
                     @{
 
-                        var totalMin = _rows.Where(r => r.Saved).Sum(r => r.Minutes);
+                        var totalMin = DayNetMinutes;   // [ML17-NET 2026-10-30] Master list 17.1: trừ nghỉ ca, giờ chồng nhau tính 1 lần (trước: cộng giờ thô từng dòng)
+                        var dayTarget = DayTargetMinutes;
 
-                        var pct = Math.Min(100, (int)(totalMin / 4.8));
+                        var pct = Math.Min(100, totalMin * 100 / Math.Max(1, dayTarget));
 
                         var barColor = pct >= 100 ? "success" : (pct >= 60 ? "warning" : "danger");
 
@@ -326,9 +327,9 @@ else
 
                         <span class="small fw-semibold">Tổng hôm nay:</span>
 
-                        <span class="fw-bold @(totalMin >= 480 ? "text-success" : "text-warning")">
+                        <span class="fw-bold @(totalMin >= dayTarget ? "text-success" : "text-warning")" title="@DayNetTip">
 
-                            @totalMin / 480 phút
+                            @totalMin / @dayTarget phút
 
                         </span>
 
@@ -402,6 +403,10 @@ else
 
                     <i class="bi bi-plus-lg me-1"></i>Thêm nhóm
 
+                </button>
+                @* [ML16-ACT 2026-10-30] Master list 16 + 11: việc không ra sản phẩm (họp, vệ sinh, chờ vật tư, sửa hàng…) — chỉ Mã CV + giờ *@
+                <button class="btn btn-sm btn-outline-secondary" @onclick="OpenActivityNew" disabled="@(!IsToday || _act != null)">
+                    <i class="bi bi-plus-lg me-1"></i>Việc không ra sản phẩm
                 </button>
 
             </div>
@@ -501,7 +506,7 @@ else
 
                                 <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
 
-                                <td class="text-center">@row.Minutes</td>
+                                <td class="text-center" title="@NetMinTip(row)">@NetMin(row)<span class="text-muted" style="font-size:9px">@NetMinRawNote(row)</span></td>   @* [ML17-NET] phút trừ nghỉ ca *@
 
                                 <td>
 
@@ -511,6 +516,11 @@ else
 
                                         <small class="text-muted">@row.PO</small>
 
+                                    }
+
+                                    else if (row.ActivityLogId.HasValue)
+                                    {
+                                        <span class="text-muted fst-italic small">việc không ra SP</span>   @* [ML16-ACT] *@
                                     }
 
                                     else
@@ -714,6 +724,8 @@ else
                 </div>
 
             }
+
+            @ActivityFormUi()   @* [ML16-ACT] form Việc không ra sản phẩm *@
 
             @* ── Nhóm đang nhập mới ── *@
 
@@ -994,6 +1006,8 @@ else
                                             }
 
                                         </datalist>
+                                        @* [ML35-PO-CAP 2026-10-30] Master list 35: số chưa làm / nhận của CHÍNH PO dòng này (theo NC nhóm / mã CV dòng) — đọc sổ Giao nhận *@
+                                        <div class="@RowCapCls(grp, sub)" style="font-size:10px;line-height:1.2" title="@RowCapTip(grp, sub)">@RowCapText(grp, sub)</div>
 
                                     </td>
 
@@ -3537,6 +3551,8 @@ else
 
                 </div>
 
+                @RepairByPoUi()   @* [ML16-ACT] Master list 11: giờ sửa hàng theo PO *@
+
                 @* ── Bảng chi tiết ── *@
 
                 @if (_reportResult.Rows.Any())
@@ -3909,7 +3925,9 @@ else
         sub.ErrorMsg = null;
     }
     private static string WtsNgText(WtsRow row)
-        => (row.NgReason ?? "") + (row.NgCaseId != null && row.QtyNg > 0 ? " · " + NgCaseNo.Format(row.NgCaseId.Value) : "");
+        => row.ActivityLogId.HasValue && !row.WtsLogId.HasValue
+            ? (row.NgCaseId != null ? "sửa " + NgCaseNo.Format(row.NgCaseId.Value) + (string.IsNullOrEmpty(row.NgReason) ? "" : " · " + row.NgReason) : "")   // [ML16-ACT] giờ sửa theo vụ lỗi
+            : (row.NgReason ?? "") + (row.NgCaseId != null && row.QtyNg > 0 ? " · " + NgCaseNo.Format(row.NgCaseId.Value) : "");
 
     // GroupCode handover tương ứng với quyền WTS của công nhân
 
@@ -4706,7 +4724,11 @@ else
 
                 EndTime       = log.EndTime,
 
-                PO            = null,
+                // [ML16-ACT] PO tham chiếu (giờ sửa hàng) — chỉ nhãn, KhPlanDetailId để trống (dòng không mang số lượng)
+                PO            = log.RefKhPlanDetailId.HasValue ? _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.RefKhPlanDetailId)?.PurchaseOrder : null,
+                PartNo        = log.RefKhPlanDetailId.HasValue ? _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.RefKhPlanDetailId)?.PartNo : null,
+                RefKhPlanDetailId = log.RefKhPlanDetailId,
+                NgCaseId      = log.NgCaseId,
 
                 NC            = null,
 
@@ -4723,6 +4745,11 @@ else
             });
 
         }
+
+        // [ML16-ACT] dòng giờ sửa: tên loại lỗi hiện tại của vụ
+        var _actCaseLbl = await NgCaseService.GetCaseLabelsAsync(Db, rows.Where(r => r.ActivityLogId.HasValue && !r.WtsLogId.HasValue).Select(r => r.NgCaseId));
+        foreach (var r in rows.Where(r => r.ActivityLogId.HasValue && !r.WtsLogId.HasValue && r.NgCaseId != null))
+            r.NgReason = _actCaseLbl.GetValueOrDefault(r.NgCaseId!.Value);
 
         _rows = rows.OrderBy(r => r.StartTime).ToList();
 
@@ -5067,6 +5094,8 @@ else
     private async Task EditSavedRow(WtsRow row)
 
     {
+        // [ML16-ACT] dòng "Việc không ra sản phẩm" sửa ở form riêng (trước: mở thành nhóm sản xuất → bắt chọn PO, không lưu được)
+        if (row.ActivityLogId.HasValue && !row.WtsLogId.HasValue) { await OpenActivityEditAsync(row); return; }
 
         // Tạo nhóm mới từ row đã lưu để sửa lại
 
@@ -5095,7 +5124,15 @@ else
 
         // [GN-WTS-CAP] GC: nạp lại sổ giao nhận, bỏ dòng đang sửa khỏi phép tính trần (để không bị tính 2 lần).
         // Non-GC: OnSubRowKhChanged bên dưới đã gọi ReloadFlowAsync → nạp sổ.
-        if (IsGcGroup && row.KhPlanDetailId.HasValue) await ReloadFlowAsync(row.KhPlanDetailId.Value);
+        // [WTS-EDIT 2026-10-30] GC: nạp snapshot của PO (danh sách NC + máy) như lúc gõ PO, GIỮ NC / máy / giờ thực tế đã lưu.
+        //   Trước: chỉ nạp sổ → ô NC / Máy trống (danh sách rỗng), người dùng phải gõ lại PO. OnSubRowKhChanged đã gọi ReloadFlowAsync.
+        if (IsGcGroup && row.KhPlanDetailId.HasValue)
+        {
+            grp.UseStdAsDefault = false;             // không để TryFillStdValues ghi đè T.Gá / T.GC / T.Ktra đã lưu
+            await OnSubRowKhChanged(grp, row, row.KhPlanDetailId.Value.ToString());
+            grp.UseStdAsDefault = _useStdAsDefault;
+            StateHasChanged();
+        }
 
 
         // [EDIT-NONGC] Non-GC: nạp lại snapshot + cache + danh sách Mã CV, GIỮ NGUYÊN giá trị đã lưu.
@@ -5160,6 +5197,302 @@ else
         if (!res.Ok) { _voidBlockMsg = res.ErrorMsg; return false; }
         await LoadSavedRowsAsync();
         return true;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // [ML16-ACT 2026-10-30] Master list 16 + 11 — "Việc không ra sản phẩm" (Hùng duyệt 30/10, cách B)
+    //   Form riêng: Mã CV (chỉ chọn trong danh sách mã của nhóm mình — WtsTasksForGroup), Bắt đầu, Kết thúc, Ghi chú,
+    //   tuỳ chọn PO + vụ lỗi (giờ sửa hàng). Lưu / kiểm ở WtsSaveService.SaveActivityAsync (máy chủ kiểm lại mã, quyền,
+    //   ngày hôm nay, trùng giờ). Không số lượng, không đụng sổ Giao nhận. Xoá dòng dùng nút xoá có sẵn (VoidRowAsync).
+    // ════════════════════════════════════════════════════════════════════════════
+    private sealed class ActForm
+    {
+        public long?   ActivityLogId { get; set; }
+        public string  WtsCode       { get; set; } = "";
+        public string  Start         { get; set; } = "";   // HH:mm
+        public string  End           { get; set; } = "";
+        public string? Notes         { get; set; }
+        public string  PoText        { get; set; } = "";
+        public string  PoFilter      { get; set; } = "";   // chữ đang gõ ở ô PO (lọc danh sách gợi ý)
+        public int?    RefId         { get; set; }
+        public long?   NgCaseId      { get; set; }
+        public List<(long Id, string Label)> Cases { get; set; } = new();
+        public string? Error         { get; set; }
+        public bool    Busy          { get; set; }
+        public bool    Done          { get; set; }
+    }
+    private ActForm? _act;
+
+    private List<StandardWtsTask> ActTasks => WtsTasksForGroup.Where(t => t.IsActive).OrderBy(t => t.CategoryCode).ThenBy(t => t.DisplayOrder).ToList();
+    private string ActTaskName => _act == null ? "" :
+        (ActTasks.FirstOrDefault(t => string.Equals(t.TaskCode, _act.WtsCode.Trim(), StringComparison.OrdinalIgnoreCase))?.TaskName ?? "");
+    private string ActSaveCls => _act?.Done == true ? "btn btn-sm btn-outline-success" : "btn btn-sm btn-primary";
+    private string ActSaveText => _act?.Busy == true ? "Đang xử lý..." : (_act?.Done == true ? "Đã lưu ✓" : "Lưu");
+    private string ActTitle => _act?.ActivityLogId != null ? "Sửa việc không ra sản phẩm" : "Việc không ra sản phẩm";
+
+    private void OpenActivityNew()
+    {
+        if (!IsToday) return;
+        var lastEnd = _rows.Where(r => r.Saved).Select(r => (DateTime?)r.EndTime).Max();
+        var st = lastEnd.HasValue && lastEnd.Value.Date == _workDate.Date ? lastEnd.Value : DateTime.Now;
+        _act = new ActForm { Start = st.ToString("HH:mm"), End = "" };
+    }
+
+    private async Task OpenActivityEditAsync(WtsRow row)
+    {
+        if (!IsToday) return;
+        _act = new ActForm
+        {
+            ActivityLogId = row.ActivityLogId,
+            WtsCode       = row.WtsCode ?? "",
+            Start         = row.StartTime.ToString("HH:mm"),
+            End           = row.EndTime.ToString("HH:mm"),
+            Notes         = row.Notes,
+            RefId         = row.RefKhPlanDetailId,
+            PoText        = row.RefKhPlanDetailId.HasValue ? (_allRows.FirstOrDefault(r => r.KhPlanDetailId == row.RefKhPlanDetailId)?.PurchaseOrder ?? "") : "",
+            NgCaseId      = row.NgCaseId,
+        };
+        await LoadActCasesAsync();
+    }
+
+    private void CloseActivity() => _act = null;
+
+    // Gợi ý PO: lọc theo chữ đang gõ, tối đa 200 dòng (không vẽ cả danh sách KH)
+    private IEnumerable<KhPlanDetailRow> ActPoOptions => _act == null ? Enumerable.Empty<KhPlanDetailRow>()
+        : _allRows.Where(r => _act.PoFilter.Length == 0
+                           || r.PurchaseOrder.Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)
+                           || r.PartNo.Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)).Take(200);
+    private void OnActPoInput(ChangeEventArgs e) { if (_act != null) _act.PoFilter = (e.Value?.ToString() ?? "").Trim(); }
+
+    private void ActTouched() { if (_act != null) { _act.Done = false; _act.Error = null; } }
+    private void OnActCodeChanged(ChangeEventArgs e) { if (_act == null) return; _act.WtsCode = e.Value?.ToString() ?? ""; ActTouched(); }
+    private void OnActStartChanged(ChangeEventArgs e) { if (_act == null) return; _act.Start = e.Value?.ToString() ?? ""; ActTouched(); }
+    private void OnActEndChanged(ChangeEventArgs e) { if (_act == null) return; _act.End = e.Value?.ToString() ?? ""; ActTouched(); }
+    private void OnActNotesChanged(ChangeEventArgs e) { if (_act == null) return; _act.Notes = e.Value?.ToString(); ActTouched(); }
+
+    private async Task OnActPoChanged(ChangeEventArgs e)
+    {
+        if (_act == null) return;
+        _act.PoText = (e.Value?.ToString() ?? "").Trim();
+        _act.RefId  = _act.PoText.Length == 0 ? null
+                    : _allRows.FirstOrDefault(r => string.Equals(r.PurchaseOrder, _act.PoText, StringComparison.OrdinalIgnoreCase))?.KhPlanDetailId;
+        _act.NgCaseId = null;
+        ActTouched();
+        await LoadActCasesAsync();
+    }
+
+    private void OnActCaseChanged(ChangeEventArgs e)
+    {
+        if (_act == null) return;
+        _act.NgCaseId = long.TryParse(e.Value?.ToString(), out var id) && id > 0 ? id : null;
+        ActTouched();
+    }
+
+    private async Task LoadActCasesAsync()
+    {
+        if (_act == null) return;
+        _act.Cases = new();
+        if (_act.RefId == null) return;
+        var ids = await Db.NgCases.AsNoTracking().Where(c => c.KhPlanDetailId == _act.RefId.Value)
+                          .OrderByDescending(c => c.NgCaseId).Select(c => c.NgCaseId).ToListAsync();
+        var lbl = await NgCaseService.GetCaseLabelsAsync(Db, ids.Select(x => (long?)x));
+        _act.Cases = ids.Select(id => (id, NgCaseNo.Format(id) + (lbl.TryGetValue(id, out var l) ? " · " + l : ""))).ToList();
+    }
+
+    private static bool TryParseHm(string? s, out TimeSpan t)
+        => TimeSpan.TryParseExact((s ?? "").Trim(), new[] { @"hh\:mm", @"h\:mm", @"hh\:mm\:ss" }, null, out t);
+
+    private async Task SaveActivityAsync()
+    {
+        if (_act == null || _act.Busy) return;
+        _act.Error = null;
+        if (!TryParseHm(_act.Start, out var ts) || !TryParseHm(_act.End, out var te))
+        { _act.Error = "Nhập đủ giờ Bắt đầu và Kết thúc (giờ:phút)."; return; }
+        if (_act.PoText.Length > 0 && _act.RefId == null)
+        { _act.Error = $"Không tìm thấy PO {_act.PoText} — chọn trong danh sách hoặc để trống."; return; }
+        _act.Busy = true;
+        try
+        {
+            var res = await WtsSaveSvc.SaveActivityAsync(new WtsSaveService.WtsActivityRequest
+            {
+                ActivityLogId     = _act.ActivityLogId,
+                UserId            = _currentUserId,
+                WtsCode           = _act.WtsCode,
+                StartTime         = _workDate.Date + ts,
+                EndTime           = _workDate.Date + te,
+                Notes             = _act.Notes,
+                RefKhPlanDetailId = _act.RefId,
+                NgCaseId          = _act.NgCaseId,
+            });
+            if (!res.Ok) { _act.Error = res.ErrorMsg; return; }
+            await LoadSavedRowsAsync();
+            _act = null;
+        }
+        catch (Exception ex) { if (_act != null) _act.Error = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message); }
+        finally { if (_act != null) _act.Busy = false; }
+    }
+
+    private RenderFragment ActivityFormUi() => __builder =>
+    {
+        if (_act == null) return;
+        <div id="wts-act-form" class="border rounded p-2 mb-2" style="background:#f6f8ff">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-semibold small"><i class="bi bi-cup-hot me-1"></i>@ActTitle</span>
+                <button type="button" class="btn-close" title="Đóng" @onclick="CloseActivity"></button>
+            </div>
+            <div class="row g-2 align-items-end" style="font-size:0.8rem">
+                <div class="col-auto" style="min-width:170px">
+                    <label class="form-label small mb-0">Mã CV</label>
+                    <input class="form-control form-control-sm" list="actCodeList" value="@_act.WtsCode" @onchange="OnActCodeChanged" placeholder="chọn mã" />
+                    <datalist id="actCodeList">
+                        @foreach (var t in ActTasks)
+                        {
+                            <option value="@t.TaskCode">@t.TaskName</option>
+                        }
+                    </datalist>
+                    <div class="text-muted" style="font-size:10px">@ActTaskName</div>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small mb-0">Bắt đầu</label>
+                    <input type="time" class="form-control form-control-sm" value="@_act.Start" @onchange="OnActStartChanged" />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small mb-0">Kết thúc</label>
+                    <input type="time" class="form-control form-control-sm" value="@_act.End" @onchange="OnActEndChanged" />
+                </div>
+                <div class="col">
+                    <label class="form-label small mb-0">Ghi chú</label>
+                    <input class="form-control form-control-sm" maxlength="500" value="@_act.Notes" @onchange="OnActNotesChanged" />
+                </div>
+                <div class="col-auto" style="min-width:150px">
+                    <label class="form-label small mb-0">PO (sửa hàng — tuỳ chọn)</label>
+                    <input class="form-control form-control-sm" list="actPoList" value="@_act.PoText" @oninput="OnActPoInput" @onchange="OnActPoChanged" placeholder="để trống = việc chung" />
+                    <datalist id="actPoList">
+                        @foreach (var r in ActPoOptions)
+                        {
+                            <option value="@r.PurchaseOrder">@r.PartNo</option>
+                        }
+                    </datalist>
+                </div>
+                <div class="col-auto" style="min-width:170px">
+                    <label class="form-label small mb-0">@NgCaseNo.TermCap đang sửa (tuỳ chọn)</label>
+                    <select class="form-select form-select-sm" @onchange="OnActCaseChanged" disabled="@(_act.RefId == null)">
+                        <option value="" selected="@(_act.NgCaseId == null)">—</option>
+                        @foreach (var c in _act.Cases)
+                        {
+                            <option value="@c.Id" selected="@(_act.NgCaseId == c.Id)">@c.Label</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="@ActSaveCls" @onclick="SaveActivityAsync" disabled="@_act.Busy">@ActSaveText</button>
+                    <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="CloseActivity" disabled="@_act.Busy">Hủy</button>
+                </div>
+            </div>
+            @if (_act.Error != null)
+            {
+                <div class="text-danger small mt-1">@_act.Error</div>
+            }
+            <div class="text-muted mt-1" style="font-size:10px">
+                Không có số lượng, không ảnh hưởng giao nhận. Mã CV lấy từ WTS tiêu chuẩn của nhóm bạn; tính hiệu suất theo cờ Có ích / Vô ích của mã. Không được trùng giờ với dòng WTS khác của bạn.
+            </div>
+        </div>
+    };
+
+    // [ML16-ACT 2026-10-30] Báo cáo: cộng giờ sửa hàng (việc không ra sản phẩm có ghi PO) theo từng PO
+    private RenderFragment RepairByPoUi() => __builder =>
+    {
+        var list = _reportResult?.RepairByPo;
+        if (list == null || list.Count == 0) return;
+        <div class="card border-0 bg-light mb-3">
+            <div class="card-body py-2">
+                <div class="small fw-semibold mb-1"><i class="bi bi-tools me-1"></i>Giờ sửa hàng theo PO (việc không ra sản phẩm có ghi PO)</div>
+                <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem;max-width:640px">
+                    <thead class="table-light"><tr><th>PO</th><th>Part No</th><th class="text-center">Phút</th><th class="text-center">Số dòng</th><th class="text-center">Số @NgCaseNo.Term</th></tr></thead>
+                    <tbody>
+                        @foreach (var x in list)
+                        {
+                            <tr><td>@x.Po</td><td>@x.Part</td><td class="text-center fw-semibold">@x.Minutes</td><td class="text-center">@x.Lines</td><td class="text-center">@x.Cases</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    };
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // [ML17-NET 2026-10-30] Master list 17.1 — CHỈ HIỂN THỊ: cột Phút bảng đã lưu + "Tổng hôm nay" trừ giờ nghỉ của ca
+    //   (CalcEffectiveMinutes — cùng hàm phần Dự kiến / chia giờ nhóm dùng). Không đổi giờ lưu DB, không đổi báo cáo.
+    //   Tổng ngày: gộp các khoảng giờ đã lưu (chồng nhau — vd GC đứng 2 máy — chỉ tính 1 lần) rồi trừ nghỉ ca;
+    //   mốc = độ dài ca trừ nghỉ (ca chưa chọn / ca qua đêm lạ → 480 như cũ). Làm xuyên nghỉ (17.2) chờ khách chốt.
+    // ════════════════════════════════════════════════════════════════════════════
+    private CaLamViec? CaOf(WtsRow r) => (r.CaId.HasValue ? _caList.FirstOrDefault(c => c.CaId == r.CaId) : null) ?? SelectedCa;
+    private int NetMin(WtsRow r) => r.EndTime > r.StartTime ? (int)Math.Round(CalcEffectiveMinutes(r.StartTime, r.EndTime, CaOf(r))) : r.Minutes;
+    private string NetMinRawNote(WtsRow r) { var n = NetMin(r); return n != r.Minutes && r.Minutes > 0 ? $" /{r.Minutes}" : ""; }
+    private string NetMinTip(WtsRow r)
+    {
+        var n = NetMin(r);
+        return n != r.Minutes && r.Minutes > 0 ? $"Giờ thô {r.Minutes} phút − nghỉ ca {r.Minutes - n} phút = {n} phút" : "Không trùng giờ nghỉ ca";
+    }
+    private int DayNetMinutes
+    {
+        get
+        {
+            // ca của dòng đầu mỗi khoảng gộp (cùng ca với cột Phút — dòng không có ca thì ca đang chọn)
+            var iv = _rows.Where(r => r.Saved && r.EndTime > r.StartTime).Select(r => (S: r.StartTime, E: r.EndTime, Ca: CaOf(r))).OrderBy(x => x.S).ToList();
+            double total = 0; DateTime? cs = null, ce = null; CaLamViec? cc = null;
+            foreach (var x in iv)
+            {
+                if (cs == null) { cs = x.S; ce = x.E; cc = x.Ca; continue; }
+                if (x.S <= ce) { if (x.E > ce) ce = x.E; continue; }
+                total += CalcEffectiveMinutes(cs.Value, ce!.Value, cc); cs = x.S; ce = x.E; cc = x.Ca;
+            }
+            if (cs != null) total += CalcEffectiveMinutes(cs.Value, ce!.Value, cc);
+            return (int)Math.Round(total);
+        }
+    }
+    private int DayTargetMinutes
+    {
+        get
+        {
+            var ca = SelectedCa;
+            if (ca == null) return 480;
+            var st = _workDate.Date.Add(ca.GioBatDau.ToTimeSpan());
+            var en = _workDate.Date.Add(ca.GioKetThuc.ToTimeSpan());
+            if (en <= st) en = en.AddDays(1);
+            var m = (int)Math.Round(CalcEffectiveMinutes(st, en, ca));
+            return m > 0 ? m : 480;
+        }
+    }
+    private string DayNetTip
+    {
+        get
+        {
+            var raw = _rows.Where(r => r.Saved).Sum(r => r.Minutes);
+            return $"Đã trừ giờ nghỉ của ca; khoảng giờ chồng nhau chỉ tính 1 lần (cộng giờ thô từng dòng = {raw} phút). Mốc = giờ ca trừ nghỉ.";
+        }
+    }
+
+    // [ML35-PO-CAP 2026-10-30] Số chưa làm / nhận của PO dòng này — cùng sổ / cùng trần với lúc Lưu (GetWtsCap)
+    private HandoverLedgerService.WtsCapInfo? RowCap(WtsGroup grp, WtsRow sub)
+        => sub.KhPlanDetailId.HasValue ? GetWtsCap(sub.KhPlanDetailId, CurrentPg(grp), IsGcGroup ? grp.NC : sub.WtsCode) : null;
+    private string RowCapText(WtsGroup grp, WtsRow sub)
+    {
+        var cap = RowCap(grp, sub);
+        if (cap == null || cap.Max == null) return "";
+        if (cap.Locked) return "🔒 chưa nhận hàng";
+        var inL = cap.Explain.Terms.FirstOrDefault()?.Value ?? 0m;
+        return $"chưa làm: {cap.Max.Value:0.##} / nhận {inL:0.##}" + (IsWorkflowOn(sub.KhPlanDetailId) ? "" : " (Workflow OFF)");
+    }
+    private string RowCapCls(WtsGroup grp, WtsRow sub)
+    {
+        var cap = RowCap(grp, sub);
+        return cap == null || cap.Max == null ? "" : (cap.Locked || cap.Max.Value <= 0) ? "text-danger" : "text-muted";
+    }
+    private string RowCapTip(WtsGroup grp, WtsRow sub)
+    {
+        var cap = RowCap(grp, sub);
+        return cap == null || cap.Max == null ? "" : $"{(IsGcGroup ? "NC" : "Mã")} {cap.Code}: {CapDetail(cap)}";
     }
 
     private static string ReportNgCls(decimal? qtyNg)
@@ -6812,10 +7145,11 @@ else
         // Trước: "còn lại: X/đã làm/PO" với X = min(NC trước, PO) − đã làm.
         var cap = GetWtsCap(firstSub.KhPlanDetailId, "GC", nc);
         if (cap == null || cap.Max == null) return nc;
-        var inL = cap.Explain.Terms.FirstOrDefault()?.Value ?? 0m;
         if (cap.Locked) return $"🔒 {nc} — chưa nhận hàng";   // [GN-TEXT] chữ Excel / trang cũ
-        if (cap.Max.Value <= 0) return $"{nc} — chưa làm: 0 / nhận {inL:0.##}";   // [GN-TEXT]
-        return $"{nc} — chưa làm: {cap.Max.Value:0.##} / nhận {inL:0.##}";   // [GN-TEXT] trước: "còn chờ làm: X / vào Y"
+        // [ML35-PO-CAP 2026-10-30] Master list 35: số "chưa làm / nhận" dời xuống dưới ô Số PO của TỪNG dòng (trước: nhãn NC chỉ theo PO dòng đầu
+        //   → nhóm nhiều PO đọc nhầm số). Nhãn NC giữ: hết hàng (chưa làm 0) / khoá chưa nhận / giao ngoài.
+        if (cap.Max.Value <= 0) return $"{nc} — chưa làm: 0";
+        return nc;
 
     }
 
@@ -7427,6 +7761,8 @@ else
         public long? ActivityLogId { get; set; }
 
         public int? KhPlanDetailId { get; set; }
+
+        public int? RefKhPlanDetailId { get; set; }   // [ML16-ACT] PO tham chiếu của dòng việc không ra SP (giờ sửa)
 
         public DateTime StartTime { get; set; }
 

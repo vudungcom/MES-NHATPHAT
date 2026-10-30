@@ -39,6 +39,14 @@ public class WorkerActivityLog
     [MaxLength(500)]
     public string? Notes { get; set; }
 
+    // [ML16-ACT 2026-10-30] Master list 16 + 11 "Việc không ra sản phẩm" (cách B, Hùng duyệt 30/10) — 2 cột TUỲ CHỌN,
+    //   SQL 2026-10-30_ML16_WorkerActivityLogs_RefPo_NgCase.sql. Chỉ để tra cứu (giờ sửa hàng theo PO / theo vụ lỗi),
+    //   KHÔNG mang số lượng, không vào sổ Giao nhận (L6 không đổi).
+    /// <summary>PO liên quan (vd sửa hàng của PO này) — null = việc chung.</summary>
+    public int? RefKhPlanDetailId { get; set; }
+    /// <summary>Vụ lỗi đang sửa (NgCases.NgCaseId) — chỉ khi có RefKhPlanDetailId và vụ thuộc đúng PO đó.</summary>
+    public long? NgCaseId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
     // Void

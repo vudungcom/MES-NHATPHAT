@@ -17,6 +17,20 @@
             <i class="bi bi-exclamation-triangle"></i> Sai username hoặc password
         </div>
     }
+    @if (ErrorParam == "3")
+    {
+        @* [RS-C3 2026-10-30] *@
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-lock"></i> Tài khoản chưa có nhóm hoặc nhóm đang bị khoá — nhờ Admin kiểm tra phân quyền.
+        </div>
+    }
+    @if (IsLocked)
+    {
+        @* [RS-C4 2026-10-30] đăng nhập sai quá nhiều lần *@
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-lock"></i> Đăng nhập sai quá nhiều lần — thử lại sau @WaitText phút, hoặc nhờ Admin kiểm tra tài khoản.
+        </div>
+    }
 
     <form method="post" action="/login-submit" id="loginForm">
         @if (!string.IsNullOrEmpty(ReturnUrl))
@@ -37,7 +51,7 @@
         <div class="mb-3 d-flex align-items-center gap-2">
             <input type="checkbox" id="rememberMe" class="form-check-input mt-0" />
             <label for="rememberMe" class="form-check-label small text-muted" style="cursor:pointer">
-                Nhớ tài khoản
+                Nhớ tên đăng nhập
             </label>
         </div>
 
@@ -46,43 +60,41 @@
         </button>
     </form>
 
-    <div class="mt-3 text-center">
-        <small class="text-muted">
-            Lần đầu: <code>admin</code> / <code>admin123</code><br />
-            <span class="text-warning">Đổi password ngay sau khi vào</span>
-        </small>
-    </div>
+    @* [RS-C4 2026-10-30] Bỏ dòng gợi ý tài khoản / mật khẩu mặc định trên trang đăng nhập *@
 </div>
 
 <script>
+// [RS-C5 2026-10-30] "Nhớ" CHỈ tên đăng nhập — trước: lưu cả mật khẩu chữ thường trong trình duyệt (máy dùng chung là lộ).
+//   Xoá luôn mật khẩu đã lưu từ bản cũ.
 (function () {
     var KEY_USER = 'mes_saved_username';
     var KEY_PASS = 'mes_saved_password';
     var KEY_REM  = 'mes_remember_me';
+    try { localStorage.removeItem(KEY_PASS); } catch (e) { }
 
     var uEl  = document.getElementById('username');
     var pEl  = document.getElementById('password');
     var cbEl = document.getElementById('rememberMe');
     var form = document.getElementById('loginForm');
 
-    // Restore nếu đã lưu
-    if (localStorage.getItem(KEY_REM) === '1') {
-        uEl.value    = localStorage.getItem(KEY_USER) || '';
-        pEl.value    = localStorage.getItem(KEY_PASS) || '';
-        cbEl.checked = true;
-    }
-
-    // Trước khi submit: lưu hoặc xóa
-    form.addEventListener('submit', function () {
-        if (cbEl.checked) {
-            localStorage.setItem(KEY_USER, uEl.value);
-            localStorage.setItem(KEY_PASS, pEl.value);
-            localStorage.setItem(KEY_REM,  '1');
-        } else {
-            localStorage.removeItem(KEY_USER);
-            localStorage.removeItem(KEY_PASS);
-            localStorage.removeItem(KEY_REM);
+    try {
+        if (localStorage.getItem(KEY_REM) === '1') {
+            uEl.value    = localStorage.getItem(KEY_USER) || '';
+            cbEl.checked = true;
+            if (uEl.value) pEl.focus();
         }
+    } catch (e) { }
+
+    form.addEventListener('submit', function () {
+        try {
+            if (cbEl.checked) {
+                localStorage.setItem(KEY_USER, uEl.value);
+                localStorage.setItem(KEY_REM,  '1');
+            } else {
+                localStorage.removeItem(KEY_USER);
+                localStorage.removeItem(KEY_REM);
+            }
+        } catch (e) { }
     });
 })();
 </script>
@@ -94,5 +106,10 @@
     [SupplyParameterFromQuery(Name = "returnUrl")]
     public string? ReturnUrl { get; set; }
 
+    [SupplyParameterFromQuery(Name = "wait")]
+    public string? WaitParam { get; set; }
+
     private bool HasError => ErrorParam == "1";
+    private bool IsLocked => ErrorParam == "2";   // [RS-C4]
+    private string WaitText => int.TryParse(WaitParam, out var w) && w > 0 ? w.ToString() : "15";
 }
