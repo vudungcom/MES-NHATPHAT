@@ -2610,6 +2610,13 @@ else
            + (string.IsNullOrEmpty(tx.ClosedByName) ? "" : $" · {tx.ClosedByName}")
            + (tx.ClosedAt != null ? $" · {tx.ClosedAt:dd/MM HH:mm}" : "")
            + (string.IsNullOrEmpty(tx.ClosedReason) ? "" : $" · {tx.ClosedReason}");
+    // [H10 2026-10-30] Phiếu trả tự lập của lần nhận này đã được bên giao nhận lại → huỷ dây chuyền (máy chủ kiểm quyền + K5 trên kết quả cuối)
+    string AutoBackRecvNote(long receiveId)
+    {
+        var back = _logItems.FirstOrDefault(x => !x.IsVoided && x.SourceReceiveId == receiveId);
+        if (back == null || ActiveRecv(back) <= 0) return "";
+        return $"; {HandoverLedgerService.GroupLabel(back.ToGroupCode)} đã nhận lại {ActiveRecv(back):0.##} chiếc ở phiếu trả #{back.HandoverTxId} — lần nhận đó huỷ kèm (cần quyền {HandoverLedgerService.GroupLabel(back.ToGroupCode)})";
+    }
     string VoidTitle => _voidMode switch { "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", "NG" => "Huỷ báo lỗi", _ => "Huỷ phiếu giao" };   // [GN-NG-AFTER] + NG
     string VoidNote()
     {
@@ -2626,7 +2633,7 @@ else
             var r = tx.Receives.FirstOrDefault(x => x.ReceiveId == _voidingReceiveId);
             var what = r == null ? "" : $"lần nhận {r.ReceivedAt:dd/MM HH:mm} (đạt {r.QtyOk:0.##} / NG {r.QtyNg:0.##})";
             return $"Huỷ {what} của phiếu #{tx.HandoverTxId}: phiếu về lại chờ {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} nhận."
-                 + (r != null && r.QtyNg > 0 ? " Phiếu trả hàng lỗi tự lập từ lần nhận này huỷ theo." : "")
+                 + (r != null && r.QtyNg > 0 ? " Phiếu trả hàng lỗi tự lập từ lần nhận này huỷ theo" + AutoBackRecvNote(r.ReceiveId) + "." : "")   // [H10]
                  + " Nếu số đã nhận đã được nhập WTS / giao tiếp thì phần mềm chặn — xoá / sửa từ cuối ngược lên.";
         }
         if (_voidMode == "CLOSE")

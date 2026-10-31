@@ -116,8 +116,11 @@ namespace Microsoft.EntityFrameworkCore
         };
 
         public int SaveChanges() => SaveChangesAsync().GetAwaiter().GetResult();
+        /// <summary>[RS-D10] Móc cho kịch bản: trả về lỗi để giả SQL Server ném (vd nạn nhân deadlock 1205) đúng lúc SaveChanges.</summary>
+        public static Func<Exception?>? OnSave;
         public virtual Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
+            if (OnSave?.Invoke() is Exception fake) throw fake;   // [RS-D10]
             int n = 0;
             foreach (var s in _sets.Values.ToList())
             {

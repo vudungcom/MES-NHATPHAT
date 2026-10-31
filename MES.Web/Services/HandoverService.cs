@@ -1558,7 +1558,47 @@ namespace MES.Web.Services
                 issuedByUserId, purpose, fromNC, toNC, notes, reason, cell, null, null, ngCaseId);
         }
 
-        private async Task<(bool Ok, string Error)> IssueWithPurposeAsync(
+        // ----------------------------------------------------------------
+        // [RS-D10 2026-10-30] SQL Server chọn giao dịch này làm "nạn nhân deadlock" (lỗi 1205) — gặp ở 2 chỗ mở giao dịch Serializable
+        //   (lập phiếu, báo hàng lỗi sau nhận) khi 2 người lưu 2 PO khác nhau cùng lúc (khoá vùng chỉ mục chồng nhau).
+        //   SQL đã tự rollback cả giao dịch → không có gì ghi dở; trước: trang báo lỗi SQL, người dùng phải bấm lại.
+        //   Nay: tự thử lại tối đa 3 lần (mỗi lần là giao dịch mới: khoá PO lại, đọc lại sổ, kiểm trần lại). Lỗi khác ném ra như cũ.
+        // ----------------------------------------------------------------
+        public const string DeadlockMsg = "Máy chủ đang bận (nhiều người lưu cùng lúc) — đã tự thử lại 3 lần chưa được. Chưa lưu gì, bấm lưu lại sau vài giây.";
+
+        /// <summary>[RS-D10] Lỗi (hoặc lỗi bên trong) là SqlException số 1205 — đọc thuộc tính Number, không cần tham chiếu Microsoft.Data.SqlClient.</summary>
+        public static bool IsDeadlock(Exception? e)
+        {
+            for (int depth = 0; e != null && depth < 10; e = e.InnerException, depth++)
+            {
+                var p = e.GetType().GetProperty("Number");
+                if (p != null && p.PropertyType == typeof(int) && (int)p.GetValue(e)! == 1205) return true;
+            }
+            return false;
+        }
+
+        async Task<(bool Ok, string Error)> RetryDeadlockAsync(Func<Task<(bool Ok, string Error)>> once)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return await once(); }
+                catch (Exception ex) when (IsDeadlock(ex))
+                {
+                    _db.ChangeTracker.Clear();   // bỏ mọi thứ đã Add / sửa trong lần hỏng (SQL đã rollback)
+                    if (attempt >= 3) return (false, DeadlockMsg);
+                    await Task.Delay(150 * attempt);
+                }
+            }
+        }
+
+        private Task<(bool Ok, string Error)> IssueWithPurposeAsync(
+            int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued,
+            int issuedByUserId, string purpose, string? fromNC, string? toNC, string? notes, string? reason,
+            string? fromCell = null, string? toCell = null, int? ngCategoryId = null, long? ngCaseId = null)
+            => RetryDeadlockAsync(() => IssueWithPurposeOnceAsync(khPlanDetailId, fromGroupCode, toGroupCode, qtyIssued,
+                   issuedByUserId, purpose, fromNC, toNC, notes, reason, fromCell, toCell, ngCategoryId, ngCaseId));   // [RS-D10]
+
+        private async Task<(bool Ok, string Error)> IssueWithPurposeOnceAsync(   // [RS-D10] thân cũ của IssueWithPurposeAsync, không đổi
             int khPlanDetailId, string fromGroupCode, string toGroupCode, decimal qtyIssued,
             int issuedByUserId, string purpose, string? fromNC, string? toNC, string? notes, string? reason,
             string? fromCell = null,   // [GN-CELL] ô bên giao chọn (null = gọi từ chỗ cũ → suy từ purpose)
@@ -1619,6 +1659,11 @@ namespace MES.Web.Services
             bool gcHasNc = row.G("GC").Steps.Any();
             if (toGroupCode == "GC" && gcHasNc && string.IsNullOrEmpty(toNC) && purpose == HandoverPurpose.HelpReturn)
                 return (false, "Trả về Gia công: bắt buộc chọn NC nhận vào (K3).");
+            // [N3-TONC 2026-10-30] NC nhận vào phải là NC thường có trong snapshot của PO (trang chỉ cho chọn các NC này; máy chủ kiểm lại).
+            //   Trước: NC máy loại trừ / NC không có trong quy trình vẫn lưu được → sổ dồn số đó vào NC đầu, không vào NC đã ghi trên phiếu (lệch truy vết).
+            if (toGroupCode == "GC" && gcHasNc && !string.IsNullOrEmpty(toNC) && !isOut
+                && !row.G("GC").Steps.Any(s => !s.IsExcluded && s.Code == toNC))   // so đúng chữ như sổ ("in:" + NC)
+                return (false, $"NC {toNC} không phải NC nhận hàng của PO này (không có trong quy trình hoặc là máy loại trừ). Chọn lại NC nhận vào.");
 
             // [GN-NC-PIN] Gia công trả hàng lỗi công đoạn trước: bắt buộc chọn NC phát hiện lỗi (chốt NC, không trôi theo dữ liệu sau)
             if (purpose == HandoverPurpose.NgReturn && fromGroupCode == "GC" && row.G("GC").Steps.Any(s => !s.IsExcluded))
@@ -1730,7 +1775,10 @@ namespace MES.Web.Services
 
         // ----------------------------------------------------------------
 
-        public async Task<(bool Ok, string Error)> ReceiveAsync(
+        public Task<(bool Ok, string Error)> ReceiveAsync(long handoverTxId, decimal qtyOk, decimal qtyNg, string? ngReason, int receivedByUserId, string? notes = null, string? toCell = null, string? toCellReason = null, int? ngCategoryId = null)
+            => RetryDeadlockAsync(() => ReceiveOnceAsync(handoverTxId, qtyOk, qtyNg, ngReason, receivedByUserId, notes, toCell, toCellReason, ngCategoryId));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> ReceiveOnceAsync(
 
             long handoverTxId,
 
@@ -1941,7 +1989,10 @@ namespace MES.Web.Services
 
         // ----------------------------------------------------------------
 
-        public async Task<(bool Ok, string Error)> VoidReceiveAsync(
+        public Task<(bool Ok, string Error)> VoidReceiveAsync(long receiveId, string voidReason, int voidedByUserId, IReadOnlyCollection<string> editGroups)
+            => RetryDeadlockAsync(() => VoidReceiveOnceAsync(receiveId, voidReason, voidedByUserId, editGroups));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> VoidReceiveOnceAsync(
 
             long receiveId,
 
@@ -1982,14 +2033,31 @@ namespace MES.Web.Services
 
                 return (false, "Bản ghi nhận không tồn tại hoặc đã bị huỷ.");
 
-            // [GN-RECV-NG] Lần nhận có NG đã sinh phiếu trả tự lập: huỷ lần nhận thì huỷ luôn phiếu trả,
-            // nhưng nếu bên giao đã nhận lại hàng lỗi thì phải huỷ lần nhận đó trước (K5: huỷ từ cuối dòng ngược lên).
+            // [GN-RECV-NG] Lần nhận có NG đã sinh phiếu trả tự lập: huỷ lần nhận thì huỷ luôn phiếu trả.
+            // [H10 2026-10-30] Bên giao đã nhận lại hàng lỗi ở phiếu trả → huỷ DÂY CHUYỀN trong cùng giao dịch này:
+            //   lần nhận phiếu trả + phiếu trả + lần nhận gốc (trước: chặn "Huỷ lần nhận đó trước" → có lúc kẹt vòng: huỷ lần nhận phiếu trả
+            //   bị K5 chặn mà chứng từ gây vướng lại chỉ huỷ được sau nó). Sổ kiểm K5 trên trạng thái CUỐI (như chưa từng nhận) — cùng cách
+            //   HandoverWhy.OpVoidReceive tính thử. Quyền: người huỷ phải huỷ được cả lần nhận phiếu trả (người bấm Nhận / nhóm nhận phiếu trả).
             var autoBack = await _db.HandoverTransactions.Include(t => t.Receives)
                 .FirstOrDefaultAsync(t => t.SourceReceiveId == receiveId && !t.IsVoided);
+            var cascadeIds = new List<long>();   // [H10] lần nhận phiếu trả huỷ kèm
             if (autoBack != null)
             {
-                if (autoBack.Receives.Any(r => !r.IsVoided))
-                    return (false, $"{HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} đã nhận lại hàng lỗi ở phiếu trả #{autoBack.HandoverTxId}. Huỷ lần nhận đó trước.");
+                var backRecs = autoBack.Receives.Where(r => !r.IsVoided).OrderByDescending(r => r.ReceivedAt).ThenByDescending(r => r.ReceiveId).ToList();
+                // [H10] kiểm quyền MỌI lần nhận phiếu trả trước khi đổi gì (bị từ chối thì chưa sửa dòng nào trong bộ nhớ)
+                var noRight = backRecs.FirstOrDefault(br => !CanVoidReceive(br.ReceivedBy, autoBack.ToGroupCode, voidedByUserId, editGroups));
+                if (noRight != null)
+                    return (false, $"{HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} đã nhận lại hàng lỗi ở phiếu trả #{autoBack.HandoverTxId} (lần nhận #{noRight.ReceiveId}). "
+                                 + $"Bạn không có quyền huỷ lần nhận đó — nhờ người đã bấm Nhận hoặc nhóm {HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} huỷ trước, hoặc người có quyền cả 2 nhóm huỷ một lần.");
+                foreach (var br in backRecs)
+                {
+                    br.IsVoided   = true;
+                    br.VoidReason = $"Huỷ theo lần nhận #{receiveId}: {voidReason.Trim()}";
+                    if (br.VoidReason.Length > 200) br.VoidReason = br.VoidReason[..200];
+                    br.VoidedBy   = voidedByUserId;
+                    br.VoidedAt   = DateTime.Now;
+                    cascadeIds.Add(br.ReceiveId);
+                }
                 autoBack.IsVoided   = true;
                 autoBack.VoidReason = $"Huỷ theo lần nhận #{receiveId}: {voidReason.Trim()}";
                 if (autoBack.VoidReason.Length > 200) autoBack.VoidReason = autoBack.VoidReason[..200];
@@ -2029,8 +2097,10 @@ namespace MES.Web.Services
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
-                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId),
-                        new HashSet<string> { "R:" + receiveId });
+                    var opDocsR = new HashSet<string> { "R:" + receiveId };   // [H10] + phiếu trả tự lập và các lần nhận huỷ kèm
+                    if (autoBack != null) opDocsR.Add("T:" + autoBack.HandoverTxId);
+                    foreach (var cid in cascadeIds) opDocsR.Add("R:" + cid);
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId), opDocsR);
                     return (false, k5 + whyTxt);
                 }
             }
@@ -2049,7 +2119,10 @@ namespace MES.Web.Services
 
         // ----------------------------------------------------------------
 
-        public async Task<(bool Ok, string Error)> VoidIssueAsync(
+        public Task<(bool Ok, string Error)> VoidIssueAsync(long handoverTxId, string voidReason, int voidedByUserId, IReadOnlyCollection<string> editGroups)
+            => RetryDeadlockAsync(() => VoidIssueOnceAsync(handoverTxId, voidReason, voidedByUserId, editGroups));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> VoidIssueOnceAsync(
 
             long handoverTxId,
 
@@ -2078,7 +2151,7 @@ namespace MES.Web.Services
             //   Không huỷ riêng phiếu: sổ sẽ coi như bên giao gốc đã nhận lại hàng lỗi ngay — sai số.
             //   Lần nhận gốc do chính người / nhóm này bấm (IssuedBy = người nhận, FromGroupCode = nhóm nhận) nên cùng luật quyền.
             if (head.SourceReceiveId != null)
-                return await VoidReceiveAsync(head.SourceReceiveId.Value, voidReason, voidedByUserId, editGroups);
+                return await VoidReceiveOnceAsync(head.SourceReceiveId.Value, voidReason, voidedByUserId, editGroups);   // [RS-D10] gọi thân (vòng thử lại ở ngoài)
 
             // [GN-K8][K5] Huỷ phiếu xong mà ô nào mới âm → chặn
             using var trx = await _db.Database.BeginTransactionAsync();
@@ -2111,16 +2184,15 @@ namespace MES.Web.Services
                 foreach (var r in recs)
                 {
                     opDocs.Add("R:" + r.ReceiveId);
+                    var kem = new List<string>();   // [H10] phiếu trả tự lập đã được nhận lại: huỷ kèm trong cùng lần huỷ (không còn bước riêng)
                     foreach (var b in backs.Where(b => b.SourceReceiveId == r.ReceiveId))
                     {
                         opDocs.Add("T:" + b.HandoverTxId);
-                        foreach (var br in b.Receives.Where(x => !x.IsVoided).OrderByDescending(x => x.ReceivedAt))
-                        {
-                            opDocs.Add("R:" + br.ReceiveId);
-                            tail.Add($"Huỷ lần nhận #{br.ReceiveId} của phiếu trả hàng lỗi #{b.HandoverTxId} ({HandoverLedgerService.GroupLabel(b.ToGroupCode)} đã nhận lại {br.QtyOk + br.QtyNg:0.##} lúc {br.ReceivedAt:dd/MM HH:mm})");
-                        }
+                        var bq = b.Receives.Where(x => !x.IsVoided).ToList();
+                        foreach (var br in bq) opDocs.Add("R:" + br.ReceiveId);
+                        if (bq.Any()) kem.Add($"huỷ kèm phiếu trả hàng lỗi #{b.HandoverTxId} và lần nhận của nó — {HandoverLedgerService.GroupLabel(b.ToGroupCode)} đã nhận lại {bq.Sum(x => x.QtyOk + x.QtyNg):0.##}, cần quyền {HandoverLedgerService.GroupLabel(b.ToGroupCode)}");
                     }
-                    tail.Add($"Huỷ lần nhận #{r.ReceiveId} của phiếu này (nhận {r.Qty:0.##} lúc {r.ReceivedAt:dd/MM HH:mm})");
+                    tail.Add($"Huỷ lần nhận #{r.ReceiveId} của phiếu này (nhận {r.Qty:0.##} lúc {r.ReceivedAt:dd/MM HH:mm})" + (kem.Any() ? " — " + string.Join("; ", kem) : ""));
                 }
                 var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId), opDocs, tail);
                 return (false, "Phiếu đã có bên nhận xác nhận. Huỷ từng lần nhận trước, hoặc dùng Huỷ phần chưa nhận." + whyTxt);   // [GN-VOID-RULE] chỉ đổi chữ
@@ -2193,7 +2265,15 @@ namespace MES.Web.Services
         public static bool CanVoidNgReport(int createdBy, string groupCode, int userId, IReadOnlyCollection<string> editGroups)
             => createdBy == userId || editGroups.Contains(groupCode);
 
-        public async Task<(bool Ok, string Error)> ReportNgAfterReceiveAsync(
+        public Task<(bool Ok, string Error)> ReportNgAfterReceiveAsync(
+            int khPlanDetailId, string groupCode, string sourceCell, string? nc, decimal qty,
+            string origin, string? causeGroupCode, string ngReason, string? notes,
+            int userId, IReadOnlyCollection<string> editGroups,
+            int? ngCategoryId = null)
+            => RetryDeadlockAsync(() => ReportNgAfterReceiveOnceAsync(khPlanDetailId, groupCode, sourceCell, nc, qty,
+                   origin, causeGroupCode, ngReason, notes, userId, editGroups, ngCategoryId));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> ReportNgAfterReceiveOnceAsync(   // [RS-D10] thân cũ của ReportNgAfterReceiveAsync, không đổi
             int khPlanDetailId, string groupCode, string sourceCell, string? nc, decimal qty,
             string origin, string? causeGroupCode, string ngReason, string? notes,
             int userId, IReadOnlyCollection<string> editGroups,
@@ -2256,7 +2336,10 @@ namespace MES.Web.Services
             return (true, string.Empty);
         }
 
-        public async Task<(bool Ok, string Error)> VoidNgReportAsync(long reportId, string voidReason, int userId, IReadOnlyCollection<string> editGroups)
+        public Task<(bool Ok, string Error)> VoidNgReportAsync(long reportId, string voidReason, int userId, IReadOnlyCollection<string> editGroups)
+            => RetryDeadlockAsync(() => VoidNgReportOnceAsync(reportId, voidReason, userId, editGroups));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> VoidNgReportOnceAsync(long reportId, string voidReason, int userId, IReadOnlyCollection<string> editGroups)
         {
             if (string.IsNullOrWhiteSpace(voidReason) || voidReason.Trim().Length < 3)
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
@@ -2324,7 +2407,10 @@ namespace MES.Web.Services
         //   Ghi lại số đã huỷ / người / lúc / lý do (QtyClosed…) để truy vết; phiếu gốc = QtyIssued + QtyClosed.
         //   Không áp dụng phiếu trả tự lập (hàng lỗi đó đã rời bên nhận gốc ngay lúc nhận — bớt phiếu là mất hàng).
         // ----------------------------------------------------------------
-        public async Task<(bool Ok, string Error)> CloseRemainderAsync(
+        public Task<(bool Ok, string Error)> CloseRemainderAsync(long handoverTxId, string reason, int userId, IReadOnlyCollection<string> editGroups)
+            => RetryDeadlockAsync(() => CloseRemainderOnceAsync(handoverTxId, reason, userId, editGroups));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+
+        private async Task<(bool Ok, string Error)> CloseRemainderOnceAsync(
             long handoverTxId,
             string reason,
             int userId,

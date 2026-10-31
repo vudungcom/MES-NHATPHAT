@@ -43,6 +43,12 @@ bool VuStrict = Environment.GetEnvironmentVariable("VU") != "0";   // [VULOI] m�
 //   → KhoVatLieuService.SaveKhoInputAsync, mã WTS đọc từ snapshot; thêm thao tác `pmedit` (sửa Part Master giữa chừng → PO cũ phải y nguyên)
 //   và 1 PO "hàng xóm" cùng phiếu KH có sẵn chứng từ → sổ PO đó không được đổi. Không đặt CHUOI thì y như cũ (cùng seed ra cùng kết quả).
 bool chuoi = Environment.GetEnvironmentVariable("CHUOI") == "1";
+// [H10 2026-10-30] WHYALL=1: sau mỗi thao tác, thử tính đường gỡ [GN-WHY] cho MỌI lần nhận còn hiệu lực (như người dùng bấm Huỷ lần nhận) —
+//   chỉ tính trên bản sao số liệu, không ghi gì, không rút số ngẫu nhiên (cùng seed vẫn ra cùng chuỗi thao tác). Gặp "chưa lần ra" (bị K5 chặn mà
+//   không có đường gỡ) thì ghi lỗi [H10 kẹt] kèm sổ chứng từ để tái hiện vòng khoá.
+bool whyAll = Environment.GetEnvironmentVariable("WHYALL") == "1";
+var h10Seen = new HashSet<string>();
+int h10MaxSteps = 0;
 var swProg = System.Diagnostics.Stopwatch.StartNew(); double lastProg = 0; // [FUZZ-UX] đồng hồ báo tiến độ
 for (int po = startPo; po < startPo + poCount; po++)
 {
@@ -73,8 +79,10 @@ for (int po = startPo; po < startPo + poCount; po++)
             nbId = ids[1]; var q2 = (int)db.KhPlanDetails.List.First(d => d.KhPlanDetailId == nbId).Quantity;
             await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(nbId, DateTime.Now, q2, "OVL", "A2", null, null, null, "nhan phoi", 1);
             var nsvc = new HandoverService(db);
-            var nc0 = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == nbId && !s.IsBackup).OrderBy(s => s.StepOrder).First().NC;
+            var nbRow0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(nbId))!;   // [N3-TONC] NC thường đầu tiên (NC đầu có thể là máy loại trừ)
+            var nc0 = nbRow0.G("GC").Steps.First(s => !s.IsExcluded).Code;
             var gi = await nsvc.IssueByCellAsync(nbId, "KHO", "GC", q2, 1, "MOI", false, "MOI", null, nc0);
+            if (!gi.Ok) fails.Add($"[CHUOI] PO{po} PO hàng xóm giao Kho → GC lỗi: {gi.Error}");
             if (gi.Ok) await nsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, q2 - 1, 1, "loi", 2, null, null, null, 2);
             db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = nbId, ProcessGroup = "GC", NC = nc0, WorkerId = 2, QtyDone = 2, QtyOk = 2, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now });
             await db.SaveChangesAsync();
@@ -147,7 +155,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var to = p == HandoverPurpose.HelpReturn ? "GC" : groups[rnd.Next(groups.Length)];
                         if (p == HandoverPurpose.HelpSend) from = "GC";
                         var fnc = p == HandoverPurpose.HelpSend ? ncs[rnd.Next(ncs.Length)] : null;
-                        var tnc = p == HandoverPurpose.HelpReturn ? ncs[rnd.Next(ncs.Length)] : null;
+                        var ncsIn = row.G("GC").Steps.Where(x => !x.IsExcluded).Select(x => x.Code).ToArray();   // [N3-TONC] NC nhận vào hợp lệ (như trang)
+                        var tnc = p == HandoverPurpose.HelpReturn ? (ncsIn.Length > 0 ? ncsIn[rnd.Next(ncsIn.Length)] : ncs[rnd.Next(ncs.Length)]) : null;
                         // [VULOI] Huỷ / Trả khách: chọn 1 vụ đang giữ ở ô Hàng lỗi bên giao (trần theo vụ)
                         long? vu = null;
                         if (p is HandoverPurpose.Scrap or HandoverPurpose.CustReturn)
@@ -345,7 +354,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!ok && res.Error.StartsWith("Không lưu"))
                     {
                         var rid = r0.ReceiveId; var grp = r0.Transaction.ToGroupCode;
-                        await WhyCheck(db, svc, led, HandoverWhy.OpVoidReceive(rid), new HashSet<string> { "R:" + rid },
+                        await WhyCheck(db, svc, led, HandoverWhy.OpVoidReceive(rid), RecvOpDocs((await led.GetInputForDetailAsync(1))!, rid),   // [H10] tập bỏ qua như máy chủ
                             async () => (await svc.VoidReceiveAsync(rid, "thu lai", Uid(grp), All)).Ok, null, rnd, po, op, desc, res.Error);
                     }
 #endif
@@ -618,6 +627,7 @@ for (int po = startPo; po < startPo + poCount; po++)
         Inc("ok." + kind);
     if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] op{op} {desc}");   // [FIX-1028] in từng thao tác thành công của 1 PO để tái hiện lỗi
         await CheckAll(db, led, po, op, desc);
+        if (whyAll) await WhyAllCheck(db, led, po, op, desc);   // [H10] WHYALL=1: thử tìm đường gỡ cho MỌI lần nhận / phiếu (chỉ tính trên bản sao, không ghi)
         if (chuoi)
         {   // [CHUOI] snapshot PO đang chạy không đổi; PO hàng xóm cùng phiếu KH: sổ + số chứng từ y nguyên; chứng từ mới chỉ thuộc PO 1
             checks++;
@@ -649,6 +659,7 @@ for (int po = startPo; po < startPo + poCount; po++)
 Console.WriteLine($"PO: {poCount} · thao tác/PO: {opsPerPo} · seed {seed0}");
 if (whyMs.Any()) Console.WriteLine($"  [GN-WHY] tìm gốc rễ: {whyMs.Count} lần · trung bình {whyMs.Average():0.0} ms · lâu nhất {whyMs.Max():0.0} ms · số lần tính sổ TB {whyComputes.Average():0.0} / lớn nhất {whyComputes.Max()}");
 foreach (var m in whyMiss) Console.WriteLine("  [GN-WHY chưa lần ra hết] " + m);
+if (whyAll) Console.WriteLine($"  [H10] thử huỷ mọi lần nhận: gỡ được {(stats.TryGetValue("h10.ok", out var h1) ? h1 : 0)} · hết trần tìm nhưng có đường {(stats.TryGetValue("h10.hettran", out var h2) ? h2 : 0)} (dài nhất {h10MaxSteps} bước) · kẹt {(stats.TryGetValue("h10.ket", out var h3) ? h3 : 0)}");
 foreach (var kv in stats.OrderBy(k => k.Key)) Console.WriteLine($"  {kv.Key,-20} {kv.Value}");
 Console.WriteLine($"Phép kiểm: {checks}");
 var groupsFail = fails.GroupBy(f => f.Split(']')[0] + "]").ToList();
@@ -811,6 +822,77 @@ static T Pick<T>(Random r, params (T v, int w)[] xs)
 }
 
 
+// [H10 2026-10-30] Chứng từ máy chủ bỏ qua khi tìm gợi ý cho "huỷ lần nhận rid" (giống HandoverService.VoidReceiveAsync):
+//   lần nhận + phiếu trả tự lập của nó + các lần nhận phiếu trả (huỷ dây chuyền).
+HashSet<string> RecvOpDocs(LedgerInput inp, long rid)
+{
+    var d = new HashSet<string> { "R:" + rid };
+    foreach (var b in inp.Txs.Where(b => b.SourceReceiveId == rid)) { d.Add("T:" + b.Id); foreach (var br in b.Receives) d.Add("R:" + br.Id); }
+    return d;
+}
+
+// [H10 2026-10-30] Mọi lần nhận còn hiệu lực (kể cả lần nhận gốc có phiếu trả đã được nhận lại — huỷ dây chuyền): nếu huỷ bị K5 chặn thì
+//   [GN-WHY] phải lần ra đường gỡ, và làm theo từng bước gợi ý trên bản sao phải gỡ được (bước không trỏ chứng từ đã mất). Chỉ tính, không ghi.
+async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int opIdx, string desc)
+{
+    var input = (await led.GetInputForDetailAsync(1))!;
+    if (!input.ApplyWorkflow) return;
+    var before = HandoverLedgerService.Compute(input);
+    foreach (var t in input.Txs)
+        foreach (var r in t.Receives)
+        {
+            if (input.Txs.Any(b => b.SourceReceiveId == r.Id && b.Receives.Any())) Inc("h10.daychuyen");
+            var opDocs = RecvOpDocs(input, r.Id);
+            var a = HandoverWhyTest.CloneInput(input); HandoverWhy.OpVoidReceive(r.Id)(a);
+            if (!HandoverLedgerService.NewNegativeKeys(before, HandoverLedgerService.Compute(a)).Any()) continue;
+            checks++;
+            var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs);
+            if (!plan.Complete)
+            {   // hết trần tìm (80 lần tính / 1,5 s) chưa phải vòng khoá: tìm lại không giới hạn để phân biệt
+                var big = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs, 5000, 60000);
+                if (big.Complete) { Inc("h10.hettran"); h10MaxSteps = Math.Max(h10MaxSteps, big.Steps.Count); continue; }
+                plan = big;
+            }
+            Inc(plan.Complete ? "h10.ok" : "h10.ket");
+            if (plan.Complete)
+            {   // làm theo gợi ý trên bản sao: mỗi bước phải còn chứng từ, cuối cùng thao tác gốc không còn ô mới âm
+                var sim = HandoverWhyTest.CloneInput(input); string? bad = null;
+                foreach (var st in plan.Steps)
+                {
+                    bool exists = st.Kind switch
+                    {
+                        "WTS" => sim.Wts.Any(w => w.Id == st.Id),
+                        "NHAN" => sim.Txs.Any(x => x.Receives.Any(y => y.Id == st.Id)),
+                        "BAOLOI" => sim.NgReps.Any(b2 => b2.Id == st.Id),
+                        _ => sim.Txs.Any(x => x.Id == st.Id),
+                    };
+                    if (!exists) { bad = $"bước {st.Kind}#{st.Id} trỏ chứng từ đã mất"; break; }
+                    var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
+                    (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
+                    if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s2)).Any()) { bad = $"bước {st.Kind}#{st.Id} tự nó bị K5 chặn"; break; }
+                    sim = s2;
+                }
+                if (bad == null && !sim.Txs.Any(x => x.Receives.Any(y => y.Id == r.Id))) bad = "làm theo gợi ý xong thì lần nhận gốc đã mất (thao tác gốc không còn để làm)";
+                if (bad == null)
+                {
+                    var bs = HandoverLedgerService.Compute(sim); var s3 = HandoverWhyTest.CloneInput(sim); HandoverWhy.OpVoidReceive(r.Id)(s3);
+                    if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s3)).Any()) bad = "làm theo gợi ý xong vẫn bị K5 chặn";
+                }
+                if (bad != null && h10Seen.Add($"{po}:{r.Id}:sim")) fails.Add($"[H10 gợi ý sai] PO{po} op{opIdx} sau «{desc}»: huỷ lần nhận #{r.Id}: {bad}");
+                continue;
+            }
+            var key = $"{po}:{r.Id}";
+            if (!h10Seen.Add(key)) continue;
+            var dump = new System.Text.StringBuilder();
+            var a2 = HandoverWhyTest.CloneInput(input); HandoverWhy.OpVoidReceive(r.Id)(a2);
+            dump.Append("ô âm: " + string.Join(", ", HandoverLedgerService.NewNegativeKeys(before, HandoverLedgerService.Compute(a2))));
+            foreach (var x in input.Txs) dump.Append($"\n      tx#{x.Id} {x.From}->{x.To} {x.Purpose} {x.FromCell}->{x.ToCell} q={x.Issued} fnc={x.FromNC} tnc={x.ToNC} vu={x.NgCaseId} src={x.SourceReceiveId} @{x.At:HH:mm:ss.fff} rec={string.Join(",", x.Receives.Select(y => $"#{y.Id}:{y.Ok}/{y.Ng}@{y.Cell}/vu{y.NgCaseId}"))}");
+            foreach (var w in input.Wts) dump.Append($"\n      wts#{w.Id} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.Ok}/{w.Ng} vu={w.NgCaseId}");
+            foreach (var b in input.NgReps) dump.Append($"\n      baoloi#{b.Id} {b.Group} {b.Source} {b.NC} {b.Qty} vu={b.NgCaseId}");
+            fails.Add($"[H10 kẹt] PO{po} op{opIdx} sau «{desc}»: huỷ lần nhận #{r.Id} (phiếu #{t.Id} {t.From}->{t.To}{(t.SourceReceiveId != null ? " tự lập" : "")}) bị chặn, gợi ý dừng sau {plan.Steps.Count} bước ({string.Join(" → ", plan.Steps.Select(st => st.Kind + "#" + st.Id))})\n      " + dump);
+        }
+}
+
 // [GN-WHY] Kiểm gợi ý gỡ: (1) gợi ý có trong lời báo; (2) làm đúng theo gợi ý (qua hàm thật / mô phỏng trang WTS) thì thao tác gốc lưu được
 async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService led, Action<LedgerInput> opFn, HashSet<string> opDocs,
                     Func<Task<bool>> retry, Func<Task<bool>>? pre, Random rnd, int po, int opIdx, string desc, string? svcMsg)
@@ -859,7 +941,7 @@ async Task<(bool Ok, string Error)> VoidRecvDeep(AppDbContext db, HandoverServic
     var r0 = await svc.VoidReceiveAsync(rid, "goi y", 1, All);
     if (r0.Ok || depth >= 4 || !r0.Error.StartsWith("Không lưu")) return r0;
     var input = (await led.GetInputForDetailAsync(1))!;
-    var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), new HashSet<string> { "R:" + rid });
+    var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), RecvOpDocs(input, rid));   // [H10] tập bỏ qua như máy chủ
     if (!plan.Complete || plan.Steps.Count == 0) return r0;
     foreach (var st in plan.Steps)
     {

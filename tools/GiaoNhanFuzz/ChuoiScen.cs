@@ -359,6 +359,60 @@ public static class ChuoiScen
                "Taro: xoá T1 thì T1-DP xoá kèm + có log");
         }
 
+        // [N3-FIRST 2026-10-30] Kiểm lại N3 sau [GN-ROUTE-FREE]: NC máy loại trừ đứng ĐẦU chuỗi GC (NC01 = H04).
+        //   Không có NC nguồn trước nó → không giao theo NC được; sổ cho NC02 nhận thẳng hàng vào Gia công.
+        //   Kịch bản canh in/out (cân, không ô âm, trần WTS khớp sổ) trên cả 2 đường xưởng có thể đi; dòng GHI NHẬN in ra cách sổ đang tính.
+        Console.WriteLine("[C14] [N3-FIRST] NC máy loại trừ đứng ĐẦU chuỗi GC (N3): in/out cân trên mọi đường đi, không ô âm");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-014", new ChuoiHelp.Shape { Gc = 3, ExclAt = 0, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 1, Prep = false, TaroTaskCode = false });
+            await ChuoiHelp.CreateKhAsync(db, pid, "P-014", new decimal[] { 10 }, "PO-14");
+            var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await kho.SaveKhoInputAsync(1, DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            bool Clean(LedgerRow rw) => rw.Balanced && HandoverLedgerService.NegativeCells(rw).Count == 0 && HandoverLedgerService.WhereIs(rw).Items.All(i => i.Qty >= 0);
+            string Gc(LedgerRow rw) => string.Join(",", rw.G("GC").Steps.Select(s => s.Code + (s.IsExcluded ? "(X)" : "") + $" vào {s.In} chờ {s.Waiting}"));
+            // Đường 1: Kho → Gia công 6, rồi Gia công thử giao theo NC cho nhóm làm H04
+            var g1 = await svc.IssueByCellAsync(1, "KHO", "GC", 6, 1, "MOI", false, "MOI", null, "NC02");
+            var r1 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 6, 0, null, 2);
+            var row = (await led.GetLedgerForDetailAsync(1))!;
+            var st = row.G("GC").Steps;
+            Ok(g1.Ok && r1.Ok && st.Count == 3 && st[0].IsExcluded && st[1].In == 6 && st[2].In == 0 && Clean(row),
+               "Kho → Gia công 6: NC01 (H04) loại trừ đầu chuỗi, NC02 nhận vào 6, NC03 0; cân, không ô âm", Gc(row));
+            // [N3-TONC] máy chủ chỉ nhận NC thường có trong snapshot: NC loại trừ / NC lạ bị chặn (trước: lưu được, sổ dồn vào NC đầu)
+            var bx = await svc.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI", null, "NC01");
+            var bu = await svc.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI", null, "NC99");
+            Ok(!bx.Ok && !bu.Ok && bx.Error.Contains("không phải NC nhận hàng") && bu.Error.Contains("không phải NC nhận hàng") && db.HandoverTransactions.List.Count(t => !t.IsVoided) == 1,
+               "Giao vào NC01 (máy loại trừ) hoặc NC99 (không có) → máy chủ chặn, không lập phiếu", bx.Error + " | " + bu.Error);
+            var capX = HandoverLedgerService.IssueCapCase(row, "GC", HandoverPurpose.HelpSend, "NC01", null, null).Max;
+            var capN2 = HandoverLedgerService.IssueCapCase(row, "GC", HandoverPurpose.HelpSend, "NC02", null, null).Max;
+            Ok(capX == 0 && capN2 == 0, "Giao theo NC: NC01 là máy loại trừ, NC02 chưa có OK → trần 0 (không có đường gửi làm hộ cho NC đầu chuỗi)", $"NC01={capX} NC02={capN2}");
+            var capW = HandoverLedgerService.WtsCap(row, "GC", "NC02").Max;
+            Console.WriteLine($"  GHI NHẬN  NC01 loại trừ ở đầu: WTS NC02 được nhập tới {capW} (= hàng vào Gia công) — công đoạn H04 không có chứng từ (chờ Hùng chốt luật)");
+            await VuHelp.Wts(db, "GC", "NC02", null, 4, 0, 2, 1);
+            row = (await led.GetLedgerForDetailAsync(1))!;
+            Ok(Clean(row) && row.G("GC").Steps[2].In == 4, "WTS NC02 OK 4 → NC03 nhận vào 4; cân, không ô âm", Gc(row));
+            // Đường 2: Kho giao thẳng 4 phôi Hàng mới cho HTSP (nhóm làm H04), HTSP giao lại Gia công → vào NC02
+            var g2 = await svc.IssueByCellAsync(1, "KHO", "HTSP", 4, 1, "MOI", false, "MOI");
+            var r2 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 0, null, 3);
+            row = (await led.GetLedgerForDetailAsync(1))!;
+            Ok(g2.Ok && r2.Ok && row.G("HTSP").ChuaLam == 4 && Clean(row), "Kho → HTSP 4 (Hàng mới): vào Chưa làm HTSP 4; cân", $"HTSP chưa làm {row.G("HTSP").ChuaLam}");
+            var hr = await svc.IssueSpecialAsync(1, "HTSP", "GC", 4, 3, HandoverPurpose.HelpReturn, null, "NC02", "tra ve");
+            Ok(!hr.Ok, "HTSP trả về Gia công theo NC khi chưa nhận hàng giao theo NC → chặn (Tồn theo NC = 0)", hr.Error);
+            var tcode = row.G("HTSP").Steps.First(s => s.Pg == "TARO").Code;
+            await VuHelp.Wts(db, "TARO", null, tcode, 4, 0, 3, 1);
+            row = (await led.GetLedgerForDetailAsync(1))!;
+            var g3 = await svc.IssueByCellAsync(1, "HTSP", "GC", 4, 3, "MOI", false, "MOI", null, "NC02");
+            var r3 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 0, null, 2);
+            row = (await led.GetLedgerForDetailAsync(1))!;
+            Ok(g3.Ok && r3.Ok && row.G("GC").Steps[1].In == 10 && Clean(row),
+               "HTSP làm xong giao Hàng mới 4 cho Gia công vào NC02 → NC02 nhận vào 10; cân, không ô âm", Gc(row) + " · " + g3.Error + r3.Error);
+            Console.WriteLine($"  GHI NHẬN  đường 2: 4 chiếc tính vào 4 số của HTSP (Nhận HTSP = {row.G("HTSP").NhanTong}), không phải 'hàng làm hộ' (K4)");
+            // Huỷ ngược cả 2 đường: không ô âm, phôi về Kho
+            var vr3 = await svc.VoidReceiveAsync(db.HandoverReceives.List.Last().ReceiveId, "huy thu", 1, new[] { "KHO", "GC", "HTSP", "KCS", "PKG" });
+            row = (await led.GetLedgerForDetailAsync(1))!;
+            Ok(vr3.Ok && Clean(row), "Huỷ lần nhận HTSP → Gia công: lưu được, cân, không ô âm", vr3.Error);
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

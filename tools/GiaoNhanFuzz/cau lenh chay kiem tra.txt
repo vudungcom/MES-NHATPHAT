@@ -81,3 +81,7 @@ set CHUOI=1       lượt ngẫu nhiên dựng PO qua chuỗi thật: Part Maste
                   30% lượt có PO hàng xóm cùng phiếu KH (sổ / chứng từ PO đó không được đổi). Tắt: set CHUOI=
    vd: set CHUOI=1 && set LOI=1 && dotnet bin2\GiaoNhanFuzz.dll 60 120 5
 set TRACEPO=11    in Part Master + từng thao tác thành công của PO số 11 (để tái hiện 1 lỗi)
+
+== 4. [H10 30/10] THỬ HUỶ MỌI LẦN NHẬN (chậm hơn ~2 lần) ==
+set WHYALL=1      sau mỗi thao tác: thử huỷ từng lần nhận còn hiệu lực (kể cả huỷ dây chuyền lần nhận gốc + phiếu trả tự lập),
+                  bị K5 chặn thì gợi ý gỡ phải lần ra và làm theo được. Cuối in dòng [H10] ... kẹt 0. Tắt: set WHYALL=

@@ -139,6 +139,23 @@ public static class HarnessSeed
             new User { Username = "khe01", FullName = "Kế hoạch A", PasswordHash = hash, GroupId = gKh.GroupId, IsActive = true, PIN = "1111" },
             new User { Username = "khe02", FullName = "Kế hoạch B", PasswordHash = hash, GroupId = gKh.GroupId, IsActive = true, PIN = "1111" });
         await db.SaveChangesAsync();
+        // ── [H10 30/10] phiếu KH riêng KH-H10 (thêm CUỐI, không chung phiếu KH-TEST → không đổi kịch bản trước): Kho → Gia công 10,
+        //    Gia công nhận 8 + NG 2 → phiếu trả tự lập → Kho đã nhận lại 2. drive_h10.py thử huỷ dây chuyền lần nhận gốc trên trang Giao nhận.
+        var planH = new KhPlan { PlanNo = "KH-H10", PlanDate = T0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = T0 };
+        db.KhPlans.Add(planH); await db.SaveChangesAsync();
+        var dH = new KhPlanDetail { KhPlanId = planH.KhPlanId, LineNo = 1, PartNo = "PART-A", PurchaseOrder = "PO-H10", Quantity = 10, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 };
+        db.KhPlanDetails.Add(dH); await db.SaveChangesAsync();
+        db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = dH.KhPlanDetailId, IsActive = true, SoLuongThucNhan = 10, SoLuongKeHoach = 10, NgayNhanPhoi = T0, OrderVatLieu = "OVL-H10", ViTriDePhoi = "A1", SoPO = "PO-H10", PartNo = "PART-A" });
+        db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = dH.KhPlanDetailId, StepOrder = 1, NC = "NC1", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+        await db.SaveChangesAsync(); db.Fixup();
+        var gH = await svc.IssueByCellAsync(dH.KhPlanDetailId, "KHO", "GC", 10, admin.UserId, "MOI", false, "MOI", null, "NC1", "seed h10");
+        if (!gH.Ok) throw new Exception("seed h10 giao: " + gH.Error);
+        var rH = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 8, 2, null, admin.UserId, ngCategoryId: db.NgCategories.List.First().NgCategoryId);
+        if (!rH.Ok) throw new Exception("seed h10 nhận: " + rH.Error);
+        var backH = db.HandoverTransactions.List.Last();
+        var rbH = await svc.ReceiveAsync(backH.HandoverTxId, 0, 2, null, admin.UserId);
+        if (!rbH.Ok) throw new Exception("seed h10 nhận phiếu trả: " + rbH.Error);
+
         db.ChangeTracker.Clear();
         db.Fixup();
         Console.WriteLine($"[HARNESS] seed xong: {db.KhPlanDetails.List.Count} PO, {db.WtsProductionLogs.List.Count} WTS, {db.HandoverTransactions.List.Count} phiếu");
@@ -176,6 +193,9 @@ public static class HarnessSeed
             khplan = db.KhPlans.List.Select(p => new { p.KhPlanId, p.Notes, Recv = D(p.ReceivedDate), p.ApplyWorkflow }),
             khdet  = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.KhPlanId, d.Quantity, d.Location, d.PartNotes, d.Priority }),
             khlog  = db.KhPlanDetailChangeLogs.List.Select(l => new { l.KhPlanDetailId, l.FieldName, l.OldValue, l.NewValue, l.ChangedBy, l.Reason }),
+            // [H10 30/10] phiếu giao nhận + lần nhận (drive_h10.py)
+            gntx  = db.HandoverTransactions.List.OrderBy(t => t.HandoverTxId).Select(t => new { t.HandoverTxId, t.KhPlanDetailId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.QtyIssued, t.Status, t.IsVoided, t.VoidReason, t.SourceReceiveId }),
+            gnrec = db.HandoverReceives.List.OrderBy(r => r.ReceiveId).Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.IsVoided, r.VoidReason, r.VoidedBy }),
         };
     }
 }

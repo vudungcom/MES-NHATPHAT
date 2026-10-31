@@ -1,5 +1,7 @@
 # WtsHarness — chạy CẢ MES.Web trên EF giả, bấm trang WTS thật bằng Playwright, so DB bản cũ / bản mới
 
+> **Chỉ chạy trên Linux (Claude kiểm trong sandbox).** `mk.sh` là bash, python3 đọc file không phải UTF-8 — Hùng không cần chạy bộ này trên Windows (Hùng chốt 30/10).
+
 Mục đích ([WTS-SVC] 29/10/2026): chứng minh tách phần lưu WTS ra `Services/WtsSaveService.cs` không đổi kết quả ghi DB —
 cùng một chuỗi thao tác trên trang `HieuSuat_Index.razor` bản cũ (git HEAD trước khi tách) và bản mới phải cho
 WtsProductionLogs / WtsProductionLogStds / WtsExtraItems / NgCases giống hệt nhau, chỉ khác ở bước [RS-E14] (bản mới chặn mã ngoài snapshot).
@@ -28,3 +30,8 @@ và endpoint `/harness/dump` (JSON các bảng WTS).
 không đụng công tắc Workflow thì không ghi đè, Ghi chú chung có lịch sử ở mọi PO, đổi Workflow có khoá PO.
 `python3 drive_khe.py 5101 new` → 30/10: bản mới ĐẠT hết, bản master 70d59ac 7 SAI. (Harness 1 DbContext dùng chung, chạy tuần tự:
 không đo được khoá chen nhau thật — phần đó kiểm ở `GiaoNhanFuzz kh` A6 bằng móc OnAppLock.)
+
+## drive_h10.py — huỷ dây chuyền trên trang Giao nhận ([H10] 30/10/2026)
+Phiếu KH riêng `KH-H10` / `PO-H10` (thêm CUỐI HarnessSeed, không chung KH-TEST): Kho → Gia công 10, Gia công nhận 8 + NG 2 → phiếu trả tự lập → Kho đã nhận lại 2.
+`gn01` (chỉ quyền sửa Gia công) bấm Huỷ lần nhận gốc → bị chặn vì thiếu quyền Kho, DB không đổi; `admin` → 1 lần huỷ cả lần nhận gốc + phiếu trả + lần nhận phiếu trả.
+`python3 drive_h10.py 5101 new` → 30/10: bản mới 7/7 ĐẠT; bản master 7479f01 bị chặn "Huỷ lần nhận đó trước" (5/5 đúng như cũ). Dump thêm bảng `gntx` / `gnrec`.
