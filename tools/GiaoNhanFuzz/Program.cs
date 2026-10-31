@@ -19,6 +19,7 @@ if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VUL
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
 if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   // [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16] quyền máy chủ + danh mục + quy trình trống + khoá cấp số KH
+if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }   // [ISO-FIX] không giao dịch Serializable + mọi lần ghi số sau khoá MES_PO_
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -662,6 +663,10 @@ foreach (var m in whyMiss) Console.WriteLine("  [GN-WHY chưa lần ra hết] " 
 if (whyAll) Console.WriteLine($"  [H10] thử huỷ mọi lần nhận: gỡ được {(stats.TryGetValue("h10.ok", out var h1) ? h1 : 0)} · hết trần tìm nhưng có đường {(stats.TryGetValue("h10.hettran", out var h2) ? h2 : 0)} (dài nhất {h10MaxSteps} bước) · kẹt {(stats.TryGetValue("h10.ket", out var h3) ? h3 : 0)}");
 foreach (var kv in stats.OrderBy(k => k.Key)) Console.WriteLine($"  {kv.Key,-20} {kv.Value}");
 Console.WriteLine($"Phép kiểm: {checks}");
+// [ISO-FIX 2026-10-31] Chạy ngẫu nhiên cũng kiểm: không hàm nào của phần mềm xin giao dịch Serializable (rò qua kết nối pool trên SQL thật)
+Console.WriteLine($"Giao dịch: mặc định {Microsoft.EntityFrameworkCore.DatabaseFacade.IsoDefault} · Serializable {Microsoft.EntityFrameworkCore.DatabaseFacade.IsoSerializable} · mức khác {Microsoft.EntityFrameworkCore.DatabaseFacade.IsoOther}");
+if (Microsoft.EntityFrameworkCore.DatabaseFacade.IsoSerializable + Microsoft.EntityFrameworkCore.DatabaseFacade.IsoOther > 0)
+    fails.Add($"[ISO-FIX giao dịch xin mức cô lập riêng] Serializable {Microsoft.EntityFrameworkCore.DatabaseFacade.IsoSerializable} · khác {Microsoft.EntityFrameworkCore.DatabaseFacade.IsoOther}");
 var groupsFail = fails.GroupBy(f => f.Split(']')[0] + "]").ToList();
 Console.WriteLine($"SAI: {fails.Count}");
 foreach (var g in groupsFail) { Console.WriteLine($"  {g.Key} × {g.Count()}"); foreach (var f in g.Take(3)) Console.WriteLine("     " + f); }

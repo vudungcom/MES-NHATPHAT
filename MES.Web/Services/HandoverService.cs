@@ -1525,7 +1525,7 @@ namespace MES.Web.Services
         // ----------------------------------------------------------------
         // [GN-LEDGER 2026-10-22] WRITE: Giao hàng theo loại phiếu (trang Giao nhận mới)
         //   Trần lấy từ HandoverLedgerService.IssueCap — cùng một hàm với số hiển thị trên trang.
-        //   K8: kiểm trần + ghi phiếu trong 1 giao dịch Serializable → 2 người giao cùng lúc không vượt trần.
+        //   K8: kiểm trần + ghi phiếu trong 1 giao dịch, dưới khoá PO MES_PO_ → 2 người giao cùng lúc không vượt trần. ([ISO-FIX 2026-10-31] trước: Serializable)
         // ----------------------------------------------------------------
         /// <summary>
         /// [GN-CELL 2026-10-23] Giao theo Ô Excel (form Giao mới): người giao chọn ô (Hàng mới / Hàng lỗi / Hàng sửa),
@@ -1648,7 +1648,12 @@ namespace MES.Web.Services
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrWhiteSpace(notes))
                 return (false, "Giao theo NC: bắt buộc ghi chú (N4).");
 
-            using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            // [ISO-FIX 2026-10-31] Bỏ IsolationLevel.Serializable, giữ khoá PO (LockPoAsync ngay dưới, trước mọi câu đọc sổ).
+            //   Trước: giao dịch Serializable để lại mức Serializable trên kết nối pool → câu đọc / giao dịch sau trên kết nối đó
+            //   (BeginTransactionAsync() không chỉ định mức) chạy Serializable ngoài ý muốn: T1 MES_TEST đo ReadCommitted 902 · Serializable 396,
+            //   RCSI mất tác dụng, deadlock / "Máy chủ đang bận" tăng. Serializable không bảo vệ thêm: mọi chỗ ghi sổ PO đều khoá MES_PO_
+            //   trước khi đọc, mã phiếu / mã vụ là identity (không max+1).
+            using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8] khoá chung với trang WTS
             if (lockErr != null) return (false, lockErr);
             var ledger = new HandoverLedgerService(_db);
@@ -2314,7 +2319,7 @@ namespace MES.Web.Services
             var repCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
             if (repCat == null) return (false, NgCaseService.MsgPickCategory);
             ngReason = repCat.Label;
-            using var trx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+            using var trx = await _db.Database.BeginTransactionAsync();   // [ISO-FIX 2026-10-31] bỏ Serializable (rò qua kết nối pool), giữ khoá PO ngay dưới — xem IssueWithPurposeOnceAsync
             var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8]
             if (lockErr != null) return (false, lockErr);
             var row = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);

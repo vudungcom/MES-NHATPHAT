@@ -309,8 +309,8 @@ public static class KhScen
             var db = Seed(); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
             var r0 = await led.GetLedgerForDetailAsync(1);
             Ok(r0!.G("KHO").LoiGiu == 0 && HandoverLedgerService.IssueCap(r0, "KHO", HandoverPurpose.CustReturn, null, HandoverCell.Loi).Max == 0, "Trước khi báo: Kho tồn hàng lỗi 0 (ô Hàng lỗi xám như ảnh)");
-            var deny = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 2, new List<string> { "GC" }, ngCategoryId: 1);
-            Ok(!deny.Ok, "Người nhóm GC không báo lỗi thay Kho được", deny.Error);
+            var deny = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, FuzzPerm.GcOnlyUser(db), new List<string> { "GC" }, ngCategoryId: 1);   // [VOID-PERM] người chỉ Sửa GC trong DB (trước u2 nhóm XUONG — nay máy chủ đọc quyền DB)
+            Ok(!deny.Ok && deny.Error.Contains("không có quyền sửa nhóm"), "Người nhóm GC không báo lỗi thay Kho được (đúng lời báo quyền)", deny.Error);   // [VOID-PERM] rà độc lập: chặn vì lý do khác không được tính là đạt
             var over = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 41, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
             Ok(!over.Ok && over.Error.Contains("tối đa 40"), "Báo 41 > phôi còn 40: chặn", over.Error);
             var r = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 3, HandoverNgSource.DauVao, "KHACH", "phoi ro khi", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);

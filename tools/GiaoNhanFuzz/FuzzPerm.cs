@@ -26,4 +26,17 @@ public static class FuzzPerm
         db.UserGroups.List.Add(g);
         return g;
     }
+
+    /// <summary>[VOID-PERM 2026-10-31] Máy chủ đọc quyền huỷ / báo lỗi từ ma trận DB, bỏ qua danh sách nhóm trang gửi lên.
+    ///   Ca "người chỉ có quyền Sửa Gia công" phải là người có ĐÚNG quyền đó trong DB (u9, nhóm GCONLY) — u2..u6 ở nhóm XUONG sửa được cả 5 nhóm.</summary>
+    public const int GcOnlyId = 9;
+    public static int GcOnlyUser(AppDbContext db)
+    {
+        if (db.Users.List.Any(u => u.UserId == GcOnlyId)) return GcOnlyId;
+        var g = new UserGroup { GroupId = 91, GroupCode = "GCONLY", GroupName = "Chỉ Gia công (thử)", IsActive = true, Permissions = Json(MES.Web.Constants.SystemPermissions.HandoverGc) };
+        db.UserGroups.List.Add(g);
+        db.Users.List.Add(new User { UserId = GcOnlyId, Username = "u9", FullName = "U9", IsActive = true, Group = g, GroupId = 91 });
+        db.Fixup();
+        return GcOnlyId;
+    }
 }

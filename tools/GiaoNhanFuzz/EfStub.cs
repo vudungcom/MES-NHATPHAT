@@ -121,6 +121,19 @@ namespace Microsoft.EntityFrameworkCore
         public virtual Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
             if (OnSave?.Invoke() is Exception fake) throw fake;   // [RS-D10]
+            // [ISO-FIX] kịch bản iso: ghi chứng từ số lượng mà giao dịch chưa khoá MES_PO_ → đếm
+            //   Dòng thêm mang số PO (KhPlanDetailId / PlanDetailId) thì PO đó phải nằm trong tập PO giao dịch đã khoá.
+            if (DatabaseFacade.TrackPoLock)
+                foreach (var s0 in _sets.Values)
+                    if (s0.Pending.Count > 0 && s0.ElementType.Name is "HandoverTransaction" or "HandoverReceive" or "HandoverNgReport" or "NgCase" or "WtsProductionLog" or "KhoVatLieu")
+                        foreach (var e0 in s0.Pending)
+                        {
+                            var pp = s0.ElementType.GetProperty("KhPlanDetailId") ?? s0.ElementType.GetProperty("PlanDetailId");
+                            var v = pp?.GetValue(e0); int? po = v == null ? null : Convert.ToInt32(v);
+                            var cur = Database.Current;
+                            if (cur == null || cur.PoLocked.Count == 0 || (po != null && !cur.PoLocked.Contains(po.Value)))
+                            { DatabaseFacade.WriteNoPoLock++; DatabaseFacade.WriteNoPoLockWhere.Add("Add " + s0.ElementType.Name + (po != null ? $" (PO {po})" : "")); }
+                        }
             int n = 0;
             foreach (var s in _sets.Values.ToList())
             {
@@ -219,8 +232,18 @@ namespace Microsoft.EntityFrameworkCore
         public DatabaseFacade(DbContext c) { _c = c; }
         public StubTransaction? Current;
         public StubTransaction? CurrentTransaction => Current;   // [RS-E16] KhPlanService.CreateAsync: có giao dịch ngoài thì dùng, không thì tự mở
-        public Task<StubTransaction> BeginTransactionAsync(CancellationToken ct = default) => Begin();
-        public Task<StubTransaction> BeginTransactionAsync(System.Data.IsolationLevel lvl, CancellationToken ct = default) => Begin();
+        // [ISO-FIX 2026-10-31] Ghi mức cô lập mỗi giao dịch xin: không chỉ định (như EF BeginTransactionAsync()) / Serializable / mức khác.
+        //   SQL thật: Serializable để lại mức trên kết nối pool → câu sau chạy Serializable (T1 MES_TEST) — bộ kiểm báo SAI nếu còn.
+        public static int IsoDefault, IsoSerializable, IsoOther;
+        // [ISO-FIX] Bật trong kịch bản iso: đếm lần GHI chứng từ số lượng (Add phiếu / lần nhận / báo lỗi / vụ / WTS / Kho, UPDATE WTS)
+        //   mà giao dịch đang mở CHƯA khoá MES_PO_ (hoặc không có giao dịch).
+        public static bool TrackPoLock; public static int WriteNoPoLock; public static List<string> WriteNoPoLockWhere = new();
+        public Task<StubTransaction> BeginTransactionAsync(CancellationToken ct = default) { IsoDefault++; return Begin(); }
+        public Task<StubTransaction> BeginTransactionAsync(System.Data.IsolationLevel lvl, CancellationToken ct = default)
+        {
+            if (lvl == System.Data.IsolationLevel.Serializable) IsoSerializable++; else IsoOther++;   // [ISO-FIX]
+            return Begin();
+        }
         Task<StubTransaction> Begin()
         {
             if (Current != null) throw new InvalidOperationException("Giao dịch lồng nhau (EF thật cũng báo lỗi)");
@@ -232,12 +255,28 @@ namespace Microsoft.EntityFrameworkCore
         public Task<int> ExecuteSqlRawAsync(string sql, params object[] args)
         {
             RawCalls++; RawLog.Add(sql);
+            if (TrackPoLock && System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*UPDATE\s+(WtsProductionLogs|HandoverTransactions|HandoverReceives|HandoverNgReports|KhoVatLieus)\b"))
+            {
+                // [ISO-FIX] UPDATE dòng WTS: PO lấy từ dòng thật trong DB giả (không tin PO trang gửi) — phải nằm trong tập PO đã khoá
+                int? po = null;
+                if (sql.Contains("UPDATE WtsProductionLogs") && sql.Contains("WtsLogId={2}") && args.Length > 2)
+                    {
+                    var ws = _c.AllSets().FirstOrDefault(x => x.ElementType.Name == "WtsProductionLog");
+                    var it = ws?.Items.Cast<object>().FirstOrDefault(x => Convert.ToInt64(x.GetType().GetProperty("WtsLogId")!.GetValue(x)) == Convert.ToInt64(args[2]));
+                    var pv = it?.GetType().GetProperty("KhPlanDetailId")!.GetValue(it);
+                    po = pv == null ? null : Convert.ToInt32(pv);
+                }
+                if (Current == null || Current.PoLocked.Count == 0 || (po != null && !Current.PoLocked.Contains(po.Value)))
+                { WriteNoPoLock++; WriteNoPoLockWhere.Add("raw: " + sql.Split('\n')[0] + (po != null ? $" (PO {po})" : "")); }
+            }
             if (Current == null && sql.Contains("sp_getapplock") && sql.Contains("'Transaction'"))
                 throw new InvalidOperationException("sp_getapplock LockOwner=Transaction gọi ngoài giao dịch");
             // [KHE-6] ghi tên khoá theo thứ tự + móc để kịch bản giả "người khác vừa lưu xong, mình mới lấy được khoá"
             if (sql.Contains("sp_getapplock") && args.Length > 0)
             {
                 LockNames.Add(Convert.ToString(args[0]) ?? "");
+                if (Current != null && (Convert.ToString(args[0]) ?? "").StartsWith("MES_PO_")
+                    && int.TryParse((Convert.ToString(args[0]) ?? "").Substring(7), out var poId)) Current.PoLocked.Add(poId);   // [ISO-FIX] ghi ĐÚNG PO đã khoá
                 OnAppLock?.Invoke(Convert.ToString(args[0]) ?? "");
             }
             // [CHUOI] Làm thật câu "DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId = {0}" (RefreshRouteSnapshotAsync / WriteSnapshotStdConfirmsAsync)
@@ -291,6 +330,7 @@ namespace Microsoft.EntityFrameworkCore
         readonly DbContext _c; readonly DatabaseFacade _f;
         readonly Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> _snap;
         bool _done;
+        public HashSet<int> PoLocked = new();   // [ISO-FIX] các PO giao dịch này đã khoá MES_PO_<id> (sp_getapplock)
         public static int Rollbacks;
         internal StubTransaction(DbContext c, DatabaseFacade f, Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> snap) { _c = c; _f = f; _snap = snap; }
         public Task CommitAsync(CancellationToken ct = default) { _done = true; _f.Current = null; return Task.CompletedTask; }

@@ -168,7 +168,7 @@ public static class LoiScen
             var row0 = (await led7.GetLedgerForDetailAsync(1))!;
             Ok(row0.G("KHO").LoiGiu == 2 && row0.G("GC").NhanTong == 10 && row0.Balanced, "Chuẩn bị: Gia công nhận 8 + NG 2, Kho đã nhận lại 2 ở phiếu trả tự lập");
             // (a) người Gia công (chỉ quyền GC) huỷ lần nhận gốc: lần nhận phiếu trả do Kho bấm → không đủ quyền, KHÔNG đổi gì
-            var a = await svc7.VoidReceiveAsync(r1, "nhan nham", 2, new List<string> { "GC" });
+            var a = await svc7.VoidReceiveAsync(r1, "nhan nham", FuzzPerm.GcOnlyUser(db7), new List<string> { "GC" });   // [VOID-PERM] người chỉ Sửa GC trong DB (trước u2 nhóm XUONG — nay máy chủ đọc quyền DB)
             Ok(!a.Ok && a.Error.Contains("không có quyền huỷ lần nhận đó") && db7.HandoverReceives.List.Count(x => x.IsVoided) == 0 && !back.IsVoided,
                "Người chỉ có quyền Gia công: bị chặn (cần quyền Kho cho lần nhận phiếu trả), không chứng từ nào bị huỷ", a.Error);
             // (b) Kho đã huỷ 2 hàng lỗi (phiếu Huỷ) → huỷ dây chuyền làm Kho Tồn hàng lỗi âm → K5 chặn, gợi ý phiếu Huỷ, rollback
