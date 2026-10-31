@@ -156,8 +156,16 @@ public class DoGaService
 
         if (string.IsNullOrWhiteSpace(nguoiMuon)) return (false, "Vui lòng nhập tên người mượn.");
 
+        // [RS-E10 2026-10-31] Khoá theo đồ gá + đọc lại trạng thái trong giao dịch: đang có người mượn thì không cho mượn chồng
+        //   (trước: mượn tiếp được → 2 phiếu "Đang mượn" cùng mở, người mượn đầu biến khỏi bảng; 2 người bấm cùng lúc cũng lọt).
+        await using var trx = await _db.Database.BeginTransactionAsync();
+        if (!await PoGuard.TryLockInTransactionAsync(_db, "MES_DOGA_" + doGaId))
+            return (false, "Đồ gá này đang có người khác thao tác — thử lại sau vài giây.");
+        _db.ChangeTracker.Clear();   // bỏ bản cũ DbContext dùng chung đang theo dõi → đọc đúng DB sau khoá (như PoGuard.LockAsync)
         var item = await _db.DoGas.FirstOrDefaultAsync(x => x.DoGaId == doGaId && x.IsActive);
         if (item == null) return (false, "Không tìm thấy đồ gá.");
+        if (item.TrangThai == "Đang mượn")
+            return (false, $"Đồ gá đang được {item.NguoiMuonHienTai} mượn — bấm Trả trước rồi mới cho mượn tiếp.");
 
         var now = DateTime.Now;
 
@@ -197,6 +205,7 @@ public class DoGaService
         });
 
         await _db.SaveChangesAsync();
+        await trx.CommitAsync();   // [RS-E10]
         return (true, null);
     }
 
@@ -215,8 +224,15 @@ public class DoGaService
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
+        // [RS-E10 2026-10-31] Khoá theo đồ gá; đồ gá không có ai mượn thì không "trả" (trước: trả được, ghi lịch sử "Đã trả" rỗng)
+        await using var trx = await _db.Database.BeginTransactionAsync();
+        if (!await PoGuard.TryLockInTransactionAsync(_db, "MES_DOGA_" + doGaId))
+            return (false, "Đồ gá này đang có người khác thao tác — thử lại sau vài giây.");
+        _db.ChangeTracker.Clear();   // đọc đúng DB sau khoá (người mượn cũ ghi vào lịch sử lấy từ bản này)
         var item = await _db.DoGas.FirstOrDefaultAsync(x => x.DoGaId == doGaId && x.IsActive);
         if (item == null) return (false, "Không tìm thấy đồ gá.");
+        if (item.TrangThai != "Đang mượn")
+            return (false, "Đồ gá đang không có ai mượn — không cần trả.");
 
         var now = DateTime.Now;
 
@@ -259,6 +275,7 @@ public class DoGaService
         });
 
         await _db.SaveChangesAsync();
+        await trx.CommitAsync();   // [RS-E10]
         return (true, null);
     }
 

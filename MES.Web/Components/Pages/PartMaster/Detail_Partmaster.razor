@@ -1867,12 +1867,17 @@ else
         try
         {
             // Service tính lại từ đầu trong transaction (không dùng lại kết quả xem trước)
-            _stdUpdResult  = await StdUpdSvc.RunAsync(_part.PartId, _stdUpdFrom, _stdUpdReason, _currentUserId, _stdUpdSelected.ToList());
+            _stdUpdResult  = await StdUpdSvc.RunAsync(_part.PartId, _stdUpdFrom, _stdUpdReason, _currentUserId, _stdUpdSelected.ToList(),
+                StdUpdFingerprintNow());   // [STD-5] Part Master đổi sau lúc Xem trước → máy chủ dừng, bắt Xem trước lại
             _stdUpdPreview = null;
         }
         catch (Exception ex) { _stdUpdError = "Lỗi khi Update: " + (ex.InnerException?.Message ?? ex.Message); }
         finally { _stdUpdBusy = false; }
     }
+
+    // [STD-5 2026-10-31] Dấu các ô snapshot của bản Xem trước đang hiện (PO đang tích chọn)
+    private string? StdUpdFingerprintNow()
+        => _stdUpdPreview == null ? null : StdUpdateService.SnapshotFingerprint(_stdUpdPreview, _stdUpdSelected.ToList());
 
     private static string StdUpdFmt(decimal? v) => v.HasValue ? v.Value.ToString("0.##") : "—";
 

@@ -7415,38 +7415,9 @@ else
     // Dòng nhập WTS non-GC đang chọn mã chuẩn bị → không có số lượng
     private bool IsPrepNoQty(WtsRow sub) => !IsGcGroup && IsFlatTimeCode(sub);
 
-    // [TRIAL-QTY-OPTIONAL] Không bắt buộc SL > 0 khi: mã chuẩn bị (non-GC) HOẶC GC đang "Chạy thử"
-    // (chạy thử có bước chuẩn bị, có thể chưa ra sản phẩm). Vẫn cho nhập SL nếu có.
-    private bool IsQtyOptional(WtsRow sub) => IsPrepNoQty(sub) || (IsGcGroup && sub.ProductionMode == "trial");
-
-    // [SERIAL-TIME-REQUIRED] GC "Hàng loạt" có số KH → bắt buộc nhập đủ T.Gá, T.GC, T.Ktra (> 0) để tính hiệu suất.
-    // Trả về thông báo lỗi (liệt kê ô thiếu) hoặc null nếu đủ. Chạy thử / non-GC / Mã WTS khác → không kiểm tra.
-    // [ACTUAL-REQUIRED-NONGC] Non-GC (HTSP/KCS/Đóng gói) có số KH → bắt buộc nhập T.Thực tế (> 0).
-    // Mã chuẩn bị (1V/1T/1R/1K/1D/1G): ô T.Thực tế = tổng phút — BẮT BUỘC nhập (chốt 2026-10-19). Đổi false nếu muốn cho để trống.
-    private const bool RequireActualForPrepCodes = true;
-
-    private string? GetMissingSerialTimesMsg(WtsRow r)
-    {
-        // [ACTUAL-REQUIRED-NONGC]
-        if (!IsGcGroup)
-        {
-            if (!r.KhPlanDetailId.HasValue) return null;
-            if (IsPrepNoQty(r) && !RequireActualForPrepCodes) return null;
-            return (r.ActualTimePerPc ?? 0) <= 0
-                ? (IsPrepNoQty(r) ? "Chưa nhập T.Thực tế (tổng phút chuẩn bị)." : "Chưa nhập T.Thực tế.")
-                : null;
-        }
-        if (!r.KhPlanDetailId.HasValue) return null;
-        // [TRIAL-PREP-REQUIRED] Chạy thử: bắt buộc T.CB (thời gian chuẩn bị) > 0; T.Chạy + SL vẫn không bắt buộc (yêu cầu KH 19/10)
-        if (r.ProductionMode == "trial")
-            return (r.PreparationTime_Actual ?? 0) <= 0 ? "Chạy thử: chưa nhập T.CB (thời gian chuẩn bị)." : null;
-        if (r.ProductionMode != "serial") return null;
-        var missing = new List<string>();
-        if ((r.SetupTime_Actual      ?? 0) <= 0) missing.Add("T.Gá");
-        if ((r.MachiningTime_Actual  ?? 0) <= 0) missing.Add("T.GC");
-        if ((r.InspectionTime_Actual ?? 0) <= 0) missing.Add("T.Ktra");
-        return missing.Count == 0 ? null : $"Hàng loạt: chưa nhập {string.Join(", ", missing)}.";
-    }
+    // [WTS-DEAD 2026-10-31] Bỏ 2 hàm không còn ai gọi từ [WTS-SVC] 29/10: IsQtyOptional + GetMissingSerialTimesMsg (+ hằng RequireActualForPrepCodes).
+    //   Luật [TRIAL-QTY-OPTIONAL] / [SERIAL-TIME-REQUIRED] / [ACTUAL-REQUIRED-NONGC] / [TRIAL-PREP-REQUIRED] nay chỉ còn 1 nơi:
+    //   Services/WtsSaveService.cs (cùng tên hàm, kiểm lúc lưu) — để không có 2 bản luật lệch nhau.
     private bool IsFlatTimeCode(WtsRow sub)
     {
         var code = !string.IsNullOrEmpty(sub.WtsCode) ? sub.WtsCode : sub.NC;
@@ -8330,7 +8301,7 @@ else
 
         if (!_reportWorkers.Any())
 
-            _reportWorkers = await ReportSvc.GetAllActiveWorkersAsync();
+            _reportWorkers = await ReportSvc.GetAllActiveWorkersAsync(_currentUserId)   /* [RPT-4] */;
 
         // Mặc định 30 ngày gần nhất nếu chưa set
 
@@ -8358,11 +8329,11 @@ else
 
         int? wId = _reportWorkerId == 0 ? null : _reportWorkerId;
 
-        _reportResult = await ReportSvc.GetReportAsync(from, to, wId);
+        _reportResult = await ReportSvc.GetReportAsync(from, to, wId, _currentUserId)   /* [RPT-4] máy chủ kiểm quyền Xem WTS Report */;
 
         // Cập nhật danh sách workers cho khoảng ngày mới
 
-        _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to);
+        _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to, _currentUserId)   /* [RPT-4] */;
 
         _reportLoading = false;
 

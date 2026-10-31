@@ -119,6 +119,16 @@
     </div>
 </div>
 
+@* [KHO-4 2026-10-31] Đã lưu nhưng có cảnh báo (PO tắt Workflow: số phôi mới làm sai số ở ô khác) — trước: lưu im lặng *@
+@if (!string.IsNullOrEmpty(_pageWarning))
+{
+    <div class="alert alert-warning py-2 small d-flex align-items-start gap-2" style="white-space:pre-line">
+        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+        <div class="flex-grow-1">@_pageWarning</div>
+        <button type="button" class="btn-close btn-sm" @onclick="ClearPageWarning"></button>
+    </div>
+}
+
 @if (_loading)
 {
     <div class="text-center py-5"><span class="spinner-border text-primary"></span> Đang tải dữ liệu kho...</div>
@@ -564,6 +574,8 @@ else
     private string _editReason = string.Empty;
     private string _editPin = string.Empty;
     private string? _errorMessage;
+    private string? _pageWarning;   // [KHO-4]
+    private void ClearPageWarning() => _pageWarning = null;   // [KHO-4]
 
     // Lần đầu nhập = tất cả cột I-O đang trống
     private bool IsFirstEntry => _editingRow != null
@@ -648,7 +660,23 @@ else
         _khoLedger        = await LedgerSvc.GetLedgerForDetailsAsync(detailIds);   // [GN-NG-AFTER][V7]
         _khoIssuedPending = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.TotalPending);
         _khoIssuedAt      = khoTxs.ToDictionary(x => x.KhPlanDetailId, x => x.FirstIssuedAt);
+
+        // [KHO-5 2026-10-31] Cột N / O / Còn lại: điền vào dòng (chỉ hiển thị) để lọc, sắp xếp, Excel dùng ĐÚNG số đang hiện (sổ Giao nhận)
+        foreach (var it in _items)
+        {
+            it.GiaoGcNgayDau = _khoIssuedAt.TryGetValue(it.KhPlanDetailId, out var d0) ? d0 : null;
+            it.GiaoGcXacNhan = _khoIssuedOut.TryGetValue(it.KhPlanDetailId, out var c0) ? c0 : 0m;
+            it.GiaoGcChoNhan = _khoIssuedPending.TryGetValue(it.KhPlanDetailId, out var p0) ? p0 : 0m;
+            it.ConLaiKho     = it.SoLuongThucNhan.HasValue ? KhoCon(it.KhPlanDetailId, it.SoLuongThucNhan.Value) : null;
+        }
     }
+
+    // [KHO-5] Chữ lọc cột N / O = đúng chữ trên ô (trước: lọc theo NgayCapPhoi / SoLuongCap cũ, không ai nhập nữa)
+    private static string NgayGiaoText(KhoVatLieuViewItem r) => r.GiaoGcNgayDau.HasValue ? r.GiaoGcNgayDau.Value.ToString("dd/MM/yyyy") : "No";
+    private static string SlGiaoText(KhoVatLieuViewItem r)
+        => r.GiaoGcXacNhan > 0 || r.GiaoGcChoNhan > 0
+            ? r.GiaoGcXacNhan.ToString("0.##") + (r.GiaoGcChoNhan > 0 ? $" (+{r.GiaoGcChoNhan:0.##} chờ nhận)" : "")
+            : "—";
 
     // ================================================================
     // BUILD COL DEFS — giống hệt Part Master pattern
@@ -670,8 +698,8 @@ else
             ["OrderVL"]    = ColFilterDef.Build(_items, r => r.OrderVatLieu ?? "—"),
             ["ViTriDe"]    = ColFilterDef.Build(_items, r => r.ViTriDePhoi ?? "—"),
             ["TinhTrang"]  = ColFilterDef.Build(_items, r => r.TinhTrangPhoi ?? "—"),
-            ["NgayCap"]    = ColFilterDef.Build(_items, r => r.NgayCapPhoi.HasValue ? r.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No"),
-            ["SlCap"]      = ColFilterDef.Build(_items, r => r.SoLuongCap?.ToString() ?? "—"),
+            ["NgayCap"]    = ColFilterDef.Build(_items, NgayGiaoText),   // [KHO-5]
+            ["SlCap"]      = ColFilterDef.Build(_items, SlGiaoText),     // [KHO-5]
         };
     }
 
@@ -811,8 +839,8 @@ else
                     "OrderVL"     => q.Where(k => def.Passes(k.OrderVatLieu ?? "—")),
                     "ViTriDe"     => q.Where(k => def.Passes(k.ViTriDePhoi ?? "—")),
                     "TinhTrang"   => q.Where(k => def.Passes(k.TinhTrangPhoi ?? "—")),
-                    "NgayCap"     => q.Where(k => def.Passes(k.NgayCapPhoi.HasValue ? k.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No")),
-                    "SlCap"       => q.Where(k => def.Passes(k.SoLuongCap?.ToString() ?? "—")),
+                    "NgayCap"     => q.Where(k => def.Passes(NgayGiaoText(k))),   // [KHO-5]
+                    "SlCap"       => q.Where(k => def.Passes(SlGiaoText(k))),     // [KHO-5]
                     _ => q
                 };
             }
@@ -835,8 +863,8 @@ else
                     "OrderVL"     => k => k.OrderVatLieu ?? "",
                     "ViTriDe"     => k => k.ViTriDePhoi ?? "",
                     "TinhTrang"   => k => k.TinhTrangPhoi ?? "",
-                    "NgayCap"     => k => k.NgayCapPhoi?.ToString("yyyy-MM-dd") ?? "9999",
-                    "SlCap"       => k => k.SoLuongCap?.ToString("0000000") ?? "",
+                    "NgayCap"     => k => k.GiaoGcNgayDau?.ToString("yyyy-MM-dd") ?? "9999",                       // [KHO-5]
+                    "SlCap"       => k => (k.GiaoGcXacNhan + k.GiaoGcChoNhan).ToString("0000000000.####"),        // [KHO-5]
                     _ => k => k.SoPO
                 };
                 q = _sortAsc ? q.OrderBy(keySelector) : q.OrderByDescending(keySelector);
@@ -936,6 +964,7 @@ else
                 reason, _currentUserId, IsFirstEntry);   // [KHO-STALE]
 
             if (!ok) { _errorMessage = err; return; }
+            _pageWarning = err;   // [KHO-4] lưu được mà có lời → cảnh báo (Workflow OFF), hiện trên bảng sau khi đóng cửa sổ
 
             _showEditModal = false;
             await LoadDataAsync();

@@ -34,6 +34,14 @@ public class KhoVatLieuViewItem
     public string? TinhTrangPhoi { get; set; }
     public DateTime? NgayCapPhoi { get; set; }
     public int? SoLuongCap { get; set; }
+
+    // [KHO-5 2026-10-31] Cột N / O / Còn lại trên trang đọc sổ Giao nhận (HandoverService.GetKhoIssueSummaryAsync + HandoverLedgerService),
+    //   trang điền sau khi nạp — chỉ hiển thị / lọc / Excel, KHÔNG ghi DB. Trước: lọc + sắp xếp + Excel cột N / O dùng 2 trường cũ
+    //   NgayCapPhoi / SoLuongCap (không ai nhập nữa) → lọc "SL đã giao" ra trống dù bảng hiện số, Excel cột N / O luôn "No" / rỗng.
+    public DateTime? GiaoGcNgayDau { get; set; }
+    public decimal GiaoGcXacNhan { get; set; }
+    public decimal GiaoGcChoNhan { get; set; }
+    public decimal? ConLaiKho { get; set; }
 }
 
 public class KhoVatLieuService
@@ -221,10 +229,10 @@ public class KhoVatLieuService
                 Reason = reason
             });
             await _db.SaveChangesAsync();
-            var guardNew = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, 0, slNhan);   // [KH-GUARD]
+            var (guardNew, warnNew) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, 0, slNhan);   // [KH-GUARD]
             if (guardNew != null) return (false, guardNew);
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
-            return (true, null);
+            return (true, warnNew);   // [KHO-4] đã lưu; Error ≠ null lúc Success = cảnh báo (Workflow OFF)
         }
 
         // Cập nhật và ghi vết thay đổi
@@ -261,20 +269,21 @@ public class KhoVatLieuService
         existing.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
-        var guardErr = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, existing.KhoVatLieuId, slNhan);   // [KH-GUARD]
+        var (guardErr, warnErr) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, existing.KhoVatLieuId, slNhan);   // [KH-GUARD]
         if (guardErr != null) return (false, guardErr);
         HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
-        return (true, null);
+        return (true, warnErr);   // [KHO-4] đã lưu; Error ≠ null lúc Success = cảnh báo (Workflow OFF)
     }
 
     /// <summary>
     /// [KH-GUARD 2026-10-27] Kiểm K5 sau khi đã SaveChanges trong giao dịch: ô nào mới âm thì rollback + báo gốc rễ ([GN-WHY]);
     /// không thì commit. Trả null = đã lưu.
     /// </summary>
-    private async Task<string?> FinishPhoiGuardAsync(
+    private async Task<(string? Err, string? Warn)> FinishPhoiGuardAsync(
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction trx,
         LedgerRow? before, int khPlanDetailId, long khoVatLieuId, int? slNhan)
     {
+        string? warn = null;
         if (before != null)
         {
             var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, before);
@@ -284,11 +293,21 @@ public class KhoVatLieuService
                 await trx.RollbackAsync();
                 var why = await HandoverWhy.ExplainAsync(_db, khPlanDetailId,
                     HandoverWhy.OpSetPhoi(khoVatLieuId, slNhan ?? 0), new HashSet<string>());
-                return "Sửa SL phôi nhận: " + k5 + why;
+                return ("Sửa SL phôi nhận: " + k5 + why, null);
+            }
+            // [KHO-4 2026-10-31] Workflow OFF (N7): vẫn lưu nhưng CẢNH BÁO nếu số phôi mới làm ô nào mới âm (vd đã giao GC 40 mà sửa phôi
+            //   nhận còn 30) — như trang Giao nhận / WTS chỉ cảnh báo khi OFF. Trước: lưu im lặng, người sửa không biết số đã lệch.
+            if (!before.ApplyWorkflow)
+            {
+                var after = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+                var bad = after == null ? new List<string>() : HandoverLedgerService.NewNegatives(before, after);
+                if (bad.Any())
+                    warn = $"Đã lưu — nhưng PO đang tắt Workflow (chỉ cảnh báo, không chặn): số phôi mới làm sai số ở {string.Join("; ", bad)}. "
+                         + "Kiểm tra lại SL phôi nhận và các phiếu đã giao từ Kho.";
             }
         }
         await trx.CommitAsync();
-        return null;
+        return (null, warn);
     }
 
     public async Task<List<KhoVatLieuChangeLogItem>> GetChangeLogsAsync(long khoVatLieuId)
@@ -318,17 +337,18 @@ public class KhoVatLieuService
         var ws = workbook.Worksheets.Add("DULIEUKHO");
 
         ws.Range("A1:H1").Merge().Value = "Dữ liệu này link từ kế hoạch";
-        ws.Range("I1:O1").Merge().Value = "Kho nhập";
-        ws.Range("A1:O1").Style.Font.Bold = true;
-        ws.Range("A1:O1").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Range("I1:Q1").Merge().Value = "Kho nhập";   // [KHO-5] + 2 cột Chờ GC nhận / Còn lại (như bảng trên trang)
+        ws.Range("A1:Q1").Style.Font.Bold = true;
+        ws.Range("A1:Q1").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         ws.Range("A1:H1").Style.Fill.BackgroundColor = XLColor.FromHtml("#E0F2FE");
-        ws.Range("I1:O1").Style.Fill.BackgroundColor = XLColor.FromHtml("#FEF08A");
+        ws.Range("I1:Q1").Style.Fill.BackgroundColor = XLColor.FromHtml("#FEF08A");
 
         var headers = new[]
         {
             "Số PO (PO)", "Mã chi tiết (Part No)", "Đơn vị tính", "Số lượng", "Thời hạn",
             "Mã vật liệu", "Cấu hình phôi", "Ghi chú phôi",
-            "Ngày nhận phôi", "Số lượng thực nhận", "Order vật liệu", "Vị trí để phôi", "Tình trạng phôi", "Ngày cấp phôi", "Số lượng cấp"
+            "Ngày nhận phôi", "Số lượng thực nhận", "Order vật liệu", "Vị trí để phôi", "Tình trạng phôi",
+            "Ngày giao GC", "SL đã giao", "Chờ GC nhận", "Còn lại"   // [KHO-5] cùng chữ + cùng số với bảng trên trang (đọc sổ Giao nhận)
         };
 
         for (int i = 0; i < headers.Length; i++)
@@ -358,11 +378,14 @@ public class KhoVatLieuService
             ws.Cell(rowIdx, 11).SetValue(item.OrderVatLieu ?? "");
             ws.Cell(rowIdx, 12).SetValue(item.ViTriDePhoi ?? "");
             ws.Cell(rowIdx, 13).SetValue(item.TinhTrangPhoi ?? "");
-            ws.Cell(rowIdx, 14).SetValue(item.NgayCapPhoi.HasValue ? item.NgayCapPhoi.Value.ToString("dd/MM/yyyy") : "No");
-            if (item.SoLuongCap.HasValue) ws.Cell(rowIdx, 15).SetValue(item.SoLuongCap.Value);
+            // [KHO-5] N / O / P / Q đọc sổ Giao nhận (trang điền), trước: 2 trường cũ NgayCapPhoi / SoLuongCap
+            ws.Cell(rowIdx, 14).SetValue(item.GiaoGcNgayDau.HasValue ? item.GiaoGcNgayDau.Value.ToString("dd/MM/yyyy") : "No");
+            if (item.GiaoGcXacNhan > 0 || item.GiaoGcChoNhan > 0) ws.Cell(rowIdx, 15).SetValue(item.GiaoGcXacNhan);
+            if (item.GiaoGcChoNhan > 0) ws.Cell(rowIdx, 16).SetValue(item.GiaoGcChoNhan);
+            if (item.ConLaiKho.HasValue) ws.Cell(rowIdx, 17).SetValue(item.ConLaiKho.Value);
 
-            ws.Range(rowIdx, 1, rowIdx, 15).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-            ws.Range(rowIdx, 1, rowIdx, 15).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            ws.Range(rowIdx, 1, rowIdx, 17).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            ws.Range(rowIdx, 1, rowIdx, 17).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
             rowIdx++;
         }
 

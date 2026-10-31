@@ -46,6 +46,18 @@ public static class PermCheck
         return res;
     }
 
+    /// <summary>[VOID-PERM 2026-10-31] Như HandoverEditGroupsAsync nhưng trả null khi tài khoản / nhóm không hoạt động
+    /// (để luật "người lập / người nhận tự huỷ" không áp cho tài khoản đã khoá).</summary>
+    public static async Task<HashSet<string>?> HandoverEditGroupsOrNullAsync(AppDbContext db, int userId)
+    {
+        var p = await ReadAsync(db, userId);
+        if (p == null) return null;
+        var res = new HashSet<string>();
+        foreach (var (grp, key) in HandoverGroupKey)
+            if (p.Value.IsAdmin || p.Value.Perms.Any(x => x.SectionCode == key && x.CanEdit)) res.Add(grp);
+        return res;
+    }
+
     /// <summary>[RS-C2] Nhóm giao nhận → mục quyền (giống Handover_Index.GroupPermKey).</summary>
     public static readonly (string Group, string Key)[] HandoverGroupKey =
     {

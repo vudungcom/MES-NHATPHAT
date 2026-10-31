@@ -102,6 +102,17 @@ public class StdUpdateService
     // Public API
     // ════════════════════════════════════════════════════════════════════
 
+    /// <summary>[STD-5 2026-10-31] Dấu các ô SNAPSHOT sẽ đổi (PO được chọn): bảng · dòng · ô · số cũ → mới · xác nhận. Trang gửi dấu của bản
+    /// Xem trước khi bấm Chạy; RunAsync tính lại dưới khoá rồi so — khác thì dừng.</summary>
+    public static string SnapshotFingerprint(Preview pv, IReadOnlyCollection<int> selected)
+    {
+        var set = new HashSet<int>(selected ?? Array.Empty<int>());
+        return string.Join(";", pv.Changes
+            .Where(c => c.Target == StdTrack.Target.Snapshot && set.Contains(c.KhPlanDetailId))
+            .Select(c => $"{c.KhPlanDetailId}|{c.SnapshotTable}|{c.SnapshotRowId}|{c.FieldName}|{c.OldValue:0.####}>{c.NewValue:0.####}|{c.OldIsConfirmed}>{c.NewIsConfirmed}")
+            .OrderBy(x => x, StringComparer.Ordinal));
+    }
+
     /// <summary>Xem trước — KHÔNG ghi gì vào DB.</summary>
     public Task<Preview> PreviewAsync(int partId, DateTime effectiveFrom)
         => ComputeAsync(partId, effectiveFrom);
@@ -111,7 +122,8 @@ public class StdUpdateService
     /// [STD-UPDATE-V3] selectedPlans = các phiếu được tích chọn (đang dở dang + chưa có WTS).
     /// </summary>
     public async Task<RunResult> RunAsync(int partId, DateTime effectiveFrom, string reason, int userId,
-        IReadOnlyCollection<int> selectedPlans)
+        IReadOnlyCollection<int> selectedPlans,
+        string? previewFingerprint = null)   // [STD-5] dấu của bản Xem trước (SnapshotFingerprint); null = không so (gọi cũ)
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new InvalidOperationException("Bắt buộc nhập lý do Update TG chuẩn.");
@@ -135,6 +147,11 @@ public class StdUpdateService
             // [STD-UPDATE-V3] Chỉ giữ thay đổi của các phiếu ĐƯỢC TÍCH CHỌN (cả đang dở dang lẫn chưa có WTS — mặc định chọn tất cả ở UI)
             pv.Changes = pv.Changes.Where(c => selected.Contains(c.KhPlanDetailId)).ToList();
             pv.Plans   = pv.Plans.Where(p => selected.Contains(p.KhPlanDetailId)).ToList();   // [STD-UPD] số phiếu / ô / WTS trong lời báo + lịch sử chỉ tính PO được chọn (RS-E13 · STD-4)
+            // [STD-5 2026-10-31] Part Master / snapshot đổi giữa lúc Xem trước và lúc Chạy → không áp thay đổi chưa ai xem: so dấu các ô snapshot
+            //   (số cũ → mới + xác nhận) của PO được chọn, tính lại dưới khoá PO, khác bản Xem trước thì dừng (rollback), bắt Xem trước lại.
+            //   Dòng WTS mới lưu sau lúc Xem trước không tính (số chuẩn của chúng đi theo đúng các ô snapshot người dùng đã xem).
+            if (previewFingerprint != null && SnapshotFingerprint(pv, selected) != previewFingerprint)
+                throw new InvalidOperationException("Part Master / quy trình PO vừa thay đổi sau lúc bấm Xem trước — chưa Update gì. Bấm Xem trước lại, xem bảng mới rồi Chạy.");
             if (pv.Changes.Count == 0)
                 throw new InvalidOperationException("Không có ô nào để Update (chưa chọn PO nào?).");
             var now = DateTime.Now;

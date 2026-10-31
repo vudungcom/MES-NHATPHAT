@@ -193,7 +193,39 @@ namespace MES.Web.Services
 
         // ── Lưu toàn bộ nhóm (nguyên văn SaveGroupAsync của trang) ───────────────────
 
+        // [RS-D10b 2026-10-31] SQL Server chọn giao dịch lưu nhóm WTS làm "nạn nhân deadlock" (1205): SQL đã rollback CẢ giao dịch.
+        //   Trước: lỗi ở bước ghi số chuẩn bị nuốt rồi báo "Đã lưu WTS nhưng chưa ghi được số chuẩn" và vẫn Commit trên giao dịch đã chết
+        //   (lời báo sai — dòng WTS không còn; Commit ném lỗi, trang hỏng phiên); lỗi ở bước ghi dòng báo "Lỗi khi lưu: … deadlocked".
+        //   Nay: lỗi 1205 đi ra ngoài (giao dịch Dispose = Rollback, khoá máy + PO nhả), trả trạng thái dòng như trước khi bấm Lưu
+        //   rồi tự lưu lại cả nhóm (giao dịch mới: khoá lại, kiểm trùng máy / trần / K5 lại), tối đa 3 lần — như HandoverService [RS-D10].
+        //   Lỗi khác giữ y cách cũ.
         public async Task<WtsSaveResult> SaveGroupAsync(WtsSaveGroup grp)
+        {
+            var snap = grp.Rows.Select(s => (Row: s, s.WtsLogId, s.ActivityLogId, s.IsEditing, s.NgCaseId, s.HasWarning, s.WarningMsg,
+                                             s.Saved, s.GcStd, s.StdTimePerPc)).ToList();
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return await SaveGroupOnceAsync(grp); }
+                catch (Exception ex) when (HandoverService.IsDeadlock(ex))
+                {
+                    _db.ChangeTracker.Clear();   // bỏ mọi thứ đã Add trong lần hỏng (SQL đã rollback)
+                    foreach (var sn in snap)
+                    {
+                        sn.Row.WtsLogId = sn.WtsLogId; sn.Row.ActivityLogId = sn.ActivityLogId; sn.Row.IsEditing = sn.IsEditing; sn.Row.NgCaseId = sn.NgCaseId;
+                        sn.Row.HasWarning = sn.HasWarning; sn.Row.WarningMsg = sn.WarningMsg; sn.Row.Saved = sn.Saved;
+                        sn.Row.GcStd = sn.GcStd; sn.Row.StdTimePerPc = sn.StdTimePerPc; sn.Row.ErrorMsg = null;
+                    }
+                    if (attempt >= 3)
+                    {
+                        grp.ErrorMsg = HandoverService.DeadlockMsg;
+                        return new WtsSaveResult { Ok = false, ErrorMsg = grp.ErrorMsg };
+                    }
+                    await Task.Delay(150 * attempt);
+                }
+            }
+        }
+
+        private async Task<WtsSaveResult> SaveGroupOnceAsync(WtsSaveGroup grp)   // [RS-D10b] thân cũ của SaveGroupAsync, không đổi
         {
             grp.ErrorMsg = null;
             var result = new WtsSaveResult();
@@ -690,7 +722,7 @@ namespace MES.Web.Services
                     _db.ChangeTracker.Clear(); // clear EF cache để reload mới nhất
                     notify.Add(row.KhPlanDetailId.Value);   // [B2B3-WTS-TRX] đang trong giao dịch nhóm: báo sau khi ghi hẳn (trang nạp lại trần + số đã làm)
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10b] deadlock: đi ra SaveGroupAsync để tự lưu lại cả nhóm
                 {
                     var inner = ex.InnerException?.Message ?? ex.Message;
                     row.ErrorMsg = "Lỗi khi lưu: " + inner;
@@ -737,7 +769,7 @@ namespace MES.Web.Services
                     }
                     _db.ChangeTracker.Clear();
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10b] deadlock: đi ra SaveGroupAsync để tự lưu lại cả nhóm
                 {
                     var inner = ex.InnerException?.Message ?? ex.Message;
                     row.ErrorMsg = "Lỗi khi lưu: " + inner;
@@ -854,7 +886,7 @@ namespace MES.Web.Services
                 _db.WtsProductionLogStds.AddRange(list);
                 await _db.SaveChangesAsync();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10b] deadlock = SQL đã rollback CẢ giao dịch (dòng WTS cũng mất) → không báo "Đã lưu", ném ra để lưu lại cả nhóm
             {
                 _db.ChangeTracker.Clear();
                 row.HasWarning = true;
@@ -1018,7 +1050,23 @@ namespace MES.Web.Services
 
         // ── Xoá dòng đã lưu (nguyên văn VoidSavedRow + VoidWtsLogRawAsync của trang) ─────────────────
         // Trả Ok = đã xoá; Ok = false = bị chặn (lời báo ở ErrorMsg). Trang gọi LoadSavedRowsAsync khi Ok.
+        // [RS-D10b 2026-10-31] Xoá dòng bị chọn làm nạn nhân deadlock → tự thử lại (giao dịch mới: khoá PO + K5 lại), tối đa 3 lần.
+        //   Trước: lỗi ném thẳng lên trang (hỏng phiên). Xoá dòng không đổi gì trên row nên thử lại an toàn.
         public async Task<WtsSaveResult> VoidRowAsync(WtsVoidRequest row)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return await VoidRowOnceAsync(row); }
+                catch (Exception ex) when (HandoverService.IsDeadlock(ex))
+                {
+                    _db.ChangeTracker.Clear();
+                    if (attempt >= 3) return new WtsSaveResult { Ok = false, ErrorMsg = HandoverService.DeadlockMsg };
+                    await Task.Delay(150 * attempt);
+                }
+            }
+        }
+
+        private async Task<WtsSaveResult> VoidRowOnceAsync(WtsVoidRequest row)   // [RS-D10b] thân cũ của VoidRowAsync, không đổi
         {
             var result = new WtsSaveResult();
             // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn

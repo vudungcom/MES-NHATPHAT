@@ -114,6 +114,10 @@ public class ThietBiService
         {
             var isDuplicate = await _db.ThietBis.AnyAsync(t => t.SoMay == updatedModel.SoMay.Trim() && t.ThietBiId != updatedModel.ThietBiId && t.IsActive);
             if (isDuplicate) return (false, $"Số máy '{updatedModel.SoMay}' đã tồn tại ở thiết bị khác.");
+            // [RS-D9 2026-10-31] Số máy đã dùng ở đâu đó thì không đổi số (như mã CV [RS-E8])
+            var used = await MachineInUseAsync(existing.SoMay, forDelete: false);
+            if (used != null)
+                return (false, $"Số máy '{existing.SoMay}' đã dùng ở {used} — không đổi số máy được (WTS, báo cáo máy, TG chuẩn, máy loại trừ nối theo số máy). Chỉ sửa tên / mã / loại; máy khác hẳn thì thêm máy mới.");
         }
 
         var now = DateTime.Now;
@@ -236,6 +240,54 @@ public class ThietBiService
         return (true, null);
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // [RS-D9 2026-10-31] Số máy là chữ nối giữa Thiết bị ↔ WTS (MachineUsed) ↔ Part Master / snapshot PO (máy đăng ký, máy đồng dạng CSV)
+    //   ↔ danh sách máy loại trừ (N3). Trước: đổi / xoá số máy tự do → WTS cũ biến khỏi báo cáo máy, TG chuẩn trỏ máy không còn,
+    //   máy loại trừ mất (NC loại trừ thành NC thường — đổi đường đi của hàng). Nay:
+    //   - đổi số máy: chặn nếu số cũ đã có ở WTS / Part Master / snapshot PO / máy loại trừ;
+    //   - xoá máy: chặn nếu máy có trong quy trình Part Master ĐANG DÙNG (Part chưa ngưng, công đoạn chưa xoá) hoặc danh sách máy loại trừ.
+    //   Trả null = không dùng ở đâu; còn lại = mô tả chỗ dùng (vài Part đầu).
+    // ════════════════════════════════════════════════════════════════════
+    private async Task<string?> MachineInUseAsync(string soMay, bool forDelete)
+    {
+        var so = (soMay ?? "").Trim();
+        if (so.Length == 0) return null;
+        // so không phân biệt hoa / thường, bỏ khoảng trắng (như sổ + hiệu suất máy nối máy); CSV máy đồng dạng tách theo ',' và ';' (như Part Master)
+        bool Eq(string? a) => string.Equals(a?.Trim(), so, StringComparison.OrdinalIgnoreCase);
+        bool Tok(string? csv) => !string.IsNullOrEmpty(csv)
+            && csv.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(Eq);
+        var where = new List<string>();
+
+        var steps = await _db.PartMachiningSteps.AsNoTracking().Include(s => s.Timings)
+            .Where(s => s.MachineRegistered == so || (s.TimingMachine != null && s.TimingMachine.Contains(so)) || s.Timings.Any(t => t.SoMay.Contains(so)))
+            .ToListAsync();
+        var hitSteps = steps
+            .Where(s => Eq(s.MachineRegistered) || Tok(s.TimingMachine) || s.Timings.Any(t => (!forDelete || t.IsActive) && Tok(t.SoMay)))
+            .Where(s => !forDelete || s.IsActive).ToList();
+        var pIds = hitSteps.Select(s => s.PartId).Distinct().ToList();
+        var parts = await _db.PartMasters.AsNoTracking().Where(p => pIds.Contains(p.PartId))
+            .Select(p => new { p.PartId, p.PartNo, p.IsObsolete, p.IsActive }).ToListAsync();
+        var partNos = parts.Where(p => !forDelete || (!p.IsObsolete && p.IsActive))   // xoá máy: chỉ Part đang dùng (chưa ngưng, chưa xoá)
+            .Select(p => p.PartNo).Distinct().OrderBy(x => x).ToList();
+        if (partNos.Count > 0)
+            where.Add("Part Master " + string.Join(", ", partNos.Take(3)) + (partNos.Count > 3 ? $" (+{partNos.Count - 3})" : ""));
+        if (await _db.MachineExcludeSettings.AnyAsync(x => x.SoMay == so))
+            where.Add("danh sách máy loại trừ");
+        if (!forDelete)
+        {
+            if (await _db.WtsProductionLogs.AnyAsync(w => w.MachineUsed == so))
+                where.Add("WTS");
+            var snapM = await _db.KhPlanRouteSnapshotMachining.AsNoTracking()
+                .Where(x => x.MachineRegistered == so || (x.TimingMachine != null && x.TimingMachine.Contains(so)))
+                .Select(x => new { x.MachineRegistered, x.TimingMachine }).ToListAsync();
+            var snapT = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking()
+                .Where(x => x.SoMay.Contains(so)).Select(x => x.SoMay).ToListAsync();
+            if (snapM.Any(x => Eq(x.MachineRegistered) || Tok(x.TimingMachine)) || snapT.Any(Tok))
+                where.Add("quy trình PO (snapshot)");
+        }
+        return where.Count == 0 ? null : string.Join(" · ", where);
+    }
+
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int thietBiId, int currentUserId, string pin)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa THIET_BI (trước: chỉ cần đăng nhập)
@@ -246,6 +298,10 @@ public class ThietBiService
         var thietBi = await _db.ThietBis.FirstOrDefaultAsync(t => t.ThietBiId == thietBiId);
         if (thietBi == null) return (false, "Không tìm thấy thiết bị.");
         if (!thietBi.IsActive) return (false, "Thiết bị này đã bị xóa.");
+        // [RS-D9 2026-10-31] Máy đang có trong quy trình Part Master đang dùng / danh sách máy loại trừ → không xoá (PO mới sẽ trỏ máy không còn)
+        var usedDel = await MachineInUseAsync(thietBi.SoMay, forDelete: true);
+        if (usedDel != null)
+            return (false, $"Máy '{thietBi.SoMay}' đang dùng ở {usedDel} — không xoá được. Gỡ máy khỏi quy trình Part Master / danh sách máy loại trừ trước.");
 
         var now = DateTime.Now;
         thietBi.IsActive = false;

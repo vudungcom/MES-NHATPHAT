@@ -21,11 +21,16 @@ public class WtsReportService
     /// Lấy toàn bộ WTS logs (production + activity) trong khoảng ngày,
     /// có thể lọc thêm theo workerId (null = tất cả công nhân).
     /// </summary>
+    // [RPT-4 2026-10-31] Máy chủ tự kiểm quyền Xem "WTS Report" (ma trận DB, PermCheck) — trước: chỉ trang ẩn tab.
+    //   Không có quyền → kết quả rỗng (trang vốn không hiện tab cho người này nên không có chữ báo mới).
     public async Task<WtsReportResult> GetReportAsync(
         DateOnly dateFrom,
         DateOnly dateTo,
-        int? workerId = null)
+        int? workerId,
+        int viewerUserId)
     {
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.WtsReport))
+            return new WtsReportResult();   // [RPT-4]
         var startDt = dateFrom.ToDateTime(TimeOnly.MinValue);
         var endDt   = dateTo.ToDateTime(TimeOnly.MaxValue);
 
@@ -167,8 +172,10 @@ public class WtsReportService
 
     /// <summary>Danh sách công nhân có WTS log trong khoảng ngày (để populate dropdown).</summary>
     public async Task<List<(int Id, string Name)>> GetWorkersWithLogsAsync(
-        DateOnly dateFrom, DateOnly dateTo)
+        DateOnly dateFrom, DateOnly dateTo, int viewerUserId)
     {
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.WtsReport))
+            return new List<(int Id, string Name)>();   // [RPT-4]
         var startDt = dateFrom.ToDateTime(TimeOnly.MinValue);
         var endDt   = dateTo.ToDateTime(TimeOnly.MaxValue);
 
@@ -197,8 +204,10 @@ public class WtsReportService
     /// Lấy TẤT CẢ users active trong hệ thống — dùng cho dropdown report Admin.
     /// Không lọc theo khoảng ngày, vì admin cần xem bất kỳ người nào.
     /// </summary>
-    public async Task<List<(int Id, string Name)>> GetAllActiveWorkersAsync()
+    public async Task<List<(int Id, string Name)>> GetAllActiveWorkersAsync(int viewerUserId)
     {
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.WtsReport))
+            return new List<(int Id, string Name)>();   // [RPT-4]
         return await _db.Users
             .Where(u => u.IsActive)
             .OrderBy(u => u.FullName)

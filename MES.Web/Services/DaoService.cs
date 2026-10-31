@@ -59,6 +59,7 @@ public class DaoService
         if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"), null);
         if (string.IsNullOrWhiteSpace(model.TenDao))
             return (false, "Tên dao không được để trống.", null);
+        if (model.SoLuongTon < 0) return (false, "SL tồn không được âm.", null);   // [RS-E10 2026-10-31] trước: lưu được số âm
 
         var name = model.TenDao.Trim();
         var isDuplicateName = await _db.Daos
@@ -117,6 +118,7 @@ public class DaoService
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa Dao (trước: chỉ cần đăng nhập)
         if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"));
+        if (updated.SoLuongTon < 0) return (false, "SL tồn không được âm.");   // [RS-E10 2026-10-31] trước: lưu được số âm
         if (string.IsNullOrWhiteSpace(updated.TenDao))
             return (false, "Tên dao không được để trống.");
 

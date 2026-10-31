@@ -2278,6 +2278,8 @@ else
         if (_issueQty <= 0)                   { _modalError = "Số lượng phải lớn hơn 0."; return; }
         _saving = true;
         var detailId = _selectedRow.KhPlanDetailId;
+        try   // [PAGE-ERR 2026-10-31]
+        {
         (bool ok, string err) = _issueSpecialMode
             ? await HandoverSvc.IssueSpecialAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId, purpose,
                 fromNC: string.IsNullOrEmpty(_issueFromNC) ? null : _issueFromNC,
@@ -2292,6 +2294,17 @@ else
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
         await ReloadRowAsync(detailId);
+        }
+        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
+        finally { _saving = false; }
+    }
+
+    // [PAGE-ERR 2026-10-31] Lỗi máy chủ lạ khi Giao / Nhận / Huỷ / Báo lỗi (lời báo nghiệp vụ đã trả qua (ok, err); deadlock đã tự thử lại [RS-D10]):
+    //   hiện trong cửa sổ + bỏ dữ liệu dở khỏi DbContext dùng chung (để lần lưu sau không ghi kèm). Trước: không bắt → hỏng phiên trang, phải F5.
+    string ServerErr(Exception ex)
+    {
+        Db.ChangeTracker.Clear();
+        return "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
     }
 
     // ── [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận ──────────────
@@ -2368,6 +2381,8 @@ else
         if (_ngCatId == null)                { _modalError = NgCaseService.MsgPickCategory; return; }   // [VULOI]
         _saving = true;
         var detailId = _selectedRow.KhPlanDetailId;
+        try   // [PAGE-ERR 2026-10-31]
+        {
         (bool ok, string err) = await HandoverSvc.ReportNgAfterReceiveAsync(detailId, _ngGroup, _ngSource,
             string.IsNullOrEmpty(_ngNc) ? null : _ngNc, _ngQty, _ngOrigin,
             string.IsNullOrEmpty(_ngCause) ? null : _ngCause, _ngReason, _ngNotes, _currentUserId, _myEditGroups, _ngCatId);   // [VULOI] + loại lỗi
@@ -2375,6 +2390,9 @@ else
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
         await ReloadRowAsync(detailId);
+        }
+        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
+        finally { _saving = false; }
     }
 
     bool ShowVoidNgBtn(HandoverNgReportItem b)
@@ -2442,6 +2460,8 @@ else
         if (pend != null && !RecvCarry(pend) && (RecvLoi(pend) || RecvSua(pend) || _receiveQtyNg > 0) && _receiveCatId == null)
         { _modalError = NgCaseService.MsgPickCategory; _saving = false; return; }
         // [GN-RECV-SUA] ô Hàng sửa không gửi NG (ô NG khoá xám)
+        try   // [PAGE-ERR 2026-10-31]
+        {
         (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, cell == HandoverCell.Sua ? 0 : _receiveQtyNg, null, _currentUserId, _receiveNotes,
             toCell: cell, toCellReason: cell != null && pend != null && cell != pend.ToCell ? _receiveCellReason : null,
             ngCategoryId: _receiveCatId);   // [VULOI] lỗi chọn từ DS Lỗi (trước: _receiveNgReason gõ tay)
@@ -2455,6 +2475,9 @@ else
             _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(id, _receiveToGroup);
             await ReloadRowAsync(id);
         }
+        }
+        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
+        finally { _saving = false; }
     }
 
     static string PendingPurpose(HandoverTxPending p)
@@ -2557,6 +2580,8 @@ else
             return;
         }
         _saving = true;
+        try   // [PAGE-ERR 2026-10-31]
+        {
         // [GN-VOID-RULE] 3 kiểu huỷ; máy chủ kiểm quyền (người lập/nhận hoặc nhóm) + K5 (huỷ xong ô nào âm, kể cả WTS từng mã CV, thì không lưu)
         (bool ok, string err) result;
         if (_voidMode == "NG")   // [GN-NG-AFTER]
@@ -2578,6 +2603,9 @@ else
         _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
         _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
         await ReloadRowAsync(_logDetailId);
+        }
+        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
+        finally { _saving = false; }
     }
 
     void CloseModals()

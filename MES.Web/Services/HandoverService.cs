@@ -2013,6 +2013,11 @@ namespace MES.Web.Services
             if (head == null)
                 return (false, "Bản ghi nhận không tồn tại hoặc đã bị huỷ.");
 
+            // [VOID-PERM 2026-10-31] Quyền đọc ma trận từ DB (PermCheck), KHÔNG tin danh sách nhóm trang gửi lên;
+            //   tài khoản / nhóm đã ngưng hoạt động thì không huỷ / báo được (kể cả chứng từ do chính mình lập).
+            var vpGroups = await VoidRightsAsync(voidedByUserId);
+            if (vpGroups == null) return (false, VoidInactiveMsg);
+            editGroups = vpGroups;
             // [GN-VOID-RULE] Chỉ người bấm Nhận hoặc người có quyền sửa nhóm nhận mới huỷ được lần nhận (máy chủ kiểm, không chỉ dựa vào nút)
             if (!CanVoidReceive(head.ReceivedBy, head.ToGroupCode, voidedByUserId, editGroups))
                 return (false, $"Chỉ người đã bấm Nhận hoặc nhóm {HandoverLedgerService.GroupLabel(head.ToGroupCode)} mới huỷ được lần nhận này.");
@@ -2143,6 +2148,11 @@ namespace MES.Web.Services
             if (head == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
 
+            // [VOID-PERM 2026-10-31] Quyền đọc ma trận từ DB (PermCheck), KHÔNG tin danh sách nhóm trang gửi lên;
+            //   tài khoản / nhóm đã ngưng hoạt động thì không huỷ / báo được (kể cả chứng từ do chính mình lập).
+            var vpGroups = await VoidRightsAsync(voidedByUserId);
+            if (vpGroups == null) return (false, VoidInactiveMsg);
+            editGroups = vpGroups;
             // [GN-VOID-RULE] Luật huỷ (Hùng nhắc lại 26/10): chỉ người lập phiếu hoặc nhóm giao (người có quyền sửa nhóm đó) — máy chủ kiểm
             if (!CanVoidIssue(head.IssuedBy, head.FromGroupCode, voidedByUserId, editGroups))
                 return (false, $"Chỉ người lập phiếu hoặc nhóm {HandoverLedgerService.GroupLabel(head.FromGroupCode)} mới huỷ được phiếu này.");
@@ -2238,7 +2248,7 @@ namespace MES.Web.Services
         // [GN-VOID-RULE 2026-10-26] Luật huỷ dùng chung (trang + service)
         //   Huỷ phiếu giao / huỷ phần chưa nhận: người lập phiếu, hoặc người có quyền sửa nhóm giao.
         //   Huỷ lần nhận: người bấm Nhận, hoặc người có quyền sửa nhóm nhận.
-        //   Admin: trang truyền đủ 5 nhóm vào editGroups.
+        //   Admin: mọi nhóm. [VOID-PERM 2026-10-31] máy chủ tự đọc ma trận (VoidRightsAsync), tham số editGroups trang gửi không còn dùng.
         // ----------------------------------------------------------------
         /// <summary>[RS-C2 2026-10-29] null = được; còn lại = lời báo không có quyền sửa nhóm (đọc ma trận từ DB, không tin trang).</summary>
         private async Task<string?> DenyGroupAsync(int userId, string groupCode, string viec)
@@ -2247,6 +2257,13 @@ namespace MES.Web.Services
             return eg.Contains(groupCode) ? null
                 : $"Bạn không có quyền sửa nhóm {HandoverLedgerService.GroupLabel(groupCode)} — không {viec} thay nhóm khác được.";
         }
+
+        // [VOID-PERM 2026-10-31] Huỷ phiếu / lần nhận / phần chưa nhận / báo lỗi: nhóm có quyền sửa đọc từ DB.
+        //   null = tài khoản hoặc nhóm không hoạt động (không được huỷ gì). Trang vẫn dùng CanVoid* + _myEditGroups chỉ để ẩn / hiện nút.
+        private async Task<HashSet<string>?> VoidRightsAsync(int userId)
+            => await PermCheck.HandoverEditGroupsOrNullAsync(_db, userId);
+
+        private const string VoidInactiveMsg = "Tài khoản chưa có nhóm hoặc tài khoản / nhóm đang ngưng hoạt động — không huỷ được. Nhờ Admin kiểm tra.";
 
         public static bool CanVoidIssue(int issuedBy, string fromGroupCode, int userId, IReadOnlyCollection<string> editGroups)
             => issuedBy == userId || editGroups.Contains(fromGroupCode);
@@ -2281,8 +2298,9 @@ namespace MES.Web.Services
         {
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
             if (!validGroups.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
-            if (!editGroups.Contains(groupCode))
-                return (false, $"Bạn không có quyền sửa nhóm {HandoverLedgerService.GroupLabel(groupCode)} — không báo lỗi thay nhóm khác được.");
+            // [VOID-PERM 2026-10-31] Quyền nhóm đọc ma trận từ DB (như lập phiếu / nhận [RS-C2]), không tin editGroups trang gửi lên (tham số giữ cho trang cũ biên dịch, không dùng)
+            var denyRep = await DenyGroupAsync(userId, groupCode, "báo lỗi");
+            if (denyRep != null) return (false, denyRep);
             if (qty <= 0) return (false, "Số lượng lỗi phải lớn hơn 0.");
             if (groupCode == "KHO" ? sourceCell != HandoverNgSource.Phoi : sourceCell is not (HandoverNgSource.Chua or HandoverNgSource.Da))
                 return (false, groupCode == "KHO" ? "Kho báo lỗi từ phôi còn." : "Chọn hàng lỗi đang nằm ở: chưa làm, hay đã làm chưa giao.");
@@ -2346,6 +2364,11 @@ namespace MES.Web.Services
             var head = await _db.HandoverNgReports.AsNoTracking().Where(b => b.HandoverNgReportId == reportId && !b.IsVoided)
                 .Select(b => new { b.KhPlanDetailId, b.CreatedBy, b.GroupCode }).FirstOrDefaultAsync();
             if (head == null) return (false, "Phiếu báo lỗi không tồn tại hoặc đã huỷ.");
+            // [VOID-PERM 2026-10-31] Quyền đọc ma trận từ DB (PermCheck), KHÔNG tin danh sách nhóm trang gửi lên;
+            //   tài khoản / nhóm đã ngưng hoạt động thì không huỷ / báo được (kể cả chứng từ do chính mình lập).
+            var vpGroups = await VoidRightsAsync(userId);
+            if (vpGroups == null) return (false, VoidInactiveMsg);
+            editGroups = vpGroups;
             if (!CanVoidNgReport(head.CreatedBy, head.GroupCode, userId, editGroups))
                 return (false, $"Chỉ người đã báo hoặc nhóm {HandoverLedgerService.GroupLabel(head.GroupCode)} mới huỷ được phiếu báo lỗi này.");
 
@@ -2423,6 +2446,11 @@ namespace MES.Web.Services
                 .Select(t => new { t.KhPlanDetailId, t.IssuedBy, t.FromGroupCode }).FirstOrDefaultAsync();
             if (head == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
+            // [VOID-PERM 2026-10-31] Quyền đọc ma trận từ DB (PermCheck), KHÔNG tin danh sách nhóm trang gửi lên;
+            //   tài khoản / nhóm đã ngưng hoạt động thì không huỷ / báo được (kể cả chứng từ do chính mình lập).
+            var vpGroups = await VoidRightsAsync(userId);
+            if (vpGroups == null) return (false, VoidInactiveMsg);
+            editGroups = vpGroups;
             if (!CanVoidIssue(head.IssuedBy, head.FromGroupCode, userId, editGroups))
                 return (false, $"Chỉ người lập phiếu hoặc nhóm {HandoverLedgerService.GroupLabel(head.FromGroupCode)} mới huỷ được phần chưa nhận.");
 
