@@ -1,0 +1,70 @@
+SqlDongThoi (T1) — 31/10/2026 11:51:13 · 6 người · 60 giây hỗn hợp · 4 PO × 100 phôi
+DB đang kết nối: MES_TEST · READ_COMMITTED_SNAPSHOT = BẬT
+Người thử: UserId 1 (nhóm ADMIN) · khách CustomerId 1 · số PO thử bắt đầu bằng T1-1031115113-
+
+[S1] 8 người CÙNG LÚC lập phiếu Kho → Gia công 20 chiếc, PO có 100 phôi
+  ĐẠT  Đúng 5 phiếu lưu được, Kho còn 0 (không vượt phôi)
+         → lưu được 5 · Kho còn 0.00 · bị chặn: Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 20.
+  ĐẠT  Sổ PO S1 cân, không ô âm
+
+[S2] 4 người CÙNG LÚC bấm Nhận đủ 20 của cùng 1 phiếu
+  ĐẠT  Đúng 1 lần nhận lưu được, 3 người còn lại bị chặn
+         → lưu được 1 · lần nhận trong DB 1 · Phiếu giao đã nhận đủ.
+
+[S3] Gia công đã nhận 100; 8 người CÙNG LÚC nhập WTS NC01 20 chiếc (8 máy khác nhau)
+  ĐẠT  Đúng 5 dòng WTS lưu được, NC01 đã làm 100 (không vượt hàng nhận)
+         → lưu được 5 · NC01 tổng 100.0000 · PO T1-1031115113-S1A1 · NC NC01: nhập 20 (OK + NG) vượt Chưa làm 0. (Nhận vào 100 − OK 100 − NG 0 = 0)
+  ĐẠT  Sổ PO S1 cân, không ô âm sau WTS
+
+[S4] 2 người CÙNG LÚC nhập WTS cùng 1 máy, cùng khung giờ, 2 PO khác nhau
+  ĐẠT  Đúng 1 người lưu được, người kia bị báo máy trùng giờ / đang có người lưu
+         → lưu được 1 · Máy T1M51139 đã có log 11:49–11:50 (PO T1-1031115113-S41, NC NC01, Administrator) — trùng 11:49–11:50. Không c…
+
+[S5] 6 người làm ngẫu nhiên 60 giây trên 4 PO (giao, nhận, WTS NC01 / NC02 / Taro, giao GC → HTSP, huỷ nhận, huỷ phiếu, xoá WTS)
+  đã chạy 3852 thao tác
+  ĐẠT  Sổ PO T1-1031115113-S51: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S52: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S53: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S54: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S41: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S42: cân, không ô âm, không lần nhận vượt phiếu
+  ĐẠT  Sổ PO T1-1031115113-S1A1: cân, không ô âm, không lần nhận vượt phiếu
+
+[THỐNG KÊ] thao tác · lưu được · bị chặn (luật) · bận-hết 3 lần thử (deadlock) · chờ khoá quá 10 s · lỗi lạ · ms trung vị / p95 / lớn nhất
+  giao GC→HTSP          66    120     0     0     0       44    339   1699
+  giao Kho→GC          110    648     3     0     0       43    596  14494
+  huỷ nhận             279    128     0     0     0       61    152    550
+  huỷ phiếu             55    314     0     0     0       56    133   5029
+  nhận                 432     65     0     0     0       56    198   2485
+  S1 giao Kho→GC         5      3     0     0     0      337    404    404
+  S2 nhận                1      3     0     0     0      129    139    139
+  S3 WTS NC01            5      3     0     0     0      319    373    373
+  S4 WTS cùng máy        1      1     0     0     0       42     42     42
+  WTS NC01             155    202     0     0     0       40    125   4972
+  WTS NC02             120    230     0     0     0       44    126   4625
+  WTS Taro             126     69     0     0     0       46    117   4989
+  xoá WTS              242    139     0     0     0       55    127    658
+  Lời báo bị chặn hay gặp (đúng luật — chỉ để xem):
+     312 × huỷ phiếu · Phiếu đã có bên nhận xác nhận. Huỷ từng lần nhận trước, hoặc dùng Huỷ phần chưa nhận.  Số này đang được dùng ở…
+      60 × nhận · Phiếu giao đã nhận đủ.
+      41 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 11.
+      37 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 3.
+      32 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 9.
+      32 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 10.
+      31 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 13.
+      30 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 2.
+      28 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 8.
+      26 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 4.
+      26 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 6.
+      26 × giao Kho→GC · Ô Hàng mới: tối đa 0 (Kho · Phôi còn giao: 100 − 100 = 0). Không thể giao 5.
+  ĐẠT  Không có lỗi lạ ném ra ngoài từ hàm LƯU của phần mềm (deadlock đã tự thử lại bên trong)
+         → 0 lỗi lạ
+  ĐẠT  Câu đọc của công cụ không gặp lỗi nào khác ngoài deadlock
+         → 0 lỗi
+  Câu ĐỌC thường (không giao dịch) bị chọn làm nạn nhân deadlock: 0 lần — không sai số; cho biết trang chỉ đọc (nạp phiếu chờ nhận, nạp sổ…) ngoài đời cũng có thể gặp khi nhiều người cùng lưu
+  Mức cô lập câu ĐỌC thường đang chạy (lấy mẫu): ReadCommitted 902 · Serializable 396
+  SAI  Câu đọc thường chạy đúng mức ReadCommitted (không bị Serializable của giao dịch trước rò sang)
+         → 396 lần câu đọc chạy ở mức khác ReadCommitted — Serializable rò qua kết nối dùng lại → RCSI không có tác dụng, trang đọc + lưu sau đó chạy Serializable ngoài ý muốn (báo Claude)
+  Bận hết 3 lần thử (báo 'Máy chủ đang bận'): 3 lần — không sai số, chỉ cần bấm lại; nhiều quá thì báo Claude
+
+KẾT QUẢ: 1 SAI

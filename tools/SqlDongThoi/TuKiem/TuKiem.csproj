@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>CS8618;CS8602;CS8600;CS8604;CS8601;CS8603;CS8625;CS0168;CS0219;CS1998;CS8619;CS8620</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../MES.Web/Data/Entities/*.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverService.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverLedgerService.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverChangeNotifier.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverWhy.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverNgTrace.cs" />
+    <Compile Include="../../../MES.Web/Services/PoGuard.cs" />
+    <Compile Include="../../../MES.Web/Services/PermCheck.cs" />
+    <Compile Include="../../../MES.Web/Services/WtsSaveService.cs" />
+    <Compile Include="../../../MES.Web/Services/NgCaseService.cs" />
+    <Compile Include="../../../MES.Web/Services/KhPlanService.cs" />
+    <Compile Include="../../../MES.Web/Services/KhoVatLieuService.cs" />
+    <Compile Include="../../../MES.Web/Constants/*.cs" />
+    <Compile Include="../../GiaoNhanFuzz/EfStub.cs;../../GiaoNhanFuzz/EfCompile2.cs;../../GiaoNhanFuzz/AppDbContextStub.cs;../../GiaoNhanFuzz/XlStub.cs;../../GiaoNhanFuzz/UserSvcStub.cs;../../GiaoNhanFuzz/FuzzPerm.cs" />
+    <Compile Include="../Core.cs" />
+    <Compile Include="StubHost.cs" />
+  </ItemGroup>
+</Project>
