@@ -254,7 +254,8 @@ public static class WtsScen
             var wb = db.WtsProductionLogs.List.First(x => x.WtsLogId == b.WtsLogId);
             Ok(v.Ok && wb.IsVoided && wb.VoidReason == "Xóa dòng" && wb.VoidedBy == 2 && v.DetailIds.SequenceEqual(new[] { 1 }), "Xoá NC2: được, cờ huỷ 'Xóa dòng' + người huỷ");
             v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = b.WtsLogId, KhPlanDetailId = 1, UserId = 3 });
-            Ok(v.Ok && wb.VoidedBy == 2, "[D8] xoá lần 2 dòng đã huỷ: không ghi đè người huỷ trước");
+            // [WTS-VOID-PO 2026-11-01] đổi chủ đích: xoá dòng đã huỷ → báo tải lại (trước: báo xoá xong dù 0 dòng đổi, như [ML16-ACT] đã sửa cho việc không ra SP)
+            Ok(!v.Ok && v.ErrorMsg == "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang." && wb.VoidedBy == 2, "[D8] xoá lần 2 dòng đã huỷ: không ghi đè người huỷ trước, báo tải lại", v.ErrorMsg);
             v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, KhPlanDetailId = 1, UserId = 2 });
             Ok(v.Ok, "Xoá NC1 sau khi NC2 đã xoá: được", v.ErrorMsg);
             // Workflow OFF: xoá không kiểm K5 (N7)
@@ -420,6 +421,114 @@ public static class WtsScen
                 }
             }
             finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null; }
+        }
+
+        // [WTS-VOID-PO][WTS-NGCASE-PO][MACHINE-CASE][KH-UPDFIELD 2026-11-01] máy chủ không tin PO / vụ / tên máy trang gửi
+        Console.WriteLine("[W12] Xoá / sửa dòng: PO đọc từ DB, chỉ dòng của mình + hôm nay; vụ lỗi đúng PO; khoá máy không phân biệt hoa thường; KH không sửa SL qua UpdateField");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var g = Gc(); var a = Row(1, 10, 0, T, T.AddHours(1)); g.Rows.Add(a); await s.SaveGroupAsync(g);
+            g = Gc(nc: "NC2", machine: "M2"); var b = Row(1, 10, 0, T.AddHours(1), T.AddHours(2)); g.Rows.Add(b); await s.SaveGroupAsync(g);
+            db.Fixup();
+            var wa = db.WtsProductionLogs.List.First(x => x.WtsLogId == a.WtsLogId);
+            // 1) trang gửi PO sai (PO2 tắt Workflow) → trước: khoá PO2, không K5 → xoá được, sổ PO1 NC2 âm −10
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, KhPlanDetailId = 2, UserId = 2 });
+            Ok(!v.Ok && v.ErrorMsg!.StartsWith("Không xoá được: xoá xong sẽ làm sai số ở Gia công NC2: chưa làm = -10") && !wa.IsVoided
+               && Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Contains("MES_PO_1") && !Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Contains("MES_PO_2"),
+               "Xoá với PO trang gửi SAI: khoá + K5 theo PO thật của dòng (PO1) → chặn, dòng còn nguyên", v.ErrorMsg + " · khoá " + string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+            // 2) PO trống → trước: nhánh cuối huỷ thẳng, không khoá, không K5
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, KhPlanDetailId = null, UserId = 2 });
+            Ok(!v.Ok && v.ErrorMsg!.StartsWith("Không xoá được:") && !wa.IsVoided, "Xoá với PO trống: vẫn khoá PO1 + K5 → chặn (trước: huỷ không khoá, không kiểm)", v.ErrorMsg);
+            // 3) dòng của người khác
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = b.WtsLogId, KhPlanDetailId = 1, UserId = 3 });
+            var wb = db.WtsProductionLogs.List.First(x => x.WtsLogId == b.WtsLogId);
+            Ok(!v.Ok && v.ErrorMsg == "Chỉ xoá được dòng WTS của chính mình." && !wb.IsVoided, "Xoá dòng của người khác: chặn, dòng còn nguyên", v.ErrorMsg);
+            // 4) dòng ngày cũ
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 900, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = T.AddDays(-1), EndTime = T.AddDays(-1).AddHours(1), CreatedAt = T.AddDays(-1) });
+            db.Fixup();
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, KhPlanDetailId = 2, UserId = 2 });
+            Ok(!v.Ok && v.ErrorMsg == "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn." && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 900).IsVoided, "Xoá dòng ngày cũ: chặn (như trang + lưu WTS)", v.ErrorMsg);
+            // 5) id không có
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 12345, KhPlanDetailId = 1, UserId = 2 });
+            Ok(!v.Ok && v.ErrorMsg == "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang.", "Xoá id không có: báo tải lại, không ghi", v.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { UserId = 2 });
+            Ok(!v.Ok && v.ErrorMsg == "Không có dòng để xoá — tải lại trang.", "Xoá không id: không ghi gì", v.ErrorMsg);
+            // 6) xoá đúng: dòng NC2 (cuối) của mình, PO trang gửi sai vẫn huỷ đúng + báo đúng PO
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = b.WtsLogId, KhPlanDetailId = 2, UserId = 2 });
+            Ok(v.Ok && wb.IsVoided && wb.VoidedBy == 2 && v.DetailIds.SequenceEqual(new[] { 1 }), "Xoá dòng của mình: huỷ, DetailIds = PO thật của dòng (PO1)", v.ErrorMsg);
+            // 7) Sửa dòng (void + mới) dòng của người khác / ngày cũ → không huỷ, không ghi dòng mới
+            int n0 = WtsCount(db, false);
+            g = Gc(); g.UserId = 3; var e1 = Row(1, 5, 0, T.AddHours(3), T.AddHours(4)); e1.IsEditing = true; e1.WtsLogId = a.WtsLogId; g.Rows.Add(e1);
+            var r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && r.ErrorMsg!.Contains("Dòng WTS này đã bị sửa / xoá ở nơi khác") && !wa.IsVoided && WtsCount(db, false) == n0, "Sửa dòng của người khác: không huỷ dòng cũ, không ghi dòng mới", r.ErrorMsg);
+            g = Gc(machine: "M5"); var e2 = Row(2, 1, 0, T.AddHours(4), T.AddHours(5)); e2.IsEditing = true; e2.WtsLogId = 900; g.Rows.Add(e2);
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && r.ErrorMsg!.Contains("Dòng WTS này đã bị sửa / xoá ở nơi khác") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 900).IsVoided && WtsCount(db, false) == n0, "Sửa dòng ngày cũ: không huỷ, không ghi", r.ErrorMsg);
+            // sửa dòng gửi vụ KHÁC cùng PO (không phải vụ của dòng cũ trong DB) → không nhận, vụ mới (rà độc lập 01/11)
+            g = Gc(machine: "M9"); var q1 = Row(1, 1, 1, T.AddHours(9), T.AddHours(10), cat: 1); g.Rows.Add(q1); r = await s.SaveGroupAsync(g); db.Fixup();
+            g = Gc(machine: "M10"); var q2 = Row(1, 1, 1, T.AddHours(10), T.AddHours(11), cat: 2); g.Rows.Add(q2); r = await s.SaveGroupAsync(g); db.Fixup();
+            int ncq = db.NgCases.List.Count;
+            g = Gc(machine: "M10"); var q3 = Row(1, 1, 1, T.AddHours(10), T.AddHours(11), cat: 2); q3.IsEditing = true; q3.WtsLogId = q2.WtsLogId; q3.NgCaseId = q1.NgCaseId; g.Rows.Add(q3);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            Ok(r.Ok && q3.NgCaseId != q1.NgCaseId && q3.NgCaseId != null && db.NgCases.List.First(c => c.NgCaseId == q1.NgCaseId).NgCategoryId == 1,
+               "Sửa dòng gửi vụ của dòng khác cùng PO: không gắn / không đổi loại lỗi vụ đó", r.ErrorMsg);
+
+            // 8) [WTS-NGCASE-PO] vụ lỗi theo PO của dòng
+            g = Gc(machine: "M6"); var n1 = Row(1, 2, 1, T.AddHours(5), T.AddHours(6), cat: 1); g.Rows.Add(n1);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            var v1 = n1.NgCaseId;
+            Ok(r.Ok && v1 != null && db.NgCases.List.First(c => c.NgCaseId == v1).KhPlanDetailId == 1, "Lưu NG PO1 → vụ thuộc PO1", r.ErrorMsg);
+            // sửa dòng, đổi sang PO2 (khác loại lỗi) → vụ mới của PO2, vụ PO1 không bị đổi loại lỗi
+            int ncase = db.NgCases.List.Count;
+            g = Gc(machine: "M6"); var n2 = Row(2, 2, 1, T.AddHours(5), T.AddHours(6), cat: 2); n2.IsEditing = true; n2.WtsLogId = n1.WtsLogId; n2.NgCaseId = v1; g.Rows.Add(n2);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            var newLog = db.WtsProductionLogs.List.First(x => x.WtsLogId == n2.WtsLogId);
+            Ok(r.Ok && newLog.KhPlanDetailId == 2 && newLog.NgCaseId != v1 && newLog.NgCaseId != null
+               && db.NgCases.List.First(c => c.NgCaseId == newLog.NgCaseId).KhPlanDetailId == 2 && db.NgCases.List.Count == ncase + 1
+               && db.NgCases.List.First(c => c.NgCaseId == v1).NgCategoryId == 1,
+               "Sửa dòng đổi PO1 → PO2: vụ MỚI của PO2, vụ PO1 giữ loại lỗi (trước: WTS PO2 gắn vụ PO1, đổi loại lỗi vụ PO1)", r.ErrorMsg);
+            // dòng MỚI (không sửa) mà trang còn sót NgCaseId → vụ mới (đúng như bước thử K5)
+            ncase = db.NgCases.List.Count;
+            g = Gc(machine: "M7"); var n3 = Row(1, 1, 1, T.AddHours(6), T.AddHours(7), cat: 1); n3.NgCaseId = v1; g.Rows.Add(n3);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            Ok(r.Ok && n3.NgCaseId != v1 && db.NgCases.List.Count == ncase + 1, "Dòng mới còn sót NgCaseId: tạo vụ mới, không gắn vụ cũ", r.ErrorMsg);
+            // sửa dòng giữ PO → giữ vụ (như cũ)
+            ncase = db.NgCases.List.Count; var v3 = n3.NgCaseId;
+            g = Gc(machine: "M7"); var n4 = Row(1, 1, 1, T.AddHours(6), T.AddHours(7), cat: 1); n4.IsEditing = true; n4.WtsLogId = n3.WtsLogId; n4.NgCaseId = v3; g.Rows.Add(n4);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            Ok(r.Ok && n4.NgCaseId == v3 && db.NgCases.List.Count == ncase, "Sửa dòng cùng PO: giữ vụ cũ (như cũ)", r.ErrorMsg);
+
+            // 8b) Xoá dòng "Việc không ra SP": chỉ của mình + hôm nay
+            db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "VS", TaskName = "Vệ sinh máy", IsActive = true });
+            db.Fixup();
+            var ra = await s.SaveActivityAsync(new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(16), EndTime = DateTime.Today.AddHours(16.5) });
+            var act = db.WorkerActivityLogs.List.Last();
+            var va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = act.ActivityLogId, UserId = 2 });
+            Ok(ra.Ok && !va.Ok && !act.IsVoided, "Xoá việc không ra SP của người khác: chặn", va.ErrorMsg);
+            db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = 950, WorkerId = 1, WorkDate = DateOnly.FromDateTime(DateTime.Today.AddDays(-1)), WtsCode = "VS", StartTime = DateTime.Today.AddDays(-1).AddHours(9), EndTime = DateTime.Today.AddDays(-1).AddHours(10), CreatedAt = DateTime.Today.AddDays(-1) });
+            db.Fixup();
+            va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = 950, UserId = 1 });
+            Ok(!va.Ok && !db.WorkerActivityLogs.List.First(x => x.ActivityLogId == 950).IsVoided, "Xoá việc không ra SP ngày cũ: chặn", va.ErrorMsg);
+            va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = act.ActivityLogId, UserId = 1 });
+            Ok(va.Ok && act.IsVoided, "Xoá việc không ra SP của mình hôm nay: được", va.ErrorMsg);
+
+            // 9) [MACHINE-CASE] tên khoá máy chuẩn hoá
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            g = Gc(machine: " m8 "); g.Rows.Add(Row(1, 1, 0, T.AddHours(8), T.AddHours(9))); r = await s.SaveGroupAsync(g);
+            Ok(Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Contains("WTS_MACHINE_M8"),
+               "Khoá máy ' m8 ' = 'WTS_MACHINE_M8' (cùng khoá với 'M8')", string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+
+            // 10) [KH-UPDFIELD] UpdateFieldAsync không sửa SL PO
+            var kh = new KhPlanService(db); string? err = null;
+            try { await kh.UpdateFieldAsync(1, "Quantity", "999", 1); } catch (InvalidOperationException ex) { err = ex.Message; }
+            Ok(err != null && err.StartsWith("SL PO chỉ sửa ở trang Sửa KH") && db.KhPlanDetails.List.First(d => d.KhPlanDetailId == 1).Quantity == 40, "UpdateFieldAsync Quantity: chặn, SL PO giữ 40", err);
+            err = null;
+            try { await kh.UpdateFieldAsync(1, "PartNotes", "x", 2); } catch (InvalidOperationException ex) { err = ex.Message; }
+            Ok(err != null && db.KhPlanDetails.List.First(d => d.KhPlanDetailId == 1).PartNotes != "x", "UpdateFieldAsync người không có quyền Sửa KE_HOACH: chặn", err);
+            err = null;
+            try { await kh.UpdateFieldAsync(1, "PartNotes", "ghi chú", 1); } catch (InvalidOperationException ex) { err = ex.Message; }
+            Ok(err == null && db.KhPlanDetails.List.First(d => d.KhPlanDetailId == 1).PartNotes == "ghi chú", "UpdateFieldAsync Admin sửa ghi chú: được (như cũ)", err);
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");

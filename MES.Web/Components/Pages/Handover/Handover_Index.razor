@@ -1016,7 +1016,7 @@ else
                                             <div class="d-flex gap-1 mb-1 flex-wrap">
                                                 @foreach (var c in HandoverCell.ReceiveCells)
                                                 {
-                                                    <button type="button" class="gn-cellbtn @(RecvCellOf(p) == c ? "on" : "")" style="flex:1;min-width:92px;padding:4px 6px" @onclick="() => SelectRecvCell(c)" title="@ToCellTitle(c)">
+                                                    <button type="button" class="gn-cellbtn @(RecvCellOf(p) == c ? "on" : "")" style="flex:1;min-width:92px;padding:4px 6px" @onclick="() => SelectRecvCell(p, c)" title="@ToCellTitle(c)">
                                                         <div class="fw-semibold small">@HandoverCell.Label(c)</div>
                                                         @if (c == p.ToCell) { <div class="text-muted" style="font-size:10px">bên giao chỉ định</div> }
                                                     </button>
@@ -2248,6 +2248,7 @@ else
         _issueFromNC = e.Value?.ToString() ?? "";
         if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromNC) && EffectivePurpose != null)
             _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, EffectivePurpose, _issueFromNC).Max;
+        else if (string.IsNullOrEmpty(_issueFromNC)) _issueQty = 0;   // [RA-CASCADE 2026-11-01] bỏ chọn NC → không giữ trần của NC cũ
     }
 
     // [GN-NGRET-TO] nhóm nhận đứng sau nhóm giao trong dòng KHO → GC → HTSP → KCS → Đóng gói
@@ -2316,12 +2317,17 @@ else
     //   và nhiều khi cửa sổ đã đóng nên không ai thấy. Nay báo rõ "Đã lưu" ở đầu trang (và trong cửa sổ nếu còn mở),
     //   dặn không bấm lưu lại (tránh ghi 2 lần). Số trên trang tự tính lại sau 2 phút / F5.
     string _pageError = "";
+    int? _pageErrorDetailId;   // [PAGE-ERR2-PO 2026-11-01] PO của lần lưu bị lỗi tải lại
     void ClearPageError() => _pageError = "";
+    // [PAGE-ERR2-PO] PO của cửa sổ đang mở (Nhận / Giao / Báo lỗi: _selectedRow; Lịch sử: _logDetailId)
+    int? ModalDetailId => _selectedRow?.KhPlanDetailId ?? (_showLogModal ? _logDetailId : (int?)null);
 
     // Cửa sổ Nhận / Lịch sử vẫn mở sau khi lưu (lời báo đầu trang nằm dưới lớp phủ) → hiện thêm trong 2 cửa sổ đó.
     private RenderFragment PageErrorBanner() => __builder =>
     {
-        if (!string.IsNullOrEmpty(_pageError))
+        // [PAGE-ERR2-PO 2026-11-01] trong cửa sổ chỉ hiện khi cửa sổ là của đúng PO vừa lưu (trước: mở Nhận / Lịch sử PO khác vẫn hiện
+        //   "Đã lưu xong… không bấm lưu lại" cạnh lỗi thật của PO đó). Lời báo đầu trang giữ như cũ (X để tắt).
+        if (!string.IsNullOrEmpty(_pageError) && _pageErrorDetailId == ModalDetailId)
         {
             <div class="alert alert-warning py-1 px-2 small m-2" style="white-space:pre-line">@_pageError</div>
         }
@@ -2336,6 +2342,7 @@ else
             var msg = "Đã lưu xong. Chỉ phần tải lại số trên màn hình bị lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message)
                     + " — bấm F5 để xem số mới (trang cũng tự tính lại sau 2 phút). Không bấm lưu lại (sẽ thành 2 lần).";
             _pageError = msg;
+            _pageErrorDetailId = ModalDetailId;   // [PAGE-ERR2-PO]
             _modalError = msg;
         }
     }
@@ -2530,9 +2537,13 @@ else
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : p.ToCell;
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
     bool RecvSua(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Sua;   // [GN-RECV-SUA] nhận hàng gửi sửa: chỉ 1 ô số lượng
-    void SelectRecvCell(string c)
+    void SelectRecvCell(HandoverTxPending p, string c)
     {
+        var _prevCell = RecvCellOf(p);   // [RA-CASCADE 2026-11-01] ô đang chọn trước khi đổi
         _receiveCell = c; _modalError = "";
+        // [RA-CASCADE 2026-11-01] Rời ô Hàng lỗi sang ô đạt (Hàng mới / Hàng lỗi đã xử lý): số đã dồn sang ô Hàng lỗi trả về ô đạt
+        //   (trước: chọn Hàng lỗi rồi chọn lại Hàng mới → OK 0, NG = cả số → lưu thành "NG đếm thấy", tự lập phiếu trả NG oan).
+        if (_prevCell == HandoverCell.Loi && c != HandoverCell.Loi && c != HandoverCell.Sua) { _receiveQtyOk += _receiveQtyNg; _receiveQtyNg = 0; }
         if (c == HandoverCell.Loi) { _receiveQtyNg += _receiveQtyOk; _receiveQtyOk = 0; }   // ô Hàng lỗi: dồn số sang ô Hàng lỗi
         if (c == HandoverCell.Sua) { _receiveQtyOk += _receiveQtyNg; _receiveQtyNg = 0; }   // [GN-RECV-SUA] ô Hàng sửa: dồn số sang ô Số lượng nhận
     }

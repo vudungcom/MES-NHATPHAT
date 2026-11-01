@@ -178,13 +178,18 @@ public class KhPlanService
         long? importBatchId = null,
         string? reason = null)
     {
+        // [KH-UPDFIELD 2026-11-01] Hàm không còn chỗ nào gọi, nhưng public: máy chủ kiểm quyền Sửa KE_HOACH như UpdateFullAsync / SaveEditAsync,
+        //   và KHÔNG sửa SL PO ở đây (trước: ghi Quantity không khoá MES_PO_, không K5) — SL PO chỉ sửa qua SaveEditAsync (khoá PO + so ô).
+        if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
+        if (fieldName == "Quantity")
+            throw new InvalidOperationException("SL PO chỉ sửa ở trang Sửa KH (khoá PO + kiểm số) — không sửa qua UpdateFieldAsync");
         var detail = await _db.KhPlanDetails.FirstOrDefaultAsync(x => x.KhPlanDetailId == khPlanDetailId);
         if (detail == null) throw new InvalidOperationException($"KhPlanDetail {khPlanDetailId} không tồn tại");
 
         string? oldValue = fieldName switch
         {
             "STD" => detail.STD.ToString("yyyy-MM-dd"),
-            "Quantity" => detail.Quantity.ToString(QtyFormat),
             "OrderVL" => detail.OrderVL,
             "Location" => detail.Location,
             "Type" => detail.Type,
@@ -197,7 +202,6 @@ public class KhPlanService
         switch (fieldName)
         {
             case "STD": detail.STD = DateTime.Parse(newValue!); break;
-            case "Quantity": detail.Quantity = decimal.Parse(newValue!); break;
             case "OrderVL": detail.OrderVL = newValue; break;
             case "Location": detail.Location = newValue; break;
             case "Type": detail.Type = newValue; break;
@@ -223,7 +227,8 @@ public class KhPlanService
         await _db.SaveChangesAsync();
     }
 
-    public async Task<int> UpdateFullAsync(
+    // [KH-UPDFIELD 2026-11-01] private: chỉ SaveEditAsync gọi (đã khoá PO MES_PO_ trong giao dịch). Trước: public — gọi thẳng = ghi SL PO không khoá.
+    private async Task<int> UpdateFullAsync(
         int khPlanDetailId,
         KhPlanDetail newValues,
         int changedBy,

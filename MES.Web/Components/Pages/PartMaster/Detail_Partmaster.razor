@@ -3356,10 +3356,14 @@ else
     private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
     {
         var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
+        // [RA-CASCADE 2026-11-01] Đổi sang mã CV KHÁC → T.Chuẩn là của mã cũ: đặt lại theo mã mới (mã mới không có chuẩn → để trống).
+        //   Trước: chỉ điền khi ô trống → đổi mã A (2.0) sang mã B (5.0) vẫn lưu mã B với 2.0 của A; bỏ chọn mã giữ số cũ, không đánh dấu sửa.
+        var _codeChanged = !string.Equals(edit.NC ?? "", task?.TaskCode ?? "", StringComparison.Ordinal);
         if (task != null)
         {
             edit.NC = task.TaskCode;
             edit.StepName = task.TaskName;
+            if (_codeChanged) edit.StandardTime = null;   // [RA-CASCADE]
             if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
             {
                 edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
@@ -3370,17 +3374,21 @@ else
         {
             edit.NC = ""; 
             edit.StepName = "";
+            if (_codeChanged) { edit.StandardTime = null; MarkAsModified(edit); }   // [RA-CASCADE]
         }
     }
 
     private void OnSelectWtsTaskTaro(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
     {
         var task = list.FirstOrDefault(t => t.TaskCode == taskCode);
+        // [RA-CASCADE 2026-11-01] như OnSelectWtsTask: đổi mã CV Taro khác → T.Chuẩn đặt lại theo mã mới
+        var _codeChanged = !string.Equals((edit as TaroEdit)?.WtsTaskCode ?? "", task?.TaskCode ?? "", StringComparison.Ordinal);
         if (task != null)
         {
             if (edit is TaroEdit taroEdit)
                 taroEdit.WtsTaskCode = task.TaskCode;
             edit.StepName = task.TaskName;
+            if (_codeChanged) edit.StandardTime = null;   // [RA-CASCADE]
             if (task.StandardTimeSec.HasValue && task.StandardTimeSec > 0 && edit.StandardTime == null)
             {
                 edit.StandardTime = Math.Round((decimal)task.StandardTimeSec.Value / 60m, 1);
@@ -3392,6 +3400,7 @@ else
             if (edit is TaroEdit taroEdit)
                 taroEdit.WtsTaskCode = "";
             edit.StepName = "";
+            if (_codeChanged) { edit.StandardTime = null; MarkAsModified(edit); }   // [RA-CASCADE]
         }
     }
 

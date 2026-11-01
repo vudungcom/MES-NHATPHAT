@@ -1,0 +1,49 @@
+﻿QUÉT SỔ (chỉ đọc) · DB MES · 01/11/2026 10:03:37
+PO: 45 · dòng WTS còn hiệu lực: 84 (dòng cũ chưa có QtyOk: 0)
+PO có vấn đề: 10 · tổng phát hiện: 32
+  CANH_BAO_SO          8 dòng · 4 PO
+  O_AM                15 dòng · 10 PO
+  WTS_VUOT_TRAN        9 dòng · 8 PO
+
+── PO test tự hiển gc · KH KH-20260831-0001 · Workflow ON (KhPlanDetailId 1010)
+   [O_AM] Gia công NC 1: chưa làm = -10
+   [O_AM] Gia công NC 2: chưa làm = -5
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 0 − đã ghi WTS OK 10 − đã ghi WTS NG 0 = -10
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 10 − đã ghi WTS OK 15 − đã ghi WTS NG 0 = -5
+── PO tesst kho · KH KH-20260901-0001 · Workflow ON (KhPlanDetailId 1011)
+   [O_AM] Gia công: Đã làm chưa giao = -15
+   [O_AM] Gia công NC 2: chưa làm = -95
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 5 − đã ghi WTS OK 100 − đã ghi WTS NG 0 = -95
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-15) — L4
+── PO 0003072377 · KH KH-20260905-0001 · Workflow ON (KhPlanDetailId 1018)
+   [O_AM] Gia công NC 1: chưa làm = -4
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 3 − đã ghi WTS OK 7 − đã ghi WTS NG 0 = -4
+── PO tttttt · KH KH-20260906-0001 · Workflow ON (KhPlanDetailId 1024)
+   [O_AM] Gia công NC 7: chưa làm = -200
+   [WTS_VUOT_TRAN] Gia công NC 7: nhận vào 0 − đã ghi WTS OK 200 − đã ghi WTS NG 0 = -200
+── PO 06-09-2026 · KH KH-20260906-0002 · Workflow ON (KhPlanDetailId 1025)
+   [O_AM] Gia công NC 2: chưa làm = -100
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 0 − đã ghi WTS OK 100 − đã ghi WTS NG 0 = -100
+── PO wwwwww · KH KH-20260908-0001 · Workflow ON (KhPlanDetailId 1027)
+   [O_AM] Gia công: Đã làm chưa giao = -50
+   [O_AM] Gia công NC 7: chưa làm = -53
+   [O_AM] HTSP: Đã làm chưa giao = -50
+   [O_AM] KCS: Đã làm chưa giao = -50
+   [WTS_VUOT_TRAN] Gia công NC 7: nhận vào 0 − đã ghi WTS OK 53 − đã ghi WTS NG 0 = -53
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] HTSP: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] KCS: PO chưa có snapshot mã CV — Đã làm đang cộng mọi mã, cần tạo snapshot
+   [CANH_BAO_SO] KCS: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] Đóng gói: PO chưa có snapshot mã CV — Đã làm đang cộng mọi mã, cần tạo snapshot
+── PO 0003109059 · KH KH-20260915-0001 · Workflow ON (KhPlanDetailId 1028)
+   [O_AM] Gia công NC 2: chưa làm = -1
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 29 − đã ghi WTS OK 30 − đã ghi WTS NG 0 = -1
+── PO 0004020933 · KH KH-20260916-0001 · Workflow ON (KhPlanDetailId 1029)
+   [O_AM] Gia công NC 1: chưa làm = -3
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 60 − đã ghi WTS OK 63 − đã ghi WTS NG 0 = -3
+── PO w11111111 · KH KH-20260916-0002 · Workflow ON (KhPlanDetailId 1030)
+   [O_AM] Gia công: Đã làm chưa giao = -5
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-5) — L4
+── PO 0003655603 · KH KH-20260923-0002 · Workflow ON (KhPlanDetailId 1035)
+   [O_AM] Gia công: Đã làm chưa giao = -16
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-16) — L4

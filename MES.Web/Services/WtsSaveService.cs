@@ -262,6 +262,22 @@ namespace MES.Web.Services
                 if (_missSerial != null)
                 { sub.ErrorMsg = _missSerial; grp.ErrorMsg = grp.IsGc ? $"Có hàng thiếu thời gian — {_missSerial}" : "Có hàng chưa nhập T.Thực tế."; return Fail(); }   // [ACTUAL-REQUIRED-NONGC]   // [TRIAL-PREP-REQUIRED] msg chung Hàng loạt / Chạy thử
 
+                // [WTS-NGCASE-PO 2026-11-01] Giữ vụ lỗi cũ CHỈ khi đang sửa dòng VÀ vụ thuộc đúng PO của dòng (đọc DB, không tin trang).
+                //   Trước: dùng thẳng sub.NgCaseId trang gửi → đổi PO lúc sửa dòng thì WTS PO2 gắn vụ của PO1 (đổi loại lỗi vụ PO1 khi chỉ giữ
+                //   khoá PO2); dòng mới (không sửa) còn sót NgCaseId thì bước thử K5 coi là vụ mới nhưng lúc ghi lại gắn vụ cũ.
+                //   Nay: không giữ được → để trống = vụ mới của PO dòng này (cùng cách bước thử K5 ở CheckGroupQtyAsync).
+                if (sub.NgCaseId != null)
+                {
+                    //   (rà độc lập 01/11) + vụ phải đúng vụ của dòng cũ trong DB (WtsLogId đang sửa), không nhận vụ khác cùng PO trang gửi.
+                    long? _oldCase = sub.IsEditing && sub.WtsLogId.HasValue
+                        ? await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == sub.WtsLogId.Value).Select(l => l.NgCaseId).FirstOrDefaultAsync()
+                        : null;
+                    int? _casePo = _oldCase != null && _oldCase == sub.NgCaseId
+                        ? await _db.NgCases.AsNoTracking().Where(c => c.NgCaseId == sub.NgCaseId.Value).Select(c => (int?)c.KhPlanDetailId).FirstOrDefaultAsync()
+                        : null;
+                    if (_casePo == null || _casePo != sub.KhPlanDetailId) sub.NgCaseId = null;
+                }
+
                 // [VULOI][DS-LOI] NG: bắt buộc CHỌN loại lỗi trong DS Lỗi (trước: gõ lý do). Sửa dòng đã có vụ lỗi đã đi phiếu: không đổi loại lỗi.
                 if (sub.QtyNg > 0 && sub.NgCategoryId == null)
                 { sub.ErrorMsg = "Chọn loại lỗi (DS Lỗi)."; grp.ErrorMsg = "Có hàng NG chưa chọn loại lỗi. " + NgCaseService.MsgPickCategory; return Fail(); }
@@ -290,7 +306,9 @@ namespace MES.Web.Services
                     // [MACHINE-LOCK] Khoá theo máy (sp_getapplock) trước khi kiểm tra trùng → giữ đến khi ghi xong.
                     // 2 người cùng lưu 1 máy: người sau phải chờ người trước ghi xong rồi mới kiểm tra → thấy log mới → bị chặn.
                     // Máy khác nhau không chờ nhau. Logic lưu bên dưới giữ nguyên.
-                    if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_MACHINE_" + grp.MachineUsed, deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
+                    // [MACHINE-CASE 2026-11-01] Tên khoá chuẩn hoá Trim + viết hoa: sp_getapplock so tên khoá phân biệt hoa / thường, còn câu kiểm
+                    //   trùng máy (CheckMachineOverlapAsync, so trong SQL) thì không → 'm1' và 'M1 ' lưu cùng lúc trước đây không chờ nhau.
+                    if (!await PoGuard.TryLockInTransactionAsync(_db, MachineLockName(grp.MachineUsed), deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
                     {
                         grp.ErrorMsg = $"Máy {grp.MachineUsed} đang có người khác lưu WTS. Vui lòng bấm Lưu lại sau vài giây.";
                         return Fail();
@@ -341,6 +359,9 @@ namespace MES.Web.Services
             result.Ok = true;
             return result;
         }
+
+        // [MACHINE-CASE 2026-11-01] Tên khoá máy dùng chung mọi chỗ khoá máy WTS (không phân biệt hoa / thường, bỏ khoảng trắng 2 đầu)
+        public static string MachineLockName(string? machine) => "WTS_MACHINE_" + (machine ?? "").Trim().ToUpperInvariant();
 
         // ── [MACHINE-OVERLAP] Kiểm tra máy trùng giờ khi lưu nhóm GC (nguyên văn CheckMachineOverlapAsync của trang) ──
         // 1) Các dòng trong cùng form với nhau (cùng máy của nhóm).
@@ -560,16 +581,18 @@ namespace MES.Web.Services
                 //   (trước: 2 tab cùng sửa 1 dòng → cả 2 bản mới cùng hiệu lực, số nhân đôi).
                 if (row.WtsLogId.HasValue)
                 {
+                    // [WTS-VOID-PO 2026-11-01] chỉ huỷ dòng của CHÍNH người nhập, bắt đầu trong ngày hôm nay (như trang: chỉ hiện dòng của mình,
+                    //   chỉ sửa ngày hôm nay) — trước: id trang gửi là huỷ, kể cả dòng người khác / ngày cũ.
                     var _nVoid = await _db.Database.ExecuteSqlRawAsync(
-                        "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",
-                        grp.UserId, DateTime.Now, row.WtsLogId.Value);
+                        "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0} AND StartTime>={3} AND StartTime<{4}",
+                        grp.UserId, DateTime.Now, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
                     if (_nVoid != 1)
                     { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
                 }
                 if (row.ActivityLogId.HasValue)
                 {
                     var _nVoidA = await _db.Database.ExecuteSqlRawAsync(
-                        "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
+                        "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0}",   // [WTS-VOID-PO] chỉ dòng của chính người nhập
                         grp.UserId, DateTime.Now, row.ActivityLogId.Value);
                     if (_nVoidA != 1)
                     { row.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
@@ -1083,25 +1106,40 @@ namespace MES.Web.Services
             }
         }
 
-        private async Task<WtsSaveResult> VoidRowOnceAsync(WtsVoidRequest row)   // [RS-D10b] thân cũ của VoidRowAsync, không đổi
+        private async Task<WtsSaveResult> VoidRowOnceAsync(WtsVoidRequest row)   // [RS-D10b] thân cũ của VoidRowAsync
         {
             var result = new WtsSaveResult();
-            // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
-            // (vd xoá WTS NC1 khi NC2 / nhóm sau đã làm từ số đó). Trước: xoá luôn, không kiểm.
-            // [B4-WF-DB 2026-10-28] Luôn khoá PO và đọc cờ Workflow từ DB (sổ).
-            // [WTS-SVC] Khoá PO LockOwner = Transaction (PoGuard.LockAsync) + 2 câu UPDATE trong cùng giao dịch (trước: khoá Session, UPDATE ngoài giao dịch).
-            if (row.WtsLogId.HasValue && row.KhPlanDetailId.HasValue)
+            // [WTS-VOID-PO 2026-11-01] PO của dòng WTS đọc từ DB theo WtsLogId (không tin row.KhPlanDetailId trang gửi).
+            //   Trước: khoá + K5 theo PO trang gửi — trang Sửa dòng đưa chính dòng đã lưu vào form, đổi / xoá PO trong form rồi bấm xoá
+            //   dòng đó = khoá nhầm PO (sổ PO thật không kiểm K5, có thể âm), PO trống thì rơi xuống nhánh cuối huỷ không khoá, không K5.
+            //   Nay: mọi dòng WTS đi 1 đường: đọc dòng → khoá PO của dòng → K5 → UPDATE phải đúng 1 dòng (còn hiệu lực, của chính
+            //   người xoá, bắt đầu hôm nay — như trang) → Commit. Không đúng 1 dòng → không đổi gì, báo tải lại trang.
+            if (row.WtsLogId.HasValue)
             {
+                var wl = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == row.WtsLogId.Value)
+                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime }).FirstOrDefaultAsync();
+                if (wl == null || wl.IsVoided)
+                { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
+                if (wl.WorkerId != row.UserId)
+                { result.ErrorMsg = "Chỉ xoá được dòng WTS của chính mình."; return result; }
+                if (wl.StartTime < DateTime.Today || wl.StartTime >= DateTime.Today.AddDays(1))
+                { result.ErrorMsg = "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn."; return result; }
+                int detId = wl.KhPlanDetailId;   // PO thật của dòng (dòng WTS append-only: PO không đổi)
+
+                // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
+                // (vd xoá WTS NC1 khi NC2 / nhóm sau đã làm từ số đó). Trước: xoá luôn, không kiểm.
+                // [B4-WF-DB 2026-10-28] Luôn khoá PO và đọc cờ Workflow từ DB (sổ).
+                // [WTS-SVC] Khoá PO LockOwner = Transaction (PoGuard.LockAsync) + câu UPDATE trong cùng giao dịch.
                 bool blocked = false;   // [GN-WHY] bị chặn K5 → tìm gốc rễ sau khi nhả khoá
                 string? blockMsg = null;
                 await using (var trx = await _db.Database.BeginTransactionAsync())
                 {
-                    var lockErr = await PoGuard.LockAsync(_db, row.KhPlanDetailId.Value, deadlockThrows: true);   // [RS-D10c] −3 → VoidRowAsync tự thử lại
+                    var lockErr = await PoGuard.LockAsync(_db, detId, deadlockThrows: true);   // [RS-D10c] −3 → VoidRowAsync tự thử lại
                     if (lockErr != null)
                     { result.ErrorMsg = lockErr; return result; }   // = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây." (chữ cũ của trang, nay 1 nguồn ở PoGuard)
-                    var before = await _ledger.GetLedgerForDetailAsync(row.KhPlanDetailId.Value);
+                    var before = await _ledger.GetLedgerForDetailAsync(detId);
                     var after  = before?.ApplyWorkflow == true
-                        ? await _ledger.GetLedgerForDetailAsync(row.KhPlanDetailId.Value, new List<long> { row.WtsLogId.Value })
+                        ? await _ledger.GetLedgerForDetailAsync(detId, new List<long> { row.WtsLogId.Value })
                         : null;   // Workflow OFF (N7): không kiểm ô âm
                     if (before != null && after != null)
                     {
@@ -1115,52 +1153,45 @@ namespace MES.Web.Services
                     }
                     if (!blocked)
                     {
-                        await VoidWtsLogRawAsync(row);
+                        // [WTS-VOID-PO] dưới khoá PO: đúng 1 dòng còn hiệu lực (tab khác vừa sửa / xoá → 0 dòng → Rollback, báo tải lại)
+                        var n = await _db.Database.ExecuteSqlRawAsync(
+                            "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0}",   // [D8-WTS-VOID] không ghi đè người huỷ trước
+                            row.UserId, DateTime.Now, row.WtsLogId.Value);
+                        if (n != 1)
+                        { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }   // Dispose = Rollback
                         await trx.CommitAsync();
                     }
                 }   // bị chặn → Dispose = Rollback, khoá PO nhả theo giao dịch
                 if (blocked)
                 {
                     // [GN-WHY] chỉ đọc + tính thử, khoá PO đã nhả
-                    result.ErrorMsg = blockMsg + await HandoverWhy.ExplainAsync(_db, row.KhPlanDetailId.Value,
+                    result.ErrorMsg = blockMsg + await HandoverWhy.ExplainAsync(_db, detId,
                         HandoverWhy.OpWts(new List<long> { row.WtsLogId.Value }), new HashSet<string> { "W:" + row.WtsLogId.Value });
                     return result;
                 }
-                HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (huỷ WTS đổi Đã làm/Chưa làm)
+                HandoverChangeNotifier.Notify(detId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (huỷ WTS đổi Đã làm/Chưa làm)
                 result.Ok = true;
-                result.DetailIds.Add(row.KhPlanDetailId.Value);
+                result.DetailIds.Add(detId);
                 return result;
             }
 
-            if (row.ActivityLogId.HasValue && !row.WtsLogId.HasValue)
+            if (row.ActivityLogId.HasValue)
             {
                 // [ML16-ACT 2026-10-30] Xoá dòng "Việc không ra sản phẩm": chỉ dòng của chính người đó, còn hiệu lực (trước: không kiểm,
                 //   0 dòng đổi vẫn báo xoá xong). Không số lượng → không khoá PO / K5.
                 var nA = await _db.Database.ExecuteSqlRawAsync(
-                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0}",
-                    row.UserId, DateTime.Now, row.ActivityLogId.Value);
+                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0} AND WorkDate={3}",   // [WTS-VOID-PO] + chỉ ngày hôm nay (như dòng WTS)
+                    row.UserId, DateTime.Now, row.ActivityLogId.Value, DateTime.Today);   // cột date so với DateTime.Today (00:00) — như WorkDate = hôm nay
                 if (nA != 1)
                 { result.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
                 result.Ok = true;
                 return result;
             }
-            await VoidWtsLogRawAsync(row);
-            if (row.KhPlanDetailId.HasValue) HandoverChangeNotifier.Notify(row.KhPlanDetailId.Value);   // [GN-LIVE]
-            result.Ok = true;
+            // [WTS-VOID-PO] trước: nhánh cuối huỷ không khoá / không K5 (VoidWtsLogRawAsync) — nay không còn đường nào tới đây có dòng để huỷ
+            result.ErrorMsg = "Không có dòng để xoá — tải lại trang.";
             return result;
         }
 
-        private async Task VoidWtsLogRawAsync(WtsVoidRequest row)
-        {
-            if (row.WtsLogId.HasValue)
-                await _db.Database.ExecuteSqlRawAsync(
-                    "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",   // [D8-WTS-VOID] không ghi đè người huỷ trước
-                    row.UserId, DateTime.Now, row.WtsLogId.Value);
-            if (row.ActivityLogId.HasValue)
-                await _db.Database.ExecuteSqlRawAsync(
-                    "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
-                    row.UserId, DateTime.Now, row.ActivityLogId.Value);
-            // [GN-LIVE] Notify: chuyển ra VoidRowAsync, báo sau khi Commit
-        }
+        // [WTS-VOID-PO 2026-11-01] Đã bỏ VoidWtsLogRawAsync (2 câu UPDATE không khoá, không K5) — huỷ dòng WTS chỉ còn trong VoidRowOnceAsync.
     }
 }

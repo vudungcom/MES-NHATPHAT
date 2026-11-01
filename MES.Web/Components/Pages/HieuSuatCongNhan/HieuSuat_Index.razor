@@ -5065,165 +5065,13 @@ else
 
     }
 
-    // ── Time input ────────────────────────────────────────────
 
-    private void OnTimeChanged(WtsRow row, bool isStart, string? val)
 
-    {
-
-        if (string.IsNullOrEmpty(val)) return;
-
-        if (!TimeSpan.TryParse(val, out var ts)) return;
-
-        var dt = _workDate.Date.Add(ts);
-
-        if (isStart) row.StartTime = dt;
-
-        else         row.EndTime   = dt;
-
-    }
-
-    // ── PO chọn → load NC từ snapshot ────────────────────────
-
-    private async Task OnPOChanged(WtsRow row, string? po)
-
-    {
-
-        row.PO = po;
-
-        row.NC = null;
-
-        row.PartNo = null;
-
-        row.WtsCode = null;
-
-        row.WtsName = null;
-
-        row.AvailableNCs.Clear();
-
-        row.AvailableWtsItems.Clear();
-
-        row.HtspSubGroup = null;
-
-        row.KhPlanDetailId = null;
-
-        if (string.IsNullOrEmpty(po)) return;
-
-        var detail = _allRows.Where(r => r.PurchaseOrder == po).Select(r => r.KhPlanDetailId).Distinct().Count() > 1 ? null : _allRows.FirstOrDefault(r => r.PurchaseOrder == po);   // [B5-PODUP] PO trùng số (khác dòng KH): không tự chọn dòng đầu
-
-        if (detail == null) return;
-
-        row.KhPlanDetailId = detail.KhPlanDetailId;
-
-        row.PartNo = detail.PartNo;
-
-        // Load snapshot
-
-        if (IsGcGroup)
-
-        {
-
-            // GC: load Machining snapshot vào cache riêng cho dropdown NC
-
-            if (!_snapshotCache.ContainsKey(po))
-
-            {
-
-                var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
-
-                _snapshotCache[po] = snap.Machining;
-
-                _fullSnapshotCache[po] = snap; // cũng lưu full để hiện bảng quy trình
-
-            }
-
-            row.AvailableNCs = _snapshotCache[po];
-
-        }
-
-        else
-
-        {
-
-            // HTSP/KCS/PKG: load full snapshot
-
-            if (!_fullSnapshotCache.ContainsKey(po))
-
-            {
-
-                var snap = await KhSvc.GetRouteSnapshotAsync(detail.KhPlanDetailId);
-
-                _fullSnapshotCache[po] = snap;
-
-            }
-
-            var fullSnap = _fullSnapshotCache[po];
-
-            if (!IsHtspGroup)
-
-            {
-
-                // KCS hoặc PKG — load thẳng vào AvailableWtsItems
-
-                row.AvailableWtsItems = HandoverGroupCode == "KCS"
-
-                    ? fullSnap.Inspection.Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList()
-
-                    : fullSnap.Packaging.Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList();
-
-            }
-
-            // HTSP: chờ user chọn nhóm nhỏ → OnHtspSubGroupChanged sẽ fill AvailableWtsItems
-
-        }
-
-        // [RA-SOCHUNG 2026-10-31] bỏ nạp qty summary tự cộng (không ai đọc)
-
-        // [GN-WTS-CAP] Bỏ nạp "SL đã nhận vào nhóm" (_receivedOkCache) — trần nhập WTS lấy từ sổ giao nhận,
-        // nạp cùng ReloadFlowAsync bên dưới.
-
-        // v0.8: Load NC flow
-
-        if (!_ncFlowCache.ContainsKey(detail.KhPlanDetailId))
-
-        {
-
-            await ReloadFlowAsync(detail.KhPlanDetailId);
-
-        }
-
-        // Load WTS logs cho bảng quy trình
-
-        if (!_wtsLogsCache.ContainsKey(po))
-
-            await ReloadWtsLogsAsync(po, detail.KhPlanDetailId);
-
-        // [STD-UPDATE] Nạp trạng thái xác nhận T.Chuẩn từ snapshot phiếu KH
-        await EnsureSnapStdConfirmsAsync(detail.KhPlanDetailId);
-
-        // Load timing chuẩn theo part
-
-        var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == detail.PartNo);
-
-        if (pm != null)
-        {
-            await EnsureTimingStdAsync(detail.KhPlanDetailId, pm.PartId);
-
-            // [FIX-STD-COLOR] Lưu trạng thái xác nhận — GC dùng IsMachiningConfirmed, non-GC dùng section tương ứng
-            if (!_poStdConfirmed.ContainsKey(po))
-            {
-                _poStdConfirmed[po] = IsGcGroup           ? pm.IsMachiningConfirmed
-                    : IsHtspGroup                          ? pm.IsHtspConfirmed
-                    : HandoverGroupCode == "KCS"           ? pm.IsKcsConfirmed
-                    :                                        pm.IsPkgConfirmed;
-            }
-            // [STD-CONFIRM-ROW] Non-GC: nạp các dòng T.Chuẩn đã tích xác nhận (per-dòng) của Part
-            if (!IsGcGroup && !_poStdRowKeys.ContainsKey(po))
-                _poStdRowKeys[po] = await StdConfirmSvc.GetConfirmedCodeKeysAsync(pm.PartId);
-        }
-
-    }
-
+    // [RA-CASCADE 2026-11-01] Đã xoá 21 hàm của form nhập 1 dòng cũ không còn chỗ nào gọi (form nhóm thay thế): OnPOChanged, OnTimeChanged,
+    //   OnNCChanged, OnMachineChanged, OnHtspSubGroupChanged, OnWtsItemChanged, OnWtsOtherChanged, OnWtsCodeInput, OnQtyOkInput, OnQtyNgInput,
+    //   OnQtyChanged, OnUseStdToggledHandler, OnUseStdToggled, SetModeSerial, SetModeTrial, OnProductionModeChanged, OnSetup/Machining/
+    //   Inspection/Preparation/TrialRunTimeInput. Phần còn thiếu ở form nhóm đã bổ sung: đổi NC xoá giờ thực tế (OnGroupNCChanged),
+    //   đổi mã CV kiểm lại trần (OnSubWtsCodeChanged). Vá sau này sửa ở hàm OnGroup… / OnSub… (bản cũ còn trong git + HieuSuat_Index_Old.razor).
     // ── Edit / Void saved row (dùng bởi bảng saved rows) ──
 
     // [EDIT-NONGC] async: non-GC cần nạp lại snapshot / Mã CV / nhóm nhỏ khi Sửa dòng
@@ -5232,6 +5080,12 @@ else
     {
         // [ML16-ACT] dòng "Việc không ra sản phẩm" sửa ở form riêng (trước: mở thành nhóm sản xuất → bắt chọn PO, không lưu được)
         if (row.ActivityLogId.HasValue && !row.WtsLogId.HasValue) { await OpenActivityEditAsync(row); return; }
+
+        // [WTS-VOID-PO 2026-11-01] Form sửa dùng BẢN SAO của dòng đã lưu. Trước: đưa chính object của bảng "dòng đã lưu" vào form →
+        //   đổi PO / NC trong form thì bảng dòng đã lưu đổi theo, bấm xoá dòng đó gửi PO đang gõ (khoá nhầm PO); bỏ nhóm sửa (X) thì dòng
+        //   đã lưu vẫn mang số đang gõ + cờ đang sửa. Nay bảng dòng đã lưu giữ đúng số trong DB; dòng đang mở sửa thì không mở thêm lần nữa.
+        if (row.WtsLogId.HasValue && _groups.SelectMany(g => g.SubRows).Any(s => s.IsEditing && s.WtsLogId == row.WtsLogId)) return;
+        row = row.CloneForEdit();
 
         // Tạo nhóm mới từ row đã lưu để sửa lại
 
@@ -5388,7 +5242,7 @@ else
             End           = row.EndTime.ToString("HH:mm"),
             Notes         = row.Notes,
             RefId         = row.RefKhPlanDetailId,
-            PoText        = row.RefKhPlanDetailId.HasValue ? (_allRows.FirstOrDefault(r => r.KhPlanDetailId == row.RefKhPlanDetailId)?.PurchaseOrder ?? "") : "",
+            PoText        = row.RefKhPlanDetailId.HasValue ? (_allRows.FirstOrDefault(r => r.KhPlanDetailId == row.RefKhPlanDetailId) is { } _rd ? ActPoKey(_rd) : "") : "",   // [ACT-PODUP]
             NgCaseId      = row.NgCaseId,
         };
         await LoadActCasesAsync();
@@ -5400,7 +5254,8 @@ else
     private IEnumerable<KhPlanDetailRow> ActPoOptions => _act == null ? Enumerable.Empty<KhPlanDetailRow>()
         : _allRows.Where(r => _act.PoFilter.Length == 0
                            || r.PurchaseOrder.Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)
-                           || r.PartNo.Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)).Take(200);
+                           || r.PartNo.Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)
+                           || ActPoKey(r).Contains(_act.PoFilter, StringComparison.OrdinalIgnoreCase)).Take(200);   // [ACT-PODUP] đã chọn "PO · Part" vẫn hiện gợi ý
     private void OnActPoInput(ChangeEventArgs e) { if (_act != null) _act.PoFilter = (e.Value?.ToString() ?? "").Trim(); }
 
     private void ActTouched() { if (_act != null) { _act.Done = false; _act.Error = null; } }
@@ -5409,14 +5264,30 @@ else
     private void OnActEndChanged(ChangeEventArgs e) { if (_act == null) return; _act.End = e.Value?.ToString() ?? ""; ActTouched(); }
     private void OnActNotesChanged(ChangeEventArgs e) { if (_act == null) return; _act.Notes = e.Value?.ToString(); ActTouched(); }
 
+    // [ACT-PODUP 2026-11-01] Gợi ý PO = "số PO · Part" (1 số PO có thể nhiều dòng KH / nhiều Part). Trước: datalist chỉ có số PO,
+    //   máy lấy dòng KH ĐẦU TIÊN trùng số → chọn "X — Part B" mà ghi giờ sửa + vụ lỗi theo Part A (máy chủ không phân biệt được).
+    private static string ActPoKey(KhPlanDetailRow r) => r.PurchaseOrder + " · " + r.PartNo;
     private async Task OnActPoChanged(ChangeEventArgs e)
     {
         if (_act == null) return;
         _act.PoText = (e.Value?.ToString() ?? "").Trim();
-        _act.RefId  = _act.PoText.Length == 0 ? null
-                    : _allRows.FirstOrDefault(r => string.Equals(r.PurchaseOrder, _act.PoText, StringComparison.OrdinalIgnoreCase))?.KhPlanDetailId;
+        string? _dupMsg = null;
+        if (_act.PoText.Length == 0) _act.RefId = null;
+        else
+        {
+            var _byKey = _allRows.Where(r => string.Equals(ActPoKey(r), _act.PoText, StringComparison.OrdinalIgnoreCase))
+                                 .Select(r => r.KhPlanDetailId).Distinct().ToList();
+            var _cands = _byKey.Any() ? _byKey
+                       : _allRows.Where(r => string.Equals(r.PurchaseOrder, _act.PoText, StringComparison.OrdinalIgnoreCase))
+                                 .Select(r => r.KhPlanDetailId).Distinct().ToList();
+            _act.RefId = _cands.Count == 1 ? _cands[0] : null;
+            if (_cands.Count > 1)
+                _dupMsg = $"Số PO {_act.PoText} có {_cands.Count} dòng trong Kế hoạch — chọn đúng dòng \"PO · Part\" trong gợi ý"
+                        + (_byKey.Count > 1 ? " (PO + Part này cũng trùng: báo quản trị xử lý PO trùng số)." : ".");
+        }
         _act.NgCaseId = null;
         ActTouched();
+        _act.Error = _dupMsg;
         await LoadActCasesAsync();
     }
 
@@ -5448,7 +5319,12 @@ else
         if (!TryParseHm(_act.Start, out var ts) || !TryParseHm(_act.End, out var te))
         { _act.Error = "Nhập đủ giờ Bắt đầu và Kết thúc (giờ:phút)."; return; }
         if (_act.PoText.Length > 0 && _act.RefId == null)
-        { _act.Error = $"Không tìm thấy PO {_act.PoText} — chọn trong danh sách hoặc để trống."; return; }
+        {
+            // [ACT-PODUP] số PO trùng nhiều dòng KH → nhắc chọn đúng "PO · Part" (trước: báo "Không tìm thấy PO")
+            var _nDup = _allRows.Where(r => string.Equals(r.PurchaseOrder, _act.PoText, StringComparison.OrdinalIgnoreCase)).Select(r => r.KhPlanDetailId).Distinct().Count();
+            _act.Error = _nDup > 1 ? $"Số PO {_act.PoText} có {_nDup} dòng trong Kế hoạch — chọn đúng dòng \"PO · Part\" trong gợi ý."
+                                   : $"Không tìm thấy PO {_act.PoText} — chọn trong danh sách hoặc để trống."; return;
+        }
         _act.Busy = true;
         try
         {
@@ -5509,7 +5385,7 @@ else
                     <datalist id="actPoList">
                         @foreach (var r in ActPoOptions)
                         {
-                            <option value="@r.PurchaseOrder">@r.PartNo</option>
+                            <option value="@ActPoKey(r)">@r.PlanNo</option>
                         }
                     </datalist>
                 </div>
@@ -5705,6 +5581,7 @@ else
             if (grp.UseStdAsDefault) TryFillStdValues(sub);
 
         }
+        RecalcGroupTimeline(grp);   // [RA-CASCADE 2026-11-01] đổi Hàng loạt / Chạy thử → giờ thực tế đổi → chia lại giờ nhóm
 
     }
 
@@ -5820,7 +5697,7 @@ else
 
     // ── Group NC / Machine changed ──
 
-    private void OnGroupNCChanged(WtsGroup grp, string? nc)
+    private async Task OnGroupNCChanged(WtsGroup grp, string? nc)   // [ML41-NC-RESET] void → async Task (gỡ cảnh báo trùng máy)
 
     {
 
@@ -5835,16 +5712,37 @@ else
         grp.MachineUsed = null;
 
         foreach (var sub in grp.SubRows) sub.MachineUsed = null;
+        // [ML41-NC-RESET 2026-11-01] Master list 41: đổi NC = xoá giờ thực tế (T.Gá / T.GC / T.Ktra / T.CB / T.Chạy thử) của mọi dòng
+        //   trong nhóm — đó là số của NC + máy cũ (trước: giữ 1.50 / 2.50 / 5.10 của NC2 khi chuyển NC3, Dự kiến đứng yên, lưu ra WTS NC3
+        //   mang giờ NC2). Bản vá cũ nằm ở OnNCChanged của form 1 dòng (đã bỏ, không còn chỗ gọi). Máy về trống → chọn máy mới thì
+        //   OnGroupMachineChanged điền chuẩn (nếu bật Tham khảo chuẩn). Kiểm lại trần theo NC mới + chia lại giờ nhóm.
+        foreach (var sub in grp.SubRows) { ClearGcActualTimes(sub); ValidateSubQty(sub, grp); }
+        RecalcGroupTimeline(grp);
+        await CheckMachineOverlapLiveAsync(grp);   // máy trống → bỏ cảnh báo trùng máy của máy cũ
 
+    }
+
+    // [ML41-NC-RESET 2026-11-01] Xoá 5 ô giờ thực tế GC của 1 dòng (ô phụ thuộc NC / máy / PO)
+    private static void ClearGcActualTimes(WtsRow sub)
+    {
+        sub.SetupTime_Actual       = null;
+        sub.MachiningTime_Actual   = null;
+        sub.InspectionTime_Actual  = null;
+        sub.PreparationTime_Actual = null;
+        sub.TrialRunTime_Actual    = null;
     }
 
     private async Task OnGroupMachineChanged(WtsGroup grp, string? machine)   // [MACHINE-OVERLAP-LIVE] void → async Task
     {
         grp.MachineUsed = machine;
         foreach (var sub in grp.SubRows) { sub.MachineUsed = machine; }
+        // [ML41-NC-RESET 2026-11-01] Đổi máy = xoá giờ thực tế của máy cũ rồi mới điền chuẩn máy mới (bật Tham khảo chuẩn).
+        //   Trước: TryFillStdValues gặp máy / NC không có chuẩn thì return sớm → giữ số máy cũ (cột tham khảo "—" mà ô vẫn 1.50…).
+        foreach (var sub in grp.SubRows) ClearGcActualTimes(sub);
         // Fill std values cho tất cả sub-rows
         if (grp.UseStdAsDefault)
             foreach (var sub in grp.SubRows) TryFillStdValues(sub);
+        RecalcGroupTimeline(grp);   // [ML41-NC-RESET] giờ thực tế đổi → chia lại giờ nhóm
         await CheckMachineOverlapLiveAsync(grp);   // [MACHINE-OVERLAP-LIVE]
 
     }
@@ -5890,6 +5788,7 @@ else
         if (value)
 
             foreach (var sub in grp.SubRows) { sub.UseStdAsDefault = true; TryFillStdValues(sub); }
+        if (value) RecalcGroupTimeline(grp);   // [RA-CASCADE 2026-11-01] vừa điền chuẩn → chia lại giờ nhóm
 
         try { await JS.InvokeVoidAsync("localStorage.setItem", $"wts_useStdAsDefault_{_currentUserId}", value ? "true" : "false"); }
 
@@ -5990,6 +5889,8 @@ else
         var det = _allRows.FirstOrDefault(r => r.KhPlanDetailId == detId);
 
         if (det == null) return;
+        // [RA-CASCADE 2026-11-01] Đổi sang PO KHÁC (không phải lần chọn đầu / mở Sửa dòng: cùng PO) → giờ thực tế + T.Chuẩn là của PO cũ
+        var _poChanged = sub.KhPlanDetailId.HasValue && sub.KhPlanDetailId.Value != detId;
 
         sub.KhPlanDetailId = detId;
 
@@ -6084,8 +5985,28 @@ else
 
         // [STD-UPDATE] Nạp trạng thái xác nhận T.Chuẩn từ snapshot phiếu KH (flow nhóm)
         await EnsureSnapStdConfirmsAsync(det.KhPlanDetailId);
+        // [RA-CASCADE 2026-11-01] Đổi PO: xoá ô phụ thuộc PO cũ rồi tính lại theo PO mới (trước: giữ giờ thực tế / T.Thực tế/pc / T.Chuẩn
+        //   của PO cũ khi PO mới không có chuẩn; mã CV không có trong quy trình PO mới vẫn giữ). SL OK / NG là số người làm đếm → giữ.
+        if (_poChanged)
+        {
+            if (IsGcGroup) ClearGcActualTimes(sub);
+            else
+            {
+                sub.ActualTimePerPc   = null;
+                sub.StandardTimePerPc = null;
+                if (!string.IsNullOrEmpty(sub.WtsCode) && (HandoverGroupCode == "KCS" || HandoverGroupCode == "PKG")
+                    && !grp.WtsItems.Any(i => i.NC == sub.WtsCode))
+                { sub.WtsCode = null; sub.WtsName = null; }
+            }
+        }
 
         if (grp.UseStdAsDefault) TryFillStdValues(sub);
+        if (_poChanged)
+        {
+            if (!IsGcGroup && !string.IsNullOrEmpty(sub.WtsCode)) OnSubWtsCodeChanged(grp, sub, sub.WtsCode);   // T.Chuẩn/pc theo PO mới
+            ValidateSubQty(sub, grp);
+            RecalcGroupTimeline(grp);
+        }
 
     }
 
@@ -6128,6 +6049,9 @@ else
     {
 
         // Mỗi row chọn Mã CV độc lập — không propagate sang row khác
+        // [RA-CASCADE 2026-11-01] Đổi sang mã KHÁC: T.Thực tế/pc là của mã cũ → xoá (trước: mã mới không có chuẩn thì TryFillStdValues
+        //   giữ số mã cũ → Dự kiến + chia giờ nhóm sai). Bật Tham khảo chuẩn thì điền lại chuẩn mã mới bên dưới.
+        if (!IsGcGroup && !string.Equals(sub.WtsCode, code, StringComparison.Ordinal)) sub.ActualTimePerPc = null;
         sub.WtsCode = code;
 
         var item = grp.WtsItems.FirstOrDefault(i => i.NC == code);
@@ -6161,6 +6085,7 @@ else
             // [STD-ACTUAL-DEFAULT] Mục 29: bật "Tham khảo chuẩn" → T.Thực tế/pc = T.Chuẩn/pc của mã vừa chọn
             if (grp.UseStdAsDefault) { sub.UseStdAsDefault = true; TryFillStdValues(sub); }
             RecalcGroupTimeline(grp);   // [NONGC-ALLOC-WEIGHT] Mã CV đổi → khối lượng đổi → chia lại
+            ValidateSubQty(sub, grp);   // [RA-CASCADE 2026-11-01] trần đổi theo mã CV mới (form 1 dòng cũ có CheckQtyWarning ở OnWtsItemChanged)
         }
         StateHasChanged();
 
@@ -6380,6 +6305,10 @@ else
         // Reset WtsCode cũ
 
         foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; }
+        // [RA-CASCADE 2026-11-01] Đổi nhóm nhỏ Taro / Bavia / Rửa: mã CV đã xoá → xoá luôn T.Thực tế/pc + T.Chuẩn/pc của mã cũ
+        //   (trước: giữ → Dự kiến + chia giờ theo mã cũ). Sửa dòng đã lưu (EditSavedRow) tự khôi phục mã + T.Thực tế sau bước này.
+        foreach (var s in grp.SubRows) { s.ActualTimePerPc = null; s.StandardTimePerPc = null; }
+        RecalcGroupTimeline(grp);
         // [FIX-NONGC-SUBGROUP] Gán nhóm nhỏ xuống từng dòng — trước đây chỉ gán cho nhóm → khi lưu
         // row.HtspSubGroup = null → ProcessGroup rơi về mặc định "TARO" (sai với Bavia/Rửa).
         foreach (var s in grp.SubRows) s.HtspSubGroup = grp.HtspSubGroup;
@@ -7121,133 +7050,13 @@ else
 
         => isSerial ? "btn btn-sm py-0 px-2 btn-outline-secondary" : "btn btn-sm py-0 px-2 btn-warning";
 
-    // Wrapper không dùng string literal trong @onclick — tránh CS1056 backslash escape
 
-    private void SetModeSerial(WtsRow row) => OnProductionModeChanged(row, "serial");
 
-    private void SetModeTrial(WtsRow row)  => OnProductionModeChanged(row, "trial");
 
-    private void OnMachineChanged(WtsRow row, string? machine)
 
-    {
 
-        row.MachineUsed = machine;
 
-        // Khi đổi máy → nếu toggle bật thì fill lại timing chuẩn theo máy mới
 
-        TryFillStdValues(row);
-
-    }
-
-    private void OnNCChanged(WtsRow row, string? nc)
-
-    {
-
-        row.NC          = nc;
-
-        row.WtsCode     = null;
-
-        row.WtsName     = null;
-
-        row.MachineUsed = null; // reset máy khi đổi NC — cần chọn máy lại để GetStdTiming có soMay
-
-        // Xóa actual cũ khi đổi NC (máy đổi → timing chuẩn đổi)
-
-        row.SetupTime_Actual      = null;
-
-        row.MachiningTime_Actual  = null;
-
-        row.InspectionTime_Actual = null;
-
-        row.PreparationTime_Actual= null;
-
-        row.TrialRunTime_Actual   = null;
-
-        CheckQtyWarning(row);
-
-    }
-
-    // Chọn nhóm nhỏ HTSP → fill danh sách mã công việc
-
-    private void OnHtspSubGroupChanged(WtsRow row, string? subGroup)
-
-    {
-
-        row.HtspSubGroup = subGroup;
-
-        row.NC = null;
-
-        row.AvailableWtsItems.Clear();
-
-        if (string.IsNullOrEmpty(subGroup) || string.IsNullOrEmpty(row.PO)) return;
-
-        if (!_fullSnapshotCache.TryGetValue(row.PO, out var snap)) return;
-
-        row.AvailableWtsItems = subGroup switch
-
-        {
-
-            // Taro: dùng WtsTaskCode làm mã CV (mới), fallback về NC nếu snapshot cũ chưa có WtsTaskCode
-
-            "Taro"  => snap.Taro.Where(s => !string.IsNullOrEmpty(s.WtsTaskCode) || !string.IsNullOrEmpty(s.NC))
-
-                           .Select(s => {
-
-                               var code = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
-
-                               return new WtsItem(code, s.StepName ?? code);
-
-                           }).ToList(),
-
-            "Bavia" => snap.Bavia  .Where(s => !string.IsNullOrEmpty(s.NC)).Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList(),
-
-            "Rua"   => snap.Washing.Where(s => !string.IsNullOrEmpty(s.NC)).Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList(),
-
-            _       => new List<WtsItem>()
-
-        };
-
-    }
-
-    private void OnWtsItemChanged(WtsRow row, string? nc)
-
-    {
-
-        row.NC = nc;
-
-        CheckQtyWarning(row);
-
-        RecalcEndTime(row); // non-GC: tính lại EndTime = SL * T.chuẩn
-
-    }
-
-    private void OnWtsOtherChanged(WtsRow row, string? code)
-
-    {
-
-        row.WtsCode = code;
-
-        row.WtsName = _wtsTasks.FirstOrDefault(t => t.TaskCode == code)?.TaskName;
-
-    }
-
-    // Datalist input handler — user gõ hoặc chọn từ list
-
-    private void OnWtsCodeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        var val = e.Value?.ToString() ?? "";
-
-        row.WtsCode = val;
-
-        // Nếu khớp đúng 1 TaskCode → tự fill WtsName
-
-        var matched = _wtsTasks.FirstOrDefault(t => t.TaskCode == val);
-
-        row.WtsName = matched?.TaskName;
-
-    }
 
     // [GN-WTS-CAP] Đã bỏ GetNonGcGroupWtsDone (cộng OK của cả Taro + Bavia + Rửa rồi so với SL nhận — sai N5).
     // Trần non-GC nay tính theo từng mã CV trong HandoverLedgerService.WtsCap.
@@ -7359,45 +7168,8 @@ else
 
     }
 
-    // Gọi khi user đổi QtyOk hoặc QtyNg — sync QtyDone + trigger warn + tính lại EndTime
 
-    private void OnQtyChanged(WtsRow row)
 
-    {
-
-        row.QtyDone = row.QtyOk + row.QtyNg;
-
-        CheckQtyWarning(row);
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
-
-    // Xử lý input riêng từng cột — tránh lambda phức tạp trong Razor markup
-
-    // (Razor parser hiểu nhầm "out var v" thành HTML tag < var >)
-
-    private void OnQtyOkInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0m;
-
-        OnQtyChanged(row);
-
-    }
-
-    private void OnQtyNgInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0m;
-
-        OnQtyChanged(row);
-
-    }
 
     // [RA-SOCHUNG] "NC2b (gộp NC2)" khi dòng là NC / mã dự phòng — số "đã làm" là của NC chính
     private string NcMainLabel(WtsRow r)
@@ -8113,6 +7885,16 @@ else
 
         public bool    IsEditing  { get; set; }
 
+        // [WTS-VOID-PO 2026-11-01] bản sao cho form Sửa dòng (danh sách riêng — sửa trong form không đổi dòng của bảng đã lưu)
+        public WtsRow CloneForEdit()
+        {
+            var c = (WtsRow)MemberwiseClone();
+            c.AvailableNCs      = new List<KhPlanRouteSnapshotMachining>(AvailableNCs);
+            c.AvailableWtsItems = new List<WtsItem>(AvailableWtsItems);
+            c.ExtraItems        = ExtraItems.Select(e => new WtsExtraItem { WtsCode = e.WtsCode, WtsName = e.WtsName, Minutes = e.Minutes, Notes = e.Notes }).ToList();
+            return c;
+        }
+
         public string? ErrorMsg   { get; set; }
 
         // [MACHINE-OVERLAP-LIVE] Cảnh báo máy trùng giờ lúc đang nhập — tách riêng ErrorMsg để không xoá nhầm lỗi khác
@@ -8427,141 +8209,13 @@ else
 
     }
 
-    // Gọi khi user thay đổi ProductionMode (toggle Chạy thử / Hàng loạt)
 
-    private void OnProductionModeChanged(WtsRow row, string mode)
 
-    {
 
-        row.ProductionMode = mode;
 
-        // Xóa giá trị actual của mode cũ để tránh nhầm lẫn
 
-        if (mode == "serial")
 
-        {
 
-            row.PreparationTime_Actual = null;
-
-            row.TrialRunTime_Actual    = null;
-
-        }
-
-        else
-
-        {
-
-            row.SetupTime_Actual      = null;
-
-            row.MachiningTime_Actual  = null;
-
-            row.InspectionTime_Actual = null;
-
-        }
-
-        TryFillStdValues(row);
-
-    }
-
-    // Wrapper EventCallback-safe cho toggle — tránh async lambda trong markup
-
-    private async Task OnUseStdToggledHandler(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        var value = e.Value is bool b ? b : false;
-
-        await OnUseStdToggled(row, value);
-
-    }
-
-    // Gọi khi user toggle UseStdAsDefault — lưu preference vào localStorage
-
-    private async Task OnUseStdToggled(WtsRow row, bool value)
-
-    {
-
-        row.UseStdAsDefault = value;
-
-        _useStdAsDefault = value; // cập nhật default cho các dòng tiếp theo
-
-        if (value) TryFillStdValues(row);
-
-        try
-
-        {
-
-            await JS.InvokeVoidAsync("localStorage.setItem",
-
-                $"wts_useStdAsDefault_{_currentUserId}", value ? "true" : "false");
-
-        }
-
-        catch { /* ignore */ }
-
-    }
-
-    // Wrapper các input actual GC — sau khi nhập thì tính lại EndTime
-
-    private void OnSetupTimeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.SetupTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
-
-    private void OnMachiningTimeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.MachiningTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
-
-    private void OnInspectionTimeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.InspectionTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
-
-    private void OnPreparationTimeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.PreparationTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
-
-    private void OnTrialRunTimeInput(WtsRow row, ChangeEventArgs e)
-
-    {
-
-        row.TrialRunTime_Actual = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
-
-        RecalcEndTime(row);
-
-        StateHasChanged();
-
-    }
 
     // ── Report methods ────────────────────────────────────────────────────
 

@@ -46,7 +46,7 @@ public static class Nang
             var (code, outFile, _) = await RunChild(dll, sc, Array.Empty<(string, string)>(), Path.Combine(dir, $"kichban_{sc}.txt"));
             var txt = File.ReadAllText(outFile);
             var dat = txt.Contains("KẾT QUẢ: ĐẠT hết");
-            Console.WriteLine($"  {(dat ? "ĐẠT" : "SAI")}  kịch bản {sc}" + (dat ? "" : $" → xem {outFile}"));
+            Console.WriteLine($"  {(dat ? "ĐẠT" : code == -999 ? "TREO" : "SAI")}  kịch bản {sc}" + (dat ? "" : $" → xem {outFile}"));   // [KIEM-TREO]
             if (!dat) totalSai++;
         }
 
@@ -72,7 +72,7 @@ public static class Nang
                     results.Add((c.Name, seed, sai, checks, sec, outFile));
                     if (sai != 0) totalSai += sai < 0 ? 1 : sai;
                     var env = c.Env.Length == 0 ? "" : " (" + string.Join(" ", c.Env.Select(e => $"{e.K}={e.V}")) + ")";
-                    Console.WriteLine($"  {(sai == 0 ? "ĐẠT" : "SAI")}  [{done}/{Configs.Length}] {c.Name}{env} · seed {seed} · {checks} phép kiểm · SAI {(sai < 0 ? "?(dừng giữa chừng)" : sai.ToString())} · {sec:0} giây"
+                    Console.WriteLine($"  {(sai == 0 ? "ĐẠT" : code == -999 ? "TREO" : "SAI")}  [{done}/{Configs.Length}] {c.Name}{env} · seed {seed} · {checks} phép kiểm · SAI {(code == -999 ? "?(TREO — quá giờ, đã tự tắt)" : sai < 0 ? "?(dừng giữa chừng)" : sai.ToString())} · {sec:0} giây"
                                       + (sai == 0 ? "" : $" → xem {outFile}"));
                 }
             }
@@ -93,6 +93,7 @@ public static class Nang
         return totalSai == 0 ? 0 : 1;
     }
 
+    static readonly object TreoLock = new();   // [KIEM-TREO]
     static async Task<(int Code, string File, double Sec)> RunChild(string dll, string args, (string K, string V)[] env, string outFile)
     {
         var psi = new ProcessStartInfo("dotnet", $"\"{dll}\" {args}")
@@ -106,9 +107,33 @@ public static class Nang
         using var proc = Process.Start(psi)!;
         var outTask = proc.StandardOutput.ReadToEndAsync();
         var errTask = proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync();
+        // [KIEM-TREO 2026-11-01] mỗi lượt / kịch bản quá TREO_PHUT phút (mặc định 20) → tự tắt cả cây tiến trình, ghi TREO + seed
+        //   vào file kết quả + tools\claude_trangthai.txt (chat đọc trạng thái, không chờ quá thời gian này).
+        var treoPhut = double.TryParse(Environment.GetEnvironmentVariable("TREO_PHUT"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tp) && tp > 0 ? tp : 20;
+        bool treo = false;
+        using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(treoPhut)))
+        {
+            try { await proc.WaitForExitAsync(cts.Token); }
+            catch (OperationCanceledException)
+            {
+                treo = true;
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                await proc.WaitForExitAsync();
+            }
+        }
         var text = await outTask + await errTask;
-        await File.WriteAllTextAsync(outFile, $"lệnh: GiaoNhanFuzz.dll {args} {string.Join(" ", env.Select(e => $"{e.K}={e.V}"))}\n" + text, Encoding.UTF8);
-        return (proc.ExitCode, outFile, sw.Elapsed.TotalSeconds);
+        var envTxt = string.Join(" ", env.Select(e => $"{e.K}={e.V}"));
+        if (treo)
+        {
+            text += $"\nTREO: quá {treoPhut} phút — tự tắt ({DateTime.Now:HH:mm:ss}). Chạy lại riêng: dotnet bin2\\GiaoNhanFuzz.dll {args} (biến: {envTxt})\n";
+            try
+            {
+                var st = Path.Combine(Environment.CurrentDirectory, "..", "claude_trangthai.txt");
+                lock (TreoLock) File.AppendAllText(st, $"TREO {DateTime.Now:dd/MM HH:mm:ss} · lệnh {args} {envTxt} · quá {treoPhut} phút, đã tự tắt\r\n", Encoding.UTF8);
+            }
+            catch { }
+        }
+        await File.WriteAllTextAsync(outFile, $"lệnh: GiaoNhanFuzz.dll {args} {envTxt}\n" + text, Encoding.UTF8);
+        return (treo ? -999 : proc.ExitCode, outFile, sw.Elapsed.TotalSeconds);
     }
 }
