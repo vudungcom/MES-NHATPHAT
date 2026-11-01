@@ -33,6 +33,7 @@ namespace Microsoft.EntityFrameworkCore
         public void Add(T e) => Added.Add(e);
         public void AddRange(IEnumerable<T> es) => Added.AddRange(es);
         public void Remove(T e) { List.Remove(e); }
+        public void Update(T e) { var pk = typeof(T).GetProperties().First(p => p.Name.EndsWith("Id")); var k = pk.GetValue(e); var i = List.FindIndex(x => Equals(pk.GetValue(x), k)); if (i >= 0) List[i] = e; else Added.Add(e); }   // [ML17-XN] CaLamViecService.SaveAsync
         public void RemoveRange(IEnumerable<T> es) { foreach (var e in es.ToList()) List.Remove(e); }   // [CHUOI] Part Master xoá NC: Confirms → Timings → Step
         public ValueTask<T?> FindAsync(params object?[] k) { var pk = typeof(T).GetProperties().First(p => p.Name.EndsWith("Id")); return ValueTask.FromResult(List.FirstOrDefault(x => Equals(pk.GetValue(x), k[0]))); }
     }

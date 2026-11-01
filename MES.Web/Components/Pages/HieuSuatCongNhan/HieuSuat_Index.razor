@@ -655,7 +655,7 @@ else
 
                                 <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
 
-                                <td class="text-center" title="@NetMinTip(row)">@NetMin(row)<span class="text-muted" style="font-size:9px">@NetMinRawNote(row)</span></td>   @* [ML17-NET] phút trừ nghỉ ca *@
+                                <td class="text-center" title="@NetMinTip(row)">@NetMin(row)<span class="text-muted" style="font-size:9px">@NetMinRawNote(row)</span><span class="text-warning" style="font-size:9px" title="Phút làm thông nghỉ">@NetMinThongNote(row)</span></td>   @* [ML17-NET] phút trừ nghỉ ca *@
 
                                 @if (IsGcGroup)
 
@@ -2411,7 +2411,7 @@ else
 
                                     {
 
-                                        var effMin = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
+                                        var effMin = GroupWorkMin(grp, tStart.Value, tEnd.Value);   // [ML17-XN] trừ nghỉ hiệu lực (làm thông = làm)
 
                                         var rawMin = (int)(tEnd.Value - tStart.Value).TotalMinutes;
 
@@ -2439,7 +2439,7 @@ else
 
                                         {
 
-                                            var effMinCycle = (int)CalcEffectiveMinutes(tStart.Value, tEnd.Value, SelectedCa);
+                                            var effMinCycle = GroupWorkMin(grp, tStart.Value, tEnd.Value);   // [ML17-XN]
 
                                             var totalExtraGrp = (int)grp.SubRows.Sum(s => s.ExtraMinutes);
 
@@ -2479,6 +2479,7 @@ else
 
                     </div>
 
+                    @ThongNghiUi(grp)   @* [ML17-XN] ô Làm thông nghỉ (chỉ hiện khi nhóm chạm giờ nghỉ ca) *@
                     @* Footer nhóm: thêm KH + lưu nhóm *@
 
                     <div class="d-flex align-items-center gap-2 px-3 pb-2 flex-wrap">
@@ -3675,9 +3676,9 @@ else
 
                         <div class="card border-0 bg-light text-center py-3">
 
-                            <div class="fs-4 fw-bold text-primary">@_reportResult.TotalMinutes</div>
-
-                            <div class="small text-muted">Tổng phút</div>
+                            <div class="fs-4 fw-bold text-primary" title="@ReportTotalTip">@_reportResult.TotalMinutes</div>
+                            <div class="small text-muted">Tổng phút làm</div>   @* [ML17-XN] phút làm (đã trừ nghỉ, cộng làm thông nghỉ, giờ chồng tính 1 lần) *@
+                            <div class="text-muted" style="font-size:10px">@ReportTotalNote</div>
 
                         </div>
 
@@ -3713,7 +3714,7 @@ else
 
                             <div class="fs-4 fw-bold text-info">@_reportResult.EfficiencyPct%</div>
 
-                            <div class="small text-muted">Hiệu suất (chưa chính thức)</div>
+                            <div class="small text-muted" title="Phút có ích / Tổng phút làm (đã trừ nghỉ, cộng làm thông nghỉ)">Hiệu suất (chưa chính thức)</div>
 
                         </div>
 
@@ -3722,6 +3723,7 @@ else
                 </div>
 
                 @RepairByPoUi()   @* [ML16-ACT] Master list 11: giờ sửa hàng theo PO *@
+                @BreakWorkUi()   @* [ML17-XN] phút làm thông nghỉ theo ngày / người / khoảng nghỉ / PO *@
 
                 @* ── Bảng chi tiết ── *@
 
@@ -3746,8 +3748,9 @@ else
 
                                     <th style="width: 80px;" class="text-center">Kết thúc</th>
 
-                                    <th style="width: 60px;" class="text-center">Phút</th>
-
+                                    <th style="width: 60px;" class="text-center" title="Phút làm = giờ thô − nghỉ bị trừ (đã cộng làm thông nghỉ)">Phút</th>
+                                    <th style="width: 50px;" class="text-center" title="Giờ thô (Kết thúc − Bắt đầu)">Thô</th>
+                                    <th style="width: 54px;" class="text-center" title="Phút làm thông nghỉ">Thông<br/><small style="font-size:9px">nghỉ</small></th>
                                     <th style="width: 130px;">PO</th>
 
                                     <th style="width: 110px;">Part No</th>
@@ -3796,7 +3799,9 @@ else
 
                                         <td class="text-center small">@row.EndTime.ToString("HH:mm")</td>
 
-                                        <td class="text-center fw-bold">@row.Minutes</td>
+                                        <td class="text-center fw-bold" title="@ReportRowTip(row)">@row.Minutes</td>
+                                        <td class="text-center small text-muted">@row.RawMinutes</td>
+                                        <td class="text-center small text-warning">@(row.BreakWorkedMin > 0 ? row.BreakWorkedMin.ToString() : "—")</td>
 
                                         <td class="small"><code>@(string.IsNullOrEmpty(row.PurchaseOrder) ? "—" : row.PurchaseOrder)</code></td>
 
@@ -4248,7 +4253,8 @@ else
 
     // ── Timing chuẩn — tra cứu từ PartMachiningTimings theo NC + máy ─────
 
-    private Dictionary<int, List<TimingStd>> _timingStdCache = new();
+    // [WTS-STD-PM-DEAD 2026-11-01] Bỏ _timingStdCache + EnsureTimingStdAsync: sau [RS-E6] không còn ai đọc (mỗi lần chọn PO thừa 1 câu đọc
+    //   PartMachiningTimings — Part Master live). Số chuẩn GC chỉ lấy từ snapshot PO (GetStdTiming).
 
     // [STD-UPDATE] Thêm SrcTable/SrcRowId = dòng snapshot đã lấy số (để tra trạng thái xác nhận).
     // NULL = không lấy từ snapshot (fallback Part Master live) → coi như CHƯA xác nhận.
@@ -4419,30 +4425,6 @@ else
             _fullSnapshotCache[purchaseOrder] = snap;             // B+C+D+E
 
         }
-
-    }
-
-    private async Task EnsureTimingStdAsync(int detailId, int partId)
-
-    {
-
-        if (_timingStdCache.ContainsKey(detailId)) return;
-
-        var rows = await Db.PartMachiningTimings
-
-            .Where(t => t.Step != null && t.Step.PartId == partId && t.IsActive)
-
-            .Select(t => new { t.Step!.NC, t.SoMay, t.SetupTime, t.MachiningTime, t.InspectionTime, t.PreparationTime, t.TrialRunTime })
-
-            .AsNoTracking()
-
-            .ToListAsync();
-
-        _timingStdCache[detailId] = rows
-
-            .Select(r => new TimingStd(r.NC, r.SoMay, r.SetupTime, r.MachiningTime, r.InspectionTime, r.PreparationTime, r.TrialRunTime))
-
-            .ToList();
 
     }
 
@@ -4901,6 +4883,12 @@ else
         foreach (var r in rows.Where(r => r.ActivityLogId.HasValue && !r.WtsLogId.HasValue && r.NgCaseId != null))
             r.NgReason = _actCaseLbl.GetValueOrDefault(r.NgCaseId!.Value);
 
+        // [ML17-XN][CA-NGHI-HIST] khoảng nghỉ đã lưu của từng dòng (cột Phút / Tổng hôm nay / Sửa dòng)
+        var _bW = await WorkMinutesStore.ForWtsAsync(Db, prodLogs.Select(x => x.WtsLogId));
+        var _bA = await WorkMinutesStore.ForActivityAsync(Db, actLogs.Select(x => x.ActivityLogId));
+        foreach (var r in rows)
+            r.Breaks = (r.WtsLogId.HasValue ? WorkMinutesStore.Get(_bW, r.WtsLogId) : WorkMinutesStore.Get(_bA, r.ActivityLogId)).Select(b => b.Clone()).ToList();
+
         _rows = rows.OrderBy(r => r.StartTime).ToList();
 
         // Load ExtraItems từ DB cho các dòng đã lưu
@@ -5110,6 +5098,8 @@ else
 
         grp.SubRows.Add(row);
 
+        RestoreGroupNghi(grp, row.Breaks);   // [ML17-XN] mở lại đúng phần làm thông nghỉ đã lưu
+
         _groups.Add(grp);
 
         // [GN-WTS-CAP] GC: nạp lại sổ giao nhận, bỏ dòng đang sửa khỏi phép tính trần (để không bị tính 2 lần).
@@ -5213,8 +5203,80 @@ else
         public string? Error         { get; set; }
         public bool    Busy          { get; set; }
         public bool    Done          { get; set; }
+        // [ML17-XN 2026-11-01] Làm thông nghỉ của dòng việc không ra SP (như nhóm WTS): phút làm theo giờ bắt đầu khoảng nghỉ
+        public bool    ThongNghi     { get; set; }
+        public Dictionary<DateTime, int> Worked { get; set; } = new();
+        public HashSet<DateTime> Manual { get; set; } = new();
+        public int Rev { get; set; }
     }
     private ActForm? _act;
+
+    // [ML17-XN] Khoảng nghỉ ca đang chọn mà giờ dòng việc không ra SP chạm (rỗng khi chưa đủ giờ)
+    private (DateTime S, DateTime E)? ActSpan()
+    {
+        if (_act == null || !TryParseHm(_act.Start, out var ts) || !TryParseHm(_act.End, out var te)) return null;
+        var s0 = _workDate.Date + ts; var e0 = _workDate.Date + te;
+        return e0 > s0 ? (s0, e0) : null;
+    }
+    private List<LineBreak> ActTouching()
+    {
+        var sp = ActSpan();
+        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(SelectedCa, sp.Value.S, sp.Value.E);
+    }
+    private void SyncActNghi() => SyncActNghi(false);
+    private void SyncActNghi(bool justTicked)
+    {
+        if (_act == null) return;
+        var touch = ActTouching();
+        var keys = touch.Select(t => t.BreakStart).ToHashSet();
+        foreach (var k in _act.Worked.Keys.Where(k => !keys.Contains(k)).ToList()) _act.Worked.Remove(k);
+        _act.Manual.RemoveWhere(k => !keys.Contains(k));
+        if (touch.Count == 0) _act.ThongNghi = false;
+        if (!_act.ThongNghi) { _act.Worked.Clear(); _act.Manual.Clear(); return; }
+        foreach (var t in touch)   // như SyncGroupNghi: khoảng mới chạm sau khi tích = 0 (nghỉ thật)
+        {
+            if (!_act.Worked.ContainsKey(t.BreakStart))
+            {
+                _act.Worked[t.BreakStart] = justTicked ? t.OverlapMin : 0;
+                if (!justTicked) _act.Manual.Add(t.BreakStart);
+            }
+            else if (!_act.Manual.Contains(t.BreakStart)) _act.Worked[t.BreakStart] = t.OverlapMin;
+            else _act.Worked[t.BreakStart] = Math.Clamp(_act.Worked[t.BreakStart], 0, t.OverlapMin);
+        }
+    }
+    private List<LineBreak> ActBreaks()
+    {
+        var touch = ActTouching();
+        if (_act != null && _act.ThongNghi)
+            foreach (var t in touch) t.WorkedMin = Math.Clamp(_act.Worked.TryGetValue(t.BreakStart, out var w) ? w : 0, 0, t.OverlapMin);
+        return touch;
+    }
+    private void OnActThongNghiToggled(ChangeEventArgs e)
+    {
+        if (_act == null) return;
+        _act.ThongNghi = e.Value is bool b ? b : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        _act.Manual.Clear(); _act.Worked.Clear();
+        SyncActNghi(true); ActTouched();
+    }
+    private void OnActNghiWorkedInput(DateTime key, int overlap, ChangeEventArgs e)
+    {
+        if (_act == null) return;
+        var v = int.TryParse(e.Value?.ToString(), out var x) ? x : 0;
+        _act.Worked[key] = Math.Clamp(v, 0, overlap);
+        if (_act.Worked[key] != v) _act.Rev++;
+        _act.Manual.Add(key); ActTouched();
+    }
+    private int ActWorked(LineBreak t) => _act != null && _act.Worked.TryGetValue(t.BreakStart, out var w) ? w : 0;
+    private string ActMinText
+    {
+        get
+        {
+            var sp = ActSpan();
+            if (sp == null) return "";
+            var m = WorkMinutes.Line(sp.Value.S, sp.Value.E, ActBreaks());
+            return m.Raw == m.Work ? $"{m.Work} phút" : $"{m.Work} phút làm (thô {m.Raw} − nghỉ {m.Deducted})";
+        }
+    }
 
     private List<StandardWtsTask> ActTasks => WtsTasksForGroup.Where(t => t.IsActive).OrderBy(t => t.CategoryCode).ThenBy(t => t.DisplayOrder).ToList();
     private string ActTaskName => _act == null ? "" :
@@ -5245,6 +5307,13 @@ else
             PoText        = row.RefKhPlanDetailId.HasValue ? (_allRows.FirstOrDefault(r => r.KhPlanDetailId == row.RefKhPlanDetailId) is { } _rd ? ActPoKey(_rd) : "") : "",   // [ACT-PODUP]
             NgCaseId      = row.NgCaseId,
         };
+        // [ML17-XN] mở lại đúng phần làm thông nghỉ đã lưu của dòng
+        if (row.Breaks.Any(b => b.WorkedMin > 0))
+        {
+            _act.ThongNghi = true;
+            foreach (var b in row.Breaks) { _act.Worked[b.BreakStart] = b.WorkedMin; if (b.WorkedMin != b.OverlapMin) _act.Manual.Add(b.BreakStart); }
+        }
+        SyncActNghi();
         await LoadActCasesAsync();
     }
 
@@ -5260,8 +5329,8 @@ else
 
     private void ActTouched() { if (_act != null) { _act.Done = false; _act.Error = null; } }
     private void OnActCodeChanged(ChangeEventArgs e) { if (_act == null) return; _act.WtsCode = e.Value?.ToString() ?? ""; ActTouched(); }
-    private void OnActStartChanged(ChangeEventArgs e) { if (_act == null) return; _act.Start = e.Value?.ToString() ?? ""; ActTouched(); }
-    private void OnActEndChanged(ChangeEventArgs e) { if (_act == null) return; _act.End = e.Value?.ToString() ?? ""; ActTouched(); }
+    private void OnActStartChanged(ChangeEventArgs e) { if (_act == null) return; _act.Start = e.Value?.ToString() ?? ""; SyncActNghi(); ActTouched(); }   // [ML17-XN] + đồng bộ ô làm thông nghỉ
+    private void OnActEndChanged(ChangeEventArgs e) { if (_act == null) return; _act.End = e.Value?.ToString() ?? ""; SyncActNghi(); ActTouched(); }
     private void OnActNotesChanged(ChangeEventArgs e) { if (_act == null) return; _act.Notes = e.Value?.ToString(); ActTouched(); }
 
     // [ACT-PODUP 2026-11-01] Gợi ý PO = "số PO · Part" (1 số PO có thể nhiều dòng KH / nhiều Part). Trước: datalist chỉ có số PO,
@@ -5325,6 +5394,7 @@ else
             _act.Error = _nDup > 1 ? $"Số PO {_act.PoText} có {_nDup} dòng trong Kế hoạch — chọn đúng dòng \"PO · Part\" trong gợi ý."
                                    : $"Không tìm thấy PO {_act.PoText} — chọn trong danh sách hoặc để trống."; return;
         }
+        SyncActNghi();   // [ML17-XN] ô làm thông khớp khoảng nghỉ ca đang chọn trước khi gửi
         _act.Busy = true;
         try
         {
@@ -5338,6 +5408,8 @@ else
                 Notes             = _act.Notes,
                 RefKhPlanDetailId = _act.RefId,
                 NgCaseId          = _act.NgCaseId,
+                CaId              = SelectedCa?.CaId,   // [ML17-XN][CA-NGHI-HIST] ca + giờ nghỉ lúc lưu chép vào WtsBreakWorkLogs
+                Breaks            = ActBreaks().Select(b => new WorkMinutes.SentBreak { BreakStart = b.BreakStart, BreakEnd = b.BreakEnd, WorkedMin = b.WorkedMin }).ToList(),
             });
             if (!res.Ok) { _act.Error = res.ErrorMsg; return; }
             await LoadSavedRowsAsync();
@@ -5404,12 +5476,78 @@ else
                     <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="CloseActivity" disabled="@_act.Busy">Hủy</button>
                 </div>
             </div>
+            @ActNghiUi()   @* [ML17-XN] làm thông nghỉ *@
             @if (_act.Error != null)
             {
                 <div class="text-danger small mt-1">@_act.Error</div>
             }
             <div class="text-muted mt-1" style="font-size:10px">
                 Không có số lượng, không ảnh hưởng giao nhận. Mã CV lấy từ WTS tiêu chuẩn của nhóm bạn; tính hiệu suất theo cờ Có ích / Vô ích của mã. Không được trùng giờ với dòng WTS khác của bạn.
+            </div>
+        </div>
+    };
+
+    // [ML17-XN] Dòng việc không ra SP chạm giờ nghỉ ca: ô "Làm thông nghỉ" + phút từng khoảng (như nhóm WTS)
+    private RenderFragment ActNghiUi() => __builder =>
+    {
+        if (_act == null) return;
+        var touch = ActTouching();
+        var minText = ActMinText;
+        <div class="d-flex align-items-center flex-wrap gap-2 mt-1" style="font-size:11px">
+            @if (minText.Length > 0)
+            {
+                <span class="text-muted">Thời gian: @minText</span>
+            }
+            @if (touch.Count > 0)
+            {
+                <label class="d-inline-flex align-items-center gap-1 fw-semibold" title="Tích khi làm xuyên giờ nghỉ. Mỗi khoảng nghỉ nhập số phút đã làm (mặc định = cả phần chồng); nghỉ thật thì sửa về 0.">
+                    <input type="checkbox" class="form-check-input mt-0" checked="@_act.ThongNghi" @onchange="OnActThongNghiToggled" />
+                    <i class="bi bi-cup-hot"></i> Làm thông nghỉ
+                </label>
+                @if (_act.ThongNghi)
+                {
+                    @foreach (var t in touch)
+                    {
+                        <span class="d-inline-flex align-items-center gap-1 border rounded px-1" style="background:#fff8e6">
+                            @t.Label:
+                            <input @key="NghiInputKey(t.BreakStart, _act.Rev)" type="number" min="0" max="@t.OverlapMin" step="1" class="form-control form-control-sm py-0 px-1" style="width:56px;font-size:11px"
+                                   value="@ActWorked(t)" @onchange="e => OnActNghiWorkedInput(t.BreakStart, t.OverlapMin, e)" />
+                            <span class="text-muted">/ @t.OverlapMin ph</span>
+                        </span>
+                    }
+                }
+                else
+                {
+                    <span class="text-muted">Chạm giờ nghỉ: @NghiListText(touch) — đang tính là nghỉ.</span>
+                }
+            }
+        </div>
+    };
+
+    // [ML17-XN 2026-11-01] Báo cáo: phút làm (câu (b) Hùng chốt) + phút làm thông nghỉ
+    private string ReportTotalNote => _reportResult == null ? "" :
+        $"thô {_reportResult.RawMinutes} · nghỉ trừ {_reportResult.RawMinutes - _reportResult.TotalMinutes}" + (_reportResult.BreakWorkedMinutes > 0 ? $" · thông nghỉ {_reportResult.BreakWorkedMinutes}" : "");
+    private const string ReportTotalTip = "Phút làm = giờ thô − nghỉ bị trừ (khoảng nghỉ chép lúc lưu từng dòng; làm thông nghỉ tính là làm); mỗi người mỗi ngày giờ chồng nhau chỉ tính 1 lần.";
+    private static string ReportRowTip(WtsReportRow r)
+        => r.Breaks.Count == 0 ? "Không trùng giờ nghỉ ca"
+         : $"Thô {r.RawMinutes} − nghỉ {r.BreakDeductMin} = {r.Minutes} phút làm" + (r.BreakWorkedMin > 0 ? $" (làm thông nghỉ {r.BreakWorkedMin})" : "")
+           + ". Giờ nghỉ lúc lưu: " + string.Join(", ", r.Breaks.Select(b => $"{b.Label} chồng {b.OverlapMin}" + (b.WorkedMin > 0 ? $", làm {b.WorkedMin}" : "")));
+    private RenderFragment BreakWorkUi() => __builder =>
+    {
+        var list = _reportResult?.BreakWorkRows;
+        if (list == null || list.Count == 0) return;
+        <div class="card border-0 bg-light mb-3">
+            <div class="card-body py-2">
+                <div class="small fw-semibold mb-1"><i class="bi bi-cup-hot me-1"></i>Làm thông nghỉ (phút) — theo ngày · công nhân · khoảng nghỉ · PO</div>
+                <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem;max-width:760px">
+                    <thead><tr><th>Ngày</th><th>Công nhân</th><th>Khoảng nghỉ</th><th>PO</th><th>NC / Mã CV</th><th class="text-center">Phút</th></tr></thead>
+                    <tbody>
+                        @foreach (var x in list)
+                        {
+                            <tr><td>@x.Day.ToString("dd/MM/yyyy")</td><td>@x.Worker</td><td>@x.Break</td><td>@(string.IsNullOrEmpty(x.Po) ? "—" : x.Po)</td><td>@x.Code</td><td class="text-center fw-semibold">@x.Minutes</td></tr>
+                        }
+                    </tbody>
+                </table>
             </div>
         </div>
     };
@@ -5436,36 +5574,37 @@ else
     };
 
     // ════════════════════════════════════════════════════════════════════════════
-    // [ML17-NET 2026-10-30] Master list 17.1 — CHỈ HIỂN THỊ: cột Phút bảng đã lưu + "Tổng hôm nay" trừ giờ nghỉ của ca
-    //   (CalcEffectiveMinutes — cùng hàm phần Dự kiến / chia giờ nhóm dùng). Không đổi giờ lưu DB, không đổi báo cáo.
-    //   Tổng ngày: gộp các khoảng giờ đã lưu (chồng nhau — vd GC đứng 2 máy — chỉ tính 1 lần) rồi trừ nghỉ ca;
-    //   mốc = độ dài ca trừ nghỉ (ca chưa chọn / ca qua đêm lạ → 480 như cũ). Làm xuyên nghỉ (17.2) chờ khách chốt.
     // ════════════════════════════════════════════════════════════════════════════
-    private CaLamViec? CaOf(WtsRow r) => (r.CaId.HasValue ? _caList.FirstOrDefault(c => c.CaId == r.CaId) : null) ?? SelectedCa;
-    private int NetMin(WtsRow r) => r.EndTime > r.StartTime ? (int)Math.Round(CalcEffectiveMinutes(r.StartTime, r.EndTime, CaOf(r))) : r.Minutes;
-    private string NetMinRawNote(WtsRow r) { var n = NetMin(r); return n != r.Minutes && r.Minutes > 0 ? $" /{r.Minutes}" : ""; }
+    // [ML17-NET 2026-10-30] Master list 17.1: cột Phút bảng đã lưu + "Tổng hôm nay" trừ giờ nghỉ, giờ chồng tính 1 lần.
+    // [ML17-XN][CA-NGHI-HIST 2026-11-01] Nay đọc khoảng nghỉ ĐÃ LƯU của từng dòng (row.Breaks = giờ nghỉ ca lúc lưu + phút làm thông),
+    //   cùng hàm báo cáo (WorkMinutes.Line / Day). Trước: tính lại theo giờ nghỉ HIỆN TẠI của ca dòng (dòng việc không ra SP: ca ĐANG
+    //   CHỌN) → admin sửa giờ nghỉ / đổi ca đang chọn thì số các dòng cũ đổi theo. Mốc = giờ ca trừ nghỉ (ca qua đêm đúng ngày).
+    // ════════════════════════════════════════════════════════════════════════════
+    private static LineMin SavedLineMin(WtsRow r) => WorkMinutes.Line(r.StartTime, r.EndTime, r.Breaks);
+    private int NetMin(WtsRow r) => r.EndTime > r.StartTime ? SavedLineMin(r).Work : r.Minutes;
+    private string NetMinRawNote(WtsRow r)
+    {
+        if (r.EndTime <= r.StartTime) return "";
+        var m = SavedLineMin(r);
+        return m.Work != m.Raw && m.Raw > 0 ? $" /{m.Raw}" : "";
+    }
+    private string NetMinThongNote(WtsRow r)
+    {
+        if (r.EndTime <= r.StartTime) return "";
+        var m = SavedLineMin(r);
+        return m.Worked > 0 ? $" ☕{m.Worked}" : "";
+    }
     private string NetMinTip(WtsRow r)
     {
-        var n = NetMin(r);
-        return n != r.Minutes && r.Minutes > 0 ? $"Giờ thô {r.Minutes} phút − nghỉ ca {r.Minutes - n} phút = {n} phút" : "Không trùng giờ nghỉ ca";
+        if (r.EndTime <= r.StartTime) return "";
+        var m = SavedLineMin(r);
+        if (r.Breaks.Count == 0) return "Không trùng giờ nghỉ ca";
+        var t = $"Giờ thô {m.Raw} phút − nghỉ {m.Deducted} phút = {m.Work} phút";
+        if (m.Worked > 0) t += $" (trong đó làm thông nghỉ {m.Worked} phút)";
+        return t + ". Giờ nghỉ lúc lưu: " + string.Join(", ", r.Breaks.Select(b => $"{b.Label} chồng {b.OverlapMin}" + (b.WorkedMin > 0 ? $", làm {b.WorkedMin}" : "")));
     }
-    private int DayNetMinutes
-    {
-        get
-        {
-            // ca của dòng đầu mỗi khoảng gộp (cùng ca với cột Phút — dòng không có ca thì ca đang chọn)
-            var iv = _rows.Where(r => r.Saved && r.EndTime > r.StartTime).Select(r => (S: r.StartTime, E: r.EndTime, Ca: CaOf(r))).OrderBy(x => x.S).ToList();
-            double total = 0; DateTime? cs = null, ce = null; CaLamViec? cc = null;
-            foreach (var x in iv)
-            {
-                if (cs == null) { cs = x.S; ce = x.E; cc = x.Ca; continue; }
-                if (x.S <= ce) { if (x.E > ce) ce = x.E; continue; }
-                total += CalcEffectiveMinutes(cs.Value, ce!.Value, cc); cs = x.S; ce = x.E; cc = x.Ca;
-            }
-            if (cs != null) total += CalcEffectiveMinutes(cs.Value, ce!.Value, cc);
-            return (int)Math.Round(total);
-        }
-    }
+    private DayMin DayMinutes => WorkMinutes.Day(_rows.Where(r => r.Saved && r.EndTime > r.StartTime).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+    private int DayNetMinutes => DayMinutes.Work;
     private int DayTargetMinutes
     {
         get
@@ -5475,7 +5614,8 @@ else
             var st = _workDate.Date.Add(ca.GioBatDau.ToTimeSpan());
             var en = _workDate.Date.Add(ca.GioKetThuc.ToTimeSpan());
             if (en <= st) en = en.AddDays(1);
-            var m = (int)Math.Round(CalcEffectiveMinutes(st, en, ca));
+            var eff = WorkMinutes.EffectiveBreaks(WorkMinutes.BreakSegments(ca, st, en), st, null);   // [ML17-XN] ca qua đêm đúng ngày
+            var m = (int)Math.Round(WorkMinutes.EffectiveMinutes(st, en, eff), MidpointRounding.AwayFromZero);
             return m > 0 ? m : 480;
         }
     }
@@ -5484,7 +5624,10 @@ else
         get
         {
             var raw = _rows.Where(r => r.Saved).Sum(r => r.Minutes);
-            return $"Đã trừ giờ nghỉ của ca; khoảng giờ chồng nhau chỉ tính 1 lần (cộng giờ thô từng dòng = {raw} phút). Mốc = giờ ca trừ nghỉ.";
+            var d = DayMinutes;
+            return $"Giờ thô gộp {d.Raw} phút − nghỉ {d.Deducted} phút = {d.Work} phút làm"
+                 + (d.Worked > 0 ? $" (trong đó làm thông nghỉ {d.Worked} phút)" : "")
+                 + $"; khoảng giờ chồng nhau chỉ tính 1 lần (cộng giờ thô từng dòng = {raw} phút). Giờ nghỉ theo giờ nghỉ ca LÚC LƯU từng dòng. Mốc = giờ ca trừ nghỉ.";
         }
     }
 
@@ -5967,7 +6110,6 @@ else
             var pmStd = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartNo == det.PartNo);
             if (pmStd != null)
             {
-                await EnsureTimingStdAsync(det.KhPlanDetailId, pmStd.PartId);
                 _poStdConfirmed[det.PurchaseOrder] = IsGcGroup           ? pmStd.IsMachiningConfirmed
                     : IsHtspGroup                                         ? pmStd.IsHtspConfirmed
                     : HandoverGroupCode == "KCS"                          ? pmStd.IsKcsConfirmed
@@ -6104,153 +6246,153 @@ else
 
     // HTSP: chọn nhóm nhỏ → load WtsItems tương ứng
 
-    /// <summary>
-
-    /// Tính số phút làm việc thực sự trong khoảng [start, end],
-
-    /// trừ đi thời gian nghỉ giải lao của ca đang chọn.
-
-    /// </summary>
-
-    // Tính tổng phút nghỉ giải lao trong khoảng [start, end] của ca
-
-    private double CalcBreakMinutes(DateTime start, DateTime end, CaLamViec? ca)
-
+    // ════════════════════════════════════════════════════════════════════════════
+    // [ML17-XN 2026-11-01] BỎ 4 hàm tính nghỉ riêng của trang (CalcBreakMinutes / SkipBreaks / CalcEffectiveMinutes / AddEffectiveMinutes):
+    //   lấy ngày của giờ bắt đầu dòng (ca qua đêm sai), không biết làm thông nghỉ, dòng đã lưu đọc giờ nghỉ HIỆN TẠI của ca.
+    //   Mọi phép tính phút nay dùng Services/WorkMinutesService.cs (WorkMinutes) — cùng hàm máy chủ kiểm lúc lưu, báo cáo, hiệu suất máy.
+    //   Nhóm tích "Làm thông nghỉ" ở CẤP NHÓM: mỗi khoảng nghỉ khung giờ nhóm chạm có 1 ô phút (mặc định = đủ phần chồng, sửa về 0 = nghỉ
+    //   thật); khúc làm thông nằm ĐẦU phần chồng → Dự kiến / chia giờ nhóm / giờ kết thúc theo chuẩn coi khúc đó là giờ làm.
+    // ════════════════════════════════════════════════════════════════════════════
+    // Khung giờ nhóm: giờ bắt đầu sớm nhất → giờ kết thúc muộn nhất của các dòng (tròn phút như lúc lưu)
+    private static (DateTime S, DateTime E)? GroupSpan(WtsGroup grp)
     {
-
-        if (ca == null || end <= start) return 0;
-
-        var date = start.Date;
-
-        double total = 0;
-
-        foreach (var nghi in ca.NghiGiaiLaos)
-
-        {
-
-            var nghiStart = date.Add(nghi.NghiBatDau.ToTimeSpan());
-
-            var nghiEnd   = date.Add(nghi.NghiKetThuc.ToTimeSpan());
-
-            if (nghi.NghiKetThuc < nghi.NghiBatDau) nghiEnd = nghiEnd.AddDays(1);
-
-            var overlapStart = nghiStart < start ? start : nghiStart;
-
-            var overlapEnd   = nghiEnd   > end   ? end   : nghiEnd;
-
-            if (overlapEnd > overlapStart)
-
-                total += (overlapEnd - overlapStart).TotalMinutes;
-
-        }
-
-        return total;
-
+        var rows = grp.SubRows.Where(x => x.StartTime != default && x.EndTime != default).ToList();
+        if (rows.Count == 0) return null;
+        var s0 = WorkMinutes.RoundToMinute(rows.Min(r => r.StartTime));
+        var e0 = WorkMinutes.RoundToMinute(rows.Max(r => r.EndTime));
+        return e0 > s0 ? (s0, e0) : null;
     }
 
-    // Nếu thời điểm t rơi vào khoảng nghỉ → đẩy ra đến hết khoảng nghỉ đó
-
-    private DateTime SkipBreaks(DateTime t, CaLamViec? ca)
-
+    // Khoảng nghỉ ca đang chọn mà khung giờ nhóm chạm (phần chồng > 0)
+    private List<LineBreak> GroupTouching(WtsGroup grp)
     {
+        var sp = GroupSpan(grp);
+        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(SelectedCa, sp.Value.S, sp.Value.E);
+    }
 
-        if (ca == null) return t;
-
-        var date = t.Date;
-
-        bool changed = true;
-
-        while (changed)
-
+    // Đồng bộ ô phút làm thông với khoảng nghỉ đang chạm: ô chưa sửa tay = đủ phần chồng; ô đã sửa tay giữ số, kẹp trong [0, chồng].
+    //   (rà độc lập 01/11) Khoảng nghỉ MỚI chạm sau khi đã tích (đổi giờ / đổi ca / giờ kết thúc tự tính kéo dài) = 0 phút (nghỉ thật),
+    //   đánh dấu đã sửa tay — không tự cho làm thông khoảng công nhân chưa nhập; mọi chỗ tính (Dự kiến, chia giờ, lưu) cùng coi thiếu = 0.
+    private void SyncGroupNghi(WtsGroup grp) => SyncGroupNghi(grp, false);
+    private void SyncGroupNghi(WtsGroup grp, bool justTicked)
+    {
+        var touch = GroupTouching(grp);
+        var keys = touch.Select(t => t.BreakStart).ToHashSet();
+        foreach (var k in grp.NghiWorked.Keys.Where(k => !keys.Contains(k)).ToList()) grp.NghiWorked.Remove(k);
+        grp.NghiManual.RemoveWhere(k => !keys.Contains(k));
+        if (touch.Count == 0) grp.ThongNghi = false;
+        if (!grp.ThongNghi) { grp.NghiWorked.Clear(); grp.NghiManual.Clear(); return; }
+        foreach (var t in touch)
         {
-
-            changed = false;
-
-            foreach (var nghi in ca.NghiGiaiLaos)
-
+            if (!grp.NghiWorked.ContainsKey(t.BreakStart))
             {
-
-                var ns = date.Add(nghi.NghiBatDau.ToTimeSpan());
-
-                var ne = date.Add(nghi.NghiKetThuc.ToTimeSpan());
-
-                if (nghi.NghiKetThuc < nghi.NghiBatDau) ne = ne.AddDays(1);
-
-                if (t >= ns && t < ne) { t = ne; changed = true; }
-
+                grp.NghiWorked[t.BreakStart] = justTicked ? t.OverlapMin : 0;
+                if (!justTicked) grp.NghiManual.Add(t.BreakStart);
             }
-
+            else if (!grp.NghiManual.Contains(t.BreakStart)) grp.NghiWorked[t.BreakStart] = t.OverlapMin;
+            else grp.NghiWorked[t.BreakStart] = Math.Clamp(grp.NghiWorked[t.BreakStart], 0, t.OverlapMin);
         }
-
-        return t;
-
     }
 
-    private double CalcEffectiveMinutes(DateTime start, DateTime end, CaLamViec? ca)
-
+    // Khoảng nghỉ HIỆU LỰC của nhóm (đã bỏ khúc làm thông) từ mốc from — Dự kiến / chia giờ / giờ kết thúc theo chuẩn / hàng Tổng
+    private List<(DateTime S, DateTime E)> GroupEffBreaks(WtsGroup? grp, DateTime from)
     {
-
-        if (end <= start) return 0;
-
-        var total = (end - start).TotalMinutes;
-
-        if (ca == null) return total;
-
-        return Math.Max(0, total - CalcBreakMinutes(start, end, ca));
-
+        var sp = grp != null ? GroupSpan(grp) : null;
+        var anchor = sp?.S ?? from;
+        var lo = from < anchor ? from : anchor;
+        var segs = WorkMinutes.BreakSegments(SelectedCa, lo, lo.AddDays(2));
+        return WorkMinutes.EffectiveBreaks(segs, anchor, grp != null && grp.ThongNghi ? grp.NghiWorked : null);
     }
 
-    /// <summary>
-    /// Tính DateTime kết thúc sau khi đã làm đủ <paramref name="prodMin"/> phút thực sự,
-    /// bỏ qua các khoảng nghỉ của ca. Thay thế vòng lặp hội tụ 3 bước — vòng lặp đó
-    /// không hội tụ khi end-time rơi gần boundary khoảng nghỉ (ví dụ: leo dần đến nghỉ
-    /// trưa nhưng dừng trước khi nhảy qua, khiến kết quả thiếu tới ~14 phút).
-    /// </summary>
-    private DateTime AddEffectiveMinutes(DateTime start, double prodMin, CaLamViec? ca)
+    // Phút làm của nhóm trong [s, e) (hàng Tổng của nhóm)
+    private int GroupWorkMin(WtsGroup grp, DateTime s, DateTime e)
+        => (int)Math.Round(WorkMinutes.EffectiveMinutes(s, e, GroupEffBreaks(grp, s)), MidpointRounding.AwayFromZero);
+
+    // Bộ khoảng nghỉ gửi máy chủ cho 1 dòng con: ĐỦ mọi khoảng dòng chạm (không làm thông = 0); phút làm thông chia từ khúc của nhóm
+    //   theo thứ tự thời gian từ đầu khoảng nghỉ (WorkMinutes.SplitForLine) — máy chủ tự tính lại + kiểm (WorkMinutes.Verify).
+    private List<LineBreak> SubRowBreaks(WtsGroup grp, WtsRow sub)
     {
-        if (prodMin <= 0) return start;
-        if (ca == null)   return start.AddMinutes(prodMin);
+        var s0 = WorkMinutes.RoundToMinute(sub.StartTime); var e0 = WorkMinutes.RoundToMinute(sub.EndTime);
+        if (e0 <= s0) return new List<LineBreak>();
+        var sp = GroupSpan(grp);
+        var anchor = sp?.S ?? s0;
+        var segs = WorkMinutes.BreakSegments(SelectedCa, s0 < anchor ? s0 : anchor, e0);
+        return WorkMinutes.SplitForLine(segs, anchor, grp.ThongNghi ? grp.NghiWorked : null, s0, e0, SelectedCa?.CaId);
+    }
 
-        var date   = start.Date;
-        var cursor = start;
-        var rem    = prodMin;
+    // Giờ kết thúc sau khi làm đủ prodMin phút từ start, nhảy qua khoảng nghỉ hiệu lực của nhóm chứa dòng (nếu có)
+    private DateTime EndAfterWork(WtsRow row, double prodMin)
+    {
+        var g = _groups.FirstOrDefault(x => x.SubRows.Contains(row));
+        return WorkMinutes.AddEffective(row.StartTime, prodMin, GroupEffBreaks(g, row.StartTime));
+    }
 
-        // Chuẩn hoá khoảng nghỉ, lọc những khoảng kết thúc trước start
-        var breaks = ca.NghiGiaiLaos
-            .Select(n =>
-            {
-                var ns = date.Add(n.NghiBatDau.ToTimeSpan());
-                var ne = date.Add(n.NghiKetThuc.ToTimeSpan());
-                if (n.NghiKetThuc < n.NghiBatDau) ne = ne.AddDays(1);
-                return (S: ns, E: ne);
-            })
-            .Where(b => b.E > start)
-            .OrderBy(b => b.S)
-            .ToList();
+    private void OnThongNghiToggled(WtsGroup grp, ChangeEventArgs e)
+    {
+        grp.ThongNghi = e.Value is bool b ? b : string.Equals(e.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        grp.NghiManual.Clear(); grp.NghiWorked.Clear();
+        SyncGroupNghi(grp, true);
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
 
-        foreach (var brk in breaks)
+    private void OnNghiWorkedInput(WtsGroup grp, DateTime key, int overlap, ChangeEventArgs e)
+    {
+        var v = int.TryParse(e.Value?.ToString(), out var x) ? x : 0;
+        grp.NghiWorked[key] = Math.Clamp(v, 0, overlap);
+        if (grp.NghiWorked[key] != v) grp.NghiRev++;   // số gõ bị kẹp → vẽ lại ô (Blazor không tự cập nhật khi giá trị render không đổi)
+        grp.NghiManual.Add(key);
+        RecalcGroupTimeline(grp);
+        StateHasChanged();
+    }
+
+    private static int GrpWorked(WtsGroup grp, LineBreak t) => grp.NghiWorked.TryGetValue(t.BreakStart, out var w) ? w : 0;   // thiếu = 0, như SplitForLine / EffectiveBreaks
+
+    // Mở sửa dòng đã lưu: khôi phục ô làm thông nghỉ từ khoảng nghỉ đã lưu của dòng
+    private static void RestoreGroupNghi(WtsGroup grp, IEnumerable<LineBreak> saved)
+    {
+        var list = saved.ToList();
+        grp.ThongNghi = list.Any(b => b.WorkedMin > 0);
+        grp.NghiWorked.Clear(); grp.NghiManual.Clear();
+        if (!grp.ThongNghi) return;
+        foreach (var b in list)
         {
-            if (rem <= 0) break;
-
-            // Cursor đang nằm trong khoảng nghỉ → nhảy qua
-            if (cursor >= brk.S && cursor < brk.E)
-            {
-                cursor = brk.E;
-                continue;
-            }
-
-            var toBreak = (brk.S - cursor).TotalMinutes;
-            if (toBreak <= 0) continue; // break đã qua
-
-            if (rem <= toBreak)
-                return cursor.AddMinutes(rem); // xong trước khi chạm break
-
-            rem   -= toBreak;
-            cursor = brk.E; // nhảy qua break, tiếp tục làm
+            grp.NghiWorked[b.BreakStart] = b.WorkedMin;
+            if (b.WorkedMin != b.OverlapMin) grp.NghiManual.Add(b.BreakStart);
         }
-
-        return cursor.AddMinutes(rem);
     }
+
+    private static string NghiInputKey(DateTime k, int rev) => k.Ticks + "_" + rev;
+    private static string NghiListText(IEnumerable<LineBreak> touch) => string.Join(", ", touch.Select(t => $"{t.Label} ({t.OverlapMin} ph)"));
+
+    // Ô "Làm thông nghỉ" của nhóm — chỉ hiện khi khung giờ nhóm chạm khoảng nghỉ của ca
+    private RenderFragment ThongNghiUi(WtsGroup grp) => __builder =>
+    {
+        var touch = GroupTouching(grp);
+        if (touch.Count == 0) return;
+        <div class="px-3 pb-1 d-flex align-items-center flex-wrap gap-2" style="font-size:11px">
+            <label class="d-inline-flex align-items-center gap-1 fw-semibold" title="Tích khi làm xuyên giờ nghỉ (hàng gấp). Mỗi khoảng nghỉ nhập số phút đã làm (mặc định = cả phần giờ nhóm chồng khoảng nghỉ); khoảng nào nghỉ thật thì sửa về 0. Phần làm thông tính từ đầu khoảng nghỉ.">
+                <input type="checkbox" class="form-check-input mt-0" checked="@grp.ThongNghi" @onchange="e => OnThongNghiToggled(grp, e)" />
+                <i class="bi bi-cup-hot"></i> Làm thông nghỉ
+            </label>
+            @if (grp.ThongNghi)
+            {
+                @foreach (var t in touch)
+                {
+                    <span class="d-inline-flex align-items-center gap-1 border rounded px-1" style="background:#fff8e6">
+                        @t.Label:
+                        <input @key="NghiInputKey(t.BreakStart, grp.NghiRev)" type="number" min="0" max="@t.OverlapMin" step="1" class="form-control form-control-sm py-0 px-1" style="width:56px;font-size:11px"
+                               value="@GrpWorked(grp, t)" @onchange="e => OnNghiWorkedInput(grp, t.BreakStart, t.OverlapMin, e)" />
+                        <span class="text-muted">/ @t.OverlapMin ph</span>
+                    </span>
+                }
+            }
+            else
+            {
+                <span class="text-muted">Nhóm chạm giờ nghỉ: @NghiListText(touch) — đang tính là nghỉ.</span>
+            }
+        </div>
+    };
 
     private static string CaButtonTooltip(CaLamViec ca)
 
@@ -6283,6 +6425,9 @@ else
         // Muốn đổi ca thì bấm ca khác.
         if (_selectedCaId == caId) return;
         _selectedCaId = caId;
+        // [ML17-XN] đổi ca → khoảng nghỉ đổi: đồng bộ ô làm thông nghỉ + chia lại giờ các nhóm đang nhập, form việc không ra SP (rà độc lập 01/11)
+        foreach (var g in _groups) RecalcGroupTimeline(g);
+        SyncActNghi();
 
         // localStorage.setItem ca — ĐÃ BỎ 2026-09: không lưu ca, luôn chọn lại mỗi lần vào trang.
 
@@ -6782,6 +6927,8 @@ else
 
         //   KHÔNG bao giờ override StartTime hàng đầu hoặc EndTime hàng cuối
 
+        SyncGroupNghi(grp);   // [ML17-XN] ô làm thông nghỉ theo khung giờ nhóm mới
+
         if (!grp.SubRows.Any()) return;
 
         if (grp.SubRows.Count <= 1) return;
@@ -6815,7 +6962,8 @@ else
 
         // Nghỉ giải lao: trừ 1 lần cho cả nhóm
 
-        var totalBreakMin = CalcBreakMinutes(first.StartTime, last.EndTime, SelectedCa);
+        var _eff = GroupEffBreaks(grp, first.StartTime);   // [ML17-XN] khoảng nghỉ hiệu lực (bỏ khúc làm thông), ca qua đêm đúng ngày
+        var totalBreakMin = WorkMinutes.BreakMinutesIn(first.StartTime, last.EndTime, _eff);
 
         // T.Phát sinh tổng — trừ ra để còn thời gian sản xuất thuần
 
@@ -6855,13 +7003,15 @@ else
             // [ALLOC-BREAK 2026-10-30] Mục 23 — cộng phút làm việc nhảy qua giờ nghỉ bằng AddEffectiveMinutes (như Dự kiến).
             //   Trước: vòng "hội tụ 3 vòng" không hội tụ khi giờ kết thúc tạm rơi vào ~⅓ đầu giờ nghỉ → dòng giữa thiếu tới ~20 phút,
             //   giờ kết thúc nằm trong giờ nghỉ, dòng cuối ăn phần dư.
-            var subEnd = AddEffectiveMinutes(cursor, subPureMin + (double)sub.ExtraMinutes, SelectedCa);
+            // [ML17-MIN 2026-11-01] giờ dòng giữa làm tròn phút (máy chủ lưu tròn phút → phút dòng + khoảng nghỉ cân đúng)
+            var subEnd = WorkMinutes.RoundToMinute(WorkMinutes.AddEffective(cursor, subPureMin + (double)sub.ExtraMinutes, _eff));
+            if (subEnd <= cursor) subEnd = cursor.AddMinutes(1);   // (rà độc lập 01/11) dòng khối lượng rất nhỏ làm tròn về 0 phút → tối thiểu 1 phút
 
             sub.EndTime = subEnd;
 
             // Đẩy cursor ra khỏi khoảng nghỉ nếu end rơi vào giờ nghỉ
 
-            cursor = SkipBreaks(sub.EndTime, SelectedCa);
+            cursor = WorkMinutes.SkipBreaks(sub.EndTime, _eff);
 
         }
 
@@ -6952,6 +7102,7 @@ else
     // (cùng hàm với phần hiển thị: GetStdTiming / GetStdTimeForSubRow / GetStdSourceForSubRow, như SaveWtsLogStdsAsync cũ).
     private WtsSaveService.WtsSaveGroup BuildSaveGroup(WtsGroup grp)
     {
+        SyncGroupNghi(grp);   // [ML17-XN] ô làm thông khớp khoảng nghỉ ca đang chọn trước khi gửi (máy chủ tự kiểm lại)
         var g = new WtsSaveService.WtsSaveGroup
         {
             IsGc = IsGcGroup, IsHtsp = IsHtspGroup, HandoverGroupCode = HandoverGroupCode,
@@ -6975,6 +7126,8 @@ else
             };
             foreach (var ei in sub.ExtraItems)
                 r.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = ei.WtsCode, WtsName = ei.WtsName, Minutes = ei.Minutes, Notes = ei.Notes });
+            // [ML17-XN] khoảng nghỉ dòng chạm + phút làm thông (máy chủ tự tính lại, khác → chặn "giờ nghỉ ca vừa đổi")
+            r.Breaks = SubRowBreaks(grp, sub).Select(b => new WorkMinutes.SentBreak { BreakStart = b.BreakStart, BreakEnd = b.BreakEnd, WorkedMin = b.WorkedMin }).ToList();
             if (IsGcGroup)
             {
                 var std = sub.KhPlanDetailId.HasValue ? GetStdTiming(sub.KhPlanDetailId.Value, sub.NC, sub.MachineUsed) : null;
@@ -7831,6 +7984,10 @@ else
 
         public string? CaName       { get; set; } // Tên ca — cache để hiển thị
 
+        // [ML17-XN][CA-NGHI-HIST 2026-11-01] Khoảng nghỉ ĐÃ LƯU của dòng (WtsBreakWorkLogs: giờ nghỉ lúc lưu + phút làm thông) —
+        //   cột Phút / Tổng hôm nay tính từ đây, không đọc giờ nghỉ hiện tại của ca.
+        public List<LineBreak> Breaks { get; set; } = new();
+
         // T.Phát sinh chi tiết — mỗi phần việc là 1 WtsExtraItem
 
         public List<WtsExtraItem> ExtraItems { get; set; } = new();
@@ -7892,6 +8049,7 @@ else
             c.AvailableNCs      = new List<KhPlanRouteSnapshotMachining>(AvailableNCs);
             c.AvailableWtsItems = new List<WtsItem>(AvailableWtsItems);
             c.ExtraItems        = ExtraItems.Select(e => new WtsExtraItem { WtsCode = e.WtsCode, WtsName = e.WtsName, Minutes = e.Minutes, Notes = e.Notes }).ToList();
+            c.Breaks            = Breaks.Select(b => b.Clone()).ToList();   // [ML17-XN]
             return c;
         }
 
@@ -7946,6 +8104,12 @@ else
 
         public List<WtsRow> SubRows { get; set; } = new();
 
+        // [ML17-XN 2026-11-01] Làm thông nghỉ ở cấp nhóm: phút làm theo giờ bắt đầu khoảng nghỉ; NghiManual = ô người dùng đã sửa tay
+        public bool ThongNghi { get; set; }
+        public Dictionary<DateTime, int> NghiWorked { get; set; } = new();
+        public HashSet<DateTime> NghiManual { get; set; } = new();
+        public int NghiRev { get; set; }   // đổi khi ô số bị kẹp → vẽ lại ô
+
     }
 
     // ── T.Kết thúc dự kiến theo công thức (dùng để màu xanh/đỏ) ──────────
@@ -7978,7 +8142,7 @@ else
         {
             if (!sub.ActualTimePerPc.HasValue || sub.ActualTimePerPc.Value <= 0) return null;
             var flatMin = (double)sub.ActualTimePerPc.Value + sub.ExtraMinutes;
-            return AddEffectiveMinutes(sub.StartTime, flatMin, SelectedCa);
+            return WorkMinutes.AddEffective(sub.StartTime, flatMin, GroupEffBreaks(grp, sub.StartTime));   // [ML17-XN]
         }
 
         if (sl <= 0) return null;
@@ -7993,7 +8157,7 @@ else
                 : GetStdTimeForSubRow(sub);
             if (!timePerPc.HasValue || timePerPc.Value <= 0) return null;
             var prodMin4 = (double)(timePerPc.Value * sl) + sub.ExtraMinutes;
-            return AddEffectiveMinutes(sub.StartTime, prodMin4, SelectedCa);
+            return WorkMinutes.AddEffective(sub.StartTime, prodMin4, GroupEffBreaks(grp, sub.StartTime));   // [ML17-XN]
         }
 
         var std = GetStdTiming(sub.KhPlanDetailId.Value, grp.NC, grp.MachineUsed);
@@ -8057,7 +8221,7 @@ else
 
         // [FIX-EST-CONV] Dùng AddEffectiveMinutes — đi thẳng qua từng khoảng nghỉ,
         // không dùng vòng lặp hội tụ 3 bước (không đủ khi end gần boundary nghỉ).
-        return AddEffectiveMinutes(sub.StartTime, prodMin, SelectedCa);
+        return WorkMinutes.AddEffective(sub.StartTime, prodMin, GroupEffBreaks(grp, sub.StartTime));   // [ML17-XN] khúc làm thông = giờ làm
 
     }
 
@@ -8091,7 +8255,7 @@ else
 
                 var totalMin = (int)Math.Ceiling((double)(std.Value * row.QtyDone));
 
-                row.EndTime = row.StartTime.AddMinutes(totalMin);
+                row.EndTime = EndAfterWork(row, totalMin);   // [ML17-ENDEST] nhảy qua giờ nghỉ như Dự kiến (trước: cộng thẳng)
 
             }
 
@@ -8123,7 +8287,7 @@ else
 
             var totalMin = (int)Math.Ceiling((double)(cycle * slTotal));
 
-            row.EndTime  = row.StartTime.AddMinutes(totalMin);
+            row.EndTime  = EndAfterWork(row, totalMin);   // [ML17-ENDEST]
 
         }
 
@@ -8141,7 +8305,7 @@ else
 
             var totalMin = (int)Math.Ceiling((double)(prep + trial));
 
-            row.EndTime  = row.StartTime.AddMinutes(totalMin);
+            row.EndTime  = EndAfterWork(row, totalMin);   // [ML17-ENDEST]
 
         }
 

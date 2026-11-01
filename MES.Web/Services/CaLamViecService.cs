@@ -38,6 +38,13 @@ public class CaLamViecService
                 return (false, $"Nghỉ giải lao: giờ kết thúc phải sau giờ bắt đầu ({n.NghiBatDau:HH\\:mm}).");
         }
 
+        // [CA-NGHI-OVERLAP 2026-11-01] 2 khoảng nghỉ chồng nhau → trước: trang WTS trừ phần chồng 2 lần (phút làm âm / thiếu).
+        //   Nay chặn lưu ca (WorkMinutes.BreakSegments vẫn gộp khoảng chồng của dữ liệu ca cũ cho an toàn).
+        var _sorted = nghiList.OrderBy(x => x.NghiBatDau).ToList();
+        for (int i = 1; i < _sorted.Count; i++)
+            if (_sorted[i].NghiBatDau < _sorted[i - 1].NghiKetThuc)
+                return (false, $"Nghỉ giải lao {_sorted[i - 1].NghiBatDau:HH\\:mm}–{_sorted[i - 1].NghiKetThuc:HH\\:mm} và {_sorted[i].NghiBatDau:HH\\:mm}–{_sorted[i].NghiKetThuc:HH\\:mm} chồng nhau — sửa cho tách rời.");
+
         if (ca.CaId == 0)
         {
             _db.CaLamViecs.Add(ca);

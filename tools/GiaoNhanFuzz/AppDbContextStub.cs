@@ -67,6 +67,7 @@ namespace MES.Web.Data
         public DbSet<WtsExtraItemLog> WtsExtraItems => Set<WtsExtraItemLog>();
         public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
         public DbSet<CaLamViec_NghiGiaiLao> CaLamViec_NghiGiaiLaos => Set<CaLamViec_NghiGiaiLao>();
+        public DbSet<WtsBreakWorkLog> WtsBreakWorkLogs => Set<WtsBreakWorkLog>();   // [ML17-XN]
 
         public AppDbContext()
         {
@@ -76,6 +77,7 @@ namespace MES.Web.Data
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;
             _ = KhPlanRouteSnapshotPackaging; _ = KhPlanRouteSnapshotMachineExclude;
+            _ = WorkerActivityLogs; _ = WtsExtraItems; _ = WtsBreakWorkLogs; _ = CaLamViecs; _ = CaLamViec_NghiGiaiLaos;   // [ML17-XN]
         }
 
         public override void Fixup()

@@ -26,6 +26,11 @@
     <Compile Include="../../MES.Web/Services/StandardWtsTaskService.cs" />
     <Compile Include="../../MES.Web/Services/WtsCategoryGroupMappingService.cs" />
     <Compile Include="../../MES.Web/Services/WtsSaveService.cs" />
+    <Compile Include="../../MES.Web/Services/WorkMinutesService.cs" />   <!-- [ML17-XN] hàm phút chung -->
+    <Compile Include="../../MES.Web/Services/WtsReportService.cs" />   <!-- [ML17-XN] báo cáo = trang -->
+    <Compile Include="../../MES.Web/Services/MachineEfficiencyService.cs" />
+    <Compile Include="../../MES.Web/Services/CaLamViecService.cs" />
+    <Compile Include="../BackfillNghi/BackfillCore.cs" />
     <Compile Include="../../MES.Web/Services/LedgerQtyText.cs" />
     <Compile Include="../QuetSo/QuetCore.cs" />   <!-- [RA-SOCHUNG] công cụ quét DB chỉ đọc — kịch bản quet -->   <!-- [WTS-PANEL-QTY] chữ / số badge dùng chung tab KH + trang WTS -->   <!-- [WTS-SVC] phần lưu WTS thật -->
     <Compile Include="../../MES.Web/Services/NgCaseService.cs" />

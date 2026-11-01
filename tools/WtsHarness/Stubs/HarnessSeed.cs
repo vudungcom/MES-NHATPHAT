@@ -230,6 +230,9 @@ public static class HarnessSeed
             // [H10 30/10] phiếu giao nhận + lần nhận (drive_h10.py)
             gntx  = db.HandoverTransactions.List.OrderBy(t => t.HandoverTxId).Select(t => new { t.HandoverTxId, t.KhPlanDetailId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.QtyIssued, t.Status, t.IsVoided, t.VoidReason, t.SourceReceiveId }),
             gnrec = db.HandoverReceives.List.OrderBy(r => r.ReceiveId).Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.IsVoided, r.VoidReason, r.VoidedBy }),
+            // [ML17-XN 01/11] dòng nghỉ (bản cũ không có bảng → rỗng; đọc bằng reflection để bản cũ vẫn biên dịch)
+            brk = ((System.Collections.IEnumerable?)(db.GetType().GetProperty("WtsBreakWorkLogs")?.GetValue(db) as dynamic)?.List ?? new List<object>())
+                .Cast<object>().Select(x => { dynamic d = x; return new { Wts = (long?)d.WtsLogId, Act = (long?)d.ActivityLogId, Bs = D((DateTime)d.BreakStart), Be = D((DateTime)d.BreakEnd), Ov = (int)d.OverlapMin, Wk = (int)d.WorkedMin, Ca = (int?)d.CaId, Bf = (bool)d.IsBackfill }; }),
         };
     }
 }

@@ -547,6 +547,14 @@ else if (!_loading)
 }
 
 @code {
+    // [ML17-XN 2026-11-01] Bảng WTS từng máy: cột Phút = phút LÀM của dòng (giờ nghỉ chép lúc lưu + làm thông nghỉ, WorkMinutes) —
+    //   trước: giờ thô (End − Start), khác cột Phút trang WTS / báo cáo.
+    private static string LogMinText(MachineRow row, WtsProductionLog log)
+        => row.LogMinutes.TryGetValue(log.WtsLogId, out var m) ? m.Work.ToString() : ((int)(log.EndTime - log.StartTime).TotalMinutes).ToString();
+    private static string LogMinTip(MachineRow row, WtsProductionLog log)
+        => row.LogMinutes.TryGetValue(log.WtsLogId, out var m) && m.Raw != m.Work
+           ? $"Thô {m.Raw} − nghỉ {m.Deducted} = {m.Work} phút" + (m.Worked > 0 ? $" (làm thông nghỉ {m.Worked})" : "") : "";
+
 
     // ── State ──────────────────────────────────────────────────────────────
 
@@ -1276,7 +1284,7 @@ else if (!_loading)
                                     <td>@(log.Worker?.FullName ?? "?")</td>
                                     <td>@log.StartTime.ToString("HH:mm")</td>
                                     <td>@log.EndTime.ToString("HH:mm")</td>
-                                    <td class="text-end">@((int)(log.EndTime - log.StartTime).TotalMinutes)</td>
+                                    <td class="text-end" title="@LogMinTip(row, log)">@LogMinText(row, log)</td>   @* [ML17-XN] phút làm (trừ nghỉ đã lưu của dòng) *@
                                     <td>@(log.NC ?? "—")</td>
                                     <td class="text-muted">@(log.KhPlanDetail?.PurchaseOrder ?? "")</td>
                                 </tr>

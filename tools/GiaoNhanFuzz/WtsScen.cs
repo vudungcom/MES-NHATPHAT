@@ -22,10 +22,11 @@ public static class WtsScen
 
     /// <summary>PO1 40 chiếc Workflow ON: NC1 (M1, số chuẩn + máy đồng dạng M3) → NC2 (M2); Taro T1 / 1T, Bavia B1, Rửa R1, KCS K1, PKG P1.
     /// Kho đã giao GC 40 (nhận vào NC1). PO2 Workflow OFF 20 chiếc, cùng quy trình, GC đã nhận 20.</summary>
-    static async Task<AppDbContext> SeedAsync()
+    internal static async Task<AppDbContext> SeedAsync()
     {
         var db = new AppDbContext();
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };
+        db.CaLamViecs.List.Add(new CaLamViec { CaId = 1, TenCa = "HC", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0), IsActive = true });   // [ML17-XN] ca phải có thật (máy chủ đọc giờ nghỉ ca); không giờ nghỉ → kịch bản cũ y như trước
         for (int u = 1; u <= 5; u++) db.Users.List.Add(new User { UserId = u, Username = "u" + u, FullName = "U" + u, IsActive = true, Group = u == 1 ? adminG : FuzzPerm.Xuong(db), GroupId = u == 1 ? 1 : FuzzPerm.XuongId });
         var cust = new Customer { CustomerId = 1, CustomerName = "KH" };
         db.Customers.List.Add(cust);
@@ -67,14 +68,14 @@ public static class WtsScen
         return db;
     }
 
-    static WtsSaveService Svc(AppDbContext db) => new(db, new HandoverLedgerService(db));
+    internal static WtsSaveService Svc(AppDbContext db) => new(db, new HandoverLedgerService(db));
 
-    static WtsSaveService.WtsSaveGroup Gc(string? nc = "NC1", string? machine = "M1", string mode = "serial")
+    internal static WtsSaveService.WtsSaveGroup Gc(string? nc = "NC1", string? machine = "M1", string mode = "serial")
         => new() { IsGc = true, IsHtsp = false, HandoverGroupCode = "GC", NC = nc, MachineUsed = machine, ProductionMode = mode, UserId = 2, CaId = 1, WorkDate = DateTime.Today };
-    static WtsSaveService.WtsSaveGroup NonGc(string group, string sub = "")
+    internal static WtsSaveService.WtsSaveGroup NonGc(string group, string sub = "")
         => new() { IsGc = false, IsHtsp = group == "HTSP", HandoverGroupCode = group, HtspSubGroup = sub, ProductionMode = "serial", UserId = 3, CaId = 1, WorkDate = DateTime.Today };
 
-    static WtsSaveService.WtsSaveRow Row(int? detailId, decimal ok, decimal ng, DateTime start, DateTime end, string? code = null, int? cat = null,
+    internal static WtsSaveService.WtsSaveRow Row(int? detailId, decimal ok, decimal ng, DateTime start, DateTime end, string? code = null, int? cat = null,
                                          decimal? setup = 5, decimal? mach = 2, decimal? insp = 1, decimal? prep = null, decimal? trial = null, decimal? actualPc = null, string mode = "serial")
         => new()
         {

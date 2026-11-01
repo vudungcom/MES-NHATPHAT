@@ -54,6 +54,11 @@ public class MachineEfficiencyService
         var filteredWts = wtsLogs
             .Where(x => allSoMay.Contains(x.MachineUsed!)).ToList();
 
+        // [ML17-XN][CA-NGHI-HIST 2026-11-01] Khoảng nghỉ ĐÃ LƯU của từng dòng WTS (giờ nghỉ ca lúc lưu + khúc làm thông nghỉ):
+        //   đoạn Chạy = giờ dòng trừ phần nghỉ thật của CHÍNH dòng đó (WorkMinutes.WorkPieces); khoảng nghỉ của ca đang xem không còn
+        //   đè lên khúc làm thông nghỉ. Trước: giờ nghỉ ca (hiện tại) che mọi đoạn chạy → làm thông nghỉ thành "Nghỉ".
+        var brkW = await WorkMinutesStore.ForWtsAsync(_db, filteredWts.Select(x => x.WtsLogId));
+
         // ── 3. Downtime logs ─────────────────────────────────────────────
         var downLogs = await _db.ThietBiChangeLogs
             .Where(x => allMachineIds.Contains(x.ThietBiId)
@@ -88,10 +93,11 @@ public class MachineEfficiencyService
             var wtsForMachine  = wtsByMachine.TryGetValue(m.SoMay, out var w) ? w : new();
             var downForMachine = downByMachine.TryGetValue(m.ThietBiId, out var d) ? d : new();
 
-            var wtsSegs = wtsForMachine.Select(x => new TimelineSegment
+            var wtsSegs = wtsForMachine.SelectMany(x => WorkMinutes.WorkPieces(x.StartTime, x.EndTime, WorkMinutesStore.Get(brkW, x.WtsLogId))
+                .Select(pc => new TimelineSegment   // [ML17-XN] mỗi phần giờ làm của dòng (nghỉ thật của dòng bị bỏ ra)
             {
-                Start         = x.StartTime < dayStart ? dayStart : x.StartTime,
-                End           = x.EndTime   > dayEnd   ? dayEnd   : x.EndTime,
+                Start         = pc.S < dayStart ? dayStart : pc.S,
+                End           = pc.E > dayEnd   ? dayEnd   : pc.E,
                 Type          = SegmentType.Running,
                 WorkerName    = x.Worker?.FullName ?? "?",
                 WorkerId      = x.WorkerId,
@@ -99,7 +105,11 @@ public class MachineEfficiencyService
                 PurchaseOrder = x.KhPlanDetail?.PurchaseOrder ?? "",
                 PartNo        = x.KhPlanDetail?.PartNo ?? "",
                 WtsLogId      = x.WtsLogId,
-            }).Where(s => s.End > s.Start).ToList();
+            })).Where(s => s.End > s.Start).ToList();
+            // [ML17-XN] khoảng nghỉ ca đang xem trừ đi giờ máy đang chạy (khúc làm thông nghỉ giữ là Chạy)
+            var runIv = wtsSegs.Select(w => (w.Start, w.End)).ToList();
+            var machineBreaks = runIv.Count == 0 ? breakSegments
+                : breakSegments.SelectMany(b => WorkMinutes.Minus((b.Start, b.End), runIv).Select(pc => b with { Start = pc.S, End = pc.E })).ToList();
 
             var downSegs = downForMachine.Select(x =>
             {
@@ -116,7 +126,7 @@ public class MachineEfficiencyService
                 };
             }).Where(s => s.End > s.Start).ToList();
 
-            var segments = BuildTimeline(dayStart, dayEnd, wtsSegs, downSegs, breakSegments);
+            var segments = BuildTimeline(dayStart, dayEnd, wtsSegs, downSegs, machineBreaks);   // [ML17-XN]
 
             var runMin   = segments.Where(s => s.Type == SegmentType.Running).Sum(s => s.Minutes);
             var downMin  = segments.Where(s => s.Type is SegmentType.Breakdown or SegmentType.Maintenance).Sum(s => s.Minutes);
@@ -126,6 +136,7 @@ public class MachineEfficiencyService
 
             rows.Add(new MachineRow
             {
+                LogMinutes   = wtsForMachine.ToDictionary(x => x.WtsLogId, x => WorkMinutes.Line(x.StartTime, x.EndTime, WorkMinutesStore.Get(brkW, x.WtsLogId))),   // [ML17-XN]
                 Machine      = m,
                 Segments     = segments,
                 WtsDetails   = wtsForMachine,
@@ -250,6 +261,8 @@ public class MachineRow
     public ThietBi                Machine      { get; set; } = null!;
     public List<TimelineSegment>  Segments     { get; set; } = new();
     public List<WtsProductionLog> WtsDetails   { get; set; } = new();
+    /// <summary>[ML17-XN] Phút từng dòng WTS (WorkMinutes.Line với giờ nghỉ đã lưu) — cột Phút bảng chi tiết máy.</summary>
+    public Dictionary<long, LineMin> LogMinutes { get; set; } = new();
     public double TotalMinutes  { get; set; }
     public double RunMinutes    { get; set; }
     public double DownMinutes   { get; set; }

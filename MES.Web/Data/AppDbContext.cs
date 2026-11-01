@@ -84,6 +84,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     // ==== Worker Activity Log (thời gian chết / hoạt động không link PO) ====
     public DbSet<WorkerActivityLog> WorkerActivityLogs => Set<WorkerActivityLog>();
     public DbSet<WtsExtraItemLog> WtsExtraItems => Set<WtsExtraItemLog>(); // Chi tiết phát sinh
+    public DbSet<WtsBreakWorkLog> WtsBreakWorkLogs => Set<WtsBreakWorkLog>(); // [ML17-XN][CA-NGHI-HIST] giờ nghỉ chép lúc lưu + phút làm thông nghỉ
 
     // ==== Handover — Giao nhận hàng giữa các nhóm công đoạn ====
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
@@ -687,6 +688,15 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<CaLamViec_NghiGiaiLao>()
             .HasOne(x => x.Ca).WithMany(x => x.NghiGiaiLaos)
             .HasForeignKey(x => x.CaId).OnDelete(DeleteBehavior.Cascade);
+
+        // ==== [ML17-XN][CA-NGHI-HIST 2026-11-01] WtsBreakWorkLogs — khớp tools/sql/06_ML17XN_WtsBreakWorkLogs.sql ====
+        mb.Entity<WtsBreakWorkLog>().HasKey(x => x.Id);
+        mb.Entity<WtsBreakWorkLog>().Property(x => x.BreakStart).HasColumnType("datetime2(0)");
+        mb.Entity<WtsBreakWorkLog>().Property(x => x.BreakEnd).HasColumnType("datetime2(0)");
+        mb.Entity<WtsBreakWorkLog>().HasIndex(x => new { x.WtsLogId, x.BreakStart }).IsUnique().HasFilter("[WtsLogId] IS NOT NULL");
+        mb.Entity<WtsBreakWorkLog>().HasIndex(x => new { x.ActivityLogId, x.BreakStart }).IsUnique().HasFilter("[ActivityLogId] IS NOT NULL");
+        mb.Entity<WtsBreakWorkLog>().HasOne<WtsProductionLog>().WithMany().HasForeignKey(x => x.WtsLogId).OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<WtsBreakWorkLog>().HasOne<WorkerActivityLog>().WithMany().HasForeignKey(x => x.ActivityLogId).OnDelete(DeleteBehavior.NoAction);
 
         // ==== WtsExtraItems ====
         mb.Entity<WtsExtraItemLog>().HasKey(x => x.Id);

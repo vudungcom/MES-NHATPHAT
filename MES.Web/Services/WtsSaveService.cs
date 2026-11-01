@@ -81,6 +81,11 @@ namespace MES.Web.Services
             public decimal? ActualTimePerPc        { get; set; }
             public string   ProductionMode         { get; set; } = "serial";
             public bool     IsEditing              { get; set; }
+            // [ML17-XN 2026-11-01] Khoảng nghỉ ca dòng này chạm (trang tính bằng WorkMinutes, gửi ĐỦ cả khoảng không làm thông = 0 phút).
+            //   Máy chủ tự tính lại từ ca + giờ dòng (WorkMinutes.Verify) — khác tập → chặn "giờ nghỉ ca vừa đổi"; ghi vào WtsBreakWorkLogs.
+            public List<WorkMinutes.SentBreak> Breaks { get; set; } = new();
+            /// <summary>[ML17-XN] Bộ khoảng nghỉ máy chủ đã kiểm (service tự gán, trang không dùng).</summary>
+            public List<LineBreak>? BreakRows { get; set; }
 
             // Trang tra sẵn từ snapshot (cùng hàm với phần hiển thị): GC → GcStd; non-GC → StdTimePerPc + StdSrcTable/StdSrcRowId
             public WtsSaveStd? GcStd        { get; set; }
@@ -287,9 +292,26 @@ namespace MES.Web.Services
                     && await NgCaseService.CategoryChangeBlockedAsync(_db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk)
                 { sub.ErrorMsg = _catBlk; grp.ErrorMsg = _catBlk; return Fail(); }
 
+                // [ML17-MIN 2026-11-01] Giờ dòng làm tròn tới phút (chia giờ nhóm cũ để lại số lẻ giây ở dòng giữa) → phút luôn nguyên,
+                //   phút dòng + khoảng nghỉ cân đúng. Trang cũng làm tròn khi chia giờ nhóm (RecalcGroupTimeline) nên số thấy = số lưu.
+                sub.StartTime = WorkMinutes.RoundToMinute(sub.StartTime);
+                sub.EndTime   = WorkMinutes.RoundToMinute(sub.EndTime);
                 if (sub.EndTime <= sub.StartTime)
                 { sub.ErrorMsg = "T.Kết thúc phải sau T.Bắt đầu."; grp.ErrorMsg = "Lỗi thời gian."; return Fail(); }
                 // OT removed 2026-09: bỏ validate khung giờ ca — CN tự do nhập thời gian
+            }
+
+            // [ML17-XN][CA-NGHI-HIST 2026-11-01] Máy chủ tự tính khoảng nghỉ mỗi dòng chạm từ ca (đọc DB) + giờ dòng, so với bộ trang gửi
+            //   (trang để cũ khi admin vừa sửa giờ nghỉ ca → chặn); phút làm thông phải trong [0, phần chồng]. Bộ đã kiểm ghi cùng dòng WTS.
+            //   Không đụng sổ số lượng / khoá PO / K5; kiểm trùng giờ máy vẫn theo giờ thô như cũ.
+            {
+                var _brkErr = await VerifyBreaksAsync(grp.CaId, grp.Rows.Select(r => (r.StartTime, r.EndTime, (IReadOnlyList<WorkMinutes.SentBreak>)r.Breaks)).ToList());
+                for (int i = 0; i < grp.Rows.Count; i++) grp.Rows[i].BreakRows = _brkErr.Rows[i];
+                if (_brkErr.Error != null)
+                {
+                    if (_brkErr.Index >= 0) grp.Rows[_brkErr.Index].ErrorMsg = _brkErr.Error;
+                    grp.ErrorMsg = _brkErr.Error; return Fail();
+                }
             }
 
             // [WTS-SVC] (1) Mở giao dịch TRƯỚC khi khoá: khoá máy + khoá PO đều LockOwner = Transaction (PoGuard), tự nhả khi Commit / Rollback.
@@ -358,6 +380,27 @@ namespace MES.Web.Services
             _db.ChangeTracker.Clear();
             result.Ok = true;
             return result;
+        }
+
+        // [ML17-XN][CA-NGHI-HIST 2026-11-01] Đọc ca từ DB rồi kiểm từng dòng (WorkMinutes.Verify). Ca không còn → chặn (trang để cũ).
+        //   Trả bộ khoảng nghỉ đã kiểm cho mọi dòng (theo thứ tự) + lời báo + chỉ số dòng lỗi (−1 = lỗi chung).
+        private async Task<(List<List<LineBreak>> Rows, string? Error, int Index)> VerifyBreaksAsync(int? caId,
+            List<(DateTime S, DateTime E, IReadOnlyList<WorkMinutes.SentBreak> Sent)> lines)
+        {
+            var rows = lines.Select(_ => new List<LineBreak>()).ToList();
+            CaLamViec? ca = null;
+            if (caId.HasValue)
+            {
+                ca = await _db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == caId.Value);
+                if (ca == null) return (rows, "Ca làm việc đã chọn không còn — tải lại trang, chọn lại ca.", -1);
+            }
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var v = WorkMinutes.Verify(ca, lines[i].S, lines[i].E, lines[i].Sent);
+                rows[i] = v.Rows;
+                if (v.Error != null) return (rows, v.Error, i);
+            }
+            return (rows, null, -1);
         }
 
         // [MACHINE-CASE 2026-11-01] Tên khoá máy dùng chung mọi chỗ khoá máy WTS (không phân biệt hoa / thường, bỏ khoảng trắng 2 đầu)
@@ -720,6 +763,13 @@ namespace MES.Web.Services
                     row.WtsLogId = log.WtsLogId;
                     row.NgCaseId = log.NgCaseId;   // [VULOI]
 
+                    // [ML17-XN][CA-NGHI-HIST] Khoảng nghỉ dòng chạm (giờ nghỉ ca LÚC LƯU + phút làm thông) — cùng giao dịch nhóm
+                    if (row.BreakRows is { Count: > 0 } _brk)
+                    {
+                        _db.WtsBreakWorkLogs.AddRange(WorkMinutes.ToEntities(_brk, log.WtsLogId, null));
+                        await _db.SaveChangesAsync();
+                    }
+
                     // Lưu từng dòng phát sinh chi tiết vào WtsExtraItems
                     if (row.ExtraItems.Any())
                     {
@@ -772,6 +822,11 @@ namespace MES.Web.Services
                     _db.WorkerActivityLogs.Add(actLog);
                     await _db.SaveChangesAsync();
                     row.ActivityLogId = actLog.ActivityLogId;
+                    if (row.BreakRows is { Count: > 0 } _brkA)   // [ML17-XN]
+                    {
+                        _db.WtsBreakWorkLogs.AddRange(WorkMinutes.ToEntities(_brkA, null, actLog.ActivityLogId));
+                        await _db.SaveChangesAsync();
+                    }
 
                     // Lưu từng dòng phát sinh chi tiết
                     if (row.ExtraItems.Any())
@@ -939,6 +994,10 @@ namespace MES.Web.Services
             public string?  Notes             { get; set; }
             public int?     RefKhPlanDetailId { get; set; }
             public long?    NgCaseId          { get; set; }
+            // [ML17-XN 2026-11-01] Ca đang chọn trên trang + khoảng nghỉ dòng chạm (phút làm thông). WorkerActivityLogs không có cột ca:
+            //   ca + giờ nghỉ lúc lưu chép vào WtsBreakWorkLogs (trước: phút của dòng tính theo ca ĐANG CHỌN mỗi lần mở trang).
+            public int?     CaId              { get; set; }
+            public List<WorkMinutes.SentBreak> Breaks { get; set; } = new();
         }
 
         public const int ActivityNotesMax = 500;
@@ -968,12 +1027,19 @@ namespace MES.Web.Services
             var code = (req.WtsCode ?? "").Trim();
             if (code.Length == 0) return Fail("Chưa chọn Mã CV.");
             var today = DateTime.Now.Date;   // giờ máy chủ (CLAUDE-RULES 8.5)
-            if (req.StartTime.Date != today)
+            // [ML17-MIN] giờ tròn phút (form gõ giờ:phút — chỉ chặn số lẻ giây từ nơi khác). Biến cục bộ: req không bị sửa (lưu lại khi deadlock an toàn).
+            var reqStart = WorkMinutes.RoundToMinute(req.StartTime);
+            var reqEnd   = WorkMinutes.RoundToMinute(req.EndTime);
+            if (reqStart.Date != today)
                 return Fail("Việc không ra sản phẩm chỉ nhập cho ngày hôm nay.");
-            if (req.EndTime <= req.StartTime)
+            if (reqEnd <= reqStart)
                 return Fail("T.Kết thúc phải sau T.Bắt đầu.");
-            if (req.EndTime > today.AddDays(1))
+            if (reqEnd > today.AddDays(1))
                 return Fail("T.Kết thúc phải trong ngày hôm nay.");
+            // [ML17-XN][CA-NGHI-HIST] khoảng nghỉ dòng chạm: máy chủ tự tính từ ca + giờ, so với bộ trang gửi
+            var _vb = await VerifyBreaksAsync(req.CaId, new() { (reqStart, reqEnd, (IReadOnlyList<WorkMinutes.SentBreak>)req.Breaks) });
+            if (_vb.Error != null) return Fail(_vb.Error);
+            var _actBreaks = _vb.Rows[0];
             var notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
             if (notes != null && notes.Length > ActivityNotesMax)
                 return Fail($"Ghi chú dài quá {ActivityNotesMax} ký tự.");
@@ -1020,7 +1086,7 @@ namespace MES.Web.Services
             }
 
             // Trùng giờ với dòng WTS / việc khác của chính người này (chạm mép không tính)
-            var s0 = req.StartTime; var e0 = req.EndTime;
+            var s0 = reqStart; var e0 = reqEnd;
             var prodHit = await _db.WtsProductionLogs.AsNoTracking()
                 .Where(w => w.WorkerId == req.UserId && !w.IsVoided && w.StartTime < e0 && w.EndTime > s0)
                 .OrderBy(w => w.StartTime)
@@ -1053,9 +1119,9 @@ namespace MES.Web.Services
             var log = new WorkerActivityLog
             {
                 WorkerId          = req.UserId,
-                WorkDate          = DateOnly.FromDateTime(req.StartTime),
-                StartTime         = req.StartTime,
-                EndTime           = req.EndTime,
+                WorkDate          = DateOnly.FromDateTime(reqStart),
+                StartTime         = reqStart,
+                EndTime           = reqEnd,
                 WtsCode           = task.TaskCode.Trim(),
                 WtsName           = task.TaskName.Length > 250 ? task.TaskName[..250] : task.TaskName,
                 Notes             = notes,
@@ -1068,6 +1134,11 @@ namespace MES.Web.Services
             {
                 _db.WorkerActivityLogs.Add(log);
                 await _db.SaveChangesAsync();
+                if (_actBreaks.Count > 0)   // [ML17-XN][CA-NGHI-HIST] giờ nghỉ lúc lưu + phút làm thông, cùng giao dịch
+                {
+                    _db.WtsBreakWorkLogs.AddRange(WorkMinutes.ToEntities(_actBreaks, null, log.ActivityLogId));
+                    await _db.SaveChangesAsync();
+                }
                 if (req.ActivityLogId != null)
                 {
                     // dòng cũ (Loại 2 bản trước) có mục phát sinh → chép sang dòng mới (dòng cũ đã huỷ, không mất dữ liệu)

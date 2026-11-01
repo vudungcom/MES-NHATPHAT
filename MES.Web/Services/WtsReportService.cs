@@ -86,6 +86,11 @@ public class WtsReportService
               .ToDictionary(x => x.KhPlanDetailId, x => (x.PurchaseOrder ?? "", x.PartNo ?? ""));
         var actCaseLbl = await NgCaseService.GetCaseLabelsAsync(_db, actLogs.Select(a => a.NgCaseId));
 
+        // [ML17-XN][CA-NGHI-HIST 2026-11-01] Khoảng nghỉ ĐÃ LƯU của từng dòng (giờ nghỉ ca lúc lưu + phút làm thông nghỉ) —
+        //   phút dòng tính bằng WorkMinutes (cùng hàm trang WTS). Trước: Minutes = giờ thô (End − Start), không trừ nghỉ.
+        var brkW = await WorkMinutesStore.ForWtsAsync(_db, prodLogs.Select(x => x.WtsLogId));
+        var brkA = await WorkMinutesStore.ForActivityAsync(_db, actLogs.Select(x => x.ActivityLogId));
+
         // ── 4. Gộp thành WtsReportRow ─────────────────────────────────────
         var rows = new List<WtsReportRow>();
         // [DS-LOI-LIVE 2026-10-28] dòng NG có mã vụ → tên loại lỗi hiện tại (DS Lỗi)
@@ -93,7 +98,8 @@ public class WtsReportService
 
         foreach (var p in prodLogs)
         {
-            var minutes = (int)Math.Round((p.EndTime - p.StartTime).TotalMinutes);
+            var pBrk = WorkMinutesStore.Get(brkW, p.WtsLogId);
+            var pm = WorkMinutes.Line(p.StartTime, p.EndTime, pBrk);   // [ML17-XN]
             rows.Add(new WtsReportRow
             {
                 WorkDate        = DateOnly.FromDateTime(p.StartTime),
@@ -101,7 +107,11 @@ public class WtsReportService
                 WorkerName      = p.Worker?.FullName ?? "?",
                 StartTime       = p.StartTime,
                 EndTime         = p.EndTime,
-                Minutes         = minutes,
+                Minutes         = pm.Work,        // [ML17-XN] phút LÀM (đã trừ nghỉ, cộng làm thông nghỉ) — câu (b) Hùng 01/11
+                RawMinutes      = pm.Raw,
+                BreakWorkedMin  = pm.Worked,
+                BreakDeductMin  = pm.Deducted,
+                Breaks          = pBrk.ToList(),
                 PurchaseOrder   = p.KhPlanDetail?.PurchaseOrder ?? "",
                 PartNo          = p.KhPlanDetail?.PartNo ?? "",
                 NC              = p.NC ?? "",
@@ -122,7 +132,8 @@ public class WtsReportService
 
         foreach (var a in actLogs)
         {
-            var minutes = (int)Math.Round((a.EndTime - a.StartTime).TotalMinutes);
+            var aBrk = WorkMinutesStore.Get(brkA, a.ActivityLogId);
+            var am = WorkMinutes.Line(a.StartTime, a.EndTime, aBrk);   // [ML17-XN]
             var isProductive = true;
             if (a.WtsCode != null && wtsLookup.TryGetValue(a.WtsCode, out var task))
                 isProductive = task.IsProductiveTask;
@@ -135,7 +146,11 @@ public class WtsReportService
                 WorkerName      = a.Worker?.FullName ?? "?",
                 StartTime       = a.StartTime,
                 EndTime         = a.EndTime,
-                Minutes         = minutes,
+                Minutes         = am.Work,        // [ML17-XN] phút làm
+                RawMinutes      = am.Raw,
+                BreakWorkedMin  = am.Worked,
+                BreakDeductMin  = am.Deducted,
+                Breaks          = aBrk.ToList(),
                 PurchaseOrder   = refPo.Item1,   // [ML16-ACT] PO tham chiếu (giờ sửa) — "" = việc chung
                 PartNo          = refPo.Item2,
                 NgReason        = a.NgCaseId != null
@@ -157,8 +172,17 @@ public class WtsReportService
         rows = rows.OrderBy(r => r.WorkDate).ThenBy(r => r.WorkerName).ThenBy(r => r.StartTime).ToList();
 
         // ── 5. Summary cards ──────────────────────────────────────────────
-        var totalMin      = rows.Sum(r => r.Minutes);
-        var productiveMin = rows.Where(r => r.IsProductiveTask).Sum(r => r.Minutes);
+        // [ML17-XN 2026-11-01] Câu (b) Hùng chốt: % hiệu suất theo PHÚT LÀM (trước: phút thô, khác cột Phút trang WTS).
+        //   Gộp theo người-ngày như "Tổng hôm nay" của trang WTS (WorkMinutes.Day): giờ chồng nhau (GC đứng 2 máy) chỉ tính 1 lần
+        //   (trước: cộng 2 lần). Phút có ích = phút làm phủ bởi dòng có ích (phút có cả dòng có ích lẫn vô ích phủ → có ích).
+        int totalMin = 0, productiveMin = 0, rawMin = 0, workedMin = 0;
+        foreach (var g in rows.GroupBy(r => (r.WorkerId, r.WorkDate)))
+        {
+            var all = WorkMinutes.Day(g.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+            var pro = WorkMinutes.Day(g.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+            totalMin += all.Work; rawMin += all.Raw; workedMin += all.Worked;
+            productiveMin += Math.Min(pro.Work, all.Work);
+        }
         var wasteMin      = totalMin - productiveMin;
 
         return new WtsReportResult
@@ -167,6 +191,8 @@ public class WtsReportService
             TotalMinutes  = totalMin,
             ProductiveMin = productiveMin,
             WasteMin      = wasteMin,
+            RawMinutes    = rawMin,
+            BreakWorkedMinutes = workedMin,
         };
     }
 
@@ -243,6 +269,11 @@ public class WtsReportRow
     public decimal?  QtyNg            { get; set; }
     public string?   NgReason         { get; set; }
     public string    Notes            { get; set; } = "";
+    // [ML17-XN 2026-11-01] Minutes = phút LÀM; Thô = Thường + Thông + Trừ (cùng WorkMinutes.Line trang WTS)
+    public int       RawMinutes       { get; set; }
+    public int       BreakWorkedMin   { get; set; }  // phút làm thông nghỉ
+    public int       BreakDeductMin   { get; set; }  // phút nghỉ bị trừ
+    public List<LineBreak> Breaks     { get; set; } = new();   // giờ nghỉ chép lúc lưu
     public int?      ExtraMinutes     { get; set; }  // T.Phát sinh (phút)
     public bool      IsOvertime       { get; set; }  // Tăng ca
     public bool      IsProductiveTask { get; set; }
@@ -257,7 +288,22 @@ public class WtsReportResult
     public int                TotalMinutes  { get; set; }
     public int                ProductiveMin { get; set; }
     public int                WasteMin      { get; set; }
+    /// <summary>[ML17-XN] Giờ thô gộp người-ngày + phút làm thông nghỉ gộp (TotalMinutes = phút làm).</summary>
+    public int                RawMinutes    { get; set; }
+    public int                BreakWorkedMinutes { get; set; }
     public double EfficiencyPct => TotalMinutes == 0 ? 0 : Math.Round((double)ProductiveMin / TotalMinutes * 100, 1);
+
+    /// <summary>[ML17-XN 2026-11-01] Phút làm thông nghỉ theo ngày · người · khoảng nghỉ · PO (mỗi dòng WTS / việc × khoảng nghỉ có làm).</summary>
+    public List<(DateOnly Day, string Worker, string Break, string Po, string Code, int Minutes)> BreakWorkRows => Rows
+        .SelectMany(r => r.Breaks.Where(b => b.WorkedMin > 0).Select(b => new
+        {
+            Day = r.WorkDate, Worker = r.WorkerName, Break = b.Label, Po = r.PurchaseOrder,
+            Code = string.IsNullOrEmpty(r.NC) ? r.WtsCode : r.NC, Min = b.WorkedMin,
+        }))
+        .GroupBy(x => (x.Day, x.Worker, x.Break, x.Po, x.Code))
+        .Select(g => (g.Key.Day, g.Key.Worker, g.Key.Break, g.Key.Po, g.Key.Code, g.Sum(x => x.Min)))
+        .OrderBy(x => x.Day).ThenBy(x => x.Worker).ThenBy(x => x.Break)
+        .ToList();
 
     /// <summary>[ML16-ACT 2026-10-30] Master list 11: cộng giờ "Việc không ra sản phẩm" có ghi PO (giờ sửa hàng) theo từng PO.</summary>
     public List<(string Po, string Part, int Minutes, int Lines, int Cases)> RepairByPo => Rows
