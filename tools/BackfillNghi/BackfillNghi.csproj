@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- [ML17-XN][CA-NGHI-HIST 2026-11-01] Chép bù giờ nghỉ cho dòng WTS / việc không ra SP cũ vào WtsBreakWorkLogs.
-       Mặc định CHỈ ĐỌC (in số dòng). Ghi thật: dotnet run -c Release -- --ghi  rồi gõ đúng tên DB. Xem README.md -->
+       Mặc định CHỈ ĐỌC (in số dòng). Ghi thật: thêm tham số ghi (xem README.md) rồi gõ đúng tên DB.
+       (Chú thích XML không được chứa 2 dấu gạch liền nhau.) -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
