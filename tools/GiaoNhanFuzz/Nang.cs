@@ -3,7 +3,8 @@
 // kết quả từng lượt ghi vào thư mục nang_ketqua\ để gửi lại khi có SAI.
 //
 //   dotnet bin2\GiaoNhanFuzz.dll nang [số PO mỗi lượt = 60] [thao tác mỗi PO = 120] [seed đầu = 1]
-//   set SONG_SONG=2   → số lượt chạy cùng lúc (mặc định: số nhân máy − 1)
+//   set SONG_SONG=2   → số tiến trình chạy cùng lúc (mặc định: số nhân máy − 1)
+//   set KHUC=10       → số PO mỗi khúc (mặc định tự tính ≈ 4 khúc / nhân) [KIEM-NHAN]
 using System.Diagnostics;
 using System.Text;
 
@@ -34,67 +35,106 @@ public static class Nang
         var dir   = Path.Combine(Environment.CurrentDirectory, "nang_ketqua");
         Directory.CreateDirectory(dir);
 
-        Console.WriteLine($"KIỂM NẶNG: kịch bản kh + loi + vu + chuoi + wts + quyen + iso + quet, rồi {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · chạy cùng lúc {par} lượt");
-        Console.WriteLine($"Kết quả từng lượt: {dir}");
+        // [KIEM-NHAN 2026-11-01] Tận dụng hết nhân máy: mỗi lượt (1 seed) chia thành nhiều "khúc" PO liên tiếp, mỗi khúc 1 tiến trình
+        //   (tham số thứ 4 = PO bắt đầu). Mỗi PO tự có Random(seed*100000 + po) + DB riêng → chia khúc chạy ĐÚNG Y NHỮNG PO / thao tác
+        //   như chạy liền 1 tiến trình (cùng phép kiểm, chỉ nhanh hơn). Trước: 10 lượt = 10 tiến trình → máy 20 nhân chỉ dùng 10,
+        //   thời gian = lượt chậm nhất (~9 phút). 8 kịch bản cố định cũng chạy song song trong cùng hàng đợi.
+        //   KHUC = số PO mỗi khúc (mặc định tự tính để có ≈ 4 khúc / nhân).
+        int khuc = int.TryParse(Environment.GetEnvironmentVariable("KHUC"), out var kq) && kq > 0 ? kq
+                 : Math.Max(1, (int)Math.Ceiling(po * Configs.Length / (double)(par * 4)));
+        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet" };   // [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
+        Console.WriteLine($"KIỂM NẶNG: {scens.Length} kịch bản + {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · {Environment.ProcessorCount} nhân · chạy cùng lúc {par} tiến trình · mỗi khúc {khuc} PO");
+        Console.WriteLine($"Kết quả từng khúc: {dir}");
         var sw = Stopwatch.StartNew();
-        var results = new List<(string Name, int Seed, int Sai, string Checks, double Sec, string File)>();
         int totalSai = 0;
-
-        // 1. Kịch bản cố định (chạy trước, tuần tự)
-        foreach (var sc in new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet" })   // [RA-SOCHUNG] + kịch bản quet (công cụ quét DB)   // [RS-C1][RS-C2] + kịch bản quyền máy chủ / danh mục   // [WTS-SVC] + kịch bản WTS service   // [VULOI] + kịch bản vụ lỗi; [CHUOI] + đi đủ chuỗi
-        {
-            var (code, outFile, _) = await RunChild(dll, sc, Array.Empty<(string, string)>(), Path.Combine(dir, $"kichban_{sc}.txt"));
-            var txt = File.ReadAllText(outFile);
-            var dat = txt.Contains("KẾT QUẢ: ĐẠT hết");
-            Console.WriteLine($"  {(dat ? "ĐẠT" : code == -999 ? "TREO" : "SAI")}  kịch bản {sc}" + (dat ? "" : $" → xem {outFile}"));   // [KIEM-TREO]
-            if (!dat) totalSai++;
-        }
-
-        // 2. Lượt ngẫu nhiên, song song
-        var sem = new SemaphoreSlim(par);
         var lockObj = new object();
-        int done = 0;
-        var tasks = Configs.Select((c, i) => Task.Run(async () =>
+        double cpuSum = 0, wallSum = 0;
+
+        // Hàng đợi việc: kịch bản (nhẹ, cần báo sớm) + khúc của các lượt, lượt hàng lỗi (nặng hơn) trước
+        var jobs = new List<(int Cfg, string Args, string File, (string K, string V)[] Env, string Scen)>();
+        foreach (var sc in scens) jobs.Add((-1, sc, Path.Combine(dir, $"kichban_{sc}.txt"), Array.Empty<(string, string)>(), sc));
+        var cfgOrder = Enumerable.Range(0, Configs.Length).OrderByDescending(i => Configs[i].Env.Any(e => e.K == "LOI")).ToList();
+        foreach (var i in cfgOrder)
+        {
+            var c = Configs[i]; var seed = seed0 + i;
+            foreach (var f in Directory.GetFiles(dir, $"{c.Name}_seed{seed}*.txt")) { try { File.Delete(f); } catch { } }
+            for (int st = 0; st < po; st += khuc)
+            {
+                int n = Math.Min(khuc, po - st);
+                jobs.Add((i, $"{n} {ops} {seed} {st}", Path.Combine(dir, $"{c.Name}_seed{seed}_po{st}-{st + n - 1}.txt"), c.Env, ""));
+            }
+        }
+        var left   = Configs.Select((c, i) => jobs.Count(j => j.Cfg == i)).ToArray();
+        var cfgSai = new int[Configs.Length]; var cfgChecks = new long[Configs.Length]; var cfgBad = new bool[Configs.Length]; var cfgTreo = new bool[Configs.Length];
+        var cfgCpu = new double[Configs.Length]; var cfgFiles = Configs.Select(_ => new List<string>()).ToArray();
+        int cfgDone = 0;
+
+        var sem = new SemaphoreSlim(par);
+        var tasks = jobs.Select(j => Task.Run(async () =>
         {
             await sem.WaitAsync();
             try
             {
-                var seed = seed0 + i;
-                var file = Path.Combine(dir, $"{c.Name}_seed{seed}.txt");
-                var (code, outFile, sec) = await RunChild(dll, $"{po} {ops} {seed}", c.Env, file);
+                var (code, outFile, sec, cpu) = await RunChild(dll, j.Args, j.Env, j.File);
+                lock (lockObj) { cpuSum += cpu; wallSum += sec; }
+                if (j.Cfg < 0)
+                {
+                    var dat = File.ReadAllText(outFile).Contains("KẾT QUẢ: ĐẠT hết");
+                    lock (lockObj)
+                    {
+                        Console.WriteLine($"  {(dat ? "ĐẠT" : code == -999 ? "TREO" : "SAI")}  kịch bản {j.Scen} · {sec:0} giây" + (dat ? "" : $" → xem {outFile}"));   // [KIEM-TREO]
+                        if (!dat) totalSai++;
+                    }
+                    return;
+                }
                 var lines = File.ReadAllLines(outFile);
                 var saiLine = lines.LastOrDefault(l => l.StartsWith("SAI:"));
                 var sai = saiLine != null && int.TryParse(saiLine.Substring(4).Trim(), out var n) ? n : -1;   // -1 = không chạy xong
-                var checks = lines.LastOrDefault(l => l.StartsWith("Phép kiểm:"))?.Substring(10).Trim() ?? "?";
+                long.TryParse(lines.LastOrDefault(l => l.StartsWith("Phép kiểm:"))?.Substring(10).Trim(), out var chk);
                 lock (lockObj)
                 {
-                    done++;
-                    results.Add((c.Name, seed, sai, checks, sec, outFile));
-                    if (sai != 0) totalSai += sai < 0 ? 1 : sai;
-                    var env = c.Env.Length == 0 ? "" : " (" + string.Join(" ", c.Env.Select(e => $"{e.K}={e.V}")) + ")";
-                    Console.WriteLine($"  {(sai == 0 ? "ĐẠT" : code == -999 ? "TREO" : "SAI")}  [{done}/{Configs.Length}] {c.Name}{env} · seed {seed} · {checks} phép kiểm · SAI {(code == -999 ? "?(TREO — quá giờ, đã tự tắt)" : sai < 0 ? "?(dừng giữa chừng)" : sai.ToString())} · {sec:0} giây"
-                                      + (sai == 0 ? "" : $" → xem {outFile}"));
+                    var i = j.Cfg;
+                    if (sai > 0) cfgSai[i] += sai;
+                    if (sai < 0) cfgBad[i] = true;
+                    if (code == -999) cfgTreo[i] = true;
+                    if (sai != 0) cfgFiles[i].Add(outFile);
+                    cfgChecks[i] += chk; cfgCpu[i] += cpu;
+                    if (--left[i] == 0)
+                    {
+                        cfgDone++;
+                        var c = Configs[i];
+                        bool ok = cfgSai[i] == 0 && !cfgBad[i];
+                        if (!ok) totalSai += cfgSai[i] + (cfgBad[i] ? 1 : 0);
+                        var env = c.Env.Length == 0 ? "" : " (" + string.Join(" ", c.Env.Select(e => $"{e.K}={e.V}")) + ")";
+                        Console.WriteLine($"  {(ok ? "ĐẠT" : cfgTreo[i] ? "TREO" : "SAI")}  [{cfgDone}/{Configs.Length}] {c.Name}{env} · seed {seed0 + i} · {cfgChecks[i]} phép kiểm · SAI {(cfgTreo[i] ? "?(TREO — khúc quá giờ, đã tự tắt)" : cfgBad[i] ? "?(dừng giữa chừng)" : cfgSai[i].ToString())} · CPU {cfgCpu[i]:0} giây · xong lúc {sw.Elapsed.TotalSeconds:0} giây"
+                                          + (ok ? "" : " → xem " + string.Join(" ; ", cfgFiles[i])));
+                    }
                 }
             }
             finally { sem.Release(); }
         })).ToList();
 
-        // Báo còn chạy ~30 giây một lần
-        while (!Task.WhenAll(tasks).IsCompleted)
+        var all = Task.WhenAll(tasks);
+        while (!all.IsCompleted)
         {
-            await Task.WhenAny(Task.WhenAll(tasks), Task.Delay(30000));
-            if (!Task.WhenAll(tasks).IsCompleted)
-                lock (lockObj) Console.WriteLine($"  … đang chạy · xong {done}/{Configs.Length} lượt · {sw.Elapsed.TotalSeconds:0} giây");
+            await Task.WhenAny(all, Task.Delay(30000));
+            if (!all.IsCompleted)
+                lock (lockObj) Console.WriteLine($"  … đang chạy · xong {cfgDone}/{Configs.Length} lượt · {sw.Elapsed.TotalSeconds:0} giây");
         }
 
         Console.WriteLine();
-        Console.WriteLine($"TỔNG: {Configs.Length} lượt × {po} PO × {ops} thao tác + 4 kịch bản · {sw.Elapsed.TotalMinutes:0.0} phút");
+        // [KIEM-NHAN] đo để biết chậm vì đâu (không đoán): CPU / thực mỗi tiến trình ≈ 1 = được chạy đủ; thấp = máy đang bận việc khác
+        var wall = sw.Elapsed.TotalSeconds;
+        var ratio = wallSum > 0 ? cpuSum / wallSum : 0;
+        Console.WriteLine($"ĐO MÁY: tổng CPU {cpuSum / 60:0.0} phút · thực {wall / 60:0.0} phút · dùng trung bình {cpuSum / Math.Max(1, wall):0.0} / {Environment.ProcessorCount} nhân · mỗi tiến trình được CPU {ratio:P0} thời gian"
+                          + (ratio < 0.75 ? " → MÁY ĐANG BẬN VIỆC KHÁC (tiến trình phải chờ CPU), thời gian lần này không so được" : ""));
+        Console.WriteLine($"TỔNG: {Configs.Length} lượt × {po} PO × {ops} thao tác + {scens.Length} kịch bản · {wall / 60:0.0} phút");
         Console.WriteLine(totalSai == 0 ? "SAI: 0" : $"SAI: {totalSai} — gửi lại các file ghi 'SAI' ở trên");
         return totalSai == 0 ? 0 : 1;
     }
 
     static readonly object TreoLock = new();   // [KIEM-TREO]
-    static async Task<(int Code, string File, double Sec)> RunChild(string dll, string args, (string K, string V)[] env, string outFile)
+    static async Task<(int Code, string File, double Sec, double Cpu)> RunChild(string dll, string args, (string K, string V)[] env, string outFile)
     {
         var psi = new ProcessStartInfo("dotnet", $"\"{dll}\" {args}")
         {
@@ -134,6 +174,9 @@ public static class Nang
             catch { }
         }
         await File.WriteAllTextAsync(outFile, $"lệnh: GiaoNhanFuzz.dll {args} {envTxt}\n" + text, Encoding.UTF8);
-        return (treo ? -999 : proc.ExitCode, outFile, sw.Elapsed.TotalSeconds);
+        double cpu = 0;   // [KIEM-NHAN] tiến trình con tự in "CPU tiến trình: x" lúc thoát (đã thoát thì không đọc TotalProcessorTime được)
+        var cpuLine = text.Split('\n').LastOrDefault(l => l.StartsWith("CPU tiến trình:"));
+        if (cpuLine != null) double.TryParse(cpuLine.Substring(15).Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out cpu);
+        return (treo ? -999 : proc.ExitCode, outFile, sw.Elapsed.TotalSeconds, cpu);
     }
 }

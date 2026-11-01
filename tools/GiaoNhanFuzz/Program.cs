@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 
 // [FUZZ-UX] 27/10/2026: tự hiện tiếng Việt ở mọi cửa sổ cmd / VS, không cần gõ chcp 65001
 Console.OutputEncoding = System.Text.Encoding.UTF8;
+// [KIEM-NHAN 2026-11-01] cuối mỗi tiến trình in giây CPU đã dùng — lệnh nang so CPU / thời gian thực để biết máy có bận việc khác không
+AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Console.WriteLine($"CPU tiến trình: {System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}"); } catch { } };
 
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }

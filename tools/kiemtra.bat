@@ -33,6 +33,13 @@ set "OPS=60"
 echo KIEM TRA %date% %time%  ^|  nang %PO% PO x %OPS% thao tac, seed %SEED%  ^|  %NUMBER_OF_PROCESSORS% nhan > "%OUT%"
 git -C "%~dp0.." log --oneline -1 >> "%OUT%" 2>nul
 
+rem [KIEM-NHAN 2026-11-01] chup tai may truoc khi chay: CPU dang dung + 6 tien trinh an CPU nhat (de biet cham vi may ban viec khac)
+powershell -NoProfile -Command "$c=(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average; 'May truoc khi chay: CPU dang dung ' + $c + '%%'; Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $_.Name -notin '_Total','Idle' } | Sort-Object PercentProcessorTime -Descending | Select-Object -First 6 | ForEach-Object { '  ' + $_.Name + ' ' + [math]::Round($_.PercentProcessorTime / $env:NUMBER_OF_PROCESSORS) + '%%' }" >> "%OUT%" 2>&1
+rem [KIEM-NHAN] ten CPU + so nhan THAT (vat ly) / luong. Mac dinh chay cung luc = so nhan that (do 01/11 13:30: 19 tien trinh tren 20 luong CHAM hon 10)
+for /f %%c in ('powershell -NoProfile -Command "Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum | Select-Object -ExpandProperty Sum"') do set NHAN_THAT=%%c
+powershell -NoProfile -Command "Get-CimInstance Win32_Processor | ForEach-Object { 'CPU: ' + $_.Name + ' | nhan that ' + $_.NumberOfCores + ' | luong ' + $_.NumberOfLogicalProcessors + ' | xung toi da ' + $_.MaxClockSpeed + ' MHz' }; $m=Get-CimInstance Win32_OperatingSystem; 'RAM trong: ' + [math]::Round($m.FreePhysicalMemory/1MB,1) + ' / ' + [math]::Round($m.TotalVisibleMemorySize/1MB,1) + ' GB'" >> "%OUT%" 2>&1
+if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set "SONG_SONG=%NHAN_THAT%"
+echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; mac dinh = so nhan that %NHAN_THAT%)>> "%OUT%"
 echo [1/2] Bien dich bo kiem...
 dotnet build GiaoNhanFuzz.csproj -c Release -o bin2 -v q -nologo >> "%OUT%" 2>&1
 if errorlevel 1 ( echo BIEN DICH LOI - xem %OUT% & echo KET QUA: BIEN DICH LOI>> "%OUT%" & exit /b 2 )
