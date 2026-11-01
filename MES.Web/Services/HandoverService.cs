@@ -1572,7 +1572,8 @@ namespace MES.Web.Services
             for (int depth = 0; e != null && depth < 10; e = e.InnerException, depth++)
             {
                 var p = e.GetType().GetProperty("Number");
-                if (p != null && p.PropertyType == typeof(int) && (int)p.GetValue(e)! == 1205) return true;
+                if (p != null && p.PropertyType == typeof(int)
+                    && ((int)p.GetValue(e)! == 1205 || (int)p.GetValue(e)! == PoGuard.ApplockDeadlockNumber)) return true;   // [RS-D10c] + sp_getapplock −3
             }
             return false;
         }
@@ -1741,12 +1742,15 @@ namespace MES.Web.Services
         //   Khoá "MES_PO_<id>" trùng tên với khoá trang WTS (HieuSuat_Index) → WTS và Giao nhận của cùng 1 PO
         //   không ghi chen nhau. LockOwner = Transaction: tự nhả khi Commit / Rollback.
         // ----------------------------------------------------------------
+        // [RS-D10c 2026-10-31] −3 (khoá bị chọn làm nạn nhân deadlock) ném lỗi 51205 → RetryDeadlockAsync tự thử lại như 1205
+        //   (mọi nơi gọi LockPoAsync đều nằm trong 7 hàm *OnceAsync có vòng thử lại). Trước: báo "PO đang có người khác lưu".
         private async Task<string?> LockPoAsync(int khPlanDetailId)
         {
             try
             {
                 await _db.Database.ExecuteSqlRawAsync(
                     "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
+                    PoGuard.ApplockDeadlockSql +   // [RS-D10c]
                     "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
                     "MES_PO_" + khPlanDetailId);
                 // [B1-STALE 2026-10-28] Có khoá rồi mới đọc số: bỏ mọi phiếu / lần nhận EF đang giữ trong bộ nhớ trang (DbContext sống suốt phiên).

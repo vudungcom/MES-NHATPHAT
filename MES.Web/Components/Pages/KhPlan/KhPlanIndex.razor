@@ -686,7 +686,10 @@ else
                     r.PartNo.ToLowerInvariant().Contains(s) ||
                     r.CustomerName.ToLowerInvariant().Contains(s) ||
                     r.PlanNo.ToLowerInvariant().Contains(s) ||
-                    (r.OrderVL ?? "").ToLowerInvariant().Contains(s));
+                    (r.OrderVL ?? "").ToLowerInvariant().Contains(s) ||
+                    (r.KhoOrderVL ?? "").ToLowerInvariant().Contains(s) ||   // [RS-E5] cột Order VL / Vị trí hiện số của Quản lý Kho → tìm cả nguồn đó
+                    (r.KhoViTri ?? "").ToLowerInvariant().Contains(s) ||
+                    (r.Location ?? "").ToLowerInvariant().Contains(s));
             }
 
             if (!string.IsNullOrEmpty(_statusFilter))

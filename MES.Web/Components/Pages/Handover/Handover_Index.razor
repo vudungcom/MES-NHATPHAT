@@ -191,6 +191,15 @@ else
         </div>
     }
 
+    @if (!string.IsNullOrEmpty(_pageError))   @* [PAGE-ERR2 2026-10-31] lỗi khi tải lại SAU khi đã lưu (cửa sổ đã đóng) *@
+    {
+        <div class="alert alert-warning py-2 small mb-2 d-flex align-items-start gap-2">
+            <i class="bi bi-exclamation-triangle mt-1"></i>
+            <div class="flex-grow-1" style="white-space:pre-line">@_pageError</div>
+            <button type="button" class="btn-close btn-sm" title="Đóng" @onclick="ClearPageError"></button>
+        </div>
+    }
+
     <div class="gn-scroll border rounded" @onclick="CloseColFilter">   @* [GN-FREEZE] trước: table-responsive (thanh cuộn ngang ở cuối bảng) *@
         <table class="table table-sm table-hover mb-0 align-middle gn-table" style="font-size:11px">
             <thead>
@@ -924,6 +933,7 @@ else
                 <button class="btn-close btn-sm" @onclick="CloseModals"></button>
             </div>
             <div class="mes-modal-body" style="overflow-y:auto;flex:1;padding:0">
+                @PageErrorBanner()   @* [PAGE-ERR2] *@
                 <div class="p-3 border-bottom">
                     <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào nhóm</label>
                     @if (_myEditGroups.Count == 1)
@@ -1119,6 +1129,7 @@ else
                 <button class="btn-close btn-sm" @onclick="CloseModals"></button>
             </div>
             <div class="mes-modal-body p-0">
+                @PageErrorBanner()   @* [PAGE-ERR2] *@
                 @if (!_logItems.Any() && !_ngLogs.Any())
                 {
                     <p class="text-muted text-center py-4">Chưa có lịch sử giao nhận.</p>
@@ -2293,7 +2304,7 @@ else
         _saving = false;
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
-        await ReloadRowAsync(detailId);
+        await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));   // [PAGE-ERR2] đã lưu: lỗi tải lại báo ở trang (trước: rơi vào cửa sổ vừa đóng)
         }
         catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
         finally { _saving = false; }
@@ -2301,6 +2312,34 @@ else
 
     // [PAGE-ERR 2026-10-31] Lỗi máy chủ lạ khi Giao / Nhận / Huỷ / Báo lỗi (lời báo nghiệp vụ đã trả qua (ok, err); deadlock đã tự thử lại [RS-D10]):
     //   hiện trong cửa sổ + bỏ dữ liệu dở khỏi DbContext dùng chung (để lần lưu sau không ghi kèm). Trước: không bắt → hỏng phiên trang, phải F5.
+    // [PAGE-ERR2 2026-10-31] Lưu / nhận / huỷ ĐÃ ghi xong, chỉ bước tải lại số lỗi: trước rơi vào ServerErr ("…xem đã lưu chưa")
+    //   và nhiều khi cửa sổ đã đóng nên không ai thấy. Nay báo rõ "Đã lưu" ở đầu trang (và trong cửa sổ nếu còn mở),
+    //   dặn không bấm lưu lại (tránh ghi 2 lần). Số trên trang tự tính lại sau 2 phút / F5.
+    string _pageError = "";
+    void ClearPageError() => _pageError = "";
+
+    // Cửa sổ Nhận / Lịch sử vẫn mở sau khi lưu (lời báo đầu trang nằm dưới lớp phủ) → hiện thêm trong 2 cửa sổ đó.
+    private RenderFragment PageErrorBanner() => __builder =>
+    {
+        if (!string.IsNullOrEmpty(_pageError))
+        {
+            <div class="alert alert-warning py-1 px-2 small m-2" style="white-space:pre-line">@_pageError</div>
+        }
+    };
+
+    async Task ReloadAfterSaveAsync(Func<Task> reload)
+    {
+        try { await reload(); _pageError = ""; }   // lần lưu sau tải lại được → bỏ lời báo cũ
+        catch (Exception ex)
+        {
+            Db.ChangeTracker.Clear();
+            var msg = "Đã lưu xong. Chỉ phần tải lại số trên màn hình bị lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message)
+                    + " — bấm F5 để xem số mới (trang cũng tự tính lại sau 2 phút). Không bấm lưu lại (sẽ thành 2 lần).";
+            _pageError = msg;
+            _modalError = msg;
+        }
+    }
+
     string ServerErr(Exception ex)
     {
         Db.ChangeTracker.Clear();
@@ -2389,7 +2428,7 @@ else
         _saving = false;
         if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
         CloseModals();
-        await ReloadRowAsync(detailId);
+        await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));   // [PAGE-ERR2] đã lưu: lỗi tải lại báo ở trang (trước: rơi vào cửa sổ vừa đóng)
         }
         catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
         finally { _saving = false; }
@@ -2472,8 +2511,11 @@ else
         if (_selectedRow != null)
         {
             var id = _selectedRow.KhPlanDetailId;
-            _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(id, _receiveToGroup);
-            await ReloadRowAsync(id);
+            await ReloadAfterSaveAsync(async () =>   // [PAGE-ERR2] đã nhận xong: lỗi tải lại không báo "xem đã lưu chưa"
+            {
+                _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(id, _receiveToGroup);
+                await ReloadRowAsync(id);
+            });
         }
         }
         catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
@@ -2600,9 +2642,12 @@ else
         _voidingReceiveId = 0;
         _modalError      = "";
         _voidingNgId     = 0;   // [GN-NG-AFTER]
-        _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
-        _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
-        await ReloadRowAsync(_logDetailId);
+        await ReloadAfterSaveAsync(async () =>   // [PAGE-ERR2] đã huỷ xong: lỗi tải lại báo ở đầu trang + trong cửa sổ Lịch sử (PageErrorBanner)
+        {
+            _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
+            _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
+            await ReloadRowAsync(_logDetailId);
+        });
         }
         catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
         finally { _saving = false; }

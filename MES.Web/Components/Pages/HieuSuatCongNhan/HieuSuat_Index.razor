@@ -417,50 +417,125 @@ else
 
             @* ── Dòng đã lưu (saved rows từ DB) ── *@
 
+            @* [WTS-SAVED-LAYOUT 2026-10-31] Khách: dòng đã lưu hiện khác form lúc nhập, bị cắt cột → nay cùng thứ tự cột với form nhập
+
+               (Số PO · Part No · NC + Máy SD / Nhóm nhỏ + Mã CV · Số lượng OK NG SL PO Lý do NG · Thời gian · phút/sp · PS).
+
+               Chỉ hiển thị đúng số ĐÃ LƯU trong dòng WTS (không tính lại): cột "Dự kiến" của form thay bằng "Phút" (phút trừ nghỉ ca,
+
+               [ML17-NET]); T.Chuẩn không ghi trên dòng WTS nên không hiện (tra lại snapshot hiện tại có thể khác lúc lưu).
+
+               Trước: dòng Tăng ca (IsOvertime, dữ liệu trước 2026-09) bị lọc mất khỏi bảng → nay hiện kèm nhãn "TC". *@
+
             @if (_rows.Any(r => r.Saved))
 
             {
 
                 <div class="table-responsive mb-2">
 
-                    <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.8rem;">
+                    <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.78rem;min-width:900px">
 
                         <thead class="table-light">
 
                             <tr>
 
-                                <th style="width:28px" class="text-center"></th>
+                                <th rowspan="2" style="width:26px" class="text-center"></th>
 
-                                <th style="width:70px" class="text-center">Ca</th>
+                                <th rowspan="2" style="width:60px" class="text-center">Ca</th>
 
-                                <th style="width:75px" class="text-center">Bắt đầu</th>
+                                <th rowspan="2" style="width:120px">Số PO</th>
 
-                                <th style="width:75px" class="text-center">Kết thúc</th>
+                                <th rowspan="2" style="width:100px">Part No</th>
 
-                                <th style="width:45px" class="text-center">Phút</th>
+                                @if (IsGcGroup)
 
-                                <th style="width:110px">Số KH / PO</th>
+                                {
 
-                                <th style="width:100px">Part No</th>
+                                    <th rowspan="2" style="width:55px" class="text-center">NC</th>
 
-                                @* [FIX-NONGC-NC] Tiêu đề theo nhóm đăng nhập: GC = "NC", HTSP/KCS/PKG = "Mã CV" *@
-                                <th style="width:50px" class="text-center">@NcColumnTitle</th>
+                                    <th rowspan="2" style="width:65px" class="text-center">Máy SD</th>
 
-                                <th style="width:65px" class="text-center">Máy</th>
+                                }
 
-                                <th style="width:52px" class="text-success text-center">OK</th>
+                                else
 
-                                <th style="width:52px" class="text-danger text-center">NG</th>
+                                {
+
+                                    @if (IsHtspGroup)
+
+                                    {
+
+                                        <th rowspan="2" style="width:70px">Nhóm nhỏ</th>
+
+                                    }
+
+                                    <th rowspan="2" style="width:90px">Mã CV</th>
+
+                                }
+
+                                <th colspan="4" class="text-center" style="background:#f8f9fa;font-size:10px">Số lượng</th>
+
+                                <th colspan="3" class="text-center" style="background:#f8f9fa;font-size:10px">Thời gian</th>
+
+                                @if (IsGcGroup)
+
+                                {
+
+                                    <th colspan="3" class="text-center" style="background:#e6f1fb;font-size:10px;color:#185fa5">Hàng loạt — phút/sp</th>
+
+                                    <th colspan="2" class="text-center" style="background:#faeeda;font-size:10px;color:#854f0b">Chạy thử — phút</th>
+
+                                }
+
+                                else
+
+                                {
+
+                                    <th rowspan="2" style="width:62px" class="text-center">T.Thực tế<br/><small style="font-size:9px">(ph/pc)</small></th>
+
+                                }
+
+                                <th rowspan="2" style="width:100px;background:#fff8e6">Mã WTS PS</th>
+
+                                <th rowspan="2" style="width:50px;background:#fff8e6" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
+
+                                <th rowspan="2" style="background:#fff8e6">Nội dung PS</th>
+
+                                <th rowspan="2" style="width:60px" class="text-center">Thao tác</th>
+
+                            </tr>
+
+                            <tr>
+
+                                <th class="text-success text-center" style="width:48px">OK</th>
+
+                                <th class="text-danger text-center" style="width:48px">NG</th>
+
+                                <th class="text-muted text-center" style="width:52px">SL PO</th>
 
                                 <th style="width:110px">Lý do NG</th>
 
-                                <th style="width:110px">Mã WTS PS</th>
+                                <th style="width:58px" class="text-center">Bắt đầu</th>
 
-                                <th style="width:50px" class="text-center">T.PS<br/><small style="font-size:9px">(ph)</small></th>
+                                <th style="width:58px" class="text-center">Kết thúc</th>
 
-                                <th>Nội dung PS</th>
+                                <th style="width:50px" class="text-center" title="Phút làm (đã trừ giờ nghỉ của ca)">Phút</th>
 
-                                <th style="width:60px" class="text-center">Thao tác</th>
+                                @if (IsGcGroup)
+
+                                {
+
+                                    <th class="text-center" style="width:50px">T.Gá</th>
+
+                                    <th class="text-center" style="width:50px">T.GC</th>
+
+                                    <th class="text-center" style="width:50px">T.Ktra</th>
+
+                                    <th class="text-center" style="width:50px;color:#854f0b">T.CB</th>
+
+                                    <th class="text-center" style="width:50px;color:#854f0b">T.Chạy</th>
+
+                                }
 
                             </tr>
 
@@ -468,13 +543,13 @@ else
 
                         <tbody>
 
-                        @foreach (var row in _rows.Where(r => r.Saved && !r.IsOvertime).OrderBy(r => r.StartTime))
+                        @foreach (var row in _rows.Where(r => r.Saved).OrderBy(r => r.StartTime))
 
                         {
 
                             <tr class="@SavedRowCls(row)">
 
-                                <td class="text-center p-0" style="width:28px">
+                                <td class="text-center p-0" style="width:26px">
 
                                     @if (row.ExtraItems.Any())
 
@@ -500,13 +575,9 @@ else
 
                                     @(row.CaName ?? "—")
 
+                                    @if (row.IsOvertime) { <span class="badge bg-warning text-dark ms-1" style="font-size:9px" title="Dòng Tăng ca (dữ liệu cũ)">TC</span> }
+
                                 </td>
-
-                                <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
-
-                                <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
-
-                                <td class="text-center" title="@NetMinTip(row)">@NetMin(row)<span class="text-muted" style="font-size:9px">@NetMinRawNote(row)</span></td>   @* [ML17-NET] phút trừ nghỉ ca *@
 
                                 <td>
 
@@ -514,13 +585,24 @@ else
 
                                     {
 
-                                        <small class="text-muted">@row.PO</small>
+                                        <small>@row.PO</small>
+
+                                        @if (row.ActivityLogId.HasValue)
+
+                                        {
+
+                                            <div class="text-muted fst-italic" style="font-size:10px">việc không ra SP</div>
+
+                                        }
 
                                     }
 
                                     else if (row.ActivityLogId.HasValue)
+
                                     {
+
                                         <span class="text-muted fst-italic small">việc không ra SP</span>   @* [ML16-ACT] *@
+
                                     }
 
                                     else
@@ -535,15 +617,69 @@ else
 
                                 <td><small>@(row.PartNo ?? "—")</small></td>
 
-                                <td><small>@(row.NC ?? row.WtsCode ?? "—")</small></td>
+                                @if (IsGcGroup)
 
-                                <td><small>@(row.MachineUsed ?? "—")</small></td>
+                                {
 
-                                <td class="text-center text-success fw-semibold">@row.QtyOk</td>
+                                    <td class="text-center"><small>@(row.NC ?? row.WtsCode ?? "—")</small></td>
 
-                                <td class="text-center text-danger fw-semibold">@(row.QtyNg > 0 ? row.QtyNg.ToString() : "—")</td>
+                                    <td class="text-center"><small>@(row.MachineUsed ?? "—")</small></td>
+
+                                }
+
+                                else
+
+                                {
+
+                                    @if (IsHtspGroup)
+
+                                    {
+
+                                        <td><small>@SavedSubGroupText(row)</small></td>
+
+                                    }
+
+                                    <td><small>@(row.NC ?? row.WtsCode ?? "—")</small>@if (!string.IsNullOrEmpty(row.WtsName)) { <span class="d-block" style="font-size:10px;color:#6c757d">@row.WtsName</span> }</td>
+
+                                }
+
+                                <td class="text-center text-success fw-semibold">@SavedOkText(row)</td>
+
+                                <td class="text-center text-danger fw-semibold">@SavedNgText(row)</td>
+
+                                <td class="text-center text-muted small">@SavedPoQtyText(row)</td>
 
                                 <td><small class="text-muted">@WtsNgText(row)</small></td>   @* [VULOI] + mã vụ lỗi *@
+
+                                <td class="text-center">@row.StartTime.ToString("HH:mm")</td>
+
+                                <td class="text-center">@row.EndTime.ToString("HH:mm")</td>
+
+                                <td class="text-center" title="@NetMinTip(row)">@NetMin(row)<span class="text-muted" style="font-size:9px">@NetMinRawNote(row)</span></td>   @* [ML17-NET] phút trừ nghỉ ca *@
+
+                                @if (IsGcGroup)
+
+                                {
+
+                                    <td class="text-end">@FmtTimeWts(row.SetupTime_Actual)</td>
+
+                                    <td class="text-end">@FmtTimeWts(row.MachiningTime_Actual)</td>
+
+                                    <td class="text-end">@FmtTimeWts(row.InspectionTime_Actual)</td>
+
+                                    <td class="text-end" style="color:#854f0b">@FmtTimeWts(row.PreparationTime_Actual)</td>
+
+                                    <td class="text-end" style="color:#854f0b">@FmtTimeWts(row.TrialRunTime_Actual)</td>
+
+                                }
+
+                                else
+
+                                {
+
+                                    <td class="text-end" title="@SavedActualTitle(row)">@FmtTimeWts(row.ActualTimePerPc)</td>
+
+                                }
 
                                 <td style="background:#fff8e6">
 
@@ -568,8 +704,11 @@ else
                                         else if (row.ExtraItems.Count > 1)
 
                                         {
+
                                             @* [FIX-CLICK] Gắn onclick để xổ/đóng dòng phát sinh — trước chỉ có span tĩnh *@
+
                                             <span style="font-size:10px;color:#0d6efd;cursor:pointer"
+
                                                   @onclick="() => row.ShowTimeDetail = !row.ShowTimeDetail">
 
                                                 <i class="bi @(row.ShowTimeDetail ? "bi-chevron-up" : "bi-chevron-down")" style="font-size:10px"></i>
@@ -666,8 +805,9 @@ else
 
                                         </td>
 
-                                        @* [FIX-COLSPAN] Đổi 10→11: cột thứ 12 là Lý do NG phải nằm trong dải dồn *@
-                                        <td colspan="11" class="text-muted" style="padding:2px 8px">—</td>
+                                        @* [WTS-SAVED-LAYOUT] dồn hết các cột trước Mã WTS PS (số cột đổi theo nhóm) *@
+
+                                        <td colspan="@SavedPsColspan" class="text-muted" style="padding:2px 8px">—</td>
 
                                         <td style="background:#fffbf0;padding:2px 6px">
 
@@ -2449,8 +2589,6 @@ else
 
         var activeDetail = _allRows.FirstOrDefault(r => r.PurchaseOrder == activePO);
 
-        var planQty = activeDetail?.Quantity ?? 0m;
-
         if (activeMachining.Any() || activeFull != null)
 
         {
@@ -2469,7 +2607,7 @@ else
 
                 <button class="btn btn-sm btn-outline-secondary ms-auto py-0"
 
-                        @onclick="async () => { _wtsLogsCache.Remove(activePO); await ReloadWtsLogsAsync(activePO, activeDetail!.KhPlanDetailId); }">
+                        @onclick="() => RefreshPanelAsync(activePO)">
 
                     <i class="bi bi-arrow-clockwise me-1"></i>Làm mới
 
@@ -2511,7 +2649,8 @@ else
 
                                         <th style="width:70px;" class="text-center" rowspan="2">Worker</th>
 
-                                        <th style="width:45px;" class="text-center" rowspan="2">SL</th>
+                                        <th style="width:40px;" class="text-center text-success" rowspan="2">OK</th>   @* [WTS-PANEL-QTY] SL tách OK / NG *@
+                                        <th style="width:40px;" class="text-center text-danger" rowspan="2">NG</th>
 
                                         <th style="width:85px;" class="text-center" rowspan="2">T.Bắt đầu</th>
 
@@ -2565,13 +2704,17 @@ else
 
                                         var gcLogs = GetWtsLogsFor(activePO, "GC", s.NC);
 
-                                        var regLogs = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered || string.IsNullOrEmpty(l.MachineUsed) || !s.TimingRows.Any(t => (t.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? ""))).ToList();
+                                        var regLogs = gcLogs.Where(l => l.MachineUsed == s.MachineRegistered || string.IsNullOrEmpty(l.MachineUsed) || !s.TimingRows.Any(t => SoMayHas(t.SoMay, l.MachineUsed))).ToList();
 
-                                        var qtyDone = gcLogs.Sum(l => l.QtyDone);
+                                        @* [WTS-PANEL-QTY 2026-10-31] Badge đọc sổ chung (cùng tab KH) — trước: Σ QtyDone (OK + NG gộp) / SL PO *@
+                                        var gcStep   = LedgerQtyText.Step(PanelLedger(activePO), "GC", s.NC);
+                                        var gcParent = s.IsBackup ? s.ParentNC : null;
 
-                                        var badgeColor = qtyDone == 0 ? "danger" : (qtyDone >= planQty ? "success" : "warning");
+                                        var badgeColor = LedgerQtyText.Color(gcStep);
+                                        var gcQText    = LedgerQtyText.Text(gcStep, gcParent);
+                                        var gcQTitle   = LedgerQtyText.Title(gcStep, gcParent);
 
-                                        var timingTotal = s.TimingRows.Sum(t => { var tl = gcLogs.Where(l => (t.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? "")).ToList(); return 1 + (tl.Count == 0 ? 1 : tl.Count); });
+                                        var timingTotal = s.TimingRows.Sum(t => { var tl = gcLogs.Where(l => SoMayHas(t.SoMay, l.MachineUsed)).ToList(); return 1 + (tl.Count == 0 ? 1 : tl.Count); });
 
                                         var totalRowspan = 1 + (regLogs.Count == 0 ? 1 : regLogs.Count) + timingTotal;
 
@@ -2585,7 +2728,7 @@ else
 
                                             <td class="text-muted small">—</td>
 
-                                            <td class="text-muted fst-italic small text-center" colspan="4" style="font-size:0.7rem;">← WTS CN</td>
+                                            <td class="text-muted fst-italic small text-center" colspan="5" style="font-size:0.7rem;">← WTS CN</td>
 
                                             <td class="text-end text-muted small">@FmtTimeWts(s.SetupTime)</td>
 
@@ -2609,7 +2752,7 @@ else
 
                                             <td class="text-center" rowspan="@totalRowspan">
 
-                                                <span class="badge bg-@badgeColor" style="font-size:0.62rem;">@qtyDone.ToString("0.##")/@planQty.ToString("0.##")</span>
+                                                <span class="badge bg-@badgeColor" style="font-size:0.62rem;" title="@gcQTitle" data-q="badge">@gcQText</span>
 
                                             </td>
 
@@ -2621,7 +2764,7 @@ else
 
                                             <tr class="bg-light" style="border-left:3px solid #0d6efd;">
 
-                                                <td colspan="18" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
+                                                <td colspan="19" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
 
                                             </tr>
 
@@ -2637,7 +2780,8 @@ else
 
                                                 <td class="fw-semibold text-primary small text-center" style="font-size:0.7rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                <td class="text-center fw-bold small" style="color:#0d6efd;font-size:0.7rem;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center fw-bold small" style="color:#0d6efd;font-size:0.7rem;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                <td class="text-center fw-bold small text-danger" style="font-size:0.7rem;" data-q="ng">@PanelLogNg(log)</td>
 
                                                 <td class="text-center small" style="font-size:0.7rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -2671,7 +2815,7 @@ else
 
                                         {
 
-                                            var trLogs = gcLogs.Where(l => (tr.SoMay ?? "").Split(',').Select(x => x.Trim()).Contains(l.MachineUsed ?? "")).ToList();
+                                            var trLogs = gcLogs.Where(l => SoMayHas(tr.SoMay, l.MachineUsed)).ToList();
 
                                             <tr style="background:#f0f7ff;">
 
@@ -2681,7 +2825,7 @@ else
 
                                                 <td class="small fw-semibold" style="color:#185fa5;">@tr.SoMay</td>
 
-                                                <td class="text-muted fst-italic small text-center" colspan="4" style="font-size:0.7rem;">← WTS CN</td>
+                                                <td class="text-muted fst-italic small text-center" colspan="5" style="font-size:0.7rem;">← WTS CN</td>
 
                                                 <td class="text-end text-muted small">@FmtTimeWts(tr.SetupTime)</td>
 
@@ -2711,7 +2855,7 @@ else
 
                                                 <tr class="bg-light" style="border-left:3px solid #185fa5;">
 
-                                                    <td colspan="18" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
+                                                    <td colspan="19" class="text-muted fst-italic small ps-2" style="font-size:0.7rem;">Chưa có dữ liệu</td>
 
                                                 </tr>
 
@@ -2727,7 +2871,8 @@ else
 
                                                     <td class="fw-semibold small text-center" style="color:#185fa5;font-size:0.7rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                    <td class="text-center fw-bold small" style="color:#185fa5;font-size:0.7rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center fw-bold small" style="color:#185fa5;font-size:0.7rem;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                    <td class="text-center fw-bold small text-danger" style="font-size:0.7rem;" data-q="ng">@PanelLogNg(log)</td>
 
                                                     <td class="text-center small" style="font-size:0.7rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -2801,7 +2946,8 @@ else
 
                                             <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
 
-                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center text-success" style="width:34px;">OK</th>   @* [WTS-PANEL-QTY] *@
+                                            <th rowspan="2" class="align-middle text-center text-danger" style="width:34px;">NG</th>
 
                                             <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
 
@@ -2829,13 +2975,16 @@ else
 
                                         {
 
-                                            var taroKey = string.IsNullOrEmpty(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+                                            var taroKey = string.IsNullOrWhiteSpace(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;   @* [WTS-PANEL-QTY] cùng TaroCode của sổ *@
 
                                             var logs = GetWtsLogsFor(activePO, "TARO", taroKey);
 
-                                            var qty = GetWtsQtyFor(activePO, "TARO", taroKey);
+                                            var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "TARO", taroKey);   @* [WTS-PANEL-QTY] sổ chung *@
+                                            var qParent = s.IsBackup ? s.ParentNC : null;
 
-                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            var badge   = LedgerQtyText.Color(qStep);
+                                            var qText   = LedgerQtyText.Text(qStep, qParent);
+                                            var qTitle  = LedgerQtyText.Title(qStep, qParent);
 
                                             <tr>
 
@@ -2845,7 +2994,7 @@ else
 
                                                 <td class="small">@(s.StepName ?? "—")</td>
 
-                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="5" style="font-size:0.68rem;">← WTS CN</td>
 
                                                 <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
 
@@ -2853,7 +3002,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    @if (!IsPrepCode(taroKey)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;" title="@qTitle" data-q="badge">@qText</span>   @* [WTS-PANEL-QTY] mã chuẩn bị hiện "chuẩn bị" như tab KH *@
 
                                                 </td>
 
@@ -2865,7 +3014,7 @@ else
 
                                                 <tr class="bg-light" style="border-left:3px solid #188038;">
 
-                                                    <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                    <td colspan="10" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
 
                                                 </tr>
 
@@ -2881,7 +3030,8 @@ else
 
                                                     <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                    <td class="text-center fw-bold small text-danger" style="font-size:0.68rem;" data-q="ng">@PanelLogNg(log)</td>
 
                                                     <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -2889,7 +3039,7 @@ else
 
                                                     <td class="text-end text-muted small">—</td>
 
-                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                    <td class="text-end small" style="color:#188038;" title="@PanelLogTtTitle(log)">@FmtTimeWts(log.ActualTimePerPc)</td>   @* [WTS-TT-SHOW] trước gõ cứng "—" *@
 
                                                 </tr>
 
@@ -2925,7 +3075,8 @@ else
 
                                             <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
 
-                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center text-success" style="width:34px;">OK</th>   @* [WTS-PANEL-QTY] *@
+                                            <th rowspan="2" class="align-middle text-center text-danger" style="width:34px;">NG</th>
 
                                             <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
 
@@ -2955,9 +3106,12 @@ else
 
                                             var logs = GetWtsLogsFor(activePO, "BAVIA", s.NC);
 
-                                            var qty = GetWtsQtyFor(activePO, "BAVIA", s.NC);
+                                            var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "BAVIA", s.NC);   @* [WTS-PANEL-QTY] sổ chung *@
+                                            var qParent = s.IsBackup ? s.ParentNC : null;
 
-                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            var badge   = LedgerQtyText.Color(qStep);
+                                            var qText   = LedgerQtyText.Text(qStep, qParent);
+                                            var qTitle  = LedgerQtyText.Title(qStep, qParent);
 
                                             <tr>
 
@@ -2965,7 +3119,7 @@ else
 
                                                 <td class="small">@(s.StepName ?? "—")</td>
 
-                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="5" style="font-size:0.68rem;">← WTS CN</td>
 
                                                 <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
 
@@ -2973,7 +3127,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;" title="@qTitle" data-q="badge">@qText</span>   @* [WTS-PANEL-QTY] mã chuẩn bị hiện "chuẩn bị" như tab KH *@
 
                                                 </td>
 
@@ -2985,7 +3139,7 @@ else
 
                                                 <tr class="bg-light" style="border-left:3px solid #188038;">
 
-                                                    <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                    <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
 
                                                 </tr>
 
@@ -3001,7 +3155,8 @@ else
 
                                                     <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                    <td class="text-center fw-bold small text-danger" style="font-size:0.68rem;" data-q="ng">@PanelLogNg(log)</td>
 
                                                     <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -3009,7 +3164,7 @@ else
 
                                                     <td class="text-end text-muted small">—</td>
 
-                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                    <td class="text-end small" style="color:#188038;" title="@PanelLogTtTitle(log)">@FmtTimeWts(log.ActualTimePerPc)</td>   @* [WTS-TT-SHOW] trước gõ cứng "—" *@
 
                                                 </tr>
 
@@ -3045,7 +3200,8 @@ else
 
                                             <th rowspan="2" class="align-middle text-center" style="width:60px;">Worker</th>
 
-                                            <th rowspan="2" class="align-middle text-center" style="width:40px;">SL</th>
+                                            <th rowspan="2" class="align-middle text-center text-success" style="width:34px;">OK</th>   @* [WTS-PANEL-QTY] *@
+                                            <th rowspan="2" class="align-middle text-center text-danger" style="width:34px;">NG</th>
 
                                             <th rowspan="2" class="align-middle text-center" style="width:75px;">T.Bắt đầu</th>
 
@@ -3075,9 +3231,12 @@ else
 
                                             var logs = GetWtsLogsFor(activePO, "WASHING", s.NC);
 
-                                            var qty = GetWtsQtyFor(activePO, "WASHING", s.NC);
+                                            var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "WASHING", s.NC);   @* [WTS-PANEL-QTY] sổ chung *@
+                                            var qParent = s.IsBackup ? s.ParentNC : null;
 
-                                            var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                            var badge   = LedgerQtyText.Color(qStep);
+                                            var qText   = LedgerQtyText.Text(qStep, qParent);
+                                            var qTitle  = LedgerQtyText.Title(qStep, qParent);
 
                                             <tr>
 
@@ -3085,7 +3244,7 @@ else
 
                                                 <td class="small">@(s.StepName ?? "—")</td>
 
-                                                <td class="fst-italic text-muted small text-center" colspan="4" style="font-size:0.68rem;">← WTS CN</td>
+                                                <td class="fst-italic text-muted small text-center" colspan="5" style="font-size:0.68rem;">← WTS CN</td>
 
                                                 <td class="text-end text-muted small">@FmtTimeWts(s.StandardTime)</td>
 
@@ -3093,7 +3252,7 @@ else
 
                                                 <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                    @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.62rem;">@qty.ToString("0.##")/@planQty.ToString("0.##")</span> } @* [FLAT-QTY-ZERO] *@
+                                                    <span class="badge bg-@badge" style="font-size:0.62rem;" title="@qTitle" data-q="badge">@qText</span>   @* [WTS-PANEL-QTY] mã chuẩn bị hiện "chuẩn bị" như tab KH *@
 
                                                 </td>
 
@@ -3105,7 +3264,7 @@ else
 
                                                 <tr class="bg-light" style="border-left:3px solid #188038;">
 
-                                                    <td colspan="8" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
+                                                    <td colspan="9" class="text-muted fst-italic small ps-2" style="font-size:0.68rem;">Chưa có dữ liệu</td>
 
                                                 </tr>
 
@@ -3121,7 +3280,8 @@ else
 
                                                     <td class="fw-semibold text-success small text-center" style="font-size:0.68rem;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;">@log.QtyDone.ToString("0.##")</td>
+                                                    <td class="text-center fw-bold small" style="color:#188038;font-size:0.68rem;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                    <td class="text-center fw-bold small text-danger" style="font-size:0.68rem;" data-q="ng">@PanelLogNg(log)</td>
 
                                                     <td class="text-center small" style="font-size:0.68rem;">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -3129,7 +3289,7 @@ else
 
                                                     <td class="text-end text-muted small">—</td>
 
-                                                    <td class="text-end small" style="color:#188038;">—</td>
+                                                    <td class="text-end small" style="color:#188038;" title="@PanelLogTtTitle(log)">@FmtTimeWts(log.ActualTimePerPc)</td>   @* [WTS-TT-SHOW] trước gõ cứng "—" *@
 
                                                 </tr>
 
@@ -3173,7 +3333,8 @@ else
 
                                         <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
 
-                                        <th rowspan="2" style="width:50px;" class="align-middle text-center">SL chạy</th>
+                                        <th rowspan="2" style="width:42px;" class="align-middle text-center text-success">OK</th>   @* [WTS-PANEL-QTY] *@
+                                        <th rowspan="2" style="width:42px;" class="align-middle text-center text-danger">NG</th>
 
                                         <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Bắt đầu</th>
 
@@ -3203,9 +3364,12 @@ else
 
                                         var logs = GetWtsLogsFor(activePO, "KCS", s.NC);
 
-                                        var qty = GetWtsQtyFor(activePO, "KCS", s.NC);
+                                        var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "KCS", s.NC);   @* [WTS-PANEL-QTY] sổ chung *@
+                                        var qParent = s.IsBackup ? s.ParentNC : null;
 
-                                        var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                        var badge   = LedgerQtyText.Color(qStep);
+                                        var qText   = LedgerQtyText.Text(qStep, qParent);
+                                        var qTitle  = LedgerQtyText.Title(qStep, qParent);
 
                                         <tr>
 
@@ -3213,7 +3377,7 @@ else
 
                                             <td>@(s.StepName ?? "—")</td>
 
-                                            <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                            <td class="text-muted text-center fst-italic small" colspan="5">← WTS công nhân</td>
 
                                             <td class="text-end text-muted">@FmtTimeWts(s.StandardTime)</td>
 
@@ -3221,7 +3385,7 @@ else
 
                                             <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span> } @* [FLAT-QTY-ZERO] *@
+                                                <span class="badge bg-@badge" style="font-size:0.65rem;" title="@qTitle" data-q="badge">@qText</span>   @* [WTS-PANEL-QTY] mã chuẩn bị hiện "chuẩn bị" như tab KH *@
 
                                             </td>
 
@@ -3233,7 +3397,7 @@ else
 
                                             <tr class="bg-light" style="border-left:3px solid #e37400;">
 
-                                                <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                                <td colspan="9" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
 
                                             </tr>
 
@@ -3249,7 +3413,8 @@ else
 
                                                 <td class="fw-semibold small text-center" style="color:#e37400;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                <td class="text-center fw-bold small" style="color:#e37400;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center fw-bold small" style="color:#e37400;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                <td class="text-center fw-bold small text-danger" style="" data-q="ng">@PanelLogNg(log)</td>
 
                                                 <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -3257,7 +3422,7 @@ else
 
                                                 <td class="text-end text-muted">—</td>
 
-                                                <td class="text-end" style="color:#e37400;">—</td>
+                                                <td class="text-end" style="color:#e37400;" title="@PanelLogTtTitle(log)">@FmtTimeWts(log.ActualTimePerPc)</td>   @* [WTS-TT-SHOW] trước gõ cứng "—" *@
 
                                             </tr>
 
@@ -3299,7 +3464,8 @@ else
 
                                         <th rowspan="2" style="width:70px;" class="align-middle text-center">Worker</th>
 
-                                        <th rowspan="2" style="width:50px;" class="align-middle text-center">SL chạy</th>
+                                        <th rowspan="2" style="width:42px;" class="align-middle text-center text-success">OK</th>   @* [WTS-PANEL-QTY] *@
+                                        <th rowspan="2" style="width:42px;" class="align-middle text-center text-danger">NG</th>
 
                                         <th rowspan="2" style="width:90px;" class="align-middle text-center">T.Bắt đầu</th>
 
@@ -3329,9 +3495,12 @@ else
 
                                         var logs = GetWtsLogsFor(activePO, "PKG", s.NC);
 
-                                        var qty = GetWtsQtyFor(activePO, "PKG", s.NC);
+                                        var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "PKG", s.NC);   @* [WTS-PANEL-QTY] sổ chung *@
+                                        var qParent = s.IsBackup ? s.ParentNC : null;
 
-                                        var badge = qty == 0 ? "danger" : (qty >= planQty ? "success" : "warning");
+                                        var badge   = LedgerQtyText.Color(qStep);
+                                        var qText   = LedgerQtyText.Text(qStep, qParent);
+                                        var qTitle  = LedgerQtyText.Title(qStep, qParent);
 
                                         <tr>
 
@@ -3339,7 +3508,7 @@ else
 
                                             <td>@(s.StepName ?? "—")</td>
 
-                                            <td class="text-muted text-center fst-italic small" colspan="4">← WTS công nhân</td>
+                                            <td class="text-muted text-center fst-italic small" colspan="5">← WTS công nhân</td>
 
                                             <td class="text-end text-muted">@FmtTimeWts(s.StandardTime)</td>
 
@@ -3347,7 +3516,7 @@ else
 
                                             <td class="text-center" rowspan="@(logs.Count + 1)">
 
-                                                @if (!IsPrepCode(s.NC)) { <span class="badge bg-@badge" style="font-size:0.65rem;">@qty.ToString("0.##")/@planQty.ToString("0.####")</span> } @* [FLAT-QTY-ZERO] *@
+                                                <span class="badge bg-@badge" style="font-size:0.65rem;" title="@qTitle" data-q="badge">@qText</span>   @* [WTS-PANEL-QTY] mã chuẩn bị hiện "chuẩn bị" như tab KH *@
 
                                             </td>
 
@@ -3359,7 +3528,7 @@ else
 
                                             <tr class="bg-light" style="border-left:3px solid #6c757d;">
 
-                                                <td colspan="8" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
+                                                <td colspan="9" class="text-muted fst-italic small ps-3">Chưa có dữ liệu sản xuất</td>
 
                                             </tr>
 
@@ -3375,7 +3544,8 @@ else
 
                                                 <td class="fw-semibold small text-center" style="color:#6c757d;">@(log.Worker?.FullName ?? $"#{log.WorkerId}")</td>
 
-                                                <td class="text-center fw-bold small" style="color:#6c757d;">@log.QtyDone.ToString("0.##")</td>
+                                                <td class="text-center fw-bold small" style="color:#6c757d;" data-q="ok">@PanelLogOk(log)</td>   @* [WTS-PANEL-QTY] OK / NG của chính dòng WTS *@
+                                                <td class="text-center fw-bold small text-danger" style="" data-q="ng">@PanelLogNg(log)</td>
 
                                                 <td class="text-center small">@log.StartTime.ToString("dd/MM HH:mm")</td>
 
@@ -3383,7 +3553,7 @@ else
 
                                                 <td class="text-end text-muted">—</td>
 
-                                                <td class="text-end" style="color:#6c757d;">—</td>
+                                                <td class="text-end" style="color:#6c757d;" title="@PanelLogTtTitle(log)">@FmtTimeWts(log.ActualTimePerPc)</td>   @* [WTS-TT-SHOW] trước gõ cứng "—" *@
 
                                             </tr>
 
@@ -3997,7 +4167,11 @@ else
 
     private HashSet<string> _brokenMachines = new();
 
-    private Dictionary<string, decimal> _qtySummaryCache = new(); // "detailId|NC" → qty done
+    // [RA-SOCHUNG 2026-10-31] Bỏ _qtySummaryCache ("detailId|NC" → Σ QtyDone tự cộng qua KhPlanService.GetWtsQtySummaryAsync):
+
+    //   chỉ được GHI, không chỗ nào đọc (khoá kiểm "detailId" không bao giờ có) → mỗi lần chọn PO / lưu tốn thêm 1 câu đọc DB vô ích.
+
+    //   Số lượng trên trang này chỉ lấy từ sổ chung: _ledgerCache (trần nhập) + _panelLedger (bảng quy trình).
 
     // [GN-WTS-CAP] Đã bỏ _receivedOkCache (SL nhận gộp mọi loại phiếu) — thay bằng _ledgerCache (sổ giao nhận).
 
@@ -4170,25 +4344,13 @@ else
 
         }
 
-        // 3. Fallback: lấy timing bất kỳ TimingRow nào thuộc NC này (bỏ qua máy)
-
-        if (snapList.TimingRows.Any())
-
-        {
-
-            var firstTr = snapList.TimingRows.First();
-
-            return new TimingStd(nc, firstTr.SoMay ?? soMay,
-
-                firstTr.SetupTime, firstTr.MachiningTime, firstTr.InspectionTime,
-
-                firstTr.PreparationTime, firstTr.TrialRunTime,
-
-                StdTrack.Table.MachiningTiming, firstTr.TimingSnapshotId); // [STD-UPDATE]
-
-        }
-
-        // 4. Fallback cuối: timing trực tiếp trên snap (bỏ qua match máy)
+        // [RS-E6 2026-10-31] BỎ 2 nhánh dự phòng cũ: (3) timing dòng máy đồng dạng ĐẦU TIÊN bất kể máy (= số của 1 MÁY KHÁC, tuỳ thứ tự
+        //   dòng) và (5) Part Master hiện tại (_timingStdCache — đọc live, trái luật snapshot CLAUDE-RULES 6). Trước: máy đang chọn không có
+        //   số chuẩn trong snapshot PO (vd nhóm nhiều PO: danh sách máy lấy theo PO mới chọn, PO khác chụp trước khi thêm máy đồng dạng;
+        //   hoặc dòng WTS cũ có máy không còn trong quy trình) thì mượn số máy khác / Part Master lúc mở trang rồi đóng băng vào
+        //   WtsProductionLogStds kèm dòng nguồn của máy khác (Update TG chuẩn + trạng thái xác nhận bám nhầm dòng).
+        //   GIỮ nhánh (4): số của dòng NC chính trong snapshot CHÍNH PO đó (nguồn ghi rõ "(NC chính)") — chờ Hùng chốt có để trống không.
+        // 4. Fallback: timing trực tiếp trên dòng NC chính của snapshot PO (bỏ qua match máy)
 
         if (snapList.SetupTime.HasValue || snapList.MachiningTime.HasValue ||
 
@@ -4206,19 +4368,7 @@ else
 
         }
 
-        // 5. Cuối cùng fallback về _timingStdCache (Part Master live — cũ)
-
-        if (!_timingStdCache.TryGetValue(detailId, out var list)) return null;
-
-        return list.FirstOrDefault(t =>
-
-            t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase) &&
-
-            t.SoMay.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-
-                .Any(m => m.Equals(soMay, StringComparison.OrdinalIgnoreCase)))
-
-            ?? list.FirstOrDefault(t => t.NC.Equals(nc, StringComparison.OrdinalIgnoreCase));
+        return null;   // [RS-E6] không còn đọc Part Master live
 
     }
 
@@ -4654,7 +4804,7 @@ else
                 QtyDone        = log.QtyDone,
                 ActualTimePerPc = log.ActualTimePerPc,   // [ACTUAL-PC] giữ T.Thực tế/pc khi Sửa dòng
 
-                QtyOk          = log.QtyOk ?? log.QtyDone,   // fallback cho bản ghi cũ
+                QtyOk          = LedgerQtyText.LogOk(log),   // fallback cho bản ghi cũ — [WTS-OK-FALLBACK 2026-10-31] cùng công thức sổ (QtyDone − NG); trước: QtyDone (OK + NG) → Sửa dòng cũ có NG ghi OK dư
 
                 QtyNg          = log.QtyNg ?? 0m,
 
@@ -5027,21 +5177,7 @@ else
 
         }
 
-        // Load qty summary
-
-        var key = detail.KhPlanDetailId.ToString();
-
-        if (!_qtySummaryCache.ContainsKey(key))
-
-        {
-
-            var summary = await KhSvc.GetWtsQtySummaryAsync(detail.KhPlanDetailId);
-
-            foreach (var kv in summary)
-
-                _qtySummaryCache[$"{detail.KhPlanDetailId}|{kv.Key}"] = kv.Value;
-
-        }
+        // [RA-SOCHUNG 2026-10-31] bỏ nạp qty summary tự cộng (không ai đọc)
 
         // [GN-WTS-CAP] Bỏ nạp "SL đã nhận vào nhóm" (_receivedOkCache) — trần nhập WTS lấy từ sổ giao nhận,
         // nạp cùng ReloadFlowAsync bên dưới.
@@ -5196,6 +5332,9 @@ else
         });
         if (!res.Ok) { _voidBlockMsg = res.ErrorMsg; return false; }
         await LoadSavedRowsAsync();
+        // [WTS-PANEL-QTY 2026-10-31] Xoá dòng xong: nạp lại sổ trần (trước: còn số cũ tới khi lưu / chọn lại PO) + bảng quy trình
+        if (row.KhPlanDetailId.HasValue) await ReloadFlowAsync(row.KhPlanDetailId.Value);
+        if (row.KhPlanDetailId.HasValue) await ReloadPanelAsync(new[] { row.KhPlanDetailId.Value });
         return true;
     }
 
@@ -5502,6 +5641,34 @@ else
     private static string SavedRowCls(WtsRow row)
 
         => row.HasWarning ? "table-warning" : "table-success bg-opacity-10";
+
+    // [WTS-SAVED-LAYOUT 2026-10-31] Ô của bảng dòng đã lưu — cùng thứ tự cột form nhập, hiện đúng số ĐÃ LƯU (không tính lại)
+
+    private bool SavedNoQty(WtsRow r) => r.ActivityLogId.HasValue || IsPrepNoQty(r);   // việc không ra SP / mã chuẩn bị: không có số lượng
+
+    private string SavedOkText(WtsRow r) => SavedNoQty(r) ? "—" : r.QtyOk.ToString("0.##");   // trước: in thô "3.0000"
+
+    private string SavedNgText(WtsRow r) => SavedNoQty(r) || r.QtyNg <= 0 ? "—" : r.QtyNg.ToString("0.##");
+
+    private string SavedPoQtyText(WtsRow r)
+
+    {
+
+        if (!r.KhPlanDetailId.HasValue) return "—";
+
+        var q = _allRows.FirstOrDefault(x => x.KhPlanDetailId == r.KhPlanDetailId)?.Quantity;
+
+        return q.HasValue ? q.Value.ToString("0.##") : "—";
+
+    }
+
+    private static string SavedSubGroupText(WtsRow r) => r.HtspSubGroup switch { "Rua" => "Rửa", null or "" => "—", var x => x };
+
+    private string SavedActualTitle(WtsRow r) => IsPrepNoQty(r) ? "T.Thực tế: tổng phút (mã chuẩn bị)" : "T.Thực tế: phút / chiếc";
+
+    // Dòng PS xổ ra: số cột trước "Mã WTS PS" trừ cột nhãn PS
+
+    private int SavedPsColspan => IsGcGroup ? 17 : (IsHtspGroup ? 13 : 12);
 
     private static string SubRowCls(WtsRow sub)
 
@@ -6816,8 +6983,7 @@ else
                 foreach (var id in res.DetailIds)
                 {
                     // trần + số đã làm trên form về lại số trong DB (giao dịch đã rollback)
-                    foreach (var kv in await KhSvc.GetWtsQtySummaryAsync(id)) _qtySummaryCache[$"{id}|{kv.Key}"] = kv.Value;
-                    await ReloadFlowAsync(id);
+                    await ReloadFlowAsync(id);   // [RA-SOCHUNG 2026-10-31] bỏ nạp qty summary tự cộng (không ai đọc)
                 }
                 return;
             }
@@ -6830,7 +6996,7 @@ else
             }
 
             // Nạp lại danh sách dòng đã lưu + cache (phần đuôi của SaveRowAsync cũ, chạy 1 lần cho cả nhóm)
-            await AfterGroupSavedRefreshAsync();
+            await AfterGroupSavedRefreshAsync(res.DetailIds);
 
             // Xóa nhóm sau khi lưu xong
 
@@ -7233,6 +7399,16 @@ else
 
     }
 
+    // [RA-SOCHUNG] "NC2b (gộp NC2)" khi dòng là NC / mã dự phòng — số "đã làm" là của NC chính
+    private string NcMainLabel(WtsRow r)
+    {
+        var main = GetWtsCap(r.KhPlanDetailId, PgOfRow(r), r.NC)?.Code ?? r.NC;
+        return string.Equals(main, r.NC, StringComparison.OrdinalIgnoreCase) ? r.NC ?? "" : $"{r.NC} (gộp {main})";
+    }
+    // [RA-SOCHUNG] ProcessGroup của 1 dòng (nhóm HTSP theo nhóm nhỏ của dòng)
+    private string PgOfRow(WtsRow r) => IsGcGroup ? "GC"
+        : IsHtspGroup ? (r.HtspSubGroup switch { "Taro" => "TARO", "Bavia" => "BAVIA", "Rua" => "WASHING", _ => "" })
+        : (HandoverGroupCode == "KCS" ? "KCS" : "PKG");
     private void CheckQtyWarning(WtsRow row)
 
     {
@@ -7253,7 +7429,17 @@ else
 
         var flow = GetFlowItem(row.KhPlanDetailId, row.NC);
 
-        var wtsDoneAtNc = flow?.WtsDone ?? 0m;
+        // [RA-SOCHUNG 2026-10-31] "đã làm" của NC / mã đọc sổ chung (_ledgerCache: đã bỏ dòng đang mở sửa) — trước: flow.WtsDone tự cộng QtyDone
+
+        //   của cả dòng đang sửa → bấm Sửa dòng đã lưu thì cảnh báo "vượt KH" cộng số cũ 2 lần; NC dự phòng không gộp vào NC chính.
+
+        var pgRow = PgOfRow(row);
+
+        var lnRow = row.KhPlanDetailId.HasValue && _ledgerCache.TryGetValue(row.KhPlanDetailId.Value, out var lrRow)
+
+            ? LedgerQtyText.Step(lrRow, pgRow, GetWtsCap(row.KhPlanDetailId, pgRow, row.NC)?.Code ?? row.NC) : null;
+
+        var wtsDoneAtNc = lnRow != null ? lnRow.Ok + lnRow.Ng : 0m;
 
         // NC dùng máy loại trừ — warn nhẹ (không block)
 
@@ -7289,14 +7475,14 @@ else
 
             row.HasWarning = true;
 
-            row.WarningMsg = $"NC {row.NC} đã làm {wtsDoneAtNc:0.##} + nhập thêm {row.QtyDone} = {wtsDoneAtNc + row.QtyDone} vượt KH ({detail.Quantity} {detail.Unit}).";
+            row.WarningMsg = $"NC {NcMainLabel(row)} đã làm {wtsDoneAtNc:0.##} + nhập thêm {row.QtyDone} = {wtsDoneAtNc + row.QtyDone} vượt KH ({detail.Quantity} {detail.Unit}).";   // [RA-SOCHUNG] dự phòng ghi rõ gộp NC chính
 
         }
 
     }
 
     // [WTS-SVC] Phần đuôi của SaveRowAsync cũ (nạp lại dòng đã lưu + cache) — giữ nguyên văn, nay chạy 1 lần sau khi service lưu xong cả nhóm
-    private async Task AfterGroupSavedRefreshAsync()
+    private async Task AfterGroupSavedRefreshAsync(IEnumerable<int> savedDetailIds)
     {
         // Reload lại toàn bộ: danh sách dòng đã lưu + qty summary cho tất cả PO
 
@@ -7308,9 +7494,7 @@ else
 
         _rows.AddRange(unsavedRows);
 
-        // Reload qty summary + flow cho tất cả PO đang có trong session (v0.8)
-
-        _qtySummaryCache.Clear();
+        // Reload flow (+ sổ trần) cho tất cả PO đang có trong session (v0.8) — [RA-SOCHUNG 2026-10-31] bỏ qty summary tự cộng (không ai đọc)
 
         _ncFlowCache.Clear();
 
@@ -7322,15 +7506,15 @@ else
 
         {
 
-            var sum = await KhSvc.GetWtsQtySummaryAsync(po);
-
-            foreach (var kv in sum)
-
-                _qtySummaryCache[$"{po}|{kv.Key}"] = kv.Value;
-
             await ReloadFlowAsync(po);
 
         }
+
+        // [WTS-PANEL-QTY 2026-10-31] Bảng quy trình nạp lại ngay sau khi lưu — trước: dòng WTS vừa lưu không hiện ở bảng
+
+        //   (và badge không đổi) cho tới khi chọn lại PO / bấm nút làm mới.
+
+        await ReloadPanelAsync(savedDetailIds);
 
         // [GN-WTS-CAP] Bỏ reload _receivedOkCache (cũ: số nhận = 0 thì lấy số PO kể cả Workflow ON — sai BUG1 FIX).
         // Sổ giao nhận đã reload cùng ReloadFlowAsync ở trên.
@@ -7372,13 +7556,49 @@ else
 
             && !l.IsVoided
 
-            && (wtsCode == null || l.WtsCode == wtsCode || l.NC == wtsCode)).ToList();
+            && (wtsCode == null || string.Equals(group == "GC" ? l.NC : (l.WtsCode ?? l.NC), wtsCode, StringComparison.OrdinalIgnoreCase))).ToList();   // [WTS-PANEL-QTY] cùng luật khớp mã với sổ, không phân biệt hoa thường
 
     }
 
-    private decimal GetWtsQtyFor(string po, string group, string? wtsCode = null)
+    // [WTS-PANEL-QTY 2026-10-31] Bỏ GetWtsQtyFor (tự cộng QtyDone = OK + NG gộp, rồi so SL PO — trái L6, vênh tab KH / Giao nhận).
 
-        => GetWtsLogsFor(po, group, wtsCode).Sum(l => l.QtyDone);
+    //   Badge bảng quy trình nay = LedgerQtyText (Services/LedgerQtyText.cs) trên sổ _panelLedger, cùng hàm với tab KH.
+
+    //   Sổ của bảng quy trình KHÔNG loại dòng đang mở sửa (khác _ledgerCache dùng tính trần) — bảng hiện đúng số đã lưu.
+
+    private Dictionary<string, LedgerRow?> _panelLedger = new();
+
+    private LedgerRow? PanelLedger(string po) => _panelLedger.TryGetValue(po, out var r) ? r : null;
+
+    // OK / NG của chính dòng WTS — cùng công thức sổ; mã chuẩn bị không có số lượng (N5) → "—"
+
+    private static string PanelLogOk(WtsProductionLog log)
+
+        => IsPrepCode(log.WtsCode ?? log.NC) && log.ProcessGroup != "GC" ? "—" : LedgerQtyText.LogOk(log).ToString("0.##");
+
+    private static string PanelLogNg(WtsProductionLog log)
+
+    {
+
+        if (IsPrepCode(log.WtsCode ?? log.NC) && log.ProcessGroup != "GC") return "—";
+
+        var ng = LedgerQtyText.LogNg(log);
+
+        return ng > 0 ? ng.ToString("0.##") : "—";
+
+    }
+
+    // [WTS-TT-SHOW 2026-10-31] Cột TT dòng WTS HTSP / KCS / Đóng gói: T.Thực tế người dùng nhập (ActualTimePerPc) — trước gõ cứng "—"
+
+    private static string PanelLogTtTitle(WtsProductionLog log)
+
+        => IsPrepCode(log.WtsCode ?? log.NC) ? "T.Thực tế: tổng phút (mã chuẩn bị)" : "T.Thực tế: phút / chiếc";
+
+    // [WTS-PANEL-QTY] SoMay máy đồng dạng là CSV "P01, P02" (ngoại lệ CLAUDE-RULES mục 6); máy trống không khớp dòng nào
+
+    private static bool SoMayHas(string? soMay, string? machine)
+
+        => !string.IsNullOrEmpty(machine) && (soMay ?? "").Split(',').Select(x => x.Trim()).Contains(machine);
 
     private static string FmtTimeWts(decimal? v)
 
@@ -7401,6 +7621,60 @@ else
             .ToListAsync();
 
         _wtsLogsCache[po] = logs;
+
+        _panelDetailId[po] = detailId;   // [WTS-PANEL-QTY] nhớ đúng dòng KH (2 dòng KH trùng số PO — [B5-PODUP])
+
+        // [WTS-PANEL-QTY] nạp sổ cùng lúc với dòng WTS của bảng quy trình (không loại dòng đang sửa)
+
+        _panelLedger[po] = await LedgerSvc.GetLedgerForDetailAsync(detailId);
+
+    }
+
+    // [WTS-PANEL-QTY 2026-10-31] Nạp lại bảng quy trình của các PO vừa đổi số (sau khi lưu nhóm / xoá dòng đã lưu).
+
+    //   Theo KhPlanDetailId đã nạp (_panelDetailId), không tra lại theo số PO. Lỗi nạp lại không làm hỏng phiên:
+
+    //   số đã lưu xong, bảng bỏ bộ nhớ PO đó → lần chọn PO sau tự nạp lại.
+
+    private Dictionary<string, int> _panelDetailId = new();
+
+    private async Task ReloadPanelAsync(IEnumerable<int> changedDetailIds)
+
+    {
+
+        var ids = changedDetailIds.ToHashSet();
+
+        foreach (var kv in _panelDetailId.Where(k => ids.Contains(k.Value)).ToList())
+
+        {
+
+            try { await ReloadWtsLogsAsync(kv.Key, kv.Value); }
+
+            catch (Exception ex)
+
+            {
+
+                _wtsLogsCache.Remove(kv.Key); _panelLedger.Remove(kv.Key);
+
+                Console.Error.WriteLine($"[WTS-PANEL-QTY] nạp lại bảng quy trình PO {kv.Key} lỗi: {ex.Message}");
+
+            }
+
+        }
+
+    }
+
+    // Nút "Làm mới" của bảng quy trình
+
+    private async Task RefreshPanelAsync(string po)
+
+    {
+
+        _wtsLogsCache.Remove(po);
+
+        var id = _panelDetailId.TryGetValue(po, out var x) ? x : _allRows.FirstOrDefault(r => r.PurchaseOrder == po)?.KhPlanDetailId;
+
+        if (id.HasValue) await ReloadWtsLogsAsync(po, id.Value);
 
     }
 

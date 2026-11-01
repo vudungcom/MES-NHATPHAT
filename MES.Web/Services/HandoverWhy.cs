@@ -118,7 +118,11 @@ namespace MES.Web.Services
         /// Tìm các chứng từ cần kiểm / gỡ trước để thao tác <paramref name="op"/> lưu được (K5).
         /// opDocs: khoá chứng từ chính thao tác này đụng tới ("W:id", "R:id", "T:id") — không gợi ý chính nó.
         /// </summary>
-        public static WhyPlan Plan(LedgerInput current, Action<LedgerInput> op, ISet<string> opDocs, int maxComputes = 80, int maxMs = 1500)
+        // [WHY-TRAN 2026-10-31] Trần tìm 80 lần tính / 1,5 s → 400 lần / 5 s, mỗi tầng tối đa 150 bước (trước 40).
+        //   Trước: huỷ lần nhận rất sớm của PO nhiều chứng từ cần 27–36 bước gỡ (~3 lần tính sổ / bước, PO lớn ~17 ms / lần tính)
+        //   → hết trần giữa chừng, lời báo chỉ có phần đầu + "Phần mềm dừng tìm ở đây". Ca thường vẫn vài chục ms (chỉ tính khi bị
+        //   chặn, sau khi đã nhả khoá PO, chỉ đọc). Lời báo vẫn hiện tối đa 8 bước + "… và N chứng từ nữa".
+        public static WhyPlan Plan(LedgerInput current, Action<LedgerInput> op, ISet<string> opDocs, int maxComputes = 400, int maxMs = 5000)
         {
             var plan = new WhyPlan();
             if (!current.ApplyWorkflow) { plan.Complete = true; return plan; }   // N7: Workflow OFF không chặn
@@ -136,7 +140,7 @@ namespace MES.Web.Services
 
             bool Clear(Action<LedgerInput> o, HashSet<string> skip, int depth)
             {
-                for (int guard = 0; guard < 40; guard++)
+                for (int guard = 0; guard < 150; guard++)   // [WHY-TRAN] trước 40
                 {
                     if (Over()) return false;
                     var bad = Bad(o);
@@ -300,7 +304,7 @@ namespace MES.Web.Services
             {
                 var input = await new HandoverLedgerService(db).GetInputForDetailAsync(khPlanDetailId);
                 if (input == null || !input.ApplyWorkflow) return "";
-                var plan = Plan(input, op, opDocs);
+                var plan = await Task.Run(() => Plan(input, op, opDocs));   // [WHY-TRAN] tính trên bản sao trong bộ nhớ (không dùng DbContext) → chạy luồng nền, không giữ luồng trang
                 var steps = plan.Steps;
                 var tailList = tail?.ToList() ?? new List<string>();
                 if (!steps.Any() && !tailList.Any())

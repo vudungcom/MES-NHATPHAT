@@ -9,6 +9,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.UserService UserSvc
+@inject HandoverLedgerService LedgerSvc
 
 <PageTitle>Sửa phiếu KH - MES</PageTitle>
 
@@ -157,7 +158,7 @@ else
             <div class="d-flex justify-content-between mb-2 pb-2 border-bottom">
                 <div>
                     <strong>Chi tiết Part</strong>
-                    <span class="badge bg-secondary ms-2">@_detailForm.Status</span>
+                    <span class="badge @LedgerStatusBadge ms-2" title="Trạng thái theo sổ Giao nhận">@LedgerStatusText</span>   @* [RS-E5] trước: cột Status nhập tay luôn "WaitingSupplierOrder" *@
                     @if (!string.IsNullOrEmpty(_detailForm.OldPurchaseOrder))
                     {
                         <span class="badge bg-info ms-1" title="Tách từ PO cũ">
@@ -245,11 +246,13 @@ else
                     <label class="form-label small">Order VL</label>
                     <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25"
                            @bind="_detailForm.OrderVL" @bind:after="OnAnyFieldChanged" />
+                    @if (KhoDiff(_detailForm.OrderVL, _khoOrderVl)) { <div class="text-muted" style="font-size:0.72rem" title="Danh sách Kế hoạch hiện số của Quản lý Kho">Quản lý Kho ghi: <code>@_khoOrderVl</code></div> }   @* [RS-E5] *@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size:0.75rem;">(tự nhập)</span></label>
                     <input class="form-control form-control-sm font-monospace"
                            @bind="_detailForm.Location" @bind:after="OnAnyFieldChanged" placeholder="VD B1" />
+                    @if (KhoDiff(_detailForm.Location, _khoViTri)) { <div class="text-muted" style="font-size:0.72rem" title="Danh sách Kế hoạch hiện số của Quản lý Kho">Quản lý Kho ghi: <code>@_khoViTri</code></div> }   @* [RS-E5] *@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Tình trạng phôi</label>
@@ -559,6 +562,16 @@ else
 
         _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
         _orig = CurrentEditValues();   // [KHE-3]
+
+        // [RS-E5] Trạng thái theo sổ Giao nhận + Order VL / Vị trí bên Quản lý Kho (chỉ hiển thị)
+        try { _ledgerRow = await LedgerSvc.GetLedgerForDetailAsync(DetailId); }
+        catch { _ledgerRow = null; }   // chỉ hiển thị: lỗi đọc sổ không làm hỏng trang Sửa (hiện "—")
+        long? khoKey = DetailId;
+        var kho = await Db.KhoVatLieus.AsNoTracking().Where(k => k.PlanDetailId == khoKey && k.IsActive)
+            .OrderByDescending(k => k.KhoVatLieuId)
+            .Select(k => new { k.OrderVatLieu, k.ViTriDePhoi }).FirstOrDefaultAsync();
+        _khoOrderVl = kho?.OrderVatLieu;
+        _khoViTri   = kho?.ViTriDePhoi;
     }
 
     // [KHE-3 2026-10-30] Gom giá trị trên form (phiếu + dòng PO) để gửi service
@@ -593,6 +606,33 @@ else
     }
 
     private void OnAnyFieldChanged() => _savedSuccessfully = false;
+
+    // ── [RS-E5 2026-10-31] Hiển thị (không đổi dữ liệu) ──
+    //   (1) Trạng thái: trước hiện cột Status nhập tay, luôn "WaitingSupplierOrder" (không chỗ nào đổi). Nay: tính từ sổ Giao nhận,
+    //       cùng hàm với danh sách Kế hoạch + Xem KH (HandoverLedgerService.WhereIs).
+    //   (2) Order VL / Vị trí có 2 nguồn: ô ở đây là của Kế hoạch (KhPlanDetails), danh sách Kế hoạch hiện của Quản lý Kho
+    //       (KhoVatLieus). Hai bên khác nhau thì ghi nhỏ giá trị bên Kho dưới ô để người sửa biết.
+    private LedgerRow? _ledgerRow;
+    private string? _khoOrderVl, _khoViTri;
+
+    private static bool KhoDiff(string? kh, string? kho)
+        => !string.IsNullOrWhiteSpace(kho) && !string.Equals((kh ?? "").Trim(), kho.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private string LedgerStatusText
+    {
+        get
+        {
+            if (_ledgerRow == null) return "—";
+            var w = HandoverLedgerService.WhereIs(_ledgerRow);
+            var lbl = HandoverLedgerService.WhereSummary.StatusLabel(w.Status);
+            return w.Loi > 0 ? $"{lbl} · lỗi {w.Loi:0.##}" : lbl;
+        }
+    }
+
+    private string LedgerStatusBadge => _ledgerRow == null ? "bg-secondary" : HandoverLedgerService.WhereIs(_ledgerRow).Status switch
+    {
+        "AM" => "bg-danger", "CHUA_PHOI" => "bg-secondary", "DU" => "bg-success", _ => "bg-primary"
+    };
 
     // ── Refresh snapshot từ Part Master ──────────────────────────────
     private async Task DoRefreshSnapshotAsync()

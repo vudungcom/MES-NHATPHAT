@@ -238,8 +238,50 @@ public static class LoiScen
                 try { await svc8.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); } catch (Exception ex) { other = ex; }
                 left = 0;
                 Ok(other != null && !HandoverService.IsDeadlock(other) && db8.Database.Current == null, "Lỗi SQL khác (547) không thử lại — ném ra như cũ", other?.Message);
+                // [RS-D10c 2026-10-31] khoá PO bị sp_getapplock trả −3 (nạn nhân deadlock) → tự thử lại như 1205 (trước: "PO đang có người khác lưu")
+                int dlLeft = 1;
+                Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = name => name == "MES_PO_1" && dlLeft-- > 0 ? -3 : 0;
+                int nTx = db8.HandoverTransactions.List.Count;
+                var g3 = await svc8.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI");
+                Ok(g3.Ok && db8.HandoverTransactions.List.Count == nTx + 1 && db8.Database.Current == null, "Khoá PO −3 1 lần: tự thử lại, đúng 1 phiếu", g3.Error);
+                dlLeft = 99;
+                var g4 = await svc8.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+                Ok(!g4.Ok && g4.Error == HandoverService.DeadlockMsg && db8.HandoverTransactions.List.Count == nTx + 1, "Khoá PO −3 mãi: 'Máy chủ đang bận', không thêm phiếu", g4.Error);
+                Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = name => name == "MES_PO_1" ? -1 : 0;
+                var g5 = await svc8.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+                Ok(!g5.Ok && g5.Error == "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.", "Hết giờ chờ khoá (−1): lời báo cũ, không thử lại", g5.Error);
+                Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
             }
-            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; }
+            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null; }
+        }
+
+        // [WHY-TRAN 2026-10-31] PO nhiều chứng từ (8 lô × 10 chiếc đi hết dây chuyền, mỗi việc chia 5 dòng WTS × 2 chiếc = 32 phiếu, 320 dòng WTS): huỷ lần nhận ĐẦU TIÊN (Kho → GC lô 1)
+        //   cần gỡ ~35 chứng từ. Trước (trần 80 lần tính / 1,5 s, 40 bước / tầng): dừng giữa chừng → lời báo "Phần mềm dừng tìm ở đây".
+        Console.WriteLine("[L9] PO nhiều chứng từ: gợi ý gỡ huỷ lần nhận đầu tiên tìm đủ (WHY-TRAN)");
+        {
+            var (db9, svc9, led9) = await Bench.BuildAsync(8, 5);   // 8 lô, mỗi việc chia 5 dòng WTS × 2 chiếc
+            var inp = (await led9.GetInputForDetailAsync(1))!;
+            var sw9 = System.Diagnostics.Stopwatch.StartNew();
+            var plan = HandoverWhy.Plan(inp, HandoverWhy.OpVoidReceive(1), new HashSet<string> { "R:1" });
+            sw9.Stop();
+            Ok(plan.Complete && plan.Steps.Count >= 30, $"Tìm đủ: {plan.Steps.Count} bước · {plan.Computes} lần tính sổ · {sw9.ElapsedMilliseconds} ms", $"đủ={plan.Complete} bước={plan.Steps.Count} tính={plan.Computes} {sw9.ElapsedMilliseconds} ms");
+            // làm đúng theo gợi ý trên bản sao: từng bước tự nó không bị K5, cuối cùng huỷ lần nhận #1 lưu được
+            var sim = HandoverWhyTest.CloneInput(inp); string? bad = null;
+            foreach (var st in plan.Steps)
+            {
+                var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
+                (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
+                if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s2)).Any()) { bad = $"bước {st.Kind}#{st.Id} bị K5 chặn"; break; }
+                sim = s2;
+            }
+            if (bad == null)
+            {
+                var bs = HandoverLedgerService.Compute(sim); var s3 = HandoverWhyTest.CloneInput(sim); HandoverWhy.OpVoidReceive(1)(s3);
+                if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s3)).Any()) bad = "làm hết gợi ý vẫn bị K5 chặn";
+            }
+            Ok(bad == null, "Làm đúng theo gợi ý (trên bản sao) thì huỷ lần nhận #1 lưu được", bad);
+            var v = await svc9.VoidReceiveAsync(1, "nhan nham", 1, new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" });
+            Ok(!v.Ok && v.Error.Contains("… và ") && !v.Error.Contains("Phần mềm dừng tìm ở đây"), "Lời báo thật: 8 bước đầu + '… và N chứng từ nữa', không còn 'dừng tìm'", v.Error);
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
@@ -247,9 +289,5 @@ public static class LoiScen
     }
 }
 
-/// <summary>[RS-D10] Giả SqlException (thuộc tính Number) — sandbox không có Microsoft.Data.SqlClient.</summary>
-public class FakeSqlException : Exception
-{
-    public int Number { get; }
-    public FakeSqlException(int n) : base(n == 1205 ? "Transaction (Process ID 61) was deadlocked on lock resources with another process and has been chosen as the deadlock victim. Rerun the transaction." : "SQL error " + n) { Number = n; }
-}
+// [RS-D10c] FakeSqlException dời sang EfStub.cs (harness WtsHarness dùng EfStub mà không có file này)
+

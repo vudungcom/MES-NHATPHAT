@@ -63,11 +63,11 @@ namespace MES.Web.Services
         }
 
         /// <summary>[GN-K8] Khoá PO trong giao dịch đang mở (cùng tên khoá với WTS + Giao nhận). null = khoá được.</summary>
-        public static async Task<string?> LockAsync(AppDbContext db, int khPlanDetailId)
+        public static async Task<string?> LockAsync(AppDbContext db, int khPlanDetailId, bool deadlockThrows = false)   // [RS-D10c] deadlockThrows: xem TryLockInTransactionAsync
         {
             // [WTS-SVC 2026-10-29] Phần sp_getapplock tách ra TryLockInTransactionAsync để trang WTS (WtsSaveService) khoá máy
             //   "WTS_MACHINE_<máy>" cùng kiểu LockOwner = Transaction. Cách khoá PO ở đây giữ nguyên.
-            if (!await TryLockInTransactionAsync(db, "MES_PO_" + khPlanDetailId))
+            if (!await TryLockInTransactionAsync(db, "MES_PO_" + khPlanDetailId, deadlockThrows))
                 return "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.";
             db.ChangeTracker.Clear();   // [B1-STALE 2026-10-28] có khoá rồi mới đọc: bỏ bản cũ EF đang giữ (như HandoverService.LockPoAsync)
             return null;
@@ -78,12 +78,22 @@ namespace MES.Web.Services
         /// đang mở — tự nhả khi Commit / Rollback. true = khoá được; false = hết giờ chờ (người khác đang giữ).
         /// Dùng cho khoá PO "MES_PO_&lt;id&gt;" (LockAsync) và khoá máy "WTS_MACHINE_&lt;máy&gt;" của WtsSaveService.
         /// </summary>
-        public static async Task<bool> TryLockInTransactionAsync(AppDbContext db, string resource)
+        // [RS-D10c 2026-10-31] sp_getapplock trả −3 = yêu cầu khoá bị SQL Server chọn làm "nạn nhân deadlock" (người khác đang chờ
+        //   khoá mình giữ, mình chờ khoá họ giữ). Trước: gộp chung với hết giờ chờ (−1) → báo "PO đang có người khác lưu", người dùng
+        //   phải bấm lại. Nay: −3 ném lỗi số 51205 (ApplockDeadlockNumber) — HandoverService.IsDeadlock nhận như 1205, nên chỗ nào có
+        //   vòng tự thử lại (WtsSaveService: lưu nhóm / xoá dòng / việc không ra SP) truyền deadlockThrows = true: giao dịch Dispose =
+        //   Rollback (nhả mọi khoá đang giữ) rồi tự lưu lại. Chỗ chưa có vòng thử lại (Kho, Kế hoạch, Update TG chuẩn, Đồ gá) giữ y cũ:
+        //   trả false → "đang có người khác lưu" (an toàn, chưa ghi gì). −1 / −2 / −999 giữ y cũ.
+        public const int ApplockDeadlockNumber = 51205;
+        internal const string ApplockDeadlockSql = "IF @r = -3 THROW 51205, N'MES_APPLOCK_DEADLOCK', 1; ";
+
+        public static async Task<bool> TryLockInTransactionAsync(AppDbContext db, string resource, bool deadlockThrows = false)
         {
             try
             {
                 await db.Database.ExecuteSqlRawAsync(
                     "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 10000; " +
+                    ApplockDeadlockSql +   // [RS-D10c]
                     "IF @r < 0 THROW 50001, N'PO đang có người khác lưu', 1;",
                     resource);
                 return true;
@@ -92,6 +102,21 @@ namespace MES.Web.Services
             {
                 return false;
             }
+            catch (Exception ex) when (!deadlockThrows && IsApplockDeadlock(ex))   // [RS-D10c] nơi gọi không tự thử lại → như cũ (chỉ −3; 1205 thật vẫn nổi lên như cũ)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>[RS-D10c] Lỗi (hoặc lỗi bên trong) là THROW 51205 của nhánh −3 ở trên.</summary>
+        public static bool IsApplockDeadlock(Exception? e)
+        {
+            for (int depth = 0; e != null && depth < 10; e = e.InnerException, depth++)
+            {
+                var p = e.GetType().GetProperty("Number");
+                if (p != null && p.PropertyType == typeof(int) && (int)p.GetValue(e)! == ApplockDeadlockNumber) return true;
+            }
+            return false;
         }
 
         /// <summary>[GN-K8][K5] So sổ trước / sau (sau = đọc lại trong cùng giao dịch). Chỉ Workflow ON (N7, H7 — giữ như trang Giao nhận).</summary>

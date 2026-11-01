@@ -252,6 +252,7 @@ namespace Microsoft.EntityFrameworkCore
         }
         public static int RawCalls; public static List<string> RawLog = new();
         public static List<string> LockNames = new(); public static Action<string>? OnAppLock;   // [KHE-6]
+        public static Func<string, int>? AppLockResult;   // [RS-D10c]
         public Task<int> ExecuteSqlRawAsync(string sql, params object[] args)
         {
             RawCalls++; RawLog.Add(sql);
@@ -278,6 +279,11 @@ namespace Microsoft.EntityFrameworkCore
                 if (Current != null && (Convert.ToString(args[0]) ?? "").StartsWith("MES_PO_")
                     && int.TryParse((Convert.ToString(args[0]) ?? "").Substring(7), out var poId)) Current.PoLocked.Add(poId);   // [ISO-FIX] ghi ĐÚNG PO đã khoá
                 OnAppLock?.Invoke(Convert.ToString(args[0]) ?? "");
+                // [RS-D10c 2026-10-31] giả mã trả về của sp_getapplock (0 = được; −1 hết giờ; −3 nạn nhân deadlock) và chạy đúng nhánh THROW
+                //   có trong câu SQL (kiểm câu SQL thật sự có nhánh −3 → 51205 trước nhánh @r < 0 → 50001).
+                var rr = AppLockResult?.Invoke(Convert.ToString(args[0]) ?? "") ?? 0;
+                if (rr == -3 && sql.Contains("IF @r = -3 THROW 51205")) throw new FakeSqlException(51205);
+                if (rr < 0 && sql.Contains("IF @r < 0 THROW 50001")) throw new Exception("PO đang có người khác lưu");
             }
             // [CHUOI] Làm thật câu "DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId = {0}" (RefreshRouteSnapshotAsync / WriteSnapshotStdConfirmsAsync)
             //   để kiểm được "làm mới quy trình = Part Master hiện tại". Các câu raw khác vẫn chỉ ghi log như cũ.
@@ -347,4 +353,11 @@ namespace Microsoft.EntityFrameworkCore
 namespace Microsoft.EntityFrameworkCore.Storage
 {
     public interface IDbContextTransaction : IDisposable, IAsyncDisposable { Task CommitAsync(CancellationToken ct = default); Task RollbackAsync(CancellationToken ct = default); }
+}
+
+/// <summary>[RS-D10] Giả SqlException (thuộc tính Number) — sandbox không có Microsoft.Data.SqlClient.</summary>
+public class FakeSqlException : Exception
+{
+    public int Number { get; }
+    public FakeSqlException(int n) : base(n == 1205 ? "Transaction (Process ID 61) was deadlocked on lock resources with another process and has been chosen as the deadlock victim. Rerun the transaction." : "SQL error " + n) { Number = n; }
 }

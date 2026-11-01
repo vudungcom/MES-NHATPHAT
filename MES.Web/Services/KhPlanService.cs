@@ -1418,23 +1418,9 @@ public class KhPlanService
             .ToListAsync();
     }
 
-    /// <summary>
-    /// Tính tổng SL hoàn thành cho từng NC/WtsCode của 1 KhPlanDetail.
-    /// Key: "ProcessGroup|NC" hoặc "ProcessGroup|WtsCode"
-    /// Value: tổng QtyDone (chỉ tính IsVoided=false)
-    /// </summary>
-    public async Task<Dictionary<string, decimal>> GetWtsQtySummaryAsync(int khPlanDetailId)
-    {
-        var logs = await _db.WtsProductionLogs
-            .Where(x => x.KhPlanDetailId == khPlanDetailId && !x.IsVoided)
-            .ToListAsync();
-
-        return logs
-            .GroupBy(x => x.NC != null
-                ? $"{x.ProcessGroup}|{x.NC}"
-                : $"{x.ProcessGroup}|{x.WtsCode}")
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyDone));
-    }
+    // [RA-SOCHUNG 2026-10-31] Bỏ GetWtsQtySummaryAsync (Σ QtyDone = OK + NG theo NC / mã, tự cộng ngoài sổ — trái L6).
+    //   Người gọi cũ: HieuSuat_Index (_qtySummaryCache, chỉ ghi không đọc) + View_Khplan (_wtsQtySummary, không đọc).
+    //   Số lượng theo NC / mã: HandoverLedgerService (LedgerStepLine) + Services/LedgerQtyText.cs.
     /// <summary>
     /// Copy toàn bộ quy trình B→E từ PartMaster vào snapshot của KhPlanDetail.
     /// Chỉ copy các step IsActive = true.

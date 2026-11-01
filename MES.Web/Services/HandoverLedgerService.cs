@@ -2003,15 +2003,16 @@ namespace MES.Web.Services
             var ex = new LedgerExplain
             {
                 Title = $"{G.Label} · {label} · Chưa làm", Rule = pg == "GC" ? "L3, N1, N2" : "L3, N5",
-                Formula = "Nhận vào − OK − NG",
+                Formula = "Nhận vào − đã ghi WTS OK − đã ghi WTS NG",   // [WTS-CAP-TEXT]
                 Note = pg == "GC"
                     ? $"Nhận vào NC: {line.Note}. Máy đồng dạng gộp chung số với NC chính."
                     : "Nhận vào mã = hàng nhận vào sản xuất của nhóm − chiếc đã rời nhóm (NG ở mã khác, trả hàng lỗi) mà mã này chưa làm; không vượt Chưa làm của cả nhóm.",
                 Result = line.Waiting ?? 0
             };
+            // [WTS-CAP-TEXT 2026-10-31] chỉ đổi chữ (số giữ nguyên): "OK" / "NG" dễ hiểu nhầm là số đang nhập → "đã ghi WTS OK / NG"
             ex.Terms.Add(new LedgerTerm { Label = "Nhận vào", Value = line.In ?? 0, Sign = 1 });
-            ex.Terms.Add(new LedgerTerm { Label = "OK", Value = line.Ok, Sign = -1 });
-            ex.Terms.Add(new LedgerTerm { Label = "NG", Value = line.Ng, Sign = -1 });
+            ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS OK", Value = line.Ok, Sign = -1 });
+            ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS NG", Value = line.Ng, Sign = -1 });
             return new WtsCapInfo { Max = line.Waiting ?? 0, Locked = (line.In ?? 0) <= 0, Code = main, Explain = ex };
         }
 

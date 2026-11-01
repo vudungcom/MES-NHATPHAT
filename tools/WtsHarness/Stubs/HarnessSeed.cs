@@ -156,6 +156,40 @@ public static class HarnessSeed
         var rbH = await svc.ReceiveAsync(backH.HandoverTxId, 0, 2, null, admin.UserId);
         if (!rbH.Ok) throw new Exception("seed h10 nhận phiếu trả: " + rbH.Error);
 
+        // ── [WTS-PANEL-QTY 31/10] phiếu KH riêng KH-CS / PO-CS (thêm CUỐI → không đổi id / kết quả các kịch bản trước) cho drive_cungso.py:
+        //    giống PO 0003655603 khách báo — Workflow OFF, GC NC1 + NC1b dự phòng (gộp NC1), NC2 chưa WTS mà đã giao 16 sang HTSP (ô âm GC),
+        //    Bavia 2V OK 15 NG 1, 3V dòng cũ không có QtyOk (sổ lấy QtyDone − NG), 1V chuẩn bị.
+        var planC = new KhPlan { PlanNo = "KH-CS", PlanDate = T0, CustomerId = cust.CustomerId, ApplyWorkflow = false, CreatedBy = admin.UserId, CreatedAt = T0 };
+        db.KhPlans.Add(planC); await db.SaveChangesAsync();
+        var dC = new KhPlanDetail { KhPlanId = planC.KhPlanId, LineNo = 1, PartNo = "PART-A", PurchaseOrder = "PO-CS", Quantity = 16, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 };
+        db.KhPlanDetails.Add(dC); await db.SaveChangesAsync();
+        int idC = dC.KhPlanDetailId;
+        db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = idC, IsActive = true, SoLuongThucNhan = 16, SoLuongKeHoach = 16, NgayNhanPhoi = T0, OrderVatLieu = "OVL-CS", ViTriDePhoi = "A1", SoPO = "PO-CS", PartNo = "PART-A" });
+        db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = idC, StepOrder = 1, NC = "NC1", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+        db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = idC, StepOrder = 2, NC = "NC1b", IsBackup = true, ParentNC = "NC1", MachineRegistered = "M3", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+        db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = idC, StepOrder = 3, NC = "NC2", MachineRegistered = "M2", SetupTime = 4, MachiningTime = 3, InspectionTime = 1, PreparationTime = 8, TrialRunTime = 2 });
+        db.KhPlanRouteSnapshotBavia.Add(new KhPlanRouteSnapshotBavia { KhPlanDetailId = idC, StepOrder = 1, NC = "1V", StepName = "Chuẩn bị", StandardTime = 3 });
+        db.KhPlanRouteSnapshotBavia.Add(new KhPlanRouteSnapshotBavia { KhPlanDetailId = idC, StepOrder = 2, NC = "2V", StepName = "Kiểm tra bề mặt", StandardTime = 0.2m });
+        db.KhPlanRouteSnapshotBavia.Add(new KhPlanRouteSnapshotBavia { KhPlanDetailId = idC, StepOrder = 3, NC = "3V1", StepName = "Bavia bao quanh", StandardTime = 2 });
+        db.KhPlanRouteSnapshotBavia.Add(new KhPlanRouteSnapshotBavia { KhPlanDetailId = idC, StepOrder = 4, NC = "3V", StepName = "Bavia tất cả", StandardTime = 5.5m });
+        await db.SaveChangesAsync(); db.Fixup();
+        await Move(idC, "KHO", "GC", 16, "NC1");
+        void WtsC(string pg, string? nc, string? code, decimal done, decimal? ok, decimal? ng, int worker, string? m, decimal? act)
+        {
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = db.WtsProductionLogs.List.Count + 1, KhPlanDetailId = idC, ProcessGroup = pg, NC = nc, WtsCode = code,
+                HtspSubGroup = pg == "BAVIA" ? "Bavia" : null, WorkerId = worker, QtyDone = done, QtyOk = ok, QtyNg = ng, StartTime = T0, EndTime = T0.AddMinutes(30), CreatedAt = T0, CaId = ca.CaId,
+                MachineUsed = m, ProductionMode = pg == "GC" ? "serial" : null, ActualTimePerPc = act, SetupTime_Actual = pg == "GC" ? 5 : null, MachiningTime_Actual = pg == "GC" ? 2 : null, InspectionTime_Actual = pg == "GC" ? 1 : null });
+            db.Fixup();
+        }
+        WtsC("GC", "NC1", null, 10, 10, 0, admin.UserId, "M1", null);
+        WtsC("GC", "NC1b", null, 6, 6, 0, admin.UserId, "M3", null);
+        WtsC("GC", "NC2", null, 16, 16, 0, admin.UserId, "M2", null);
+        await Move(idC, "GC", "HTSP", 16);
+        // dòng WTS NC2 bị huỷ sau khi đã giao (dữ liệu giống PO khách: giao 16 sang HTSP mà NC2 không có WTS) → GC "đã làm chưa giao" −16
+        var w2 = db.WtsProductionLogs.List.Last(); w2.IsVoided = true; w2.VoidReason = "seed: giống PO khách"; db.Fixup();
+        WtsC("BAVIA", null, "1V", 0, 0, 0, htsp, null, 3);
+        WtsC("BAVIA", null, "2V", 16, 15, 1, htsp, null, 0.25m);
+        WtsC("BAVIA", null, "3V", 4, null, null, htsp, null, 5);   // dòng cũ: QtyOk / QtyNg null
         db.ChangeTracker.Clear();
         db.Fixup();
         Console.WriteLine($"[HARNESS] seed xong: {db.KhPlanDetails.List.Count} PO, {db.WtsProductionLogs.List.Count} WTS, {db.HandoverTransactions.List.Count} phiếu");

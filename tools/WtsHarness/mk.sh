@@ -8,7 +8,7 @@ rm -rf "$DST"; mkdir -p "$DST"
 cp -r "$SRC/." "$DST/"; rm -rf "$DST/bin" "$DST/obj" "$DST/Data/AppDbContext - Copy.bak"
 mkdir -p "$DST/Stubs"
 cp "$TOOLS/EfStub.cs" "$TOOLS/EfCompile2.cs" "$TOOLS/XlStub.cs" "$DST/Stubs/"
-cp "$H/Stubs/WebStub.cs" "$H/Stubs/HarnessFixup.cs" "$H/Stubs/HarnessSeed.cs" "$DST/Stubs/"
+cp "$H/Stubs/WebStub.cs" "$H/Stubs/HarnessFixup.cs" "$H/Stubs/HarnessSeed.cs" "$H/Stubs/HarnessLedger.cs" "$DST/Stubs/"
 # DbContext giả: thêm ctor nhận options
 python3 - "$DST" <<'PY'
 import sys,re
@@ -47,7 +47,7 @@ s=s.replace("<RootNamespace>MES.Web</RootNamespace>","<RootNamespace>MES.Web</Ro
 open(p,'w').write(s)
 p=d+'/Program.cs'; s=open(p).read()
 s=s.replace("        SeedData.EnsureSeeded(db);","        SeedData.EnsureSeeded(db);\n        await HarnessSeed.RunAsync(db);   // [harness]")
-s=s.replace("app.UseStaticFiles();","app.UseStaticFiles();\napp.MapGet(\"/harness/dump\", (AppDbContext d) => Results.Json(HarnessSeed.Dump(d)));   // [harness]")
+s=s.replace("app.UseStaticFiles();","app.UseStaticFiles();\napp.MapGet(\"/harness/dump\", (AppDbContext d) => Results.Json(HarnessSeed.Dump(d)));   // [harness]\napp.MapGet(\"/harness/ledger\", async (HandoverLedgerService l, AppDbContext d) => Results.Json(await HarnessLedger.SnapshotAsync(l, d)));   // [harness][WTS-PANEL-QTY]")
 assert "HarnessSeed.RunAsync" in s and "/harness/dump" in s
 open(p,'w').write(s)
 p=d+'/appsettings.json'; s=open(p).read()

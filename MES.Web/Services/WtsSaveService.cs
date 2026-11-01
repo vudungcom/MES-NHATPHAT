@@ -185,7 +185,7 @@ namespace MES.Web.Services
         {
             var e = cap.Explain;
             var detail = e.Terms.Count > 0
-                ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = {e.Result:0.##}"
+                ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = còn {e.Result:0.##}"   // [WTS-CAP-TEXT 2026-10-31] "= còn", chỉ đổi chữ
                 : $"{e.Result:0.##}";
             // [GN-TEXT] bỏ phần ghi chú công thức (chữ kỹ thuật) — xem đủ ở trang Giao nhận, nút Hiện công thức
             return detail;
@@ -290,7 +290,7 @@ namespace MES.Web.Services
                     // [MACHINE-LOCK] Khoá theo máy (sp_getapplock) trước khi kiểm tra trùng → giữ đến khi ghi xong.
                     // 2 người cùng lưu 1 máy: người sau phải chờ người trước ghi xong rồi mới kiểm tra → thấy log mới → bị chặn.
                     // Máy khác nhau không chờ nhau. Logic lưu bên dưới giữ nguyên.
-                    if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_MACHINE_" + grp.MachineUsed))
+                    if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_MACHINE_" + grp.MachineUsed, deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
                     {
                         grp.ErrorMsg = $"Máy {grp.MachineUsed} đang có người khác lưu WTS. Vui lòng bấm Lưu lại sau vài giây.";
                         return Fail();
@@ -435,7 +435,7 @@ namespace MES.Web.Services
             {
                 // [B4-WF-DB 2026-10-28] Khoá PO trước, rồi đọc PO + cờ Workflow MỚI từ DB.
                 // [WTS-SVC] Số PO cho lời báo "đang có người khác lưu" đọc từ DB (trước: _allRows của trang).
-                if (!await PoGuard.TryLockInTransactionAsync(_db, "MES_PO_" + id))
+                if (!await PoGuard.TryLockInTransactionAsync(_db, "MES_PO_" + id, deadlockThrows: true))   // [RS-D10c]
                 {
                     var poName = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == id).Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
                     return $"PO {poName ?? $"KH#{id}"} đang có người khác lưu WTS / giao nhận. Bấm Lưu lại sau vài giây.";
@@ -920,7 +920,24 @@ namespace MES.Web.Services
 
         public const int ActivityNotesMax = 500;
 
+        // [RS-D10c 2026-10-31] Lưu "Việc không ra sản phẩm" bị chọn làm nạn nhân deadlock (1205, hoặc khoá người nhập −3): SQL đã rollback.
+        //   Trước: báo "Lỗi khi lưu: … deadlocked", người dùng bấm lại. Nay: tự lưu lại (giao dịch mới: khoá lại, kiểm trùng giờ lại),
+        //   tối đa 3 lần — như SaveGroupAsync [RS-D10b]. req không bị sửa trong lúc lưu nên thử lại an toàn. Lỗi khác giữ y cũ.
         public async Task<WtsSaveResult> SaveActivityAsync(WtsActivityRequest req)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return await SaveActivityOnceAsync(req); }
+                catch (Exception ex) when (HandoverService.IsDeadlock(ex))
+                {
+                    _db.ChangeTracker.Clear();
+                    if (attempt >= 3) return new WtsSaveResult { Ok = false, ErrorMsg = HandoverService.DeadlockMsg };
+                    await Task.Delay(150 * attempt);
+                }
+            }
+        }
+
+        private async Task<WtsSaveResult> SaveActivityOnceAsync(WtsActivityRequest req)   // [RS-D10c] thân cũ của SaveActivityAsync
         {
             var result = new WtsSaveResult();
             WtsSaveResult Fail(string msg) { result.Ok = false; result.ErrorMsg = msg; return result; }
@@ -965,7 +982,7 @@ namespace MES.Web.Services
 
             await using var trx = await _db.Database.BeginTransactionAsync();
             // Khoá theo người nhập: 2 tab cùng lưu không lọt trùng giờ (LockOwner = Transaction, nhả khi Commit / Rollback)
-            if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + req.UserId))
+            if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + req.UserId, deadlockThrows: true))   // [RS-D10c]
                 return Fail("Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây.");
 
             if (req.ActivityLogId != null)
@@ -1038,7 +1055,7 @@ namespace MES.Web.Services
                 }
                 await trx.CommitAsync();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10c] deadlock: đi ra SaveActivityAsync để tự lưu lại
             {
                 _db.ChangeTracker.Clear();   // không để dòng lỗi ở lại DbContext dùng chung với trang
                 return Fail("Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message));
@@ -1079,7 +1096,7 @@ namespace MES.Web.Services
                 string? blockMsg = null;
                 await using (var trx = await _db.Database.BeginTransactionAsync())
                 {
-                    var lockErr = await PoGuard.LockAsync(_db, row.KhPlanDetailId.Value);
+                    var lockErr = await PoGuard.LockAsync(_db, row.KhPlanDetailId.Value, deadlockThrows: true);   // [RS-D10c] −3 → VoidRowAsync tự thử lại
                     if (lockErr != null)
                     { result.ErrorMsg = lockErr; return result; }   // = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây." (chữ cũ của trang, nay 1 nguồn ở PoGuard)
                     var before = await _ledger.GetLedgerForDetailAsync(row.KhPlanDetailId.Value);

@@ -164,7 +164,7 @@ public static class WtsScen
             r = await s.SaveGroupAsync(k); w = db.WtsProductionLogs.List.Last();
             var st = db.WtsProductionLogStds.List.Where(x => x.WtsLogId == w.WtsLogId).ToList();
             Ok(!r.Ok && r.ErrorMsg!.StartsWith("PO PO1 · mã K1: chưa nhận hàng"), "KCS chưa nhận hàng → chặn (trần Locked, chữ y cũ)", r.ErrorMsg);
-            Eq(r.ErrorMsg, "PO PO1 · mã K1: chưa nhận hàng — chưa nhập số lượng được. (Nhận vào 0 − OK 0 − NG 0 = 0)", "  nguyên văn");
+            Eq(r.ErrorMsg, "PO PO1 · mã K1: chưa nhận hàng — chưa nhập số lượng được. (Nhận vào 0 − đã ghi WTS OK 0 − đã ghi WTS NG 0 = còn 0)", "  nguyên văn");
         }
 
         Console.WriteLine("[W4] Trần L3 + Workflow OFF + K5 khi sửa — chữ y cũ");
@@ -172,11 +172,11 @@ public static class WtsScen
             var db = await SeedAsync(); var s = Svc(db);
             var g = Gc(); g.Rows.Add(Row(1, 30, 0, T, T.AddHours(1))); g.Rows.Add(Row(1, 15, 0, T.AddHours(1), T.AddHours(2)));
             var r = await s.SaveGroupAsync(g);
-            Eq(r.ErrorMsg, "PO PO1 · NC NC1: nhập 45 (OK + NG) vượt Chưa làm 40. (Nhận vào 40 − OK 0 − NG 0 = 40)", "2 dòng cùng NC cộng dồn vượt trần");
+            Eq(r.ErrorMsg, "PO PO1 · NC NC1: nhập 45 (OK + NG) vượt Chưa làm 40. (Nhận vào 40 − đã ghi WTS OK 0 − đã ghi WTS NG 0 = còn 40)", "2 dòng cùng NC cộng dồn vượt trần");
             Ok(g.Rows.All(x => x.ErrorMsg == r.ErrorMsg) && WtsCount(db) == 0, "Cả 2 dòng mang lời báo, chưa ghi gì");
             g = Gc(nc: "NC2", machine: "M2"); g.Rows.Add(Row(1, 1, 0, T, T.AddHours(1)));
             r = await s.SaveGroupAsync(g);
-            Eq(r.ErrorMsg, "PO PO1 · NC NC2: chưa nhận hàng — chưa nhập số lượng được. (Nhận vào 0 − OK 0 − NG 0 = 0)", "NC2 chưa có hàng (NC1 chưa làm) → Locked");
+            Eq(r.ErrorMsg, "PO PO1 · NC NC2: chưa nhận hàng — chưa nhập số lượng được. (Nhận vào 0 − đã ghi WTS OK 0 − đã ghi WTS NG 0 = còn 0)", "NC2 chưa có hàng (NC1 chưa làm) → Locked");
             // Workflow OFF: chỉ chặn dòng ≤ PO
             g = Gc(); g.Rows.Add(Row(2, 25, 0, T, T.AddHours(1)));
             r = await s.SaveGroupAsync(g);
@@ -323,6 +323,103 @@ public static class WtsScen
             var h = NonGc("KCS"); h.Rows.Add(Row(1, 1, 0, T, T.AddHours(1), code: "K1", setup: null, mach: null, insp: null, actualPc: 1)); await s.SaveGroupAsync(h);
             locks = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Where(x => x.Contains("sp_getapplock")).ToList();
             Ok(locks.Count == 1, "Lưu non-GC: chỉ khoá PO (không khoá máy)", string.Join(" | ", locks));
+        }
+
+        // [RS-D10b 2026-10-31] Lưu nhóm / xoá dòng bị chọn làm nạn nhân deadlock 1205 → tự lưu lại, không ghi trùng, không báo "đã lưu" sai.
+        Console.WriteLine("[W10] Deadlock 1205 khi lưu nhóm / xoá dòng → tự lưu lại (RS-D10b)");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            int left = 0, skip = 0;
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = () => skip-- > 0 ? null : left-- > 0
+                ? new InvalidOperationException("transient", new Exception("save", new FakeSqlException(1205))) : null;
+            try
+            {
+                int n0 = WtsCount(db, false), st0 = db.WtsProductionLogStds.List.Count;
+                left = 1; skip = 1;   // lần lưu thứ 2 (bước ghi số chuẩn) hỏng 1 lần
+                var g = Gc(); var row = Row(1, 5, 0, T, T.AddHours(1)); g.Rows.Add(row);
+                var r = await s.SaveGroupAsync(g);
+                Ok(r.Ok && WtsCount(db, false) == n0 + 1 && db.WtsProductionLogStds.List.Count == st0 + 5 && row.WtsLogId == db.WtsProductionLogs.List.Last().WtsLogId && !StubTransactionOpen(db),
+                   "Hỏng ở bước số chuẩn 1 lần: tự lưu lại — đúng 1 dòng WTS + 5 dòng số chuẩn, giao dịch đóng", $"{r.ErrorMsg} · wts {WtsCount(db, false) - n0} · std {db.WtsProductionLogStds.List.Count - st0}");
+                left = 99; skip = 0;
+                g = Gc(); var row2 = Row(1, 3, 0, T.AddHours(2), T.AddHours(3)); g.Rows.Add(row2);
+                r = await s.SaveGroupAsync(g);
+                left = 0;
+                Ok(!r.Ok && r.ErrorMsg == HandoverService.DeadlockMsg && WtsCount(db, false) == n0 + 1 && row2.WtsLogId == null && !row2.Saved && !StubTransactionOpen(db),
+                   "Deadlock mãi: báo 'Máy chủ đang bận … chưa lưu gì', không thêm dòng, dòng về như trước khi bấm Lưu", r.ErrorMsg);
+                left = 1;
+                var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = row.WtsLogId, KhPlanDetailId = 1, UserId = 2 });
+                Ok(v.Ok && db.WtsProductionLogs.List.SingleOrDefault(x => x.WtsLogId == row.WtsLogId)?.IsVoided == true && !StubTransactionOpen(db), "Xoá dòng gặp deadlock 1 lần: tự thử lại, dòng đã huỷ", v.ErrorMsg);
+            }
+            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; }
+        }
+
+        // [RS-D10c 2026-10-31] sp_getapplock trả −3 (khoá bị chọn làm nạn nhân deadlock) → nơi có vòng thử lại tự lưu lại;
+        //   "Việc không ra sản phẩm" gặp 1205 → tự lưu lại; nơi chưa có vòng thử lại giữ lời báo cũ.
+        Console.WriteLine("[W11] Khoá −3 / deadlock ở WTS + Việc không ra SP → tự thử lại (RS-D10c)");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "VS", TaskName = "Vệ sinh máy", IsActive = true });
+            db.Fixup();
+            var dl = new Dictionary<string, int>();   // tên khoá → số lần còn trả −3
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = name => dl.TryGetValue(name, out var k) && k > 0 ? (dl[name] = k - 1) >= 0 ? -3 : 0 : 0;
+            int left = 0;
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = () => left-- > 0 ? new InvalidOperationException("transient", new Exception("save", new FakeSqlException(1205))) : null;
+            try
+            {
+                int n0 = WtsCount(db, false);
+                dl["WTS_MACHINE_M1"] = 1;
+                var g = Gc(); var row = Row(1, 5, 0, T, T.AddHours(1)); g.Rows.Add(row);
+                var r = await s.SaveGroupAsync(g);
+                Ok(r.Ok && WtsCount(db, false) == n0 + 1 && !StubTransactionOpen(db), "Khoá máy bị −3 1 lần: tự lưu lại, đúng 1 dòng (trước: 'Máy M1 đang có người khác lưu')", r.ErrorMsg);
+                dl["MES_PO_1"] = 2;
+                g = Gc(); g.Rows.Add(Row(1, 2, 0, T.AddHours(1), T.AddHours(2))); r = await s.SaveGroupAsync(g);
+                Ok(r.Ok && WtsCount(db, false) == n0 + 2, "Khoá PO bị −3 2 lần: lần 3 lưu được, đúng 1 dòng", r.ErrorMsg);
+                dl["MES_PO_1"] = 99;
+                g = Gc(); var row3 = Row(1, 1, 0, T.AddHours(3), T.AddHours(4)); g.Rows.Add(row3); r = await s.SaveGroupAsync(g);
+                dl["MES_PO_1"] = 0;
+                Ok(!r.Ok && r.ErrorMsg == HandoverService.DeadlockMsg && WtsCount(db, false) == n0 + 2 && row3.WtsLogId == null, "Khoá PO −3 mãi: báo 'Máy chủ đang bận', không ghi", r.ErrorMsg);
+                dl["MES_PO_1"] = 1;
+                var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = row.WtsLogId, KhPlanDetailId = 1, UserId = 2 });
+                Ok(v.Ok && db.WtsProductionLogs.List.SingleOrDefault(x => x.WtsLogId == row.WtsLogId)?.IsVoided == true, "Xoá dòng: khoá PO −3 1 lần → tự thử lại, đã huỷ", v.ErrorMsg);
+                // Việc không ra sản phẩm (người 1 = Admin)
+                var a0 = db.WorkerActivityLogs.List.Count;
+                var req = new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(13), EndTime = DateTime.Today.AddHours(13.5) };
+                left = 1;
+                var ra = await s.SaveActivityAsync(req);
+                Ok(ra.Ok && db.WorkerActivityLogs.List.Count == a0 + 1 && !StubTransactionOpen(db), "Việc không ra SP gặp 1205 1 lần: tự lưu lại, đúng 1 dòng (trước: 'Lỗi khi lưu: … deadlocked')", ra.ErrorMsg);
+                dl["WTS_WORKER_1"] = 1;
+                req = new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(14), EndTime = DateTime.Today.AddHours(14.5) };
+                ra = await s.SaveActivityAsync(req);
+                Ok(ra.Ok && db.WorkerActivityLogs.List.Count == a0 + 2, "Việc không ra SP: khoá người nhập −3 1 lần → tự lưu lại", ra.ErrorMsg);
+                left = 99;
+                req = new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(15), EndTime = DateTime.Today.AddHours(15.5) };
+                ra = await s.SaveActivityAsync(req);
+                left = 0;
+                Ok(!ra.Ok && ra.ErrorMsg == HandoverService.DeadlockMsg && db.WorkerActivityLogs.List.Count == a0 + 2 && !StubTransactionOpen(db), "Việc không ra SP deadlock mãi: 'Máy chủ đang bận', không ghi", ra.ErrorMsg);
+                left = 1; Exception? other = null;
+                Microsoft.EntityFrameworkCore.DbContext.OnSave = () => left-- > 0 ? new Exception("save", new FakeSqlException(547)) : null;
+                ra = await s.SaveActivityAsync(new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(16), EndTime = DateTime.Today.AddHours(16.5) });
+                Ok(!ra.Ok && ra.ErrorMsg!.StartsWith("Lỗi khi lưu: ") && db.WorkerActivityLogs.List.Count == a0 + 2, "Lỗi SQL khác: giữ y cũ 'Lỗi khi lưu: …', không thử lại", ra.ErrorMsg + other);
+                // Nơi chưa có vòng thử lại (Kho / Kế hoạch qua PoGuard.LockAsync mặc định): −3 vẫn báo y cũ, không ném lỗi
+                dl["MES_PO_2"] = 1;
+                await using (var trx = await db.Database.BeginTransactionAsync())
+                {
+                    var e = await PoGuard.LockAsync(db, 2);
+                    Eq(e, "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.", "PoGuard.LockAsync mặc định: −3 → lời báo cũ (Kho, Kế hoạch, Update TG chuẩn)");
+                }
+                dl["MES_PO_2"] = 1; Exception? thrown = null;
+                await using (var trx = await db.Database.BeginTransactionAsync())
+                { try { await PoGuard.LockAsync(db, 2, deadlockThrows: true); } catch (Exception ex) { thrown = ex; } }
+                Ok(thrown != null && HandoverService.IsDeadlock(thrown), "deadlockThrows: −3 → lỗi deadlock (51205) cho vòng thử lại");
+                dl["MES_PO_2"] = 0; dl["X"] = 0;
+                Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = name => name == "MES_PO_2" ? -1 : 0;
+                await using (var trx = await db.Database.BeginTransactionAsync())
+                {
+                    var e = await PoGuard.LockAsync(db, 2, deadlockThrows: true);
+                    Eq(e, "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây.", "Hết giờ chờ (−1): vẫn lời báo cũ, không thử lại");
+                }
+            }
+            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null; }
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");

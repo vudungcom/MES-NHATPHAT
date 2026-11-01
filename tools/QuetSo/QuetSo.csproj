@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- [RA-SOCHUNG 2026-10-31] Quét toàn DB, CHỈ ĐỌC: PO ô âm / không cân / WTS vượt trần / dòng WTS số lệch.
+       Chạy trong thư mục tools/QuetSo:  dotnet run -c Release   (xem README.md) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>QuetSo</RootNamespace>
+    <StartupObject>QuetSo.Host</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../MES.Web/MES.Web.csproj" />
+  </ItemGroup>
+</Project>

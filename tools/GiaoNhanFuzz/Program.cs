@@ -19,7 +19,8 @@ if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VUL
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
 if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   // [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16] quyền máy chủ + danh mục + quy trình trống + khoá cấp số KH
-if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }   // [ISO-FIX] không giao dịch Serializable + mọi lần ghi số sau khoá MES_PO_
+if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }
+if (args.Length > 0 && args[0] == "quet") { return await QuetScen.Run(); }   // [RA-SOCHUNG] tự kiểm công cụ quét DB tools/QuetSo (chỉ đọc)   // [ISO-FIX] không giao dịch Serializable + mọi lần ghi số sau khoá MES_PO_
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -691,6 +692,24 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     foreach (var G in row.Groups.Values)
         foreach (var w in G.Warnings.Where(w => w.Contains("WTS nhập vượt")))
         { checks++; F("WTS vượt hàng thật", w); }
+    // [WTS-PANEL-QTY 2026-10-31] Số hiện trên bảng quy trình trang WTS + tab KH (LedgerQtyText) = cộng OK / NG đúng từng dòng WTS
+    //   (gồm dòng NC / mã dự phòng gộp vào mã chính), cùng công thức OK dòng cũ (QtyDone − NG) mà 2 trang dùng cho cột OK / NG.
+    {
+        var wl = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();
+        foreach (var G in row.Groups.Values)
+            foreach (var s in G.Steps.Where(s => !s.IsPrep && !s.IsExcluded))
+            {
+                checks++;
+                var mine = wl.Where(w => w.ProcessGroup == s.Pg && string.Equals(
+                    row.CodeMain.TryGetValue(s.Pg + "|" + (w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC))?.Trim(), out var mm) ? mm : (w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC))?.Trim(),
+                    s.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+                var o = mine.Sum(LedgerQtyText.LogOk); var g = mine.Sum(LedgerQtyText.LogNg);
+                if (o != s.Ok || g != s.Ng) F("Bảng quy trình ≠ dòng WTS", $"{s.Pg} {s.Code}: sổ OK {s.Ok} NG {s.Ng} · cộng dòng WTS OK {o} NG {g}");
+                checks++;
+                var t = LedgerQtyText.Text(LedgerQtyText.Step(row, s.Pg, s.Code));
+                if (t != $"OK {s.Ok:0.##} / vào {(s.In ?? 0):0.##}" + (s.Ng > 0 ? $" · NG {s.Ng:0.##}" : "")) F("Chữ badge ≠ sổ", $"{s.Pg} {s.Code}: {t}");
+            }
+    }
     // GC: Σ chờ các NC = Chưa GC
     var gc = row.G("GC");
     var gcLines = gc.Steps.Where(s => !s.IsExcluded && s.Waiting.HasValue).ToList();
@@ -853,7 +872,7 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
             checks++;
             var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs);
             if (!plan.Complete)
-            {   // hết trần tìm (80 lần tính / 1,5 s) chưa phải vòng khoá: tìm lại không giới hạn để phân biệt
+            {   // hết trần tìm (mặc định Plan: 400 lần tính / 5 s — [WHY-TRAN]; trước 80 / 1,5 s) chưa phải vòng khoá: tìm lại không giới hạn để phân biệt
                 var big = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs, 5000, 60000);
                 if (big.Complete) { Inc("h10.hettran"); h10MaxSteps = Math.Max(h10MaxSteps, big.Steps.Count); continue; }
                 plan = big;

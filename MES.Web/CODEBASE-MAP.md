@@ -270,7 +270,7 @@ MES.Web/
 - `GetSnapshotSummaryAsync(List<int> detailIds)` → batch count snapshot mỗi loại → `SnapshotSummary`
 - `GetRouteSnapshotAsync(khPlanDetailId)` → lấy 6 bảng snapshot đầy đủ
 - `GetWtsLogsAsync(khPlanDetailId)` → `WtsProductionLogs` + `Worker`
-- `GetWtsQtySummaryAsync(khPlanDetailId)` → tổng `QtyDone` theo `ProcessGroup|NC`
+- ~~`GetWtsQtySummaryAsync`~~ — bỏ 31/10/2026 [RA-SOCHUNG]: số theo NC / mã đọc sổ `HandoverLedgerService` + `Services/LedgerQtyText.cs`
 - **DB tables:** `KhPlans`, `KhPlanDetails`, `KhPlanDetailChangeLogs`, `KhPlanRouteSnapshot*` (×6), `WtsProductionLogs`, `KhoVatLieus`, `Customers`, `Users`
 
 ### `StandardWtsTaskService`
