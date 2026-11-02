@@ -319,6 +319,84 @@ public static class LoiScen
             other?.Dispose();
         }
 
+        // [GN-RECV-NG2 2026-11-02] Nhận vào ô Hàng lỗi (phiếu trả tự lập / phiếu hàng lỗi lập tay / bên nhận chọn ô Hàng lỗi): toàn bộ là hàng lỗi —
+        //   không có số "đạt" (OK > 0 bị chặn), lỗi lấy theo phiếu khi không ghi, KHÔNG tự lập phiếu trả lần nữa, sổ không ghi "NG lúc nhận".
+        //   Phiếu trả tự lập chỉ nhận vào ô Hàng lỗi. (Luật cũ "phiếu tự lập chặn NG" đã bỏ — nhận NG vào ô Hàng lỗi là đúng.)
+        Console.WriteLine("[L12] GN-RECV-NG2 — nhận vào ô Hàng lỗi: không có hàng đạt, lỗi theo phiếu, không tự lập phiếu trả lần 2");
+        {
+            var dbn = Seed(); var svn = new HandoverService(dbn); var ledn = new HandoverLedgerService(dbn);
+            int Backs() => dbn.HandoverTransactions.List.Count(t => t.SourceReceiveId != null);
+            string StepText(long receiveId) => HandoverLedgerService.ComputeSteps(ledn.GetInputForDetailAsync(1).GetAwaiter().GetResult()!)
+                .FirstOrDefault(x => x.Kind == "NHAN" && x.RefId == receiveId)?.Text ?? "(không thấy bước)";
+            await svn.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            var r0 = await svn.ReceiveAsync(LastTx(dbn), 8, 2, null, 2, ngCategoryId: 1);
+            var back = dbn.HandoverTransactions.List.Single(t => t.SourceReceiveId != null);
+            Ok(r0.Ok && Backs() == 1 && back.NgReason == "NUT · Phôi nứt", "Dựng: GC nhận 8 + NG 2 → 1 phiếu trả tự lập (lỗi 'NUT · Phôi nứt')", r0.Error + " · " + back.NgReason);
+            int nRecv = dbn.HandoverReceives.List.Count;
+            var a = await svn.ReceiveAsync(back.HandoverTxId, 1, 1, null, 1);
+            Ok(!a.Ok && a.Error == "Phiếu hàng lỗi: không có hàng đạt — nhập số nhận lại ở ô Hàng lỗi." && dbn.HandoverReceives.List.Count == nRecv,
+               "Kho nhận phiếu trả tự lập có OK 1: chặn đúng lời báo, không ghi", a.Error);
+            var b = await svn.ReceiveAsync(back.HandoverTxId, 0, 2, null, 1, toCell: HandoverCell.Moi, toCellReason: "thu");
+            Ok(!b.Ok && b.Error == "Phiếu trả hàng lỗi do phần mềm tự lập: chỉ nhận vào ô Hàng lỗi.", "Phiếu trả tự lập chọn ô Hàng mới: chặn", b.Error);
+            var c = await svn.ReceiveAsync(back.HandoverTxId, 0, 2, null, 1);
+            var rc = dbn.HandoverReceives.List.Last();
+            Ok(c.Ok && rc.QtyNg == 2 && rc.QtyOk == 0 && rc.ToCell == HandoverCell.Loi && rc.NgReason == "NUT · Phôi nứt" && Backs() == 1,
+               "Kho nhận 0 + NG 2 (không ghi lỗi): lưu, ô Hàng lỗi, lỗi theo phiếu, KHÔNG tự lập phiếu trả lần 2", $"{c.Error} · ô {rc.ToCell} lỗi '{rc.NgReason}' · phiếu trả tự lập {Backs()}");
+            var tc = StepText(rc.ReceiveId);
+            Ok(!tc.Contains("NG lúc nhận") && tc.Contains("Hàng lỗi"), "Sổ: bước nhận vào ô Hàng lỗi không ghi 'NG lúc nhận'", tc);
+
+            // phiếu hàng lỗi lập tay: GC giao ô Hàng lỗi (WTS NG 2) về Kho
+            await Wts(dbn, "GC", "NC1", 3, 2, 2, 2);
+            var g = await svn.IssueByCellAsync(1, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "xuoc nang", ngCaseId: VuHelp.LastCase(dbn));
+            var mt = dbn.HandoverTransactions.List.Last();
+            var d = await svn.ReceiveAsync(mt.HandoverTxId, 2, 0, null, 1);
+            Ok(g.Ok && !d.Ok && d.Error == "Phiếu hàng lỗi: không có hàng đạt — nhập số nhận lại ở ô Hàng lỗi.", "Phiếu hàng lỗi lập tay, Kho nhập 2 ở ô đạt: chặn", g.Error + " · " + d.Error);
+            var e = await svn.ReceiveAsync(mt.HandoverTxId, 0, 2, null, 1);
+            var re = dbn.HandoverReceives.List.Last();
+            Ok(e.Ok && re.NgReason == mt.NgReason && !string.IsNullOrEmpty(re.NgReason) && Backs() == 1, "Nhận 0 + NG 2: lỗi theo phiếu, không tự lập phiếu trả", $"{e.Error} · '{re.NgReason}' vs phiếu '{mt.NgReason}' · tự lập {Backs()}");
+            Ok(!StepText(re.ReceiveId).Contains("NG lúc nhận"), "Sổ: không ghi 'NG lúc nhận'", StepText(re.ReceiveId));
+
+            // phiếu Hàng mới, bên nhận đổi sang ô Hàng lỗi (có lý do): cũng không có hàng đạt, không tự lập phiếu trả
+            await svn.IssueByCellAsync(1, "KHO", "GC", 3, 1, "MOI", false, "MOI");
+            var nt = LastTx(dbn);
+            var f = await svn.ReceiveAsync(nt, 1, 2, null, 2, toCell: HandoverCell.Loi, toCellReason: "phoi nut", ngCategoryId: 1);
+            Ok(!f.Ok && f.Error == "Phiếu hàng lỗi: không có hàng đạt — nhập số nhận lại ở ô Hàng lỗi.", "Phiếu Hàng mới, bên nhận chọn ô Hàng lỗi mà có OK 1: chặn", f.Error);
+            var h = await svn.ReceiveAsync(nt, 0, 3, null, 2, toCell: HandoverCell.Loi, toCellReason: "phoi nut", ngCategoryId: 1);
+            var rh = dbn.HandoverReceives.List.Last();
+            var row = (await ledn.GetLedgerForDetailAsync(1))!;
+            Ok(h.Ok && rh.ToCell == HandoverCell.Loi && rh.QtyNg == 3 && Backs() == 1 && row.Balanced, "Nhận 0 + NG 3 vào ô Hàng lỗi: lưu, không tự lập phiếu trả, sổ cân", $"{h.Error} · tự lập {Backs()}");
+        }
+
+        // [D10-REASON 2026-11-02] Lý do huỷ: cột DB 200 ký tự — dài hơn thì cắt còn 200 (đã Trim), ngắn thì giữ nguyên (đã Trim). Trước: lỗi SQL, trang sập.
+        Console.WriteLine("[L13] D10-REASON — lý do huỷ lần nhận / huỷ phiếu dài quá 200 ký tự: cắt còn 200");
+        {
+            var dbn = Seed(); var svn = new HandoverService(dbn);
+            string Long(char ch, int n) => "  " + string.Concat(Enumerable.Range(0, n).Select(i => (char)(ch + i % 20))) + "  ";
+            await svn.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI");
+            var tx = LastTx(dbn);
+            await svn.ReceiveAsync(tx, 10, 0, null, 2);
+            var rcv = dbn.HandoverReceives.List.Last();
+            var why1 = Long('a', 250);
+            var v1 = await svn.VoidReceiveAsync(rcv.ReceiveId, why1, 1, new List<string>());
+            rcv = dbn.HandoverReceives.List.Single(x => x.ReceiveId == rcv.ReceiveId);
+            Ok(v1.Ok && rcv.IsVoided && rcv.VoidReason == why1.Trim()[..200], "Huỷ lần nhận, lý do 250 ký tự (+ dấu cách 2 đầu): lưu, lý do = 200 ký tự đầu (đã Trim)",
+               $"{v1.Error} · dài {rcv.VoidReason?.Length}");
+            var why2 = Long('A', 320);
+            var v2 = await svn.VoidIssueAsync(tx, why2, 1, new List<string>());
+            var t = dbn.HandoverTransactions.List.Single(x => x.HandoverTxId == tx);
+            Ok(v2.Ok && t.IsVoided && t.VoidReason == why2.Trim()[..200], "Huỷ phiếu, lý do 320 ký tự: lưu, lý do = 200 ký tự đầu", $"{v2.Error} · dài {t.VoidReason?.Length}");
+            await svn.IssueByCellAsync(1, "KHO", "GC", 5, 1, "MOI", false, "MOI");
+            var tx2 = LastTx(dbn);
+            var v3 = await svn.VoidIssueAsync(tx2, "  nhap nham so  ", 1, new List<string>());
+            var t2 = dbn.HandoverTransactions.List.Single(x => x.HandoverTxId == tx2);
+            Ok(v3.Ok && t2.VoidReason == "nhap nham so", "Lý do ngắn: giữ nguyên (đã Trim)", t2.VoidReason);
+            var why4 = "  " + new string('x', 200) + "  ";
+            await svn.IssueByCellAsync(1, "KHO", "GC", 5, 1, "MOI", false, "MOI");
+            var tx3 = LastTx(dbn);
+            var v4 = await svn.VoidIssueAsync(tx3, why4, 1, new List<string>());
+            Ok(v4.Ok && dbn.HandoverTransactions.List.Single(x => x.HandoverTxId == tx3).VoidReason == new string('x', 200), "Lý do đúng 200 ký tự (sau Trim): giữ đủ 200");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

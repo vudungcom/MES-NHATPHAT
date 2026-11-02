@@ -173,7 +173,90 @@ public static class ViecScen
             Ok(await SoPo(db, 1) == so0, "Sổ số lượng PO1 giống hệt trước khi chạy");
         }
 
+        // [ML16-DOCS 2026-11-02] PO chỉ có giờ sửa (dòng "Việc không ra sản phẩm" ghi PO đó, kể cả đã huỷ) KHÔNG còn là PO trắng:
+        //   WorkerActivityLogs.RefKhPlanDetailId có khoá ngoại → Xoá / Tách PO phải chặn trước (không để SQL báo lỗi giữa chừng).
+        Console.WriteLine("[X6] ML16-DOCS — PO chỉ có giờ sửa (việc không ra SP, kể cả đã huỷ): Xoá / Tách PO bị chặn");
+        {
+            var db = await SeedAsync(); var s = WtsScen.Svc(db); var kh = new KhPlanService(db);
+            var plan = db.KhPlans.List.First(p => p.KhPlanId == 1);
+            var d3 = new KhPlanDetail { KhPlanDetailId = 3, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO3", Quantity = 10, Unit = "EA", LineNo = 2 };
+            db.KhPlanDetails.List.Add(d3); plan.Details.Add(d3); db.Fixup();
+            var c0 = await PoGuard.CountDocsAsync(db, 3);
+            Ok(!c0.HasAny, "PO3 mới (không phôi / WTS / phiếu / báo lỗi / giờ sửa): PO trắng", c0.Text());
+            var r = await s.SaveActivityAsync(Req(UGc, "VS", D.AddHours(9), D.AddHours(10), po: 3, notes: "sua do ga PO3"));
+            db.Fixup();
+            var c1 = await PoGuard.CountDocsAsync(db, 3);
+            Ok(r.Ok && c1.GioSuaAll == 1 && c1.HasAny && c1.Text() == "1 dòng việc không ra sản phẩm (giờ sửa) ghi PO này",
+               "Lưu 1 dòng việc không ra SP ghi PO3 → PoGuard đếm 1 dòng giờ sửa, HasAny", (r.ErrorMsg ?? "") + " · " + c1.Text());
+            EfRaw().Clear();
+            var del = await kh.DeleteDetailAsync(3, 1);
+            Ok(!del.Success && del.Error!.Contains("1 dòng việc không ra sản phẩm (giờ sửa) ghi PO này") && db.KhPlanDetails.List.Any(x => x.KhPlanDetailId == 3) && EfRaw().Count == 0,
+               "Xoá PO3: chặn, lời báo nêu dòng giờ sửa, không chạy lệnh xoá nào", del.Error);
+            var act = db.WorkerActivityLogs.List.Single(a => a.RefKhPlanDetailId == 3);
+            var vd = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = act.ActivityLogId, UserId = UGc }); db.Fixup();
+            var c2 = await PoGuard.CountDocsAsync(db, 3);
+            del = await kh.DeleteDetailAsync(3, 1);
+            Ok(vd.Ok && act.IsVoided && c2.GioSuaAll == 1 && !del.Success && del.Error!.Contains("giờ sửa"), "Huỷ dòng giờ sửa → vẫn đếm (lịch sử, khoá ngoại) → Xoá PO3 vẫn chặn", (vd.ErrorMsg ?? "") + " · " + del.Error);
+            string? err = null; try { await kh.SplitPOAsync(3, new() { new() { PurchaseOrder = "PO3A", Quantity = 5 }, new() { PurchaseOrder = "PO3B", Quantity = 5 } }, 1, "tach"); } catch (Exception ex) { err = ex.Message; }
+            Ok(err != null && err.Contains("không tách được") && err.Contains("giờ sửa") && !db.KhPlanDetails.List.Any(x => x.PurchaseOrder == "PO3A"), "Tách PO3: chặn, không sinh PO mới", err);
+        }
+
+        // [ML16-Q 2026-11-02] Hùng duyệt: chiều ngược lại — lưu WTS sản xuất chồng giờ "Việc không ra SP" đã lưu của CHÍNH người đó → chặn;
+        //   khoá WTS_WORKER_ đầu tiên (thứ tự người → máy → PO); WTS chồng WTS (GC nhiều máy) vẫn được.
+        Console.WriteLine("[X7] ML16-Q — lưu WTS sản xuất chồng giờ việc không ra SP của chính mình: chặn; chạm mép / người khác / việc đã huỷ: được; khoá người → máy → PO");
+        {
+            var db = await SeedAsync(); var s = WtsScen.Svc(db);
+            db.Users.List.First(u => u.UserId == 2).GroupId = 77; db.Users.List.First(u => u.UserId == 2).Group = db.UserGroups.List.First(x => x.GroupId == 77); db.Fixup();
+            var a1 = await s.SaveActivityAsync(Req(2, "VS", D.AddHours(10), D.AddHours(11)));
+            int w0 = db.WtsProductionLogs.List.Count;
+            var g = WtsScen.Gc(); g.Rows.Add(WtsScen.Row(1, 2, 0, D.AddHours(10).AddMinutes(30), D.AddHours(11).AddMinutes(30)));
+            var r1 = await s.SaveGroupAsync(g);
+            Ok(a1.Ok && !r1.Ok && r1.ErrorMsg == "Trùng giờ với việc không ra sản phẩm VS 10:00–11:00 đã lưu — sửa giờ, hoặc sửa / xoá dòng việc đó." && db.WtsProductionLogs.List.Count == w0,
+               "WTS 10:30–11:30 chồng việc VS 10:00–11:00 của chính mình: chặn, không ghi dòng nào", a1.ErrorMsg + " | " + r1.ErrorMsg);
+            var g2 = WtsScen.Gc(); g2.Rows.Add(WtsScen.Row(1, 2, 0, D.AddHours(11), D.AddHours(12)));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var r2 = await s.SaveGroupAsync(g2);
+            var ln = Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.ToList();
+            Ok(r2.Ok, "Chạm mép 11:00 (bắt đầu WTS = kết thúc việc): lưu được", r2.ErrorMsg);
+            int iw = ln.IndexOf("WTS_WORKER_2"), im = ln.IndexOf("WTS_MACHINE_M1"), ip = ln.IndexOf("MES_PO_1");
+            Ok(iw >= 0 && im > iw && ip > im, "Thứ tự khoá lúc lưu WTS: WTS_WORKER_2 → WTS_MACHINE_M1 → MES_PO_1", string.Join(",", ln));
+            var g3 = WtsScen.Gc(machine: "M2"); g3.UserId = UGc; g3.Rows.Add(WtsScen.Row(1, 2, 0, D.AddHours(10).AddMinutes(30), D.AddHours(10).AddMinutes(50)));
+            var r3 = await s.SaveGroupAsync(g3);
+            Ok(r3.Ok, "Người khác (u7) cùng giờ việc của u2: lưu được (chỉ xét chính người nhập)", r3.ErrorMsg);
+            var w11 = db.WtsProductionLogs.List.First(w => w.WorkerId == 2 && !w.IsVoided);
+            var g4 = WtsScen.Gc(); var e4 = WtsScen.Row(1, 2, 0, D.AddHours(10).AddMinutes(15), D.AddHours(11)); e4.IsEditing = true; e4.WtsLogId = w11.WtsLogId; g4.Rows.Add(e4);
+            var r4 = await s.SaveGroupAsync(g4); db.Fixup();
+            Ok(!r4.Ok && r4.ErrorMsg!.StartsWith("Trùng giờ với việc không ra sản phẩm VS 10:00–11:00") && !w11.IsVoided,
+               "Sửa dòng WTS 11:00–12:00 thành 10:15–11:00 (đè lên việc): chặn, dòng cũ KHÔNG bị huỷ", r4.ErrorMsg);
+            var vv = db.WorkerActivityLogs.List.First(a => a.WorkerId == 2 && !a.IsVoided);
+            var vd = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = vv.ActivityLogId, UserId = 2 }); db.Fixup();
+            var g5 = WtsScen.Gc(); g5.Rows.Add(WtsScen.Row(1, 2, 0, D.AddHours(10).AddMinutes(30), D.AddHours(10).AddMinutes(55)));
+            var r5 = await s.SaveGroupAsync(g5);
+            Ok(vd.Ok && r5.Ok, "Việc đã xoá (IsVoided) không tính trùng: WTS 10:30–10:55 lưu được", vd.ErrorMsg + " | " + r5.ErrorMsg);
+            var g6 = WtsScen.Gc(machine: "M3"); g6.Rows.Add(WtsScen.Row(1, 1, 0, D.AddHours(10).AddMinutes(30), D.AddHours(10).AddMinutes(55)));
+            var r6 = await s.SaveGroupAsync(g6);
+            Ok(r6.Ok, "WTS chồng WTS của chính mình (GC đứng 2 máy M1 + M3): vẫn lưu được như cũ", r6.ErrorMsg);
+            // ngẫu nhiên: u2 trộn lưu WTS (máy ngẫu nhiên) + việc không ra SP → không bao giờ có WTS hiệu lực chồng việc hiệu lực
+            var rnd = new Random(1102); string? bad = null; int okW = 0, okA = 0, blk = 0;
+            for (int i = 0; i < 200 && bad == null; i++)
+            {
+                var st = D.AddHours(6).AddMinutes(rnd.Next(0, 14 * 60) / 5 * 5); var en = st.AddMinutes(5 + rnd.Next(0, 12) * 5);
+                if (en > D.AddDays(1)) en = D.AddDays(1);
+                WtsSaveService.WtsSaveResult r;
+                if (rnd.Next(2) == 0) { var gg = WtsScen.Gc(machine: "MR" + rnd.Next(1, 40)); gg.Rows.Add(WtsScen.Row(1, 0.01m, 0, st, en)); r = await s.SaveGroupAsync(gg); if (r.Ok) okW++; }
+                else { r = await s.SaveActivityAsync(Req(2, "VS", st, en)); if (r.Ok) okA++; }
+                if (!r.Ok) blk++;
+                db.Fixup();
+                var W = db.WtsProductionLogs.List.Where(w => w.WorkerId == 2 && !w.IsVoided).ToList();
+                var A = db.WorkerActivityLogs.List.Where(a => a.WorkerId == 2 && !a.IsVoided).ToList();
+                foreach (var a in A) foreach (var w in W)
+                    if (w.StartTime < a.EndTime && w.EndTime > a.StartTime) bad = $"lượt {i}: WTS {w.StartTime:HH:mm}–{w.EndTime:HH:mm} chồng việc {a.StartTime:HH:mm}–{a.EndTime:HH:mm}";
+            }
+            Ok(bad == null && okW > 10 && okA >= 5 && blk > 10, $"200 lượt trộn: {okW} WTS + {okA} việc lưu được, {blk} bị chặn; không WTS nào chồng việc", bad);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }
+    static List<string> EfRaw() => Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog;   // [ML16-DOCS] lệnh SQL thô đã chạy (EfStub)
 }

@@ -192,7 +192,227 @@ public static class HarnessSeed
         WtsC("BAVIA", null, "3V", 4, null, null, htsp, null, 5);   // dòng cũ: QtyOk / QtyNg null
         db.ChangeTracker.Clear();
         db.Fixup();
+
+        // ── [WTS-OK-FALLBACK 02/11] CHỈ khi biến môi trường HARNESS_OKF=1 (drive_okfb.py tự bật lúc khởi động harness) → không đổi dữ liệu
+        //    của mọi kịch bản khác. Phiếu KH riêng KH-OKF / PO-OKF 10: Kho → GC 10 (NC1); admin có 1 dòng WTS CŨ HÔM NAY (trước khi có cột QtyOk):
+        //    QtyDone 10, QtyOk NULL, QtyNg 2 (vụ lỗi có sẵn) → sổ tính OK = 10 − 2 = 8. Bấm Sửa dòng rồi Lưu phải ghi OK 8 (trước: OK 10 → OK + NG = 12).
+        if (Environment.GetEnvironmentVariable("HARNESS_OKF") == "1")
+        {
+            var planO = new KhPlan { PlanNo = "KH-OKF", PlanDate = T0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = T0 };
+            db.KhPlans.Add(planO); await db.SaveChangesAsync();
+            var dO = new KhPlanDetail { KhPlanId = planO.KhPlanId, LineNo = 1, PartNo = "PART-A", PurchaseOrder = "PO-OKF", Quantity = 10, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 };
+            db.KhPlanDetails.Add(dO); await db.SaveChangesAsync();
+            int idO = dO.KhPlanDetailId;
+            db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = idO, IsActive = true, SoLuongThucNhan = 10, SoLuongKeHoach = 10, NgayNhanPhoi = T0, OrderVatLieu = "OVL-OKF", ViTriDePhoi = "A1", SoPO = "PO-OKF", PartNo = "PART-A" });
+            db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = idO, StepOrder = 1, NC = "NC1", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            await db.SaveChangesAsync(); db.Fixup();
+            await Move(idO, "KHO", "GC", 10, "NC1");
+            var catO = db.NgCategories.List.First();
+            var vuO = await NgCaseService.CreateCaseAsync(db, idO, catO, NgOrigin.Wts, "GC", "NC1", "GC", admin.UserId);
+            var d0 = DateTime.Today;
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = db.WtsProductionLogs.List.Count + 1, KhPlanDetailId = idO, ProcessGroup = "GC", NC = "NC1",
+                WorkerId = admin.UserId, QtyDone = 10, QtyOk = null, QtyNg = 2, NgReason = catO.Code + " · " + catO.Name, NgCaseId = vuO.NgCaseId,
+                StartTime = d0.AddHours(8), EndTime = d0.AddHours(9), CreatedAt = d0.AddHours(9), CaId = ca.CaId, MachineUsed = "M1", ProductionMode = "serial",
+                SetupTime_Actual = 5, MachiningTime_Actual = 2, InspectionTime_Actual = 1 });
+            db.ChangeTracker.Clear();
+            db.Fixup();
+        }
         Console.WriteLine($"[HARNESS] seed xong: {db.KhPlanDetails.List.Count} PO, {db.WtsProductionLogs.List.Count} WTS, {db.HandoverTransactions.List.Count} phiếu");
+        await SeedPmAsync(db, admin, cust);   // [ML9-DUP][STD-UPDATE 02/11] thêm CUỐI — Dump cũ lọc bỏ dữ liệu này (drive.py ra y hệt)
+    }
+
+    // ── [ML9-DUP][PM-DUP][B6-NC-DUP][SUBROW-DEL][STD-UPDATE 02/11] Part Master cho drive_ml9.py / drive_std.py ──
+    //   Thêm CUỐI seed, mọi id ghi vào Extra* để Dump() cũ lọc bỏ (các bảng parts / bavia / timings / snapm / podet / khdet / khplan / raw
+    //   y như trước) — dữ liệu này chỉ đọc qua Dump2() (/harness/dump2).
+    static readonly HashSet<int> ExtraParts = new(), ExtraDetails = new(), ExtraPlans = new();
+    static readonly HashSet<long> ExtraSteps = new();
+    static async Task SeedPmAsync(AppDbContext db, User admin, Customer cust)
+    {
+        var raw0 = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Count;
+        // PART-ML9: NC 1 (M1) + đồng dạng M2, M3 · NC 2 (M2) dữ liệu CŨ trùng: đồng dạng M2 (= máy đăng ký), M3, M3 · NC 3 (M1) chưa có đồng dạng
+        //           Taro T1 (mã CV 3T), Bavia B1, Rửa R1 + R1 (dữ liệu cũ trùng), KCS K1, Đóng gói P1
+        var p9 = new PartMaster { PartNo = "PART-ML9", PartName = "Thử ML9", IsActive = true, CustomerId = cust.CustomerId };
+        db.PartMasters.Add(p9); await db.SaveChangesAsync(); ExtraParts.Add(p9.PartId);
+        async Task<PartMachiningStep> Nc(int pid, int order, string nc, string m, decimal st, decimal mt)
+        {
+            var s = new PartMachiningStep { PartId = pid, StepOrder = order, NC = nc, MachineRegistered = m, SetupTime = st, MachiningTime = mt, InspectionTime = 1, PreparationTime = 2, TrialRunTime = 3, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 };
+            db.PartMachiningSteps.Add(s); await db.SaveChangesAsync(); ExtraSteps.Add(s.StepId); return s;
+        }
+        async Task Tim(long stepId, string soMay, int order, decimal st, decimal mt)
+        {
+            db.PartMachiningTimings.Add(new PartMachiningTiming { StepId = stepId, SoMay = soMay, DisplayOrder = order, SetupTime = st, MachiningTime = mt, InspectionTime = 1, PreparationTime = 2, TrialRunTime = 3, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+            await db.SaveChangesAsync();
+        }
+        var n1 = await Nc(p9.PartId, 1, "1", "M1", 5, 7); await Tim(n1.StepId, "M2", 1, 5, 7); await Tim(n1.StepId, "M3", 2, 5, 7);
+        var n2 = await Nc(p9.PartId, 2, "2", "M2", 4, 6); await Tim(n2.StepId, "M2", 1, 4, 6); await Tim(n2.StepId, "M3", 2, 4, 6); await Tim(n2.StepId, "M3", 3, 4, 6);
+        await Nc(p9.PartId, 3, "3", "M1", 3, 3);
+        db.PartTaroSteps.Add(new PartTaroStep { PartId = p9.PartId, StepOrder = 1, NC = "T1", WtsTaskCode = "3T", StepName = "Taro", StandardTime = 1.5m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartBaviaSteps.Add(new PartBaviaStep { PartId = p9.PartId, StepOrder = 1, NC = "B1", StepName = "Bavia", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartWashingSteps.Add(new PartWashingStep { PartId = p9.PartId, StepOrder = 1, NC = "R1", StepName = "Rửa", StandardTime = 0.5m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartWashingSteps.Add(new PartWashingStep { PartId = p9.PartId, StepOrder = 2, NC = "R1", StepName = "Rửa (cũ trùng)", StandardTime = 0.5m, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartInspectionSteps.Add(new PartInspectionStep { PartId = p9.PartId, StepOrder = 1, NC = "K1", StepName = "KCS", StandardTime = 2, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = p9.PartId, StepOrder = 1, NC = "P1", StepName = "Đóng gói", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        await db.SaveChangesAsync();
+
+        // PART-STD: NC 1 (M1, T.Gá 10) + đồng dạng M3 (T.Gá 11), Bavia B1 1, KCS K1 2 · phiếu KH-STD (Workflow OFF) 2 PO chưa có WTS,
+        //   snapshot chép bằng KhPlanService.CopyRouteSnapshotAsync thật (cột nối nguồn SourceStepId / SourceTimingId) — drive_std.py
+        var ps = new PartMaster { PartNo = "PART-STD", PartName = "Thử Update TG chuẩn", IsActive = true, CustomerId = cust.CustomerId };
+        db.PartMasters.Add(ps); await db.SaveChangesAsync(); ExtraParts.Add(ps.PartId);
+        var sn1 = await Nc(ps.PartId, 1, "1", "M1", 10, 5); await Tim(sn1.StepId, "M3", 1, 11, 6);
+        db.PartBaviaSteps.Add(new PartBaviaStep { PartId = ps.PartId, StepOrder = 1, NC = "B1", StepName = "Bavia", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartInspectionSteps.Add(new PartInspectionStep { PartId = ps.PartId, StepOrder = 1, NC = "K1", StepName = "KCS", StandardTime = 2, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        await db.SaveChangesAsync();
+        var planS = new KhPlan { PlanNo = "KH-STD", PlanDate = T0, CustomerId = cust.CustomerId, ApplyWorkflow = false, CreatedBy = admin.UserId, CreatedAt = T0 };
+        db.KhPlans.Add(planS); await db.SaveChangesAsync(); ExtraPlans.Add(planS.KhPlanId);
+        var kh = new KhPlanService(db);
+        foreach (var (po, ln) in new[] { ("PO-STD1", 1), ("PO-STD2", 2) })
+        {
+            var d = new KhPlanDetail { KhPlanId = planS.KhPlanId, LineNo = ln, PartNo = "PART-STD", PurchaseOrder = po, Quantity = 5, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync(); ExtraDetails.Add(d.KhPlanDetailId);
+            await kh.CopyRouteSnapshotAsync(d.KhPlanDetailId, ps.PartId, admin.UserId);
+        }
+        // người ADMIN có PIN cho nút Chạy Update (admin gốc không có PIN — không đổi admin để khỏi đụng kịch bản khác)
+        var adminG = db.UserGroups.List.First(g => g.GroupCode == "ADMIN");
+        db.Users.Add(new User { Username = "stdadm", FullName = "Admin STD", PasswordHash = PasswordHasher.Hash("123456"), GroupId = adminG.GroupId, IsActive = true, PIN = "1111" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear(); db.Fixup();
+        var rl = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog;
+        if (rl.Count > raw0) rl.RemoveRange(raw0, rl.Count - raw0);   // câu SQL thô của CopyRouteSnapshotAsync không vào Dump().raw
+    }
+
+    /// <summary>[ML9-DUP][STD-UPDATE 02/11] Dữ liệu Part Master thêm cuối seed (drive_ml9.py / drive_std.py) — /harness/dump2.</summary>
+    public static object Dump2(AppDbContext db)
+    {
+        static string D(DateTime? t) => t?.ToString("yyyy-MM-dd HH:mm:ss") ?? "";
+        var parts = db.PartMasters.List.Where(p => ExtraParts.Contains(p.PartId)).ToDictionary(p => p.PartId, p => p.PartNo);
+        string Pn(int pid) => parts.TryGetValue(pid, out var n) ? n : "";
+        var steps = db.PartMachiningSteps.List.Where(s => parts.ContainsKey(s.PartId)).ToList();
+        var stepPart = steps.ToDictionary(s => s.StepId, s => Pn(s.PartId));
+        object Cde<T>(IEnumerable<T> xs, Func<T, int> pid, Func<T, object> sel) => xs.Where(x => parts.ContainsKey(pid(x))).Select(sel).ToList();
+        return new
+        {
+            steps = steps.OrderBy(s => s.StepId).Select(s => new { s.StepId, Part = Pn(s.PartId), s.NC, s.MachineRegistered, s.SetupTime, s.MachiningTime, s.IsActive, s.IsBackup }),
+            timings = db.PartMachiningTimings.List.Where(t => stepPart.ContainsKey(t.StepId)).OrderBy(t => t.TimingId)
+                .Select(t => new { t.TimingId, t.StepId, Part = stepPart[t.StepId], t.SoMay, t.DisplayOrder, t.SetupTime, t.MachiningTime, t.FixtureType, t.ToolType, t.IsActive }),
+            taro = Cde(db.PartTaroSteps.List, x => x.PartId, x => new { x.StepId, Part = Pn(x.PartId), x.NC, x.WtsTaskCode, x.StandardTime, x.IsActive }),
+            bavia = Cde(db.PartBaviaSteps.List, x => x.PartId, x => new { x.StepId, Part = Pn(x.PartId), x.NC, x.StandardTime, x.IsActive }),
+            washing = Cde(db.PartWashingSteps.List, x => x.PartId, x => new { x.StepId, Part = Pn(x.PartId), x.NC, x.StandardTime, x.IsActive }),
+            kcs = Cde(db.PartInspectionSteps.List, x => x.PartId, x => new { x.StepId, Part = Pn(x.PartId), x.NC, x.StandardTime, x.IsActive }),
+            pkg = Cde(db.PartPackagingSteps.List, x => x.PartId, x => new { x.StepId, Part = Pn(x.PartId), x.NC, x.StandardTime, x.IsActive }),
+            logs = db.PartProcessStepChangeLogs.List.Where(l => parts.ContainsKey(l.PartId)).OrderBy(l => l.ChangeId)
+                .Select(l => new { l.StepTable, l.StepId, l.TimingId, Part = Pn(l.PartId), l.FieldName, l.OldValue, l.NewValue, l.Reason }),
+            tconf = db.PartMachiningTimingConfirms.List.Where(c => stepPart.ContainsKey(c.StepId)).OrderBy(c => c.Id)
+                .Select(c => new { c.StepId, c.TimingId, c.FieldName, c.IsConfirmed }),
+            sconf = db.PartStepStdTimeConfirms.List.Where(c => parts.ContainsKey(c.PartId)).OrderBy(c => c.Id)
+                .Select(c => new { c.StepTable, c.StepId, c.IsConfirmed }),
+            po = db.KhPlanDetails.List.Where(d => ExtraDetails.Contains(d.KhPlanDetailId)).Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }),
+            snapm = db.KhPlanRouteSnapshotMachining.List.Where(s => ExtraDetails.Contains(s.KhPlanDetailId)).OrderBy(s => s.SnapshotId)
+                .Select(s => new { s.SnapshotId, s.KhPlanDetailId, s.NC, s.SetupTime, s.MachiningTime, s.SourceStepId }),
+            snapt = db.KhPlanRouteSnapshotMachiningTimings.List.Where(s => ExtraDetails.Contains(s.KhPlanDetailId)).OrderBy(s => s.TimingSnapshotId)
+                .Select(s => new { s.TimingSnapshotId, s.KhPlanDetailId, s.SoMay, s.SetupTime, s.MachiningTime, s.SourceTimingId }),
+            snapb = db.KhPlanRouteSnapshotBavia.List.Where(s => ExtraDetails.Contains(s.KhPlanDetailId)).Select(s => new { s.SnapshotId, s.KhPlanDetailId, s.NC, s.StandardTime }),
+            snapc = db.KhPlanRouteSnapshotStdConfirms.List.Where(s => ExtraDetails.Contains(s.KhPlanDetailId)).OrderBy(s => s.Id)
+                .Select(s => new { s.KhPlanDetailId, s.SnapshotTable, s.SnapshotRowId, s.FieldName, s.IsConfirmed, s.SyncSource }),
+            batches = db.StdUpdateBatches.List.Select(b => new { b.BatchId, b.PartNo, b.PlanCount, b.SnapshotCellChanged, b.WtsCellChanged, b.Reason, At = D(b.RunAt) }),
+        };
+    }
+
+    /// <summary>
+    /// [KHO-5][KHO-LEDGER][KHO-ACTIVE][KHO-STALE][KHO-VIEW][D11-KHO-SL 02/11] Dữ liệu riêng trang Kho cho drive_kho.py — KHÔNG chạy lúc khởi động
+    /// (thêm phiếu giao nhận vào seed sẽ đổi bảng gntx / cases trong /harness/dump → đổi new.json của drive.py), chỉ dựng khi drive_kho.py gọi
+    /// POST /harness/kho-seed (gọi lại lần 2 không dựng thêm). Phiếu KH riêng KH-KHO; ngày giao cố định để kiểm lọc / sắp xếp cột N.
+    ///   PO-K2 phôi 20, giao GC 12 ngày 27/10 (GC nhận đủ)   PO-K1 phôi 10, giao GC 10 ngày 25/10 (chờ nhận)   PO-K3 phôi 15, Kho báo lỗi 5 → gửi GC sửa 5 (chờ nhận, không phải Hàng mới)
+    ///   PO-K4 chưa có dòng Kho   PO-K5 dòng Kho cũ đã tắt + dòng đang dùng   PO-K6 chỉ có dòng Kho đã tắt   PO-K7 phôi 7 (thử sửa: chữ dài, số âm)
+    ///   PO-K8 phôi 15, giao GC 5, GC nhận cả 5 là NG (phiếu trả tự lập chờ Kho nhận) — GC chưa xác nhận OK chiếc nào nhưng sổ vẫn là đã giao 5
+    /// Người dùng (SeedData đã có kho01 nhóm WAREHOUSE): khoa01 / khob01 (Xem + Sửa KHO), khoxem01 (chỉ Xem KHO) — mật khẩu 123456 (trang Kho xác nhận "PIN" bằng mật khẩu).
+    /// </summary>
+    public static async Task<object> SeedKhoAsync(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-KHO"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            var cust = db.Customers.List.First();
+            var hash = PasswordHasher.Hash("123456");
+            static string PermsVE(params (string c, bool v, bool e)[] ps) => JsonSerializer.Serialize(ps.Select(p => new GroupPermissionSetting { SectionCode = p.c, CanView = p.v, CanEdit = p.e }).ToList());
+            var gKho = new UserGroup { GroupCode = "KHOTEST", GroupName = "Kho thử", IsActive = true, Permissions = PermsVE((SystemPermissions.Kho, true, true)) };
+            var gXem = new UserGroup { GroupCode = "KHOXEM", GroupName = "Kho chỉ xem", IsActive = true, Permissions = PermsVE((SystemPermissions.Kho, true, false)) };
+            db.UserGroups.AddRange(gKho, gXem); await db.SaveChangesAsync();
+            db.Users.AddRange(
+                new User { Username = "khoa01", FullName = "Kho A", PasswordHash = hash, GroupId = gKho.GroupId, IsActive = true, PIN = "1111" },
+                new User { Username = "khob01", FullName = "Kho B", PasswordHash = hash, GroupId = gKho.GroupId, IsActive = true, PIN = "1111" },
+                new User { Username = "khoxem01", FullName = "Kho xem", PasswordHash = hash, GroupId = gXem.GroupId, IsActive = true, PIN = "1111" });
+            await db.SaveChangesAsync();
+
+            var plan = new KhPlan { PlanNo = "KH-KHO", PlanDate = T0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = T0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var ids = new Dictionary<string, int>(); int line = 0;
+            foreach (var (po, qty) in new[] { ("PO-K2", 20m), ("PO-K1", 10m), ("PO-K3", 15m), ("PO-K4", 8m), ("PO-K5", 6m), ("PO-K6", 5m), ("PO-K7", 7m), ("PO-K8", 15m) })
+            {
+                var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = ++line, PartNo = "PART-A", PurchaseOrder = po, Quantity = qty, Unit = "EA", STD = T0.AddDays(10), CreatedAt = T0 };
+                db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+                ids[po] = d.KhPlanDetailId;
+                db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "NC1", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+                await db.SaveChangesAsync();
+            }
+            KhoVatLieu Kho(string po, int? sl, string? ovl, bool active) => new KhoVatLieu { PlanDetailId = ids[po], IsActive = active, SoLuongThucNhan = sl, SoLuongKeHoach = sl ?? 0,
+                NgayNhanPhoi = sl != null ? T0 : null, OrderVatLieu = ovl, ViTriDePhoi = sl != null ? "K-" + po[^1] : null, SoPO = po, PartNo = "PART-A", CreatedAt = T0, CreatedBy = admin.UserId };
+            // dòng đã tắt thêm TRƯỚC dòng đang dùng (đọc nhầm dòng tắt thì lấy ra dòng này)
+            db.KhoVatLieus.Add(Kho("PO-K5", 99, "OVL-CU", false));
+            db.KhoVatLieus.Add(Kho("PO-K6", 55, "OVL-CU6", false));
+            db.KhoVatLieus.Add(Kho("PO-K2", 20, "OVL-K2", true));
+            db.KhoVatLieus.Add(Kho("PO-K1", 10, "OVL-K1", true));
+            db.KhoVatLieus.Add(Kho("PO-K3", 15, "OVL-K3", true));
+            db.KhoVatLieus.Add(Kho("PO-K5", 6, "OVL-K5", true));
+            db.KhoVatLieus.Add(Kho("PO-K7", 7, "OVL-K7", true));
+            db.KhoVatLieus.Add(Kho("PO-K8", 15, "OVL-K8", true));
+            await db.SaveChangesAsync(); db.Fixup();
+
+            var svc = new HandoverService(db);
+            void Chk((bool Ok, string Error) r, string what) { if (!r.Ok) throw new Exception("seed kho " + what + ": " + r.Error); }
+            Chk(await svc.IssueByCellAsync(ids["PO-K2"], "KHO", "GC", 12, admin.UserId, "MOI", false, "MOI", null, "NC1", "seed kho"), "K2 giao");
+            var tK2 = db.HandoverTransactions.List.Last(); tK2.IssuedAt = new DateTime(2026, 10, 27, 8, 0, 0);
+            Chk(await svc.ReceiveAsync(tK2.HandoverTxId, 12, 0, null, admin.UserId), "K2 nhận");
+            Chk(await svc.IssueByCellAsync(ids["PO-K1"], "KHO", "GC", 10, admin.UserId, "MOI", false, "MOI", null, "NC1", "seed kho"), "K1 giao");
+            db.HandoverTransactions.List.Last().IssuedAt = new DateTime(2026, 10, 25, 8, 0, 0);
+            Chk(await svc.ReportNgAfterReceiveAsync(ids["PO-K3"], "KHO", HandoverNgSource.Phoi, null, 5, HandoverNgSource.DauRa, null, "kho lam mop", null, admin.UserId,
+                new List<string> { "KHO" }, ngCategoryId: db.NgCategories.List.First().NgCategoryId), "K3 báo lỗi");
+            Chk(await svc.IssueByCellAsync(ids["PO-K3"], "KHO", "GC", 5, admin.UserId, "LOI", false, "SUA", null, "NC1", "seed kho", "gui sua",
+                ngCaseId: db.NgCases.List.Last().NgCaseId), "K3 gửi sửa");
+            db.HandoverTransactions.List.Last().IssuedAt = new DateTime(2026, 10, 20, 8, 0, 0);   // sớm nhất — nếu bị đếm là "giao" thì cột N hiện 20/10
+            Chk(await svc.IssueByCellAsync(ids["PO-K8"], "KHO", "GC", 5, admin.UserId, "MOI", false, "MOI", null, "NC1", "seed kho"), "K8 giao");
+            var tK8 = db.HandoverTransactions.List.Last(); tK8.IssuedAt = new DateTime(2026, 10, 28, 8, 0, 0);
+            Chk(await svc.ReceiveAsync(tK8.HandoverTxId, 0, 5, null, admin.UserId, ngCategoryId: db.NgCategories.List.First().NgCategoryId), "K8 nhận NG");
+            db.ChangeTracker.Clear(); db.Fixup();
+        }
+        return db.KhPlanDetails.List.Where(d => db.KhPlans.List.Any(p => p.KhPlanId == d.KhPlanId && p.PlanNo == "KH-KHO"))
+            .ToDictionary(d => d.PurchaseOrder, d => d.KhPlanDetailId);
+    }
+
+    /// <summary>[KHO-5 …] /harness/kho — mọi dòng Kho (cả dòng đã tắt), lịch sử Kho, số sổ chung KHO của từng PO (chỉ đọc).</summary>
+    public static async Task<object> DumpKhoAsync(AppDbContext db, HandoverLedgerService led)
+    {
+        static string D(DateTime? t) => t?.ToString("yyyy-MM-dd") ?? "";
+        var ids = db.KhPlanDetails.List.Select(d => d.KhPlanDetailId).ToList();
+        var map = await led.GetLedgerForDetailsAsync(ids);
+        return new
+        {
+            po = db.KhPlanDetails.List.Select(d =>
+            {
+                map.TryGetValue(d.KhPlanDetailId, out var r);
+                var k = r?.G("KHO");
+                var txs = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == d.KhPlanDetailId && t.FromGroupCode == "KHO" && !t.IsVoided).ToList();
+                return new
+                {
+                    id = d.KhPlanDetailId, d.PurchaseOrder,
+                    giaoMoi = k?.GiaoMoi, conGiao = k?.ConGiao, loiGiu = k?.LoiGiu,
+                    tx = txs.Select(t => new { t.HandoverTxId, t.Purpose, t.QtyIssued, t.Status, t.SourceReceiveId, At = D(t.IssuedAt),
+                        ok = db.HandoverReceives.List.Where(x => x.HandoverTxId == t.HandoverTxId && !x.IsVoided).Sum(x => x.QtyOk),
+                        ng = db.HandoverReceives.List.Where(x => x.HandoverTxId == t.HandoverTxId && !x.IsVoided).Sum(x => x.QtyNg) }),
+                };
+            }),
+            kho = db.KhoVatLieus.List.Select(k => new { k.KhoVatLieuId, k.PlanDetailId, k.IsActive, k.SoLuongThucNhan, k.OrderVatLieu, k.ViTriDePhoi, k.TinhTrangPhoi, Nhan = D(k.NgayNhanPhoi), k.UpdatedBy, k.CreatedBy }),
+            kholog = db.KhoVatLieuChangeLogs.List.Select(l => new { l.KhoVatLieuId, l.FieldName, l.OldValue, l.NewValue, l.ChangedBy, l.Reason }),
+        };
     }
 
     /// <summary>Chụp các bảng WTS ghi ra JSON (bỏ cột giờ máy / id để so bản cũ – mới).</summary>
@@ -217,16 +437,17 @@ public static class HarnessSeed
             acts = db.WorkerActivityLogs.List.OrderBy(a => a.ActivityLogId).Select(a => new { a.ActivityLogId, a.WorkerId, a.WtsCode, a.WtsName, Start = D(a.StartTime), End = D(a.EndTime), a.IsVoided }),
             raw = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.ToList(),
             // [RS-E2] cờ xác nhận Part (drive_quyen.py) · [RS-C1] máy / khách / mã CV (đếm)
-            parts = db.PartMasters.List.OrderBy(p => p.PartId).Select(p => new { p.PartNo, p.IsPlanConfirmed, p.IsMachiningConfirmed, p.IsHtspConfirmed, p.IsKcsConfirmed, p.IsPkgConfirmed }),
-            bavia = db.PartBaviaSteps.List.OrderBy(b => b.StepId).Select(b => new { b.PartId, b.NC, b.StepName, b.IsActive }),
+            // [ML9-DUP 02/11] các bảng dưới lọc bỏ dữ liệu SeedPmAsync (Extra*) → drive.py / drive_quyen.py … ra y như trước; xem Dump2()
+            parts = db.PartMasters.List.Where(p => !ExtraParts.Contains(p.PartId)).OrderBy(p => p.PartId).Select(p => new { p.PartNo, p.IsPlanConfirmed, p.IsMachiningConfirmed, p.IsHtspConfirmed, p.IsKcsConfirmed, p.IsPkgConfirmed }),
+            bavia = db.PartBaviaSteps.List.Where(b => !ExtraParts.Contains(b.PartId)).OrderBy(b => b.StepId).Select(b => new { b.PartId, b.NC, b.StepName, b.IsActive }),
             thietbi = db.ThietBis.List.Where(t => t.IsActive).Select(t => t.SoMay),
-            timings = db.PartMachiningTimings.List.OrderBy(t => t.TimingId).Select(t => new { t.StepId, t.SoMay, t.IsActive }),
-            snapm = db.KhPlanRouteSnapshotMachining.List.Select(m => new { m.KhPlanDetailId, m.NC, m.MachineRegistered }),
-            podet = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }),
+            timings = db.PartMachiningTimings.List.Where(t => !ExtraSteps.Contains(t.StepId)).OrderBy(t => t.TimingId).Select(t => new { t.StepId, t.SoMay, t.IsActive }),
+            snapm = db.KhPlanRouteSnapshotMachining.List.Where(m => !ExtraDetails.Contains(m.KhPlanDetailId)).Select(m => new { m.KhPlanDetailId, m.NC, m.MachineRegistered }),
+            podet = db.KhPlanDetails.List.Where(d => !ExtraDetails.Contains(d.KhPlanDetailId)).Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }),
             // [KHE-3][KHE-6][KHE-7 30/10] phiếu KH + dòng PO + lịch sử (drive_khe.py)
-            khplan = db.KhPlans.List.Select(p => new { p.KhPlanId, p.Notes, Recv = D(p.ReceivedDate), p.ApplyWorkflow }),
-            khdet  = db.KhPlanDetails.List.Select(d => new { d.KhPlanDetailId, d.KhPlanId, d.Quantity, d.Location, d.PartNotes, d.Priority }),
-            khlog  = db.KhPlanDetailChangeLogs.List.Select(l => new { l.KhPlanDetailId, l.FieldName, l.OldValue, l.NewValue, l.ChangedBy, l.Reason }),
+            khplan = db.KhPlans.List.Where(p => !ExtraPlans.Contains(p.KhPlanId)).Select(p => new { p.KhPlanId, p.Notes, Recv = D(p.ReceivedDate), p.ApplyWorkflow }),
+            khdet  = db.KhPlanDetails.List.Where(d => !ExtraDetails.Contains(d.KhPlanDetailId)).Select(d => new { d.KhPlanDetailId, d.KhPlanId, d.Quantity, d.Location, d.PartNotes, d.Priority }),
+            khlog  = db.KhPlanDetailChangeLogs.List.Where(l => !ExtraDetails.Contains(l.KhPlanDetailId)).Select(l => new { l.KhPlanDetailId, l.FieldName, l.OldValue, l.NewValue, l.ChangedBy, l.Reason }),
             // [H10 30/10] phiếu giao nhận + lần nhận (drive_h10.py)
             gntx  = db.HandoverTransactions.List.OrderBy(t => t.HandoverTxId).Select(t => new { t.HandoverTxId, t.KhPlanDetailId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.QtyIssued, t.Status, t.IsVoided, t.VoidReason, t.SourceReceiveId }),
             gnrec = db.HandoverReceives.List.OrderBy(r => r.ReceiveId).Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.IsVoided, r.VoidReason, r.VoidedBy }),

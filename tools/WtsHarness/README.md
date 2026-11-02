@@ -35,3 +35,27 @@ không đo được khoá chen nhau thật — phần đó kiểm ở `GiaoNhanF
 Phiếu KH riêng `KH-H10` / `PO-H10` (thêm CUỐI HarnessSeed, không chung KH-TEST): Kho → Gia công 10, Gia công nhận 8 + NG 2 → phiếu trả tự lập → Kho đã nhận lại 2.
 `gn01` (chỉ quyền sửa Gia công) bấm Huỷ lần nhận gốc → bị chặn vì thiếu quyền Kho, DB không đổi; `admin` → 1 lần huỷ cả lần nhận gốc + phiếu trả + lần nhận phiếu trả.
 `python3 drive_h10.py 5101 new` → 30/10: bản mới 7/7 ĐẠT; bản master 7479f01 bị chặn "Huỷ lần nhận đó trước" (5/5 đúng như cũ). Dump thêm bảng `gntx` / `gnrec`.
+
+## drive_kho.py — trang Kho ([KHO-5][KHO-LEDGER][KHO-ACTIVE][KHO-VIEW][KHO-STALE][KHO-LEN][E4-KHO-NEG][D11-KHO-SL] 02/11/2026)
+Dữ liệu riêng `KH-KHO` (PO-K1…K7, người dùng `khoa01` / `khob01` Xem + Sửa KHO, `khoxem01` chỉ Xem — mật khẩu 123456) dựng khi drive gọi
+`POST /harness/kho-seed` (`HarnessSeed.SeedKhoAsync`) — KHÔNG nằm trong seed khởi động (phiếu giao nhận thêm vào seed sẽ đổi `gntx` / `cases` của
+`/harness/dump` → đổi new.json của drive.py). `GET /harness/kho` = mọi dòng Kho (cả dòng đã tắt), lịch sử Kho, phiếu từ Kho, sổ KHO từng PO.
+Excel: `mk.sh` dùng `Stubs/XlMini.cs` (ClosedXML tối thiểu ghi .xlsx thật, bỏ định dạng) thay `GiaoNhanFuzz/XlStub.cs`; drive đọc file bằng zipfile + xml.
+Cần Bootstrap tải sẵn (nút lọc cột chỉ có icon): `KHO_BS` (mặc định /home/claude/bs_shared). Chạy trên harness VỪA khởi động:
+`python3 drive_kho.py <port> new` → 02/11: HEAD ĐẠT hết (36 bước); luật máy chủ cùng mã kiểm thêm ở `GiaoNhanFuzz kh` A11–A15.
+
+## drive_ml9.py / drive_std.py — trang Part Master ([ML9-DUP][PM-DUP][B6-NC-DUP][SUBROW-DEL][CONFIRM-LOG-FIELD][STD-CONFIRM][SAVE-HANG-FIX][STD-UPDATE-V4][STD-5] 02/11/2026)
+Dữ liệu thêm CUỐI HarnessSeed (`SeedPmAsync`): PART-ML9 (NC 2 có dữ liệu cũ trùng máy, Rửa R1 trùng cũ) và PART-STD + phiếu KH-STD (2 PO, snapshot chép bằng
+`KhPlanService.CopyRouteSnapshotAsync` thật), người `stdadm` (ADMIN, PIN 1111). `Dump()` cũ lọc bỏ dữ liệu này (drive.py ra new.json giống hệt bản trước khi thêm);
+đọc qua `/harness/dump2` (`Dump2()`, mk.sh thêm endpoint). Mỗi script chạy trên harness mới khởi động (DB giả mới tinh):
+`python3 drive_ml9.py 5101 new` (pha D / P / M / X / B / C / H, mỗi pha mở trang mới — pha dừng giữa chừng ghi "<pha>! SAI") ·
+`python3 drive_std.py 5101 new` (V / U / F / R). Phần máy chủ của Update TG chuẩn kiểm ở `GiaoNhanFuzz std`. Không kiểm Taro trùng mã CV (khách chốt Taro
+dùng chung mã CV giữa 2 NC — chờ sửa) và không kiểm [TIMING-COPY-MAIN] (chờ chốt RA-CASCADE-PM).
+
+## drive_rsc5.py / drive_okfb.py / drive_rse11.py ([RS-C5][WTS-OK-FALLBACK][RS-E11] 02/11/2026)
+- `python3 drive_rsc5.py <port> new` — harness đang chạy: "Nhớ tên đăng nhập" chỉ lưu tên, mật khẩu bản cũ đã lưu bị xoá khi mở trang.
+- `python3 drive_okfb.py <port> <bin harness> new` — TỰ bật harness với `HARNESS_OKF=1` (HarnessSeed thêm PO-OKF + 1 dòng WTS cũ hôm nay QtyOk NULL;
+  không có biến này thì seed y cũ) rồi tự tắt: Sửa dòng cũ → form OK = QtyDone − NG, lưu ra OK 8 / NG 2.
+- `python3 drive_rse11.py <port> <bin harness> new` — TỰ bật harness (Production) trong mount namespace riêng (`unshare -m`, cần root) với thư mục
+  bản quyền tạm hỏng → bản quyền khoá; kiểm chỉ đúng `/about` qua khoá, DetailedErrors tắt, cookie HttpOnly + Secure sau proxy. Thư mục bản quyền chung không bị đụng.
+- Hai file tự bật harness dùng `hk_launch.py` (giết theo pid của chính nó); cổng phải trống trước khi chạy.

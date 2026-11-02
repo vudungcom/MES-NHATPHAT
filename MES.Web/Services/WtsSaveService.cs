@@ -321,6 +321,18 @@ namespace MES.Web.Services
             bool _allOk = false;
             await using (var _wtsTrx = await _db.Database.BeginTransactionAsync())
             {
+                // [ML16-Q 2026-11-02] Hùng duyệt (chat 02/11 13:16 "cứ làm theo bạn"): lưu WTS sản xuất cũng chặn chồng giờ với "Việc không ra sản phẩm"
+                //   đã lưu của CHÍNH người này (trước: chỉ chiều ngược lại chặn → báo cáo coi phút chồng là có ích, giấu giờ vô ích).
+                //   Khoá WTS_WORKER_<người> ĐẦU TIÊN — thứ tự khoá toàn hệ thống: WTS_WORKER_ → WTS_MACHINE_ → MES_PO_ (tăng dần) → MES_KH_NUMBERS,
+                //   giống SaveActivityAsync (chỉ giữ khoá người) → 2 đường không chờ vòng nhau. WTS chồng WTS (GC đứng nhiều máy) giữ như cũ.
+                if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + grp.UserId, deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
+                {
+                    grp.ErrorMsg = "Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây.";
+                    return Fail();
+                }
+                var _actOverlapMsg = await CheckActivityOverlapAsync(grp);
+                if (_actOverlapMsg != null) { grp.ErrorMsg = _actOverlapMsg; return Fail(); }
+
                 // [MACHINE-OVERLAP] Mục 19: 1 máy không được chạy 2 việc trùng giờ (mọi công nhân, cả Hàng loạt + Chạy thử).
                 // Trùng = Bắt đầu A < Kết thúc B và Bắt đầu B < Kết thúc A (chạm mép 08:15→08:15 không tính). Trùng → chặn lưu.
                 if (grp.IsGc && !string.IsNullOrEmpty(grp.MachineUsed))
@@ -405,6 +417,29 @@ namespace MES.Web.Services
 
         // [MACHINE-CASE 2026-11-01] Tên khoá máy dùng chung mọi chỗ khoá máy WTS (không phân biệt hoa / thường, bỏ khoảng trắng 2 đầu)
         public static string MachineLockName(string? machine) => "WTS_MACHINE_" + (machine ?? "").Trim().ToUpperInvariant();
+
+        // [ML16-Q 2026-11-02] Dòng WTS sản xuất của nhóm chồng giờ với "Việc không ra sản phẩm" ĐÃ LƯU (chưa huỷ) của chính người nhập → trả lời báo.
+        //   Cùng điều kiện với SaveActivityOnceAsync: Bắt đầu A < Kết thúc B và Kết thúc A > Bắt đầu B (chạm mép không tính), giờ đầy đủ ngày + giờ.
+        //   Bỏ qua dòng việc mà chính dòng này đang sửa (row.ActivityLogId — sẽ bị huỷ trong cùng giao dịch). Gọi SAU khi đã khoá WTS_WORKER_.
+        public async Task<string?> CheckActivityOverlapAsync(WtsSaveGroup grp)
+        {
+            foreach (var row in grp.Rows)
+            {
+                var s0 = row.StartTime; var e0 = row.EndTime; var skip = row.IsEditing ? row.ActivityLogId : null;   // chỉ dòng việc mà SaveRowAsync sẽ huỷ (IsEditing) mới được bỏ qua
+                var hit = await _db.WorkerActivityLogs.AsNoTracking()
+                    .Where(a => a.WorkerId == grp.UserId && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0
+                             && (skip == null || a.ActivityLogId != skip.Value))
+                    .OrderBy(a => a.StartTime)
+                    .Select(a => new { a.StartTime, a.EndTime, a.WtsCode })
+                    .FirstOrDefaultAsync();
+                if (hit != null)
+                {
+                    row.ErrorMsg = $"Trùng giờ với việc không ra sản phẩm {hit.WtsCode} {hit.StartTime:HH:mm}–{hit.EndTime:HH:mm}";
+                    return $"Trùng giờ với việc không ra sản phẩm {hit.WtsCode} {hit.StartTime:HH:mm}–{hit.EndTime:HH:mm} đã lưu — sửa giờ, hoặc sửa / xoá dòng việc đó.";
+                }
+            }
+            return null;
+        }
 
         // ── [MACHINE-OVERLAP] Kiểm tra máy trùng giờ khi lưu nhóm GC (nguyên văn CheckMachineOverlapAsync của trang) ──
         // 1) Các dòng trong cùng form với nhau (cùng máy của nhóm).
@@ -867,21 +902,43 @@ namespace MES.Web.Services
         {
                 // [STD-SNAP 2026-10-30] SỐ chuẩn đọc lại từ đúng dòng snapshot (bảng + id trang đã tra) trong giao dịch lưu — trước: số lấy từ
                 //   cache trang (nạp lúc chọn PO). Trang mở từ trước khi "Update TG chuẩn" chạy sẽ lưu số CŨ kèm trạng thái xác nhận MỚI
-                //   (đã đọc DB từ [WTS-SVC]) và Update đã chạy xong không ai sửa lại. Không tìm thấy dòng snapshot → giữ số trang như cũ.
+                //   (đã đọc DB từ [WTS-SVC]) và Update đã chạy xong không ai sửa lại. Không tìm thấy dòng snapshot → GC: để trống ([RS-E6-Q] 02/11, trước: giữ số trang).
                 if (grp.IsGc && row.GcStd is { } gs0 && !string.IsNullOrEmpty(gs0.SrcTable) && gs0.SrcRowId.HasValue)
                 {
                     var sid = gs0.SrcRowId.Value;
+                    // [RS-E6-Q 2026-11-02] Hùng duyệt (02/11 13:16): máy chủ tự kiểm dòng chuẩn trang gửi ĐÚNG NC của nhóm + ĐÚNG máy đang chọn —
+                    //   dòng NC chính: máy = máy đăng ký, hoặc NC không đăng ký máy VÀ không có dòng máy đồng dạng; dòng đồng dạng: SoMay chứa máy.
+                    //   Sai (vd trang cũ còn mượn số NC chính cho máy không có trong quy trình PO) → KHÔNG ghi số chuẩn (GcStd = null, hiệu suất
+                    //   dòng đó không tính chuẩn) thay vì ghi số của máy khác như số thật.
+                    string mUse = (grp.MachineUsed ?? "").Trim(), ncUse = (grp.NC ?? "").Trim();
                     if (gs0.SrcTable == StdTrack.Table.Machining)
                     {
                         var m = await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(x => x.SnapshotId == sid && x.KhPlanDetailId == dId)
-                            .Select(x => new { x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
-                        if (m != null) row.GcStd = new WtsSaveStd { SetupTime = m.SetupTime, MachiningTime = m.MachiningTime, InspectionTime = m.InspectionTime, PreparationTime = m.PreparationTime, TrialRunTime = m.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId };
+                            .Select(x => new { x.NC, x.MachineRegistered, x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
+                        if (m != null)
+                        {
+                            var hasSub = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking().AnyAsync(x => x.MachiningSnapshotId == sid && x.KhPlanDetailId == dId);
+                            var reg = (m.MachineRegistered ?? "").Trim();
+                            bool okRow = string.Equals((m.NC ?? "").Trim(), ncUse, StringComparison.OrdinalIgnoreCase)
+                                && (string.Equals(reg, mUse, StringComparison.OrdinalIgnoreCase) || (reg.Length == 0 && !hasSub));
+                            row.GcStd = okRow ? new WtsSaveStd { SetupTime = m.SetupTime, MachiningTime = m.MachiningTime, InspectionTime = m.InspectionTime, PreparationTime = m.PreparationTime, TrialRunTime = m.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId } : null;
+                        }
+                        else row.GcStd = null;   // [RS-E6-Q] rà độc lập V1: dòng snapshot trang tra đã bị Làm mới / thuộc PO khác → không ghi số cũ như số thật
                     }
                     else if (gs0.SrcTable == StdTrack.Table.MachiningTiming)
                     {
                         var t = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking().Where(x => x.TimingSnapshotId == sid && x.KhPlanDetailId == dId)
-                            .Select(x => new { x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
-                        if (t != null) row.GcStd = new WtsSaveStd { SetupTime = t.SetupTime, MachiningTime = t.MachiningTime, InspectionTime = t.InspectionTime, PreparationTime = t.PreparationTime, TrialRunTime = t.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId };
+                            .Select(x => new { x.MachiningSnapshotId, x.SoMay, x.SetupTime, x.MachiningTime, x.InspectionTime, x.PreparationTime, x.TrialRunTime }).FirstOrDefaultAsync();
+                        if (t != null)
+                        {
+                            var pNc = await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(x => x.SnapshotId == t.MachiningSnapshotId && x.KhPlanDetailId == dId)
+                                .Select(x => x.NC).FirstOrDefaultAsync();
+                            bool okRow = string.Equals((pNc ?? "").Trim(), ncUse, StringComparison.OrdinalIgnoreCase)
+                                && (t.SoMay ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                       .Any(x => string.Equals(x, mUse, StringComparison.OrdinalIgnoreCase));
+                            row.GcStd = okRow ? new WtsSaveStd { SetupTime = t.SetupTime, MachiningTime = t.MachiningTime, InspectionTime = t.InspectionTime, PreparationTime = t.PreparationTime, TrialRunTime = t.TrialRunTime, SrcTable = gs0.SrcTable, SrcRowId = gs0.SrcRowId } : null;
+                        }
+                        else row.GcStd = null;   // [RS-E6-Q] V1
                     }
                 }
                 else if (!grp.IsGc && !string.IsNullOrEmpty(row.StdSrcTable) && row.StdSrcRowId.HasValue)
@@ -945,7 +1002,7 @@ namespace MES.Web.Services
                 if (grp.IsGc)
                 {
                     var std  = row.GcStd;
-                    var note = std == null                       ? "Không tìm thấy chuẩn trong snapshot phiếu KH"
+                    var note = std == null                       ? $"Không tìm thấy chuẩn trong snapshot phiếu KH (NC {grp.NC} · máy {grp.MachineUsed})"   // [RS-E6-Q] ghi rõ máy
                              : string.IsNullOrEmpty(std.SrcTable) ? "Chuẩn lấy từ Part Master live (không có trong snapshot)"
                              : null;
                     list.Add(Make(StdTrack.Field.Setup,       std?.SetupTime,       std?.SrcTable, std?.SrcRowId, note));

@@ -45,8 +45,16 @@
     <Compile Include="../../MES.Web/Services/PartWashingService.cs" />
     <Compile Include="../../MES.Web/Services/PartInspectionService.cs" />
     <Compile Include="../../MES.Web/Services/PartPackagingService.cs" />
+    <!-- [STD-UPDATE] kịch bản `std`: Update TG chuẩn bằng service thật (StdUpdateService) + xác nhận T.Chuẩn C/D/E -->
+    <Compile Include="../../MES.Web/Services/StdUpdateService.cs" />
+    <Compile Include="../../MES.Web/Services/PartStepStdTimeConfirmService.cs" />
     <Compile Include="../../MES.Web/Constants/*.cs" />
     <Compile Include="*.cs" />
+    <!-- [C6-PIN] UserService THẬT (thay UserSvcStub.cs cũ): kịch bản auth U4 dựng IServiceScopeFactory trỏ DbContext giả. Chỗ khác vẫn "new UserService(null)":
+         chỉ KhoVatLieuService.HasPermissionAsync gọi tới, mà mọi ca dùng user 1 (ADMIN) nên trả true trước khi chạm UserService — hành vi y cũ. -->
+    <Compile Include="../../MES.Web/Services/UserService.cs" />
+    <!-- [C7-LICENSE] kịch bản auth U5: gọi ParseApiResponse (riêng tư) bằng phản chiếu — KHÔNG gọi API bản quyền thật -->
+    <Compile Include="../../MES.Web/Services/ServerLicenseHelper.cs" />
     <Compile Include="../../MES.Web/Services/AuthGuard.cs" />   <!-- [RS-C3][RS-C4] kịch bản auth (cần FrameworkReference ASP.NET Core có sẵn trong SDK, không NuGet) -->
   </ItemGroup>
   <ItemGroup>

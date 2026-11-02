@@ -422,6 +422,115 @@ public static class KhScen
                "Giảm 45→30 khi đã giao 40: lưu 30 + cảnh báo nêu ô âm (trước: lưu im lặng)", dn.Error);
         }
 
+        // ── [KHO] luật máy chủ KhoVatLieuService (02/11) — trang thật: tools/WtsHarness/drive_kho.py ──
+        Console.WriteLine("[A11] E4-KHO-NEG — SaveKhoInputAsync chặn số âm ở máy chủ (cả khi Workflow OFF, không còn K5 đỡ)");
+        {
+            var db = Seed(workflow: false); var kho = new KhoVatLieuService(db, new UserService(null));
+            var r = await kho.SaveKhoInputAsync(1, DateTime.Now, -5, "OVL-1", "A1", null, null, null, "nhap am", 1);
+            Ok(!r.Success && r.Error == "Số lượng không được âm." && db.KhoVatLieus.List.Single().SoLuongThucNhan == 40 && db.KhoVatLieuChangeLogs.List.Count == 0,
+               "SL nhận −5: chặn, DB giữ 40, không ghi lịch sử", r.Error);
+            var r2 = await kho.SaveKhoInputAsync(1, DateTime.Now, 40, "OVL-1", "A1", null, null, -1, "cap am", 1);
+            Ok(!r2.Success && r2.Error == "Số lượng không được âm." && db.KhoVatLieus.List.Single().SoLuongCap == null, "SL cấp −1 (trường cũ): chặn", r2.Error);
+            var r3 = await kho.SaveKhoInputAsync(1, DateTime.Now, 0, "OVL-1", "A1", null, null, null, "het phoi", 1);
+            Ok(r3.Success && db.KhoVatLieus.List.Single().SoLuongThucNhan == 0, "SL nhận 0: lưu được (0 không phải số âm)", r3.Error);
+        }
+
+        Console.WriteLine("[A12] KHO-LEN — SaveKhoInputAsync kiểm độ dài theo cột DB (Order / Vị trí 100, Tình trạng 50; tính sau Trim)");
+        {
+            var db = Seed(); var kho = new KhoVatLieuService(db, new UserService(null));
+            async Task<(bool Success, string? Error)> Sv(string? o, string? v, string? t) => await kho.SaveKhoInputAsync(1, DateTime.Now, 40, o, v, t, null, null, "do dai", 1);
+            var e1 = await Sv(new string('X', 101), "A1", null);
+            var e2 = await Sv("OVL-1", new string('V', 101), null);
+            var e3 = await Sv("OVL-1", "A1", new string('T', 51));
+            var k = db.KhoVatLieus.List.Single();
+            Ok(!e1.Success && e1.Error == "Order vật liệu dài quá 100 ký tự." && !e2.Success && e2.Error == "Vị trí để phôi dài quá 100 ký tự."
+               && !e3.Success && e3.Error == "Tình trạng phôi dài quá 50 ký tự." && k.OrderVatLieu == "OVL-1" && k.ViTriDePhoi == "A1" && k.TinhTrangPhoi == null
+               && db.KhoVatLieuChangeLogs.List.Count == 0, "Order 101 / Vị trí 101 / Tình trạng 51 ký tự: chặn từng ô, DB không đổi", $"{e1.Error} | {e2.Error} | {e3.Error}");
+            var ok100 = await Sv(" " + new string('X', 100) + " ", new string('V', 100), new string('T', 50));
+            k = db.KhoVatLieus.List.Single();
+            Ok(ok100.Success && k.OrderVatLieu == new string('X', 100) && k.ViTriDePhoi!.Length == 100 && k.TinhTrangPhoi!.Length == 50,
+               "Đúng 100 / 100 / 50 ký tự (Order có khoảng trắng 2 đầu → Trim): lưu được", ok100.Error);
+        }
+
+        Console.WriteLine("[A13] KHO-STALE — trang mở lúc dòng Kho còn trống (nhập lần đầu) mà người khác đã nhập → không ghi đè");
+        {
+            var db = Seed(phoi: null); db.KhoVatLieus.List.Clear(); db.Fixup();
+            var kho = new KhoVatLieuService(db, new UserService(null));
+            var b = await kho.SaveKhoInputAsync(1, DateTime.Now, 30, "OVL-B", "B1", null, null, null, "Nhập lần đầu", 1, expectFirstEntry: true);
+            Ok(b.Success && db.KhoVatLieus.List.Count == 1, "B nhập lần đầu (chưa có dòng Kho): lưu được", b.Error);
+            var a = await kho.SaveKhoInputAsync(1, DateTime.Now, 25, "OVL-A", "A1", null, null, null, "Nhập lần đầu", 1, expectFirstEntry: true);
+            var k = db.KhoVatLieus.List.Single();
+            Ok(!a.Success && a.Error!.Contains("vừa được người khác nhập") && k.SoLuongThucNhan == 30 && k.OrderVatLieu == "OVL-B"
+               && db.KhoVatLieuChangeLogs.List.Count == 1, "A (trang cũ, vẫn tưởng nhập lần đầu) lưu sau: bị chặn, DB giữ số của B, không thêm lịch sử", a.Error);
+            var a2 = await kho.SaveKhoInputAsync(1, DateTime.Now, 25, "OVL-A", "A1", null, null, null, "A sua co ly do", 1);
+            Ok(a2.Success && db.KhoVatLieus.List.Single().SoLuongThucNhan == 25, "A tải lại rồi sửa có lý do (không phải nhập lần đầu): lưu được", a2.Error);
+        }
+        {   // dòng Kho đã có nhưng mọi ô I–M còn trống (vd Tách PO chưa chép gì) → vẫn là nhập lần đầu, không chặn oan
+            var db = Seed(phoi: null); var k0 = db.KhoVatLieus.List.Single(); k0.OrderVatLieu = null; k0.ViTriDePhoi = null;
+            var kho = new KhoVatLieuService(db, new UserService(null));
+            var r = await kho.SaveKhoInputAsync(1, DateTime.Now, 12, "OVL-N", "N1", null, null, null, "Nhập lần đầu", 1, expectFirstEntry: true);
+            Ok(r.Success && db.KhoVatLieus.List.Single().SoLuongThucNhan == 12, "Dòng Kho có sẵn nhưng trống hết: nhập lần đầu lưu được", r.Error);
+        }
+
+        Console.WriteLine("[A14] KHO-ACTIVE — trang Kho / xem 1 PO / danh sách Kế hoạch / lưu Kho chỉ dùng dòng Kho đang dùng (IsActive)");
+        {
+            var db = Seed();
+            // dòng Kho cũ đã tắt (vd sau Tách PO) đặt TRƯỚC dòng đang dùng: đọc nhầm thì ra 99 / OVL-CU
+            db.KhoVatLieus.List.Insert(0, new KhoVatLieu { KhoVatLieuId = 2, PlanDetailId = 1, IsActive = false, SoLuongThucNhan = 99, NgayNhanPhoi = DateTime.Now, OrderVatLieu = "OVL-CU", ViTriDePhoi = "Z9", SoPO = "PO1", PartNo = "P" });
+            db.Fixup();
+            var kho = new KhoVatLieuService(db, new UserService(null));
+            var lst = await kho.GetAllAsync();
+            Ok(lst.Count == 1 && lst[0].KhoVatLieuId == 1 && lst[0].SoLuongThucNhan == 40 && lst[0].OrderVatLieu == "OVL-1",
+               "GetAllAsync (trang Kho): PO1 đúng 1 dòng, số của dòng đang dùng", string.Join(" | ", lst.Select(x => $"{x.KhoVatLieuId}:{x.SoLuongThucNhan}:{x.OrderVatLieu}")));
+            var one = await kho.GetByDetailIdAsync(1);
+            Ok(one != null && one.KhoVatLieuId == 1 && one.OrderVatLieu == "OVL-1", "GetByDetailIdAsync (xem 1 PO): dòng đang dùng", one?.OrderVatLieu);
+            var kh = await new KhPlanService(db).GetDetailRowsAsync();
+            Ok(kh.Count == 1 && kh[0].KhoOrderVL == "OVL-1" && kh[0].KhoViTri == "A1", "KhPlanService.GetDetailRowsAsync (danh sách KH): 1 dòng PO, Order / Vị trí Kho của dòng đang dùng",
+               string.Join(" | ", kh.Select(x => $"{x.KhoOrderVL}/{x.KhoViTri}")));
+            var s = await kho.SaveKhoInputAsync(1, DateTime.Now, 45, "OVL-1", "A1", null, null, null, "nhan them", 1);
+            var cu = db.KhoVatLieus.List.Single(x => x.KhoVatLieuId == 2); var moi = db.KhoVatLieus.List.Single(x => x.KhoVatLieuId == 1);
+            Ok(s.Success && moi.SoLuongThucNhan == 45 && cu.SoLuongThucNhan == 99 && !cu.IsActive && db.KhoVatLieuChangeLogs.List.All(l => l.KhoVatLieuId == 1),
+               "SaveKhoInputAsync sửa dòng đang dùng (40→45), dòng đã tắt giữ nguyên 99", s.Error);
+        }
+
+        Console.WriteLine("[A15] D11-KHO-SL — \"SL đã giao\" trang Kho (GetKhoIssueSummaryAsync) chỉ đếm phiếu Hàng mới");
+        {
+            var db = Seed(); var svc = new HandoverService(db); var K = new List<string> { "KHO" };
+            var rep = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 5, HandoverNgSource.DauRa, null, "kho lam mop", null, 1, K, ngCategoryId: 1);
+            var gs = await svc.IssueByCellAsync(1, "KHO", "GC", 5, 1, "LOI", false, "SUA", toNC: "NC1", reason: "gui sua", ngCaseId: VuHelp.LastCase(db));
+            var tSua = db.HandoverTransactions.List.Last();
+            var s0 = await svc.GetKhoIssueSummaryAsync(new[] { 1 });
+            Ok(rep.Ok && gs.Ok && tSua.Purpose == HandoverPurpose.RepairSend && s0.Sum(x => x.TotalConfirmed + x.TotalPending) == 0 && s0.All(x => x.FirstIssuedAt == null),
+               "Kho báo lỗi 5 phôi rồi gửi GC sửa 5 (phiếu Hàng lỗi, chờ nhận): SL đã giao 0, chờ 0, chưa có ngày giao", $"{rep.Error}{gs.Error} · {string.Join(",", s0.Select(x => $"{x.TotalConfirmed}/{x.TotalPending}/{x.FirstIssuedAt}"))}");
+            var g1 = await svc.IssueByCellAsync(1, "KHO", "GC", 12, 1, "MOI", false, "MOI", toNC: "NC1");
+            var t1 = db.HandoverTransactions.List.Last(); await svc.ReceiveAsync(t1.HandoverTxId, 12, 0, null, 2);
+            var g2 = await svc.IssueByCellAsync(1, "KHO", "GC", 3, 1, "MOI", false, "MOI", toNC: "NC1");
+            var s1 = (await svc.GetKhoIssueSummaryAsync(new[] { 1 })).SingleOrDefault();
+            Ok(g1.Ok && g2.Ok && s1 != null && s1.TotalConfirmed == 12 && s1.TotalPending == 3 && s1.FirstIssuedAt == t1.IssuedAt,
+               "Thêm Hàng mới 12 (GC nhận) + 3 (chờ): đã giao 12, chờ 3, ngày giao = phiếu Hàng mới đầu (không phải phiếu gửi sửa)", s1 == null ? "không có dòng" : $"{s1.TotalConfirmed}/{s1.TotalPending}");
+        }
+
+        // [E3-NGREP 2026-11-02] "PO trắng" (PoGuard.CountDocsAsync) đếm cả phiếu báo hàng lỗi sau nhận (HandoverNgReports, kể cả đã huỷ):
+        //   Kho báo 2 phôi lỗi → huỷ báo → đưa phôi nhận về 0 → PO chỉ còn 1 phiếu báo lỗi đã huỷ (lịch sử, có khoá ngoại vụ lỗi) → Xoá / Tách PO phải bị chặn.
+        Console.WriteLine("[A16] E3-NGREP — PO chỉ còn phiếu báo hàng lỗi (đã huỷ): không còn là PO trắng → Xoá / Tách bị chặn");
+        {
+            var db = Seed(); var svc = new HandoverService(db); var kho = new KhoVatLieuService(db, new UserService(null)); var kh = new KhPlanService(db);
+            var rp = await svc.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauRa, null, "kho lam mop", null, 1, new List<string> { "KHO" }, ngCategoryId: 1);
+            var vr = await svc.VoidNgReportAsync(db.HandoverNgReports.List.Last().HandoverNgReportId, "bao nham", 1, new List<string>());
+            var k0 = await kho.SaveKhoInputAsync(1, DateTime.Now, 0, "OVL-1", "A1", null, null, null, "tao nham", 1);
+            var docs = await PoGuard.CountDocsAsync(db, 1);
+            Ok(rp.Ok && vr.Ok && k0.Success && docs.PhoiNhan == 0 && docs.WtsAll == 0 && docs.PhieuAll == 0 && docs.BaoLoiAll == 1 && docs.BaoLoiActive == 0,
+               "Dựng: báo 2 phôi lỗi → huỷ báo → phôi nhận về 0; PoGuard đếm 1 phiếu báo lỗi (0 còn hiệu lực), không còn chứng từ nào khác",
+               $"{rp.Error}{vr.Error}{k0.Error} · phôi {docs.PhoiNhan} WTS {docs.WtsAll} phiếu {docs.PhieuAll} báo lỗi {docs.BaoLoiAll}/{docs.BaoLoiActive}");
+            Ok(docs.HasAny && docs.Text() == "1 phiếu báo hàng lỗi (1 phiếu đã huỷ)", "HasAny = true, Text nêu đúng '1 phiếu báo hàng lỗi (1 phiếu đã huỷ)'", docs.Text());
+            EfRaw().Clear();
+            var d = await kh.DeleteDetailAsync(1, 1);
+            Ok(!d.Success && d.Error!.Contains("1 phiếu báo hàng lỗi (1 phiếu đã huỷ)") && db.KhPlanDetails.List.Count == 1 && EfRaw().Count == 0,
+               "Xoá PO: chặn, lời báo nêu phiếu báo lỗi, không chạy lệnh xoá nào", d.Error);
+            string? err = null; try { await kh.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 20 }, new() { PurchaseOrder = "PO1B", Quantity = 20 } }, 1, "tach"); } catch (Exception ex) { err = ex.Message; }
+            Ok(err != null && err.Contains("không tách được") && err.Contains("1 phiếu báo hàng lỗi") && db.KhPlanDetails.List.Count == 1, "Tách PO: chặn, không sinh PO mới", err);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

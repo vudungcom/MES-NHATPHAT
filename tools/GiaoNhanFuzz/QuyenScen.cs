@@ -324,6 +324,28 @@ public static class QuyenScen
             Ok(!r.Success && r.Error!.Contains("danh sách máy loại trừ") && db.ThietBis.List[2].IsActive, "M8 trong danh sách máy loại trừ: không xoá", r.Error);
         }
 
+        // [WTS-ORDER-SAVE 2026-11-02] WTS tiêu chuẩn mục 14: chỉ đổi Thứ tự hiển thị phải LƯU + có dòng lịch sử
+        //   (trước: không có dòng log nào → bỏ qua cả lượt lưu mà vẫn báo thành công).
+        Console.WriteLine("[Q8] WTS-ORDER-SAVE — WTS tiêu chuẩn: chỉ đổi Thứ tự hiển thị → lưu + lịch sử");
+        {
+            var db = Seed(); var auth = new AuthService(db); var wts = new StandardWtsTaskService(db, auth);
+            StandardWtsTask M(int id, int order) => new() { TaskId = id, TaskCode = "9K", TaskName = "KCS 9", CategoryCode = "KCS", CategoryName = "KCS", DefaultUnit = "Chi tiết", DisplayOrder = order, IsProductiveTask = true };
+            var c = await wts.CreateAsync(M(0, 3), Admin, "1111");
+            var t9 = db.StandardWtsTasks.List.Single(x => x.TaskCode == "9K");
+            int logs0 = db.StandardWtsTaskChangeLogs.List.Count(l => l.TaskId == t9.TaskId);
+            var u = await wts.UpdateAsync(M(t9.TaskId, 3), "khong doi", CatEdit, "1111");
+            Ok(c.Success && u.Success && t9.DisplayOrder == 3 && db.StandardWtsTaskChangeLogs.List.Count(l => l.TaskId == t9.TaskId) == logs0,
+               "Lưu mà không đổi gì: thành công, không thêm lịch sử", c.Error + u.Error);
+            u = await wts.UpdateAsync(M(t9.TaskId, 7), "xep lai", CatEdit, "1111");
+            var lg = db.StandardWtsTaskChangeLogs.List.LastOrDefault(l => l.TaskId == t9.TaskId);
+            Ok(u.Success && t9.DisplayOrder == 7, "Chỉ đổi Thứ tự hiển thị 3 → 7: lưu (DisplayOrder = 7)", $"{u.Error} · DisplayOrder={t9.DisplayOrder}");
+            Ok(lg != null && lg.FieldName == "Thứ tự hiển thị" && lg.OldValue == "3" && lg.NewValue == "7" && lg.Reason == "xep lai" && lg.ChangedBy == CatEdit,
+               "Có dòng lịch sử 'Thứ tự hiển thị' 3 → 7, lý do + người sửa", lg == null ? "không có" : $"{lg.FieldName} {lg.OldValue}→{lg.NewValue}");
+            Ok(t9.TaskName == "KCS 9" && t9.TaskCode == "9K" && t9.IsActive, "Các ô khác giữ nguyên");
+            u = await wts.UpdateAsync(M(t9.TaskId, 1), "xep", CatView, "1111");
+            Ok(!u.Success && t9.DisplayOrder == 7, "Người chỉ có quyền Xem: chặn, thứ tự giữ 7", u.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

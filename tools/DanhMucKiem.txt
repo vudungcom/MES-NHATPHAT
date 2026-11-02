@@ -56,7 +56,7 @@ GN-NG-TRACE | loi:L0; loi:L1; nang | đường đi hàng lỗi
 GN-NGRET-TO | loi:L4 | trả NG chọn nhóm nhận
 GN-PLH | loi:L3 | ô Hàng lỗi đã xử lý
 GN-RECV-NG | loi:L1; nang | NG lúc nhận → phiếu trả tự lập
-GN-RECV-NG2 | CHUA | cần ca: bản 2 của phiếu trả tự lập (đọc code xác định đúng hành vi rồi viết ca)
+GN-RECV-NG2 | loi:L12 | nhận vào ô Hàng lỗi: không có hàng đạt, lỗi theo phiếu, không tự lập phiếu trả lần 2, sổ không ghi "NG lúc nhận"
 GN-RECV-SUA | loi:L3 | nhận ô Hàng sửa 1 ô số, NG khoá
 GN-ROUTE-FREE | nang | chọn nhóm nhận tự do
 GN-HELP-LAST | chuoi:C10 | không giao theo NC từ NC cuối
@@ -72,11 +72,11 @@ VL8-TIMELINE | vu:V9; vu:V10 | K5 theo vụ xét thứ tự thời gian
 VULOI | vu:V0; vu:V1; vu:V2; vu:V3; vu:V4; vu:V5; nang | vụ lỗi
 DS-LOI | vu:V8; wts:W1 | danh mục lỗi, loại ngưng dùng bị chặn
 DS-LOI-LIVE | vu:V8 | đổi tên loại lỗi hiện tên mới
-E3-NGREP | CHUA | cần ca: "PO trắng" đếm cả phiếu báo lỗi (PoGuard) — Xoá / Tách PO có phiếu báo lỗi phải bị chặn
+E3-NGREP | kh:A16 | PoGuard đếm phiếu báo hàng lỗi (kể cả đã huỷ) → Xoá / Tách PO chặn
 RS-C2 | quyen:Q1 | giao / nhận kiểm quyền máy chủ
 RS-D10 | loi:L8 | deadlock 1205 tự thử lại (Giao nhận)
 RS-D10c | loi:L8; wts:W11 | khoá −3 tự thử lại
-D10-REASON | CHUA | cần ca: lý do huỷ cắt 200 ký tự
+D10-REASON | loi:L13 | lý do huỷ lần nhận / huỷ phiếu cắt 200 ký tự (ô 500 ký tự ở trang: giaodien)
 PAGE-ERR | CHUA | cần ca harness: Giao nhận bắt lỗi máy chủ lạ, báo rõ
 PAGE-ERR2 | CHUA | cần ca harness: lưu xong mà tải lại lỗi → báo "Đã lưu xong… không bấm lưu lại"
 PAGE-ERR2-PO | CHUA | cần ca harness: lời báo trong cửa sổ chỉ ở đúng PO
@@ -88,7 +88,7 @@ ISO-FIX | iso:I1; iso:I2 | không Serializable, ghi sau khoá MES_PO_
 VOID-PERM | loi:L7 | quyền huỷ đọc ma trận DB
 N3-TONC | chuoi:C14 | phiếu tới GC: NC nhận phải là NC thường trong snapshot
 D10-DBLCLICK | giaodien | chặn bấm đúp Giao / Nhận / Báo lỗi / Huỷ
-D11-KHO-SL | CHUA | cần ca: cột "SL đã giao" trang Kho chỉ đếm phiếu Hàng mới
+D11-KHO-SL | kh:A15; harness:drive_kho.py:K4 | cột "SL đã giao" trang Kho chỉ đếm phiếu Hàng mới (Kho gửi sửa phôi lỗi không tính)
 
 # ═══ KẾ HOẠCH / KHO / PART MASTER ═══
 KH-GUARD | kh:A1; kh:A2; kh:A3; kh:A4; kh:A5 | Kho sửa phôi, Xoá / Tách PO, Cập nhật quy trình, bật Workflow
@@ -105,34 +105,34 @@ KH-SOMAY-CSV | harness:drive_cungso.py | tab KH chia dòng máy đồng dạng t
 WORKFLOW | chuoi:C8; wts:W4 | công tắc Workflow
 RS-E5 | harness:drive_rse5.py | Sửa KH trạng thái theo sổ
 KHO-4 | kh:A10 | Kho Workflow OFF sửa phôi làm sai số → lưu + cảnh báo ô âm
-KHO-5 | CHUA | cần ca (drive_kho cũ chưa lên master): cột N / O, lọc, Excel đọc sổ
-KHO-ACTIVE | CHUA | cần ca: Kho chỉ dòng đang dùng
-KHO-LEDGER | CHUA | cần ca: trang Kho trạng thái + lọc theo sổ
-KHO-STALE | CHUA | cần ca: Kho không ghi đè khi trang để cũ
+KHO-5 | harness:drive_kho.py:K5; harness:drive_kho.py:K9b; harness:drive_kho.py:K10b; harness:drive_kho.py:K11; harness:drive_kho.py:K12; harness:drive_kho.py:K13d | cột N / O / Còn lại đọc sổ, lọc + sắp xếp theo chữ / số trên ô, Excel (.xlsx đọc lại) cùng số
+KHO-ACTIVE | kh:A14; harness:drive_kho.py:K2a | Kho / xem 1 PO / danh sách KH / lưu Kho chỉ dòng đang dùng
+KHO-LEDGER | harness:drive_kho.py:K6a; harness:drive_kho.py:K6c; harness:drive_kho.py:K7; harness:drive_kho.py:K8 | trang Kho trạng thái + lọc Đã giao hết / Chưa giao hết theo sổ
+KHO-STALE | kh:A13; harness:drive_kho.py:K15b | Kho không ghi đè khi trang để cũ (nhập lần đầu)
 TBL-FREEZE | giaodien | khung cuộn + cố định tiêu đề
 PM-PARENT | chuoi:C9 | đổi tên NC chính cập nhật ParentNC dự phòng
 PM-DEL-BACKUP | chuoi:C11 | xoá NC chính xoá kèm dự phòng
 PM-ORDER | giaodien | dự phòng nằm dưới NC gốc
-PM-DUP | CHUA | cần ca: Part Master chặn trùng (đọc code xác định)
-B6-NC-DUP | CHUA | cần ca: Part Master chặn NC trùng / trống
+PM-DUP | harness:drive_ml9.py:D1; harness:drive_ml9.py:D4; harness:drive_ml9.py:D5; harness:drive_ml9.py:P1; harness:drive_ml9.py:P2; harness:drive_ml9.py:P3 | máy đăng ký trùng máy đồng dạng báo đỏ, modal khoá máy đăng ký + máy dòng khác, Lưu chặn trùng ở NC đang sửa, NC cũ không đụng không chặn oan
+B6-NC-DUP | harness:drive_ml9.py:B1; harness:drive_ml9.py:B2; harness:drive_ml9.py:B3; harness:drive_ml9.py:B4; harness:drive_ml9.py:B5; harness:drive_ml9.py:B6; harness:drive_ml9.py:B7; harness:drive_ml9.py:B8 | GC / Bavia / Rửa / KCS / Đóng gói: NC trống / trùng dòng mới bị chặn, dữ liệu cũ không chặn oan; KHÔNG kiểm Taro (khách chốt 02/11 Taro dùng chung mã CV — TARO-NC-MA)
 RS-E2 | harness:drive_quyen.py | Part Master không "Xác nhận OK" khi lưu lỗi giữa chừng
 RS-E8 | quyen:Q3 | mã trùng sau xoá mềm
 RS-C1 | quyen:Q2; harness:drive_quyen.py | quyền ma trận danh mục
 RA-CASCADE | harness:drive_ml41.py | đổi ô gốc xoá ô phụ thuộc
-ML9-DUP | CHUA | cần ca (drive_ml9 cũ chưa lên master): dòng đồng dạng trùng máy hiện đỏ, đổi chéo không báo oan
+ML9-DUP | harness:drive_ml9.py:D2; harness:drive_ml9.py:D3; harness:drive_ml9.py:M2; harness:drive_ml9.py:M3; harness:drive_ml9.py:M4; harness:drive_ml9.py:M5; harness:drive_ml9.py:X6 | dòng đồng dạng trùng máy (cả dữ liệu cũ) hiện đỏ; lúc ghi đọc lại DB (2 tab); đổi chéo / lấy máy dòng đang xoá / xoá + thêm lại không báo oan
 DEL-NC-FULL | chuoi:C11 | xoá NC đủ máy đồng dạng + xác nhận
-SUBROW-DEL | CHUA | cần ca: xoá dòng máy đồng dạng
-SUBROW-DEL-UNDO | CHUA | cần ca: xoá máy đồng dạng có khôi phục
-CONFIRM-LOG-FIELD | CHUA | cần ca: lịch sử xác nhận ghi rõ ô
-STD-CONFIRM | CHUA | cần ca: xác nhận T.Chuẩn ở Part Master
-STD-UPDATE | CHUA | cần ca: Update TG chuẩn (gốc)
-STD-UPDATE-V2 | CHUA | cần ca: Update TG chuẩn bản 2
-STD-UPDATE-V3 | CHUA | cần ca: Update TG chuẩn bản 3
-STD-UPDATE-V4 | CHUA | cần ca: Update TG chuẩn bản 4
+SUBROW-DEL | harness:drive_ml9.py:X1; harness:drive_ml9.py:X4; harness:drive_ml9.py:X5 | nút xoá máy đồng dạng luôn hiện; dòng mới bỏ luôn; Lưu tắt dòng + lịch sử
+SUBROW-DEL-UNDO | harness:drive_ml9.py:X2; harness:drive_ml9.py:X3 | gạch ngang + khôi phục đúng trạng thái
+CONFIRM-LOG-FIELD | harness:drive_ml9.py:C1; harness:drive_ml9.py:C2; harness:drive_ml9.py:C4; harness:drive_ml9.py:C6; harness:drive_ml9.py:C7 | lịch sử xác nhận ghi rõ ô ([SetupTime] / [StandardTime]) + hiện "· T.Gá lắp" / "· T.Chuẩn"
+STD-CONFIRM | harness:drive_ml9.py:C3; harness:drive_ml9.py:C4; harness:drive_ml9.py:C5; harness:drive_ml9.py:C7 | tích xác nhận T.Chuẩn C/D/E: chờ lưu (vàng, mở nút Lưu), Lưu mới ghi, tải lại hiện xanh, bỏ xác nhận
+STD-UPDATE | std:S1; std:S2; std:S3; std:S5 | Update TG chuẩn (StdUpdateService thật): snapshot số + xác nhận, WTS từ mốc, lịch sử, khác cấu trúc chỉ cảnh báo
+STD-UPDATE-V2 | std:S1; std:S2 | PO đang dở dang / chưa có WTS; WTS trước mốc giữ nguyên
+STD-UPDATE-V3 | std:S2; std:S3; harness:drive_std.py:U2; harness:drive_std.py:R2 | chỉ PO được tích đổi (máy chủ + trang gửi đúng PO tích)
+STD-UPDATE-V4 | harness:drive_std.py:V1; harness:drive_std.py:V2; harness:drive_std.py:U1; harness:drive_std.py:U3; harness:drive_std.py:U4; harness:drive_std.py:U5; harness:drive_std.py:R3 | không có gì cần Update → 1 dòng xanh, ẩn nút Chạy + mục rỗng; bấm Chạy báo lý do
 STD-UPDATE-VIEW | giaodien | xem trước Update TG chuẩn
-STD-UPD | CHUA | cần ca: Update TG chuẩn kiểm quyền máy chủ, khoá PO chọn, đếm theo PO chọn
-STD-5 | CHUA | cần ca: Part Master đổi sau Xem trước → dừng, bắt xem lại
-SAVE-HANG-FIX | CHUA | cần ca: Part Master lưu không treo (đọc code xác định)
+STD-UPD | std:S2; std:S3; harness:drive_std.py:U2 | máy chủ kiểm quyền ma trận, khoá PO chọn (id tăng dần), đếm theo PO chọn; trang tick sẵn PO (phần "trừ PO đã xong DU" chưa có ca — harness chưa có PO đủ thành phẩm)
+STD-5 | std:S4; harness:drive_std.py:F1 | Part Master đổi sau Xem trước → máy chủ dừng (rollback), trang gửi dấu bản Xem trước
+SAVE-HANG-FIX | harness:drive_ml9.py:H2; harness:drive_ml9.py:H3; harness:drive_ml9.py:H5 | lỗi 1 dòng (trang cũ sửa dòng đã xoá) báo rõ, dòng sau vẫn lưu, lưu lại được
 TIMING-COPY-MAIN | CHUA | cần ca: dòng đồng dạng chép giờ dòng chính (xem RA-CASCADE-PM chờ Hùng chốt)
 TIMING-PENCIL | giaodien | nút bút chì sửa giờ
 UI-ONE-SAVE | giaodien | 1 nút lưu
@@ -144,11 +144,11 @@ D3-LOCK | kh:A2; kh:A3; kh:A4 | Xoá / Tách PO / Cập nhật quy trình kiểm
 RS-E15 | quyen:Q4 | Cập nhật quy trình với Part không còn công đoạn
 RS-E16 | quyen:Q5 | khoá chung cấp số KH + kiểm trùng PO
 B4-TAKE | giaodien | danh sách PO trang WTS nạp tới 20.000 dòng (không phải phép kiểm số)
-E4-KHO-NEG | CHUA | cần ca: Kho chặn số âm ở máy chủ
-KHO-LEN | CHUA | cần ca: Kho giới hạn độ dài chữ
-KHO-VIEW | CHUA | cần ca: trang Kho cần quyền Xem
-C6-PIN | CHUA | cần ca: sửa người dùng không xoá PIN
-WTS-ORDER-SAVE | CHUA | cần ca: lưu thứ tự hiển thị WTS tiêu chuẩn
+E4-KHO-NEG | kh:A11; harness:drive_kho.py:K17 | Kho chặn số âm ở máy chủ
+KHO-LEN | kh:A12; harness:drive_kho.py:K16a | Kho giới hạn độ dài chữ (máy chủ, báo trong cửa sổ)
+KHO-VIEW | harness:drive_kho.py:K1a; harness:drive_kho.py:K1b | trang Kho cần quyền Xem KHO
+C6-PIN | auth:U4 | sửa người dùng không xoá PIN; Reset PIN chỉ ADMIN
+WTS-ORDER-SAVE | quyen:Q8 | chỉ đổi Thứ tự hiển thị: lưu + lịch sử
 
 # ═══ WTS ═══
 WTS-SVC | wts:W1; wts:W2; wts:W6; harness:drive.py | tách phần lưu WTS
@@ -160,7 +160,7 @@ RS-D10b | wts:W10 | WTS deadlock tự lưu lại
 MACHINE-LOCK | wts:W9 | khoá máy
 MACHINE-OVERLAP | wts:W5; harness:drive.py:S5 | máy trùng giờ
 MACHINE-OVERLAP-LIVE | harness:drive.py:S5 | báo trùng giờ ngay trên form
-STD-SNAP | CHUA | cần ca: lưu WTS đọc số chuẩn từ snapshot DB (trang để cũ không ghi số cũ)
+STD-SNAP | wts:W13 | lưu WTS đọc số chuẩn từ snapshot DB (GC / máy đồng dạng / non-GC + IsActualManual)
 SERIAL-TIME-REQUIRED | wts:W1; harness:drive.py:S6 | Hàng loạt bắt T.Gá / T.Ktra
 TRIAL-PREP-REQUIRED | wts:W1 | Chạy thử bắt T.CB
 TRIAL-QTY-OPTIONAL | wts:W3; harness:drive.py:S2 | Chạy thử không SL
@@ -176,12 +176,13 @@ WTS-EDIT | harness:drive.py:S9 | sửa dòng GC giữ NC / máy / giờ
 ALLOC-GC | harness:drive_alloc.py; harness:drive_trial.py | chia giờ GC theo khối lượng
 ALLOC-BREAK | harness:drive_alloc.py | chia giờ qua nghỉ trưa
 NONGC-ALLOC-WEIGHT | harness:drive_alloc.py | chia giờ non-GC
-WF-CEIL-MIN | CHUA | cần ca: trần WTS lấy min (đọc code xác định)
+WF-CEIL-MIN | wts:W4; harness:drive.py:S4 | luật "trần lấy min" cũ ĐÃ THAY bằng GN-WTS-CAP (trần = Còn chờ làm) — trỏ ca đang kiểm GN-WTS-CAP, không viết ca theo luật cũ
 ML41-NC-RESET | harness:drive_ml41.py | đổi NC / máy xoá giờ cũ
 ML41-SELECT-STALE | harness:drive_ml41.py | đổi NC → ô Máy trên màn hình về "--" (ô NC / ô vụ tạo lại khi đổi PO)
+WTS-NC-WIDTH | harness:drive_ncw.py | ô nhập dòng WTS (NC, Máy, Số PO, Part, OK / NG, giờ) hiện đủ chữ ở mọi cỡ màn; màn hẹp cuộn ngang, ≥ 1600 không tràn
 ACT-PODUP | harness:drive_actpo.py | form việc chọn "PO · Part"
 ML16-ACT | viec:X1; viec:X2; viec:X3; viec:X4; viec:X5; wts:W11; wts:W12; nghi:N3 | Việc không ra SP: đầu vào, nhãn PO / vụ, trùng giờ chính người, sửa = huỷ + mới, không đổi sổ
-ML16-DOCS | CHUA | cần ca: PO có giờ sửa (Việc không ra SP) không còn là PO trắng (PoGuard)
+ML16-DOCS | viec:X6 | PO có giờ sửa (việc không ra SP, kể cả đã huỷ) không còn là PO trắng
 ML17-NET | nghi:N1 | cột Phút trừ nghỉ, chồng tính 1 lần
 ML17-XN | nghi:N1; nghi:N2; nghi:N3; nghi:N4; nghi:N6; harness:drive_nghi.py | làm thông nghỉ
 CA-NGHI-HIST | nghi:N4 | phút dòng đã lưu đọc giờ nghỉ chép lúc lưu
@@ -192,7 +193,9 @@ WTS-TT-SHOW | giaodien | cột TT hiện T.Thực tế
 WTS-SAVED-LAYOUT | giaodien | dòng đã lưu cùng cột form
 WTS-CAP-TEXT | harness:drive.py:S4 | chữ vượt trần
 RA-SOCHUNG | harness:drive_cungso.py | bỏ chỗ tự cộng, đọc sổ
-RS-E6 | CHUA | cần ca: WTS GC không mượn số chuẩn máy đồng dạng đầu tiên / Part Master live
+RS-E6 | wts:W14 | WTS GC không mượn số chuẩn máy đồng dạng đầu tiên / Part Master live (nay [RS-E6-Q] cũng không mượn NC chính)
+RS-E6-Q | wts:W14; wts:W2 | máy không có trong quy trình PO → để trống chuẩn; máy chủ kiểm dòng chuẩn trang gửi đúng NC + đúng máy (Hùng duyệt 02/11)
+ML16-Q | viec:X7; wts:W9 | lưu WTS sản xuất chồng giờ việc không ra SP của chính mình → chặn; khoá người → máy → PO (Hùng duyệt 02/11)
 STD-CONFIRM-ROW | CHUA | cần ca: ô xác nhận chuẩn từng dòng WTS (wts:W2 kiểm 1 phần — xác định rồi trỏ)
 STD-ACTUAL-DEFAULT | CHUA | cần ca: T.Thực tế mặc định theo chuẩn
 SERIAL-EST-ACTUAL | CHUA | cần ca: Dự kiến Hàng loạt theo thực tế
@@ -220,21 +223,21 @@ MACHINE-CASE | wts:W12 | khoá máy Trim + viết hoa
 WTS-NGCASE-PO | wts:W12 | giữ vụ khi sửa chỉ khi đúng vụ dòng cũ + cùng PO
 CA-NGHI-OVERLAP | nghi:N5 | ca có 2 nghỉ chồng bị chặn
 ML35-PO-CAP | giaodien | "chưa làm / nhận" dưới ô Số PO
-WTS-OK-FALLBACK | CHUA | cần ca: dòng WTS cũ QtyOk trống → OK = QtyDone − NG như sổ, Sửa dòng không ghi OK dư
+WTS-OK-FALLBACK | harness:drive_okfb.py | dòng WTS cũ QtyOk trống: Sửa dòng ghi OK = QtyDone − NG
 W2-REMOVEROW | chung | hàm chết đã bỏ (không còn code để kiểm)
 WTS-DEAD | chung | hàm chết đã bỏ
 WTS-STD-PM-DEAD | chung | hàm chết đã bỏ
 
 # ═══ BÁO CÁO / HIỆU SUẤT / QUYỀN / HỆ THỐNG ═══
-RPT-4 | CHUA | cần ca: báo cáo WTS kiểm quyền máy chủ
+RPT-4 | nghi:N7 | báo cáo WTS kiểm quyền Xem ở máy chủ (3 hàm)
 RS-C3 | auth:U2 | khoá tài khoản / nhóm, đổi tên / nhóm → phiên hết hiệu lực ngay
 RS-C4 | auth:U1; auth:U3 | returnUrl nội bộ, giới hạn đăng nhập sai (bỏ gợi ý admin trên trang = giao diện)
-RS-E11 | CHUA | cần ca: /about không qua khoá bản quyền, DetailedErrors chỉ Development
+RS-E11 | harness:drive_rse11.py | chỉ đúng /about qua khoá bản quyền; DetailedErrors tắt ở Production; cookie HttpOnly + Secure sau proxy
 RS-E10 | quyen:Q6 | đồ gá không mượn chồng / không trả khi không ai mượn, dao tồn không âm
 MES | chung | tên mô-đun
-RPT-3 | CHUA | cần ca: hiệu suất máy ca vắt đêm (nghi:N4 có hiệu suất máy nhưng chưa xác nhận đủ ca vắt đêm)
-RPT-ACTIVE | CHUA | cần ca: báo cáo — mã CV ngưng dùng giữ cờ có ích
-RS-E7 | CHUA | cần ca: báo cáo hiện mã CV HTSP / KCS / PKG
-RS-C5 | CHUA | cần ca: "Nhớ tài khoản" chỉ nhớ tên, không lưu mật khẩu
+RPT-3 | nghi:N8 | hiệu suất máy ca vắt đêm
+RPT-ACTIVE | nghi:N7 | mã CV ngưng dùng giữ cờ có ích, không phân biệt hoa thường
+RS-E7 | nghi:N7 | báo cáo hiện mã CV HTSP / KCS
+RS-C5 | harness:drive_rsc5.py | Nhớ chỉ tên đăng nhập, xoá mật khẩu bản cũ đã lưu
 RS-D9 | quyen:Q7 | số máy đã dùng không đổi số, máy loại trừ / Part Master đang dùng không xoá
-C7-LICENSE | CHUA | cần ca: phản hồi bản quyền không phải JSON không khoá xưởng
+C7-LICENSE | auth:U5 | phản hồi bản quyền không phải JSON → ném lỗi (giữ bản quyền cũ)

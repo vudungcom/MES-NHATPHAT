@@ -73,3 +73,14 @@ C9 (đổi tên NC chính có dòng dự phòng) và C10 (NC máy loại trừ �
 `nang` nay chạy thêm kịch bản `chuoi` + 3 lượt `chuoi_loi` / `chuoi_loaitru` / `chuoi_thuong`.
 Stub thêm: khoá chính StepId / TimingId / PartId, KhPlans.Add chèn cả Details, Timings chỉ dòng IsActive (như Include thật),
 câu `DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId` được làm thật (các câu raw khác vẫn chỉ ghi log).
+
+
+Thêm (STD-UPDATE, 02/11/2026 — Update TG chuẩn Part Master bằng hàm thật):
+
+```
+dotnet bin2/GiaoNhanFuzz.dll std    # S1..S5: StdUpdateService.PreviewAsync / RunAsync thật trên Part + 3 PO dựng qua chuỗi thật, WTS lưu bằng WtsSaveService
+```
+
+S1 xem trước (PO đang dở dang / chưa có WTS, 5 ô snapshot mỗi PO, WTS từ mốc, không ghi DB) · S2 chạy cho PO tích chọn (PO bỏ tích + WTS trước mốc y nguyên,
+khoá MES_PO_ đúng PO chọn, lịch sử đếm theo PO chọn) · S3 máy chủ chặn thiếu lý do / không quyền PART_STD_UPDATE / chưa chọn PO · S4 [STD-5] Part Master đổi sau
+Xem trước → dừng · S5 khác cấu trúc chỉ cảnh báo. Biên dịch thêm `StdUpdateService.cs`, `PartStepStdTimeConfirmService.cs`. `nang` chạy cả `std`.

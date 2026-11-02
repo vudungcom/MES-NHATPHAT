@@ -442,12 +442,99 @@ public static class NghiScen
         Console.WriteLine($"  N6: {saved} nhóm lưu được, {db.WtsBreakWorkLogs.List.Count} dòng nghỉ");
     }
 
+    // [RPT-4][RPT-ACTIVE][RS-E7 2026-11-02] Báo cáo WTS (WtsReportService):
+    //   RPT-4  máy chủ kiểm quyền Xem "WTS Report" (ma trận DB) ở cả 3 hàm — không quyền / tài khoản khoá → rỗng; chỉ Xem (không Sửa) → đọc được.
+    //   RPT-ACTIVE cờ Có ích / Vô ích đọc cả mã đã NGƯNG dùng, so mã không phân biệt hoa thường; trùng mã → lấy bản đang dùng.
+    //   RS-E7  dòng HTSP / KCS / Đóng gói hiện mã CV (WtsCode); dòng GC: NC, mã CV trống.
+    static async Task N7()
+    {
+        Console.WriteLine("[N7] Báo cáo WTS: quyền máy chủ (RPT-4), mã CV ngưng dùng giữ cờ có ích (RPT-ACTIVE), hiện mã CV HTSP / KCS (RS-E7)");
+        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        string PermsV(bool view, bool edit) => System.Text.Json.JsonSerializer.Serialize(new[] { new MES.Web.Constants.GroupPermissionSetting { SectionCode = MES.Web.Constants.SystemPermissions.WtsReport, CanView = view, CanEdit = edit } });
+        var gV = new UserGroup { GroupId = 61, GroupCode = "RPTV", IsActive = true, Permissions = PermsV(true, false) };
+        var gN = new UserGroup { GroupId = 62, GroupCode = "NORPT", IsActive = true, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsGc) };
+        db.UserGroups.List.AddRange(new[] { gV, gN });
+        db.Users.List.Add(new User { UserId = 61, Username = "rv", FullName = "Xem BC", IsActive = true, Group = gV, GroupId = 61 });
+        db.Users.List.Add(new User { UserId = 62, Username = "rn", FullName = "Không BC", IsActive = true, Group = gN, GroupId = 62 });
+        db.Users.List.Add(new User { UserId = 63, Username = "rk", FullName = "Xem BC khoá", IsActive = false, Group = gV, GroupId = 61 });
+        // mã CV: HOP vô ích đang dùng · CU vô ích ĐÃ NGƯNG · DUP: bản đang dùng có ích + bản cũ đã ngưng vô ích
+        db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", TaskCode = "HOP", TaskName = "Họp", IsActive = true, IsProductiveTask = false });
+        db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 2, CategoryCode = "CHUNG", TaskCode = "CU", TaskName = "Việc cũ", IsActive = false, IsProductiveTask = false });
+        db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 3, CategoryCode = "CHUNG", TaskCode = "DUP", TaskName = "Trùng mới", IsActive = true, IsProductiveTask = true });
+        db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 4, CategoryCode = "CHUNG", TaskCode = "dup", TaskName = "Trùng cũ", IsActive = false, IsProductiveTask = false });
+        db.Fixup();
+        // WTS thật: GC NC1 (u2) + HTSP Taro mã chuẩn bị 1T (u3); KCS K1 + việc không ra SP ghi thẳng (dòng cũ — mã CU đã ngưng thì service không cho lưu mới)
+        var g = WtsScen.Gc(); g.Rows.Add(WtsScen.Row(1, 5, 0, D0.AddHours(8), D0.AddHours(9))); var r1 = await s.SaveGroupAsync(g);
+        var h = WtsScen.NonGc("HTSP", "Taro"); var p = WtsScen.Row(1, 0, 0, D0.AddHours(9), D0.AddHours(9).AddMinutes(15), code: "1T", setup: null, mach: null, insp: null, actualPc: 15); p.StdTimePerPc = 15; h.Rows.Add(p);
+        var r2 = await s.SaveGroupAsync(h);
+        db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 900, KhPlanDetailId = 1, ProcessGroup = "KCS", WtsCode = "K1", WorkerId = 4, QtyDone = 2, QtyOk = 2, QtyNg = 0, StartTime = D0.AddHours(10), EndTime = D0.AddHours(10.5), CreatedAt = D0, Worker = db.Users.List.First(u => u.UserId == 4) });
+        long aid = 800;
+        void Act(int w, string code, double h0, double h1) => db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = ++aid, WorkerId = w, WorkDate = DateOnly.FromDateTime(D0), StartTime = D0.AddHours(h0), EndTime = D0.AddHours(h1), WtsCode = code, WtsName = code, CreatedAt = D0, Worker = db.Users.List.First(u => u.UserId == w) });
+        Act(5, "HOP", 8, 9); Act(5, "cu", 9, 10); Act(5, "DUP", 10, 11); Act(5, "dup", 11, 12);
+        db.Fixup();
+        Say(r1.Ok && r2.Ok, "Dựng: 1 dòng GC + 1 dòng HTSP qua service, 1 dòng KCS + 4 việc không ra SP", (r1.ErrorMsg ?? "") + (r2.ErrorMsg ?? ""));
+        var rep = new WtsReportService(db); var day = DateOnly.FromDateTime(D0);
+
+        // RPT-4
+        var rA = await rep.GetReportAsync(day, day, null, 1);
+        var rV = await rep.GetReportAsync(day, day, null, 61);
+        var rN = await rep.GetReportAsync(day, day, null, 62);
+        var rK = await rep.GetReportAsync(day, day, null, 63);
+        Say(rA.Rows.Count == 7 && rV.Rows.Count == 7, "Admin + người chỉ có quyền XEM WTS Report: đọc đủ 7 dòng", $"admin {rA.Rows.Count} · xem {rV.Rows.Count}");
+        Say(rN.Rows.Count == 0 && rN.TotalMinutes == 0 && rK.Rows.Count == 0, "Không có quyền WTS Report / tài khoản đã khoá: kết quả rỗng (máy chủ chặn)", $"không quyền {rN.Rows.Count} · khoá {rK.Rows.Count}");
+        var wV = await rep.GetWorkersWithLogsAsync(day, day, 61); var wN = await rep.GetWorkersWithLogsAsync(day, day, 62);
+        var aV = await rep.GetAllActiveWorkersAsync(61); var aN = await rep.GetAllActiveWorkersAsync(62);
+        Say(wV.Count == 4 && wN.Count == 0 && aV.Count > 0 && aN.Count == 0, "Danh sách công nhân (có log / tất cả): có quyền → có, không quyền → rỗng", $"{wV.Count}/{wN.Count} · {aV.Count}/{aN.Count}");
+
+        // RPT-ACTIVE
+        bool? Pro(string code) => rA.Rows.FirstOrDefault(x => x.RowType == WtsRowType.Activity && x.WtsCode == code)?.IsProductiveTask;
+        Say(Pro("HOP") == false, "Mã HOP vô ích đang dùng: vô ích", Pro("HOP")?.ToString());
+        Say(Pro("cu") == false, "Mã CU vô ích ĐÃ NGƯNG, dòng cũ ghi 'cu' (chữ thường): vẫn vô ích (trước: thành có ích)", Pro("cu")?.ToString());
+        Say(Pro("DUP") == true && Pro("dup") == true, "Mã trùng (đang dùng có ích + bản cũ đã ngưng vô ích): lấy bản đang dùng → có ích", $"{Pro("DUP")}/{Pro("dup")}");
+        // phút: u5 4 giờ việc: có ích DUP + dup = 120, vô ích HOP + cu = 120
+        var u5 = rA.Rows.Where(x => x.WorkerId == 5).ToList();
+        Say(u5.Count == 4 && u5.Where(x => x.IsProductiveTask).Sum(x => x.Minutes) == 120 && u5.Where(x => !x.IsProductiveTask).Sum(x => x.Minutes) == 120, "u5: 120 phút có ích, 120 phút vô ích");
+
+        // RS-E7
+        var gc = rA.Rows.FirstOrDefault(x => x.RowType == WtsRowType.Production && x.NC == "NC1");
+        var ht = rA.Rows.FirstOrDefault(x => x.RowType == WtsRowType.Production && x.WorkerId == 3);
+        var kc = rA.Rows.FirstOrDefault(x => x.RowType == WtsRowType.Production && x.WorkerId == 4);
+        Say(gc != null && gc.WtsCode == "" && ht != null && ht.NC == "" && ht.WtsCode == "1T" && kc != null && kc.WtsCode == "K1",
+            "Dòng GC: NC1, mã CV trống · dòng HTSP: mã CV 1T · dòng KCS: mã CV K1 (trước: luôn trống)", $"GC '{gc?.NC}'/'{gc?.WtsCode}' · HTSP '{ht?.NC}'/'{ht?.WtsCode}' · KCS '{kc?.WtsCode}'");
+    }
+
+    // [RPT-3 2026-11-02] Hiệu suất máy ca vắt đêm 20:00–05:00: giờ kết thúc sang ngày hôm sau → tổng 540 phút, đoạn WTS 21:00–03:00 qua nửa đêm là Chạy 360.
+    //   Trước: dayEnd cùng ngày → tổng âm, mọi đoạn bị cắt, hiệu suất 0 %.
+    static async Task N8()
+    {
+        Console.WriteLine("[N8] RPT-3 — hiệu suất máy ca vắt đêm (20:00–05:00, WTS qua nửa đêm)");
+        var db = await WtsScen.SeedAsync();
+        var ca = AddCa(db, 2, new TimeOnly(20, 0), new TimeOnly(5, 0));   // không giờ nghỉ: ca này chỉ kiểm khung giờ vắt đêm (giờ nghỉ đã kiểm ở N4)
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "GC", IsActive = true });
+        // M1: 21:00 → 03:00 hôm sau (qua nửa đêm); M2: 04:00 → 06:00 hôm sau (vượt cuối ca 1 giờ); dòng ngày khác (hôm sau 21:00) không tính
+        db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 901, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M1", WorkerId = 2, QtyDone = 5, QtyOk = 5, StartTime = D0.AddHours(21), EndTime = D0.AddHours(27), CreatedAt = D0, CaId = 2 });
+        db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 902, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC2", MachineUsed = "M2", WorkerId = 3, QtyDone = 2, QtyOk = 2, StartTime = D0.AddHours(28), EndTime = D0.AddHours(30), CreatedAt = D0, CaId = 2 });
+        db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 903, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M1", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = D0.AddHours(45), EndTime = D0.AddHours(46), CreatedAt = D0, CaId = 2 });
+        db.Fixup();
+        var me = await new MachineEfficiencyService(db).GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(20, 0), new TimeOnly(5, 0), ca);
+        var m1 = me.Rows.First(x => x.Machine.SoMay == "M1"); var m2 = me.Rows.First(x => x.Machine.SoMay == "M2");
+        string Inf(dynamic r) => $"tổng {r.TotalMinutes} chạy {r.RunMinutes} nghỉ {r.BreakMinutes} chờ {r.IdleMinutes} dừng {r.DownMinutes}";
+        Say(Math.Abs(m1.TotalMinutes - 540) < 0.01 && Math.Abs(m2.TotalMinutes - 540) < 0.01, "Tổng phút ca vắt đêm = 540 (20:00 → 05:00 hôm sau), không âm", Inf(m1));
+        Say(Math.Abs(m1.RunMinutes - 360) < 0.01 && Math.Abs(m1.IdleMinutes - 180) < 0.01,
+            "M1 WTS 21:00 → 03:00 (qua nửa đêm): chạy 360, chờ 180", Inf(m1));
+        Say(Math.Abs(m2.RunMinutes - 60) < 0.01 && Math.Abs(m2.IdleMinutes - 480) < 0.01,
+            "M2 WTS 04:00 → 06:00 hôm sau: chỉ tính 04:00–05:00 = 60 chạy, chờ 480; dòng 21:00 hôm sau không tính", Inf(m2));
+        Say(Math.Abs(m1.TotalMinutes - m1.RunMinutes - m1.BreakMinutes - m1.IdleMinutes - m1.DownMinutes) < 0.01 && m1.RunPct > 0, "Tổng cân, % chạy > 0 (trước: 0 %)", m1.RunPct.ToString());
+    }
+
     public static async Task<int> Run()
     {
         Console.WriteLine("[N1] Hàm phút WorkMinutes đối chiếu đếm từng phút (ngẫu nhiên 3000 lượt, cả ca qua đêm)");
         N1(17, 3000);
         Console.WriteLine($"  {(fails == 0 ? "ĐẠT" : "SAI")} N1 ({checks} phép kiểm)");
         await N2(); await N3(); await N4(); await N5(); await N6(29, 60);
+        await N7(); await N8();   // [RPT-4][RPT-ACTIVE][RS-E7][RPT-3] báo cáo WTS + hiệu suất máy ca vắt đêm
         Console.WriteLine($"Tổng phép kiểm: {checks}");
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;

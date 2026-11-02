@@ -121,7 +121,10 @@ public static class WtsScen
         {
             var db = await SeedAsync(); var s = Svc(db);
             var g = Gc(); var row = Row(1, 8, 2, T, T.AddHours(1), cat: 2);
-            row.GcStd = new WtsSaveService.WtsSaveStd { SetupTime = 4, MachiningTime = 3, InspectionTime = 1, SrcTable = StdTrack.Table.Machining, SrcRowId = 2 };   // trang tra sẵn (NC2 PO1 đã xác nhận Setup)
+            // [RS-E6-Q 2026-11-02] trước: nhóm NC1 / M1 mà gửi dòng chuẩn của NC2 (SrcRowId 2) — máy chủ nay KHÔNG nhận chuẩn sai NC / máy
+            //   → ca dùng dòng NC1 M1 (SrcRowId 1) + dấu xác nhận Setup trên chính dòng đó (ý ca giữ nguyên: đọc trạng thái xác nhận từ DB).
+            db.KhPlanRouteSnapshotStdConfirms.List.Add(new KhPlanRouteSnapshotStdConfirm { Id = 99, KhPlanDetailId = 1, SnapshotTable = StdTrack.Table.Machining, SnapshotRowId = 1, FieldName = StdTrack.Field.Setup, IsConfirmed = true, ConfirmedBy = 1, ConfirmedByName = "U1", ConfirmedAt = T });
+            row.GcStd = new WtsSaveService.WtsSaveStd { SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3, SrcTable = StdTrack.Table.Machining, SrcRowId = 1 };   // trang tra sẵn (NC1 M1 PO1, đã xác nhận Setup)
             row.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS1", WtsName = "Phát sinh", Minutes = 5 });
             row.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS2", Minutes = 0 });
             g.Rows.Add(row); row.Notes = "ghi chú"; row.IsOvertime = true;
@@ -139,15 +142,15 @@ public static class WtsScen
             Ok(ex.Count == 1 && ex[0].WtsCode == "PS1" && ex[0].Minutes == 5, "Phát sinh: chỉ dòng có phút > 0 được ghi");
             var stds = db.WtsProductionLogStds.List.Where(x => x.WtsLogId == w.WtsLogId).ToList();
             var su = stds.FirstOrDefault(x => x.FieldName == StdTrack.Field.Setup);
-            Ok(stds.Count == 5 && su != null && su.StdValue == 4 && su.IsConfirmed && su.ConfirmedByName == "U1" && su.SnapshotTable == StdTrack.Table.Machining && su.SnapshotRowId == 2 && su.SyncSource == StdTrack.Source.Save && su.SyncedBy == 2
-               && stds.First(x => x.FieldName == StdTrack.Field.Machining).IsConfirmed == false && stds.First(x => x.FieldName == StdTrack.Field.Preparation).StdValue == null,
+            Ok(stds.Count == 5 && su != null && su.StdValue == 5 && su.IsConfirmed && su.ConfirmedByName == "U1" && su.SnapshotTable == StdTrack.Table.Machining && su.SnapshotRowId == 1 && su.SyncSource == StdTrack.Source.Save && su.SyncedBy == 2
+               && stds.First(x => x.FieldName == StdTrack.Field.Machining).IsConfirmed == false && stds.First(x => x.FieldName == StdTrack.Field.Preparation).StdValue == 10,
                "5 dòng số chuẩn GC; ô Setup ĐÃ xác nhận (đọc KhPlanRouteSnapshotStdConfirms), các ô khác chưa", string.Join(",", stds.Select(x => $"{x.FieldName}={x.StdValue}/{x.IsConfirmed}")));
             Ok(r.DetailIds.SequenceEqual(new[] { 1 }), "DetailIds trả PO đã ghi");
             // không có số chuẩn (máy lạ) → 5 dòng null + ghi chú
             g = Gc(machine: "M9"); row = Row(1, 3, 0, T.AddHours(2), T.AddHours(3)); g.Rows.Add(row);
             r = await s.SaveGroupAsync(g);
             var st2 = db.WtsProductionLogStds.List.Where(x => x.WtsLogId == row.WtsLogId).ToList();
-            Ok(r.Ok && st2.Count == 5 && st2.All(x => x.StdValue == null && x.Note == "Không tìm thấy chuẩn trong snapshot phiếu KH"), "Không có chuẩn: 5 dòng trống + ghi chú y cũ");
+            Ok(r.Ok && st2.Count == 5 && st2.All(x => x.StdValue == null && x.Note == "Không tìm thấy chuẩn trong snapshot phiếu KH (NC NC1 · máy M9)"), "Không có chuẩn: 5 dòng trống + ghi chú nêu NC + máy ([RS-E6-Q] đáp án đổi 02/11)");
         }
 
         Console.WriteLine("[W3] GC Chạy thử không SL; mã chuẩn bị non-GC không SL; T.Thực tế khác chuẩn");
@@ -312,19 +315,22 @@ public static class WtsScen
             r = await s.SaveGroupAsync(k); Ok(r.Ok, "PO chưa có snapshot KCS: mã lạ vẫn lưu theo Chưa làm cả nhóm (giữ như cũ)", r.ErrorMsg);
         }
 
-        Console.WriteLine("[W9] Khoá: máy + PO đều LockOwner = Transaction trong 1 giao dịch (PoGuard)");
+        Console.WriteLine("[W9] Khoá: người + máy + PO đều LockOwner = Transaction trong 1 giao dịch (PoGuard)");
         {
             Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Clear();
             var db = await SeedAsync(); var s = Svc(db);
-            Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Clear();
+            Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Clear(); Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
             var g = Gc(); g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1))); var r = await s.SaveGroupAsync(g);
+            var names = Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.ToList();
             var locks = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Where(x => x.Contains("sp_getapplock")).ToList();
-            Ok(r.Ok && locks.Count == 2 && locks.All(x => x.Contains("'Transaction'")) && !Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Any(x => x.Contains("sp_releaseapplock")),
-               "Lưu GC: 2 lần khoá (máy + PO) kiểu Transaction, không có lệnh nhả riêng", string.Join(" | ", locks));
-            Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Clear();
+            // [ML16-Q 2026-11-02] đáp án đổi theo luật mới (Hùng duyệt 02/11): thêm khoá người WTS_WORKER_ đứng ĐẦU → GC 3 lần khoá, non-GC 2 lần
+            Ok(r.Ok && locks.Count == 3 && names.SequenceEqual(new[] { "WTS_WORKER_2", "WTS_MACHINE_M1", "MES_PO_1" })
+               && locks.All(x => x.Contains("'Transaction'")) && !Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Any(x => x.Contains("sp_releaseapplock")),
+               "Lưu GC: 3 lần khoá (người → máy → PO) kiểu Transaction, không có lệnh nhả riêng", string.Join(",", names) + " · " + locks.Count);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Clear(); Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
             var h = NonGc("KCS"); h.Rows.Add(Row(1, 1, 0, T, T.AddHours(1), code: "K1", setup: null, mach: null, insp: null, actualPc: 1)); await s.SaveGroupAsync(h);
             locks = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog.Where(x => x.Contains("sp_getapplock")).ToList();
-            Ok(locks.Count == 1, "Lưu non-GC: chỉ khoá PO (không khoá máy)", string.Join(" | ", locks));
+            Ok(locks.Count == 2 && Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.SequenceEqual(new[] { "WTS_WORKER_3", "MES_PO_1" }), "Lưu non-GC: khoá người → PO (không khoá máy)", string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
         }
 
         // [RS-D10b 2026-10-31] Lưu nhóm / xoá dòng bị chọn làm nạn nhân deadlock 1205 → tự lưu lại, không ghi trùng, không báo "đã lưu" sai.
@@ -530,6 +536,107 @@ public static class WtsScen
             err = null;
             try { await kh.UpdateFieldAsync(1, "PartNotes", "ghi chú", 1); } catch (InvalidOperationException ex) { err = ex.Message; }
             Ok(err == null && db.KhPlanDetails.List.First(d => d.KhPlanDetailId == 1).PartNotes == "ghi chú", "UpdateFieldAsync Admin sửa ghi chú: được (như cũ)", err);
+        }
+
+        // [STD-SNAP 2026-11-02] Trang tra số chuẩn lúc chọn PO (cache); "Update TG chuẩn" chạy SAU đó đổi số trong snapshot DB.
+        //   Lưu phải đọc lại SỐ chuẩn từ đúng dòng snapshot (bảng + id trang đã tra) → WtsProductionLogStds + IsActualManual theo số MỚI.
+        //   Không thấy dòng snapshot → giữ số trang như cũ.
+        Console.WriteLine("[W13] STD-SNAP — lưu WTS đọc số chuẩn từ snapshot DB (trang để cũ không ghi số cũ)");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            // trang tra lúc mở: NC1 M1 = 5 / 2 / 1 / 10 / 3 (snapshot #1); NC1 M3 (máy đồng dạng) = 6 / 2.5 / 1 / 12 / 4 (timing #1); Taro 1T = 15 (#12)
+            var pageM1 = new WtsSaveService.WtsSaveStd { SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3, SrcTable = StdTrack.Table.Machining, SrcRowId = 1 };
+            var pageM3 = new WtsSaveService.WtsSaveStd { SetupTime = 6, MachiningTime = 2.5m, InspectionTime = 1, PreparationTime = 12, TrialRunTime = 4, SrcTable = StdTrack.Table.MachiningTiming, SrcRowId = 1 };
+            // sau đó Update TG chuẩn đổi snapshot DB
+            var sm = db.KhPlanRouteSnapshotMachining.List.First(x => x.SnapshotId == 1); sm.SetupTime = 7; sm.MachiningTime = 2.2m;
+            var st = sm.TimingRows.First(x => x.TimingSnapshotId == 1); st.MachiningTime = 2.8m; st.TrialRunTime = 5;
+            if (!db.KhPlanRouteSnapshotMachiningTimings.List.Contains(st)) db.KhPlanRouteSnapshotMachiningTimings.List.Add(st);   // DB thật: dòng timing nằm ở bảng riêng (seed chỉ gắn vào TimingRows)
+            var s1t = db.KhPlanRouteSnapshotTaro.List.First(x => x.SnapshotId == 12); s1t.StandardTime = 20;
+            Dictionary<string, decimal?> Stds(long? id) => db.WtsProductionLogStds.List.Where(x => x.WtsLogId == id).ToDictionary(x => x.FieldName, x => x.StdValue);
+            string Show(Dictionary<string, decimal?> d) => string.Join(",", d.Select(x => $"{x.Key}={x.Value}"));
+
+            var g = Gc(); var r1 = Row(1, 3, 0, T, T.AddHours(1)); r1.GcStd = pageM1; g.Rows.Add(r1);
+            var res = await s.SaveGroupAsync(g);
+            var d1 = Stds(r1.WtsLogId);
+            Ok(res.Ok && d1.Count == 5 && d1[StdTrack.Field.Setup] == 7 && d1[StdTrack.Field.Machining] == 2.2m && d1[StdTrack.Field.Inspection] == 1 && d1[StdTrack.Field.Preparation] == 10 && d1[StdTrack.Field.TrialRun] == 3,
+               "GC NC1 M1: trang giữ 5 / 2, snapshot DB đã đổi 7 / 2.2 → số chuẩn ghi 7 / 2.2 / 1 / 10 / 3", (res.ErrorMsg ?? "") + " · " + Show(d1));
+            Ok(r1.GcStd != null && r1.GcStd.SetupTime == 7 && r1.GcStd.SrcRowId == 1, "DTO dòng nhận số chuẩn mới (trang hiện đúng sau khi lưu)", r1.GcStd?.SetupTime?.ToString());
+
+            g = Gc(machine: "M3"); var r2 = Row(1, 3, 0, T.AddHours(1), T.AddHours(2)); r2.GcStd = pageM3; g.Rows.Add(r2);
+            res = await s.SaveGroupAsync(g);
+            var d2 = Stds(r2.WtsLogId);
+            Ok(res.Ok && d2[StdTrack.Field.Setup] == 6 && d2[StdTrack.Field.Machining] == 2.8m && d2[StdTrack.Field.TrialRun] == 5,
+               "GC NC1 M3 (máy đồng dạng, bảng timing): ghi số timing mới 6 / 2.8 / … / 5", (res.ErrorMsg ?? "") + " · " + Show(d2));
+
+            var h = NonGc("HTSP", "Taro"); var p = Row(1, 0, 0, T.AddHours(2), T.AddHours(2).AddMinutes(20), code: "1T", setup: null, mach: null, insp: null, actualPc: 20);
+            p.StdTimePerPc = 15; p.StdSrcTable = StdTrack.Table.Taro; p.StdSrcRowId = 12; h.Rows.Add(p);
+            res = await s.SaveGroupAsync(h);
+            var w3 = db.WtsProductionLogs.List.Last(); var d3 = Stds(w3.WtsLogId);
+            Ok(res.Ok && w3.WtsCode == "1T" && w3.IsActualManual == false && d3.Count == 1 && d3[StdTrack.Field.Standard] == 20,
+               "HTSP Taro 1T: trang giữ chuẩn 15, DB đã đổi 20, T.Thực tế 20 → IsActualManual = false (bằng chuẩn mới), số chuẩn ghi 20",
+               $"{res.ErrorMsg} · IsActualManual={w3.IsActualManual} · {Show(d3)}");
+
+            // [RS-E6-Q 02/11 — đáp án đổi] không tìm thấy dòng snapshot (id lạ) → GC để TRỐNG chuẩn (trước: giữ số trang)
+            var pageLa = new WtsSaveService.WtsSaveStd { SetupTime = 5, MachiningTime = 2, InspectionTime = 1, SrcTable = StdTrack.Table.Machining, SrcRowId = 999 };
+            g = Gc(); var r4 = Row(1, 2, 0, T.AddHours(3), T.AddHours(4)); r4.GcStd = pageLa; g.Rows.Add(r4);
+            res = await s.SaveGroupAsync(g);
+            var d4 = Stds(r4.WtsLogId);
+            Ok(res.Ok && d4.Count == 5 && d4.Values.All(v => v == null), "Dòng snapshot trang tra không còn (id 999): để trống chuẩn ([RS-E6-Q], trước giữ số trang)", (res.ErrorMsg ?? "") + " · " + Show(d4));
+            // snapshot của PO KHÁC cùng id không được dùng (kiểm KhPlanDetailId)
+            var pageOther = new WtsSaveService.WtsSaveStd { SetupTime = 4, MachiningTime = 3, InspectionTime = 1, SrcTable = StdTrack.Table.Machining, SrcRowId = 3 };   // #3 là NC1 của PO2
+            g = Gc(); var r5 = Row(1, 2, 0, T.AddHours(4), T.AddHours(5)); r5.GcStd = pageOther; g.Rows.Add(r5);
+            res = await s.SaveGroupAsync(g);
+            var d5 = Stds(r5.WtsLogId);
+            Ok(res.Ok && d5.Count == 5 && d5.Values.All(v => v == null), "Id snapshot thuộc PO khác: không đọc số PO đó, để trống chuẩn ([RS-E6-Q])", (res.ErrorMsg ?? "") + " · " + Show(d5));
+        }
+
+        // [RS-E6-Q 2026-11-02] Hùng duyệt: máy không có trong quy trình (snapshot) PO → KHÔNG ghi số chuẩn của máy / NC khác (trước: trang mượn số
+        //   dòng NC chính, máy chủ ghi như số thật). Máy chủ tự kiểm dòng chuẩn trang gửi đúng NC của nhóm + đúng máy đang chọn.
+        Console.WriteLine("[W14] RS-E6-Q — số chuẩn trang gửi phải đúng NC + đúng máy; sai → không ghi số chuẩn (để trống), vẫn lưu dòng");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var sm = db.KhPlanRouteSnapshotMachining.List.First(x => x.SnapshotId == 1);
+            foreach (var t in sm.TimingRows) if (!db.KhPlanRouteSnapshotMachiningTimings.List.Contains(t)) db.KhPlanRouteSnapshotMachiningTimings.List.Add(t);   // DB thật: bảng riêng
+            var tm = sm.TimingRows.First(x => x.TimingSnapshotId == 1);
+            Dictionary<string, decimal?> Stds(long? id) => db.WtsProductionLogStds.List.Where(x => x.WtsLogId == id).ToDictionary(x => x.FieldName, x => x.StdValue);
+            bool AllNull(Dictionary<string, decimal?> d) => d.Count == 5 && d.Values.All(v => v == null);
+            WtsSaveService.WtsSaveStd Main() => new() { SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3, SrcTable = StdTrack.Table.Machining, SrcRowId = 1 };
+            WtsSaveService.WtsSaveStd Sub() => new() { SetupTime = 6, MachiningTime = 2.5m, InspectionTime = 1, PreparationTime = 12, TrialRunTime = 4, SrcTable = StdTrack.Table.MachiningTiming, SrcRowId = 1 };
+            async Task<(WtsSaveService.WtsSaveResult r, WtsSaveService.WtsSaveRow row)> Save(string nc, string mc, WtsSaveService.WtsSaveStd std, int h)
+            { var g = Gc(nc: nc, machine: mc); var row = Row(1, 1, 0, T.AddHours(h), T.AddHours(h).AddMinutes(30)); row.GcStd = std; g.Rows.Add(row); return (await s.SaveGroupAsync(g), row); }
+            var (a, ra) = await Save("NC1", "M9", Main(), 0);
+            Ok(a.Ok && AllNull(Stds(ra.WtsLogId)) && ra.GcStd == null, "Máy M9 không có trong quy trình, trang (cũ) gửi số NC chính: dòng lưu, số chuẩn để trống", (a.ErrorMsg ?? "") + " · " + string.Join(",", Stds(ra.WtsLogId)));
+            Ok(db.WtsProductionLogStds.List.Any(x => x.WtsLogId == ra.WtsLogId && (x.Note ?? "").Contains("máy M9")), "Ghi chú số chuẩn nêu rõ máy M9", string.Join(" | ", db.WtsProductionLogStds.List.Where(x => x.WtsLogId == ra.WtsLogId).Select(x => x.Note)));
+            var (b, rb) = await Save("NC1", "M3", Main(), 1);
+            Ok(b.Ok && AllNull(Stds(rb.WtsLogId)), "Máy đồng dạng M3 mà trang gửi dòng NC chính (M1): không ghi số M1 cho M3", b.ErrorMsg);
+            var (c, rc) = await Save("NC1", "M1", Sub(), 2);
+            Ok(c.Ok && AllNull(Stds(rc.WtsLogId)), "Máy M1 mà trang gửi dòng đồng dạng của M3: không ghi", c.ErrorMsg);
+            var (d, rd) = await Save("NC1", "M3", Sub(), 3);
+            var dd = Stds(rd.WtsLogId);
+            Ok(d.Ok && dd[StdTrack.Field.Setup] == tm.SetupTime && dd[StdTrack.Field.Machining] == tm.MachiningTime, "Máy M3 + dòng đồng dạng M3: giữ số đúng", d.ErrorMsg + " · " + string.Join(",", dd));
+            var (e, re) = await Save("NC1", " m1 ", Main(), 4);
+            var de = Stds(re.WtsLogId);
+            Ok(e.Ok && de[StdTrack.Field.Setup] == 5 && de[StdTrack.Field.Machining] == 2, "Máy ' m1 ' (khác hoa thường / khoảng trắng) + dòng chính M1: giữ số đúng", e.ErrorMsg + " · " + string.Join(",", de));
+            var (f, rf) = await Save("NC2", "M1", Main(), 5);
+            Ok(f.Ok && AllNull(Stds(rf.WtsLogId)), "Nhóm NC2 mà trang gửi dòng chuẩn của NC1: lưu được, không ghi số NC1", f.ErrorMsg);
+            // rà độc lập V2: 2 nhánh mới — (1) NC đăng ký máy TRỐNG: không có dòng đồng dạng → mọi máy dùng số dòng chính; có dòng đồng dạng → máy
+            //   không thuộc dòng nào thì để trống; (2) dòng đồng dạng của NC KHÁC (NC cha sai) mà đúng máy → không ghi
+            var n2 = db.KhPlanRouteSnapshotMachining.List.First(x => x.SnapshotId == 2);   // NC2 PO1 (M2)
+            n2.MachineRegistered = null;
+            WtsSaveService.WtsSaveStd N2() => new() { SetupTime = 4, MachiningTime = 3, InspectionTime = 1, SrcTable = StdTrack.Table.Machining, SrcRowId = 2 };
+            var (g1, rg1) = await Save("NC2", "MX", N2(), 6);
+            var dg1 = Stds(rg1.WtsLogId);
+            Ok(g1.Ok && dg1[StdTrack.Field.Setup] == 4 && dg1[StdTrack.Field.Machining] == 3, "NC2 không đăng ký máy, không dòng đồng dạng: máy MX dùng số dòng chính", g1.ErrorMsg + " · " + string.Join(",", dg1));
+            var t2 = new KhPlanRouteSnapshotMachiningTiming { TimingSnapshotId = 77, MachiningSnapshotId = 2, KhPlanDetailId = 1, SoMay = "M3", SetupTime = 9, MachiningTime = 9, InspectionTime = 1, DisplayOrder = 1 };
+            db.KhPlanRouteSnapshotMachiningTimings.List.Add(t2); n2.TimingRows.Add(t2);
+            var (g2, rg2) = await Save("NC2", "MY", N2(), 7);
+            Ok(g2.Ok && AllNull(Stds(rg2.WtsLogId)), "NC2 không đăng ký máy NHƯNG có dòng đồng dạng (M3): máy MY không thuộc dòng nào → để trống", g2.ErrorMsg);
+            WtsSaveService.WtsSaveStd Sub2() => new() { SetupTime = 9, MachiningTime = 9, InspectionTime = 1, SrcTable = StdTrack.Table.MachiningTiming, SrcRowId = 1 };   // dòng đồng dạng M3 của NC1
+            var (g3, rg3) = await Save("NC2", "M3", Sub2(), 8);
+            Ok(g3.Ok && AllNull(Stds(rg3.WtsLogId)), "Nhóm NC2 máy M3 mà trang gửi dòng đồng dạng M3 của NC1 (NC cha sai): không ghi", g3.ErrorMsg);
+            var (g4, rg4) = await Save("NC2", "m3", new() { SetupTime = 9, MachiningTime = 9, InspectionTime = 1, SrcTable = StdTrack.Table.MachiningTiming, SrcRowId = 77 }, 9);
+            var dg4 = Stds(rg4.WtsLogId);
+            Ok(g4.Ok && dg4[StdTrack.Field.Setup] == 9, "Nhóm NC2 máy 'm3' + dòng đồng dạng M3 của chính NC2: giữ số", g4.ErrorMsg + " · " + string.Join(",", dg4));
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");

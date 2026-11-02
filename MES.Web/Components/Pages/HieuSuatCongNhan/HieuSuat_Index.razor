@@ -968,7 +968,10 @@ else
 
                                     {
 
-                                        <th rowspan="2" style="width:60px">NC</th>
+                                        @* [WTS-NC-WIDTH 2026-11-02] ô NC trước rộng 60px nhưng bảng co còn ~47–61px (đo app 5000: màn 1366 bảng còn 1071px vì menu trái) → chữ "1 — chưa làm: 0"
+   bị che, nhìn như chưa chọn NC; cùng lúc Số PO, giờ "08:00", OK / NG cũng bị cắt. Nay mỗi ô nhập có bề rộng tối thiểu đọc được: Số PO 90, Part 96, NC 132,
+   Máy 66, OK / NG 50, Bắt đầu / Kết thúc 64 (mũi tên ô chọn thu gọn); màn hẹp thì bảng CUỘN NGANG (đã nằm trong table-responsive) thay vì cắt chữ. *@
+                                        <th rowspan="2" style="width:132px">NC</th>
 
                                         <th rowspan="2" style="width:70px">Máy SD</th>
 
@@ -1112,7 +1115,7 @@ else
 
                                     <td>
 
-                                        <input class="form-control form-control-sm" style="font-size:11px"
+                                        <input class="form-control form-control-sm" style="font-size:11px;min-width:90px"
 
                                                list="@dlId"
 
@@ -1159,7 +1162,7 @@ else
 
                                         {
 
-                                            <input class="form-control form-control-sm" style="font-size:11px"
+                                            <input class="form-control form-control-sm" style="font-size:11px;min-width:96px" title="@sub.PartNo"
 
                                                    value="@sub.PartNo" readonly />
 
@@ -1347,7 +1350,7 @@ else
                                             {
 
                                                 @* [ML41-SELECT-STALE 2026-11-02] @key = danh sách NC của PO: đổi PO → tạo lại ô NC (trình duyệt không giữ dòng đã chọn của PO cũ) *@
-                                                <select @key="grp.AvailableNCs" class="form-select form-select-sm" style="font-size:11px"
+                                                <select @key="grp.AvailableNCs" class="form-select form-select-sm" style="font-size:11px;padding-right:1.4rem;background-position:right .3rem center;min-width:132px" title="@NcSelectTitle(grp)"
 
                                                         @onchange="e => OnGroupNCChanged(grp, e.Value?.ToString())">
 
@@ -1398,7 +1401,7 @@ else
                                                 @* [ML41-SELECT-STALE 2026-11-02] Master list 41: đổi NC → phần mềm bỏ máy cũ nhưng ô Máy trên màn hình vẫn giữ
                                                    dòng đã chọn (vd hiện "P01" của NC mới) vì option đánh dấu bằng selected, trình duyệt giữ lựa chọn của người dùng
                                                    → người dùng tưởng đã chọn máy, chuẩn tham khảo không điền ("không nhảy theo NC"). @key theo NC: đổi NC tạo lại ô → hiện "--". *@
-                                                <select @key="@("may|" + grp.NC)" class="form-select form-select-sm" style="font-size:11px"
+                                                <select @key="@("may|" + grp.NC)" class="form-select form-select-sm" style="font-size:11px;padding-right:1.4rem;background-position:right .3rem center;min-width:66px" title="@grp.MachineUsed"
 
                                                         @onchange="e => OnGroupMachineChanged(grp, e.Value?.ToString())">
 
@@ -1438,7 +1441,7 @@ else
                                         else
                                         {
 
-                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                        <input type="number" class="form-control form-control-sm text-center" min="0" style="min-width:50px"
 
                                                value="@(sub.QtyOk > 0 ? sub.QtyOk.ToString() : "")"
 
@@ -1457,7 +1460,7 @@ else
                                         else
                                         {
 
-                                        <input type="number" class="form-control form-control-sm text-center" min="0"
+                                        <input type="number" class="form-control form-control-sm text-center" min="0" style="min-width:50px"
 
                                                value="@(sub.QtyNg > 0 ? sub.QtyNg.ToString() : "")"
 
@@ -1702,7 +1705,7 @@ else
 
                                             <input type="text" class="form-control form-control-sm text-center"
 
-                                                   list="@($"ts-{grpIdx}-{subIdx}")" pattern="[0-9]{2}:[0-9]{2}" placeholder="HH:mm" maxlength="5"
+                                                   style="min-width:64px" list="@($"ts-{grpIdx}-{subIdx}")" pattern="[0-9]{2}:[0-9]{2}" placeholder="HH:mm" maxlength="5"
 
                                                    value="@sub.StartTime.ToString("HH:mm")"
 
@@ -1932,7 +1935,7 @@ else
 
                                             <input type="text" class="form-control form-control-sm text-center"
 
-                                                   style="border-color:#0d6efd"
+                                                   style="border-color:#0d6efd;min-width:64px"
 
                                                    list="@($"te-{grpIdx}-{subIdx}")" pattern="[0-9]{2}:[0-9]{2}" placeholder="HH:mm" maxlength="5"
 
@@ -4328,9 +4331,11 @@ else
 
         // 2. Fallback: máy đăng ký chính — timing lưu trực tiếp trên snap
 
+        // [RS-E6-Q 2026-11-02] NC không đăng ký máy chỉ dùng số dòng chính khi NC đó KHÔNG có dòng máy đồng dạng (có dòng đồng dạng mà máy
+        //   không nằm trong dòng nào = máy không có trong quy trình PO) — cùng điều kiện máy chủ kiểm lại lúc lưu (WtsSaveService.RefreshStdFromSnapshotAsync).
         if (soMay.Equals(snapList.MachineRegistered ?? "", StringComparison.OrdinalIgnoreCase)
 
-            || string.IsNullOrEmpty(snapList.MachineRegistered))
+            || (string.IsNullOrEmpty(snapList.MachineRegistered) && !snapList.TimingRows.Any()))
 
         {
 
@@ -4359,24 +4364,9 @@ else
         //   số chuẩn trong snapshot PO (vd nhóm nhiều PO: danh sách máy lấy theo PO mới chọn, PO khác chụp trước khi thêm máy đồng dạng;
         //   hoặc dòng WTS cũ có máy không còn trong quy trình) thì mượn số máy khác / Part Master lúc mở trang rồi đóng băng vào
         //   WtsProductionLogStds kèm dòng nguồn của máy khác (Update TG chuẩn + trạng thái xác nhận bám nhầm dòng).
-        //   GIỮ nhánh (4): số của dòng NC chính trong snapshot CHÍNH PO đó (nguồn ghi rõ "(NC chính)") — chờ Hùng chốt có để trống không.
-        // 4. Fallback: timing trực tiếp trên dòng NC chính của snapshot PO (bỏ qua match máy)
-
-        if (snapList.SetupTime.HasValue || snapList.MachiningTime.HasValue ||
-
-            snapList.InspectionTime.HasValue)
-
-        {
-
-            return new TimingStd(nc, soMay,
-
-                snapList.SetupTime, snapList.MachiningTime, snapList.InspectionTime,
-
-                snapList.PreparationTime, snapList.TrialRunTime,
-
-                StdTrack.Table.Machining, snapList.SnapshotId); // [STD-UPDATE]
-
-        }
+        // [RS-E6-Q 2026-11-02] Hùng duyệt (02/11 13:16): BỎ luôn nhánh (4) mượn số dòng NC chính cho máy không có trong quy trình PO —
+        //   máy đồng dạng có chuẩn riêng, mượn số NC chính làm hiệu suất sai mà không ai thấy (máy chủ ghi như số thật, còn điền sẵn vào giờ
+        //   thực tế khi bật Tham khảo chuẩn). Nay: để TRỐNG chuẩn + lời báo "chưa có chuẩn cho NC + máy này" (GcStdTitle), không chặn lưu.
 
         return null;   // [RS-E6] không còn đọc Part Master live
 
@@ -7257,6 +7247,8 @@ else
 
     // [WORKFLOW Phase2] Helper: label NC dropdown
 
+    // [WTS-NC-WIDTH 2026-11-02] chữ đầy đủ khi rê chuột ô NC (phòng tên NC dài vẫn bị cắt)
+    private string NcSelectTitle(WtsGroup grp) => string.IsNullOrEmpty(grp.NC) ? "Chọn NC" : GetNcLabel(grp, grp.NC);
     private string GetNcLabel(WtsGroup grp, string nc)
 
     {
@@ -7742,7 +7734,10 @@ else
             StdTrack.Field.TrialRun    => "T.Chạy thử",
             _                          => field
         };
-        if (std == null) return $"{label}: không tìm thấy thời gian chuẩn trong snapshot phiếu KH";
+        // [RS-E6-Q] rà độc lập T3: std null có nhiều lý do (chưa chọn PO / máy, máy không có trong quy trình, dòng chuẩn chưa có số) → không khẳng định 1 lý do
+        if (std == null) return string.IsNullOrEmpty(sub.PO)
+            ? $"{label}: chưa chọn PO — chưa có chuẩn"
+            : $"{label}: quy trình (snapshot) PO {sub.PO} chưa có chuẩn cho NC + máy này (chưa chọn máy, máy không có trong quy trình, hoặc dòng chuẩn chưa có số) — nhập giờ thực tế; cần chuẩn thì nhờ Kế hoạch cập nhật quy trình";
         decimal? v = field switch
         {
             StdTrack.Field.Setup       => std.SetupTime,
@@ -7754,7 +7749,7 @@ else
         };
         if (string.IsNullOrEmpty(std.SrcTable))
             return $"{label}: {(v.HasValue ? v.Value.ToString("0.##") : "—")} phút — không lấy từ snapshot phiếu KH, CHƯA xác nhận";
-        var where = std.SrcTable == StdTrack.Table.MachiningTiming ? $" (máy đồng dạng {std.SoMay})" : " (NC chính)";
+        var where = std.SrcTable == StdTrack.Table.MachiningTiming ? $" (máy đồng dạng {std.SoMay})" : " (máy chính)";   // [RS-E6-Q] không còn mượn số NC chính
         return StdConfirmTitle(GetSnapConfirm(sub.KhPlanDetailId, std.SrcTable, std.SrcRowId, field), v, label + where);
     }
 
