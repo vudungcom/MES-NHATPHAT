@@ -53,24 +53,28 @@ namespace Microsoft.EntityFrameworkCore
 
     public static class EntityFrameworkQueryableExtensions
     {
+        // [WHY-TRAN-DB 2026-11-01] đếm câu truy vấn async (kịch bản loi L10: sau khi Plan chạy không còn câu DB nào)
+        public static int AsyncQueries;
+        public static Action? OnQuery;   // [WHY-TRAN-DB] kịch bản loi L11: giả thao tác khác chen vào lúc trang đang chờ câu DB
+        static Task<R> Cnt<R>(R v) { System.Threading.Interlocked.Increment(ref AsyncQueries); OnQuery?.Invoke(); return Task.FromResult(v); }
         public static IIncludableQueryable<T, P> Include<T, P>(this IQueryable<T> q, Expression<Func<T, P>> nav) where T : class => new Inc<T, P>(q);
         public static IIncludableQueryable<T, P2> ThenInclude<T, P1, P2>(this IIncludableQueryable<T, IEnumerable<P1>> q, Expression<Func<P1, P2>> nav) where T : class => new Inc<T, P2>(q);
         public static IIncludableQueryable<T, P2> ThenInclude<T, P1, P2>(this IIncludableQueryable<T, P1> q, Expression<Func<P1, P2>> nav) where T : class => new Inc<T, P2>(q);
         public static IQueryable<T> AsNoTracking<T>(this IQueryable<T> q) where T : class => q;
-        public static Task<List<T>> ToListAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Task.FromResult(q.ToList());
-        public static Task<T?> FirstOrDefaultAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Task.FromResult(q.FirstOrDefault());
-        public static Task<T?> FirstOrDefaultAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Task.FromResult(q.FirstOrDefault(p));
-        public static Task<bool> AnyAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Task.FromResult(q.Any());
-        public static Task<bool> AnyAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Task.FromResult(q.Any(p));
-        public static Task<int> CountAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Task.FromResult(q.Count());
-        public static Task<int> CountAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Task.FromResult(q.Count(p));
-        public static Task<decimal> SumAsync(this IQueryable<decimal> q, CancellationToken ct = default) => Task.FromResult(q.Sum());
-        public static Task<decimal?> SumAsync(this IQueryable<decimal?> q, CancellationToken ct = default) => Task.FromResult(q.Sum());
-        public static Task<decimal> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, decimal>> s, CancellationToken ct = default) => Task.FromResult(q.Sum(s));
-        public static Task<decimal?> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, decimal?>> s, CancellationToken ct = default) => Task.FromResult(q.Sum(s));
-        public static Task<int> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, int>> s, CancellationToken ct = default) => Task.FromResult(q.Sum(s));
-        public static Task<Dictionary<K, T>> ToDictionaryAsync<T, K>(this IQueryable<T> q, Func<T, K> k, CancellationToken ct = default) where K : notnull => Task.FromResult(q.ToDictionary(k));
-        public static Task<Dictionary<K, V>> ToDictionaryAsync<T, K, V>(this IQueryable<T> q, Func<T, K> k, Func<T, V> v, CancellationToken ct = default) where K : notnull => Task.FromResult(q.ToDictionary(k, v));
+        public static Task<List<T>> ToListAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Cnt(q.ToList());
+        public static Task<T?> FirstOrDefaultAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Cnt(q.FirstOrDefault());
+        public static Task<T?> FirstOrDefaultAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Cnt(q.FirstOrDefault(p));
+        public static Task<bool> AnyAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Cnt(q.Any());
+        public static Task<bool> AnyAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Cnt(q.Any(p));
+        public static Task<int> CountAsync<T>(this IQueryable<T> q, CancellationToken ct = default) => Cnt(q.Count());
+        public static Task<int> CountAsync<T>(this IQueryable<T> q, Expression<Func<T, bool>> p, CancellationToken ct = default) => Cnt(q.Count(p));
+        public static Task<decimal> SumAsync(this IQueryable<decimal> q, CancellationToken ct = default) => Cnt(q.Sum());
+        public static Task<decimal?> SumAsync(this IQueryable<decimal?> q, CancellationToken ct = default) => Cnt(q.Sum());
+        public static Task<decimal> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, decimal>> s, CancellationToken ct = default) => Cnt(q.Sum(s));
+        public static Task<decimal?> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, decimal?>> s, CancellationToken ct = default) => Cnt(q.Sum(s));
+        public static Task<int> SumAsync<T>(this IQueryable<T> q, Expression<Func<T, int>> s, CancellationToken ct = default) => Cnt(q.Sum(s));
+        public static Task<Dictionary<K, T>> ToDictionaryAsync<T, K>(this IQueryable<T> q, Func<T, K> k, CancellationToken ct = default) where K : notnull => Cnt(q.ToDictionary(k));
+        public static Task<Dictionary<K, V>> ToDictionaryAsync<T, K, V>(this IQueryable<T> q, Func<T, K> k, Func<T, V> v, CancellationToken ct = default) where K : notnull => Cnt(q.ToDictionary(k, v));
     }
 
     public class ChangeTracker
@@ -351,9 +355,15 @@ namespace Microsoft.EntityFrameworkCore
         public static int Rollbacks;
         internal StubTransaction(DbContext c, DatabaseFacade f, Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> snap) { _c = c; _f = f; _snap = snap; }
         public Task CommitAsync(CancellationToken ct = default) { _done = true; _f.Current = null; return Task.CompletedTask; }
-        public Task RollbackAsync(CancellationToken ct = default) { if (!_done) { _c.Restore(_snap); Rollbacks++; } _done = true; _f.Current = null; return Task.CompletedTask; }
+        public static Action? OnRollback;   // [WHY-TRAN-DB] kịch bản loi L11
+        public Task RollbackAsync(CancellationToken ct = default) { if (!_done) { _c.Restore(_snap); Rollbacks++; } _done = true; _f.Current = null; OnRollback?.Invoke(); return Task.CompletedTask; }
+        // [WHY-TRAN-DB 2026-11-01] Giống EF thật: Dispose lần 2 không làm gì (cờ _disposed); Dispose lần đầu — kể cả sau Rollback —
+        //   gỡ giao dịch hiện tại của kết nối (ClearTransaction → UseTransaction(null)), dù lúc đó là giao dịch của thao tác khác.
+        bool _disposed;
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             if (!_done) { _c.Restore(_snap); Rollbacks++; }
             _done = true; _f.Current = null;
         }

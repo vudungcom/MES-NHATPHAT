@@ -1062,6 +1062,7 @@ namespace MES.Web.Services
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
+                    await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var opDocsR = new HashSet<string> { "R:" + receiveId };   // [H10] + phiếu trả tự lập và các lần nhận huỷ kèm
                     if (autoBack != null) opDocsR.Add("T:" + autoBack.HandoverTxId);
                     foreach (var cid in cascadeIds) opDocsR.Add("R:" + cid);
@@ -1149,6 +1150,7 @@ namespace MES.Web.Services
                     .Where(t => recIds.Contains(t.SourceReceiveId) && !t.IsVoided).ToListAsync();
                 _db.ChangeTracker.Clear();
                 await trx.RollbackAsync();   // nhả khoá PO trước khi tìm gốc rễ
+                await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                 var tail = new List<string>();
                 var opDocs = new HashSet<string> { "T:" + handoverTxId };
                 foreach (var r in recs)
@@ -1190,6 +1192,7 @@ namespace MES.Web.Services
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
+                    await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId),
                         new HashSet<string> { "T:" + handoverTxId });
                     return (false, k5 + whyTxt);
@@ -1350,6 +1353,7 @@ namespace MES.Web.Services
                 {
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
+                    await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidNgRep(reportId),
                         new HashSet<string> { "B:" + reportId }, new[] { $"Huỷ phiếu báo lỗi #{reportId}" });
                     return (false, k5 + whyTxt);
@@ -1453,6 +1457,7 @@ namespace MES.Web.Services
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
+                    await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpCloseRemainder(handoverTxId),
                         new HashSet<string> { "T:" + handoverTxId });
                     return (false, k5 + whyTxt);

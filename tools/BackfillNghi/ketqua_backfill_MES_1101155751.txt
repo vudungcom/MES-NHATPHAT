@@ -1,0 +1,6 @@
+﻿BackfillNghi — DB MES — 01/11/2026 15:57:51 — ĐÃ GHI
+Mốc: chưa có dòng nghỉ nào do code mới ghi → xét mọi dòng
+WTS: tổng 114 | đã có giờ nghỉ 0 | tạo sau mốc 0 | không có ca (giữ phút thô) 40 | không chạm nghỉ 55 | CHÉP BÙ 19
+Việc không ra SP: tổng 9 | đã có giờ nghỉ 0 | tạo sau mốc 0 | không tìm được ca (giữ phút thô) 7 | ≥ 2 ca cùng ngày (giữ phút thô) 0 | không chạm nghỉ 2 | CHÉP BÙ 0
+Số dòng nghỉ sẽ / đã thêm: 35
+Dòng có phút làm KHÁC trang WTS bản cũ (ca qua đêm / ngày khác ngày bắt đầu): 0

@@ -21,6 +21,7 @@ set "PO=60"
 set "OPS=120"
 set "SEED=%RANDOM%"
 if /i "%~1"=="gap" goto gap
+if /i "%~1"=="tong" goto tong
 if not "%~1"=="" set "PO=%~1"
 if not "%~2"=="" set "OPS=%~2"
 if not "%~3"=="" set "SEED=%~3"
@@ -28,6 +29,13 @@ goto chay
 :gap
 set "PO=15"
 set "OPS=60"
+goto chay
+:tong
+rem [KIEM-TONG 2026-11-01] Kiem toan he thong (lan chay cuoi / truoc ban giao): danh muc CHAN (thieu tag = SAI) + 2 luot nang lon 2 seed
+set "PO=120"
+set "OPS=160"
+set "TONG=1"
+set "DANHMUC_CHAN=1"
 :chay
 
 echo KIEM TRA %date% %time%  ^|  nang %PO% PO x %OPS% thao tac, seed %SEED%  ^|  %NUMBER_OF_PROCESSORS% nhan > "%OUT%"
@@ -44,10 +52,22 @@ echo [1/2] Bien dich bo kiem...
 dotnet build GiaoNhanFuzz.csproj -c Release -o bin2 -v q -nologo >> "%OUT%" 2>&1
 if errorlevel 1 ( echo BIEN DICH LOI - xem %OUT% & echo KET QUA: BIEN DICH LOI>> "%OUT%" & exit /b 2 )
 
+rem [KIEM-TONG 2026-11-01] So phep kiem: moi tag sua trong MES.Web phai co ca kiem trong tools\DanhMucKiem.txt; ca tro toi khong co = SAI
+echo [1b] Doi chieu danh muc kiem (tools\DanhMucKiem.txt)...
+dotnet bin2\GiaoNhanFuzz.dll danhmuc >> "%OUT%" 2>&1
+set RC_DM=%errorlevel%
 echo [2/2] Chay 8 kich ban + %PO% PO x %OPS% thao tac (song song theo so nhan may)...
 if "%TREO_PHUT%"=="" set "TREO_PHUT=20"
 dotnet bin2\GiaoNhanFuzz.dll nang %PO% %OPS% %SEED% >> "%OUT%" 2>&1
 set RC=%errorlevel%
+if not "%TONG%"=="1" goto sau_luot2
+if not "%RC%"=="0" goto sau_luot2
+set /a SEED2=%SEED%+5000
+echo Luot 2: nang %PO% %OPS% seed %SEED2%>> "%OUT%"
+dotnet bin2\GiaoNhanFuzz.dll nang %PO% %OPS% %SEED2% >> "%OUT%" 2>&1
+set RC=%errorlevel%
+:sau_luot2
+if not "%RC_DM%"=="0" if "%RC%"=="0" set RC=%RC_DM%
 findstr /c:"  TREO  " "%OUT%" >nul && set RC=TREO
 
 echo.>> "%OUT%"

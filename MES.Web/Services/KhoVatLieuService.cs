@@ -291,6 +291,7 @@ public class KhoVatLieuService
             {
                 _db.ChangeTracker.Clear();
                 await trx.RollbackAsync();
+                await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                 var why = await HandoverWhy.ExplainAsync(_db, khPlanDetailId,
                     HandoverWhy.OpSetPhoi(khoVatLieuId, slNhan ?? 0), new HashSet<string>());
                 return ("Sửa SL phôi nhận: " + k5 + why, null);

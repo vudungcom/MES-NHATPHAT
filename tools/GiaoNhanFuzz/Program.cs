@@ -24,6 +24,9 @@ if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   /
 if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }
 if (args.Length > 0 && args[0] == "nghi") { return await NghiScen.Run(); }   // [ML17-XN][CA-NGHI-HIST] làm thông nghỉ + giờ nghỉ chép lúc lưu + ca qua đêm
 if (args.Length > 0 && args[0] == "quet") { return await QuetScen.Run(); }   // [RA-SOCHUNG] tự kiểm công cụ quét DB tools/QuetSo (chỉ đọc)   // [ISO-FIX] không giao dịch Serializable + mọi lần ghi số sau khoá MES_PO_
+if (args.Length > 0 && args[0] == "auth") { return await AuthScen.Run(); }   // [RS-C3][RS-C4][TOOLS-PUSH] đăng nhập / phiên
+if (args.Length > 0 && args[0] == "viec") { return await ViecScen.Run(); }   // [ML16-ACT][TOOLS-PUSH] Việc không ra sản phẩm
+if (args.Length > 0 && args[0] == "danhmuc") { return DanhMuc.Run(); }   // [KIEM-TONG] đối chiếu tools/DanhMucKiem.txt với tag trong code + ca kiểm
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;

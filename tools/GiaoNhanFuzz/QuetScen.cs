@@ -85,8 +85,20 @@ public static class QuetScen
             Ok(!r.Findings.Any(f => f.Kind == QuetCore.WtsSoLech && !f.Detail.Contains("#900")), "Không báo nhầm dòng WTS đúng", Has(QuetCore.WtsSoLech));
             Ok(r.Findings.All(f => f.Po == "PO1" && f.Plan == "KH-QUET"), "Mỗi phát hiện ghi đúng PO / KH");
             var sw = new StringWriter(); QuetCore.Write(r, sw, "GIA");
-            Ok(sw.ToString().Contains("── PO PO1 · KH KH-QUET · Workflow OFF"), "File kết quả liệt kê theo PO");
+            Ok(sw.ToString().Contains("── PO PO1 · KH KH-QUET · ") && sw.ToString().Contains(" · Workflow OFF (KhPlanDetailId 1)"), "File kết quả liệt kê theo PO (kèm mã chi tiết · khách — [PM-NC-DUP-SVC] 02/11)", sw.ToString().Split('\n').FirstOrDefault(l => l.StartsWith("── PO")));
             Ok(before == after, "Quét không ghi gì (số dòng WTS / phiếu / lần nhận / dòng huỷ giữ nguyên)", $"{before} → {after}");
+            // [PM-NC-DUP-SVC 2026-11-01] quy trình PO có 2 dòng chính cùng mã (Đóng gói P1 ×2; Taro theo mã CV) → MA_TRUNG; dòng dự phòng không tính
+            Ok(!r.Findings.Any(f => f.Kind == QuetCore.MaTrung), "Quy trình chưa trùng mã: không báo MA_TRUNG", Has(QuetCore.MaTrung));
+            db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 801, KhPlanDetailId = 1, StepOrder = 8, NC = "PX" });
+            db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 802, KhPlanDetailId = 1, StepOrder = 9, NC = " px " });
+            db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 803, KhPlanDetailId = 1, StepOrder = 10, NC = "PX", IsBackup = true, ParentNC = "PX" });
+            db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 811, KhPlanDetailId = 1, StepOrder = 8, NC = "TA", WtsTaskCode = "9T" });
+            db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 812, KhPlanDetailId = 1, StepOrder = 9, NC = "TB", WtsTaskCode = "9t" });
+            db.Fixup();
+            var r2 = await QuetCore.ScanAsync(db, led);
+            var mt = r2.Findings.Where(f => f.Kind == QuetCore.MaTrung).Select(f => f.Detail).ToList();
+            Ok(mt.Count == 2 && mt.Any(d => d.Contains("Đóng gói có 2 dòng chính cùng mã PX")) && mt.Any(d => d.Contains("Taro có 2 dòng chính cùng mã 9T")),
+               "Bắt MA_TRUNG: Đóng gói PX ×2 (dòng dự phòng không tính), Taro theo mã CV 9T ×2", string.Join(" | ", mt));
         }
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;

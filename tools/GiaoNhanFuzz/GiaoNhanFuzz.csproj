@@ -47,5 +47,9 @@
     <Compile Include="../../MES.Web/Services/PartPackagingService.cs" />
     <Compile Include="../../MES.Web/Constants/*.cs" />
     <Compile Include="*.cs" />
+    <Compile Include="../../MES.Web/Services/AuthGuard.cs" />   <!-- [RS-C3][RS-C4] kịch bản auth (cần FrameworkReference ASP.NET Core có sẵn trong SDK, không NuGet) -->
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />   <!-- [RS-C3] AuthGuard dùng RevalidatingServerAuthenticationStateProvider -->
   </ItemGroup>
 </Project>

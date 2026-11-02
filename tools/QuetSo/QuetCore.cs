@@ -13,6 +13,7 @@ public static class QuetCore
         public int    DetailId { get; set; }
         public string Po       { get; set; } = "";
         public string Plan     { get; set; } = "";
+        public string Part     { get; set; } = "";   // [PM-NC-DUP-SVC 2026-11-02] mã chi tiết + khách (để báo khách ví dụ thật)
         public bool   Workflow { get; set; }
         public string Kind     { get; set; } = "";
         public string Detail   { get; set; } = "";
@@ -26,6 +27,7 @@ public static class QuetCore
     public const string WtsSoLech  = "WTS_SO_LECH";      // dòng WTS: QtyDone ≠ QtyOk + QtyNg (màn hình cũ đọc QtyDone, sổ đọc OK / NG)
     public const string WtsSoAm    = "WTS_SO_AM";        // dòng WTS có số âm
     public const string CanhBao    = "CANH_BAO_SO";      // cảnh báo khác của sổ (vd PO chưa có snapshot mã CV)
+    public const string MaTrung    = "MA_TRUNG";         // [PM-NC-DUP-SVC 2026-11-01] quy trình (snapshot) PO có 2 dòng CHÍNH cùng mã trong 1 nhóm → sổ tính lệch
 
     public sealed class Result
     {
@@ -42,7 +44,7 @@ public static class QuetCore
         res.PoCount = rows.Count;
         var plans = rows.ToDictionary(r => r.KhPlanDetailId);
         void Add(LedgerRow r, string kind, string detail)
-            => res.Findings.Add(new Finding { DetailId = r.KhPlanDetailId, Po = r.PurchaseOrder, Plan = r.PlanNo, Workflow = r.ApplyWorkflow, Kind = kind, Detail = detail });
+            => res.Findings.Add(new Finding { DetailId = r.KhPlanDetailId, Po = r.PurchaseOrder, Plan = r.PlanNo, Part = $"{r.PartNo} · {r.CustomerName}", Workflow = r.ApplyWorkflow, Kind = kind, Detail = detail });
 
         foreach (var r in rows)
         {
@@ -60,6 +62,30 @@ public static class QuetCore
                 foreach (var msg in G.Warnings.Where(m => !m.Contains("WTS nhập vượt")))   // "WTS nhập vượt" đã ghi ở WTS_VUOT_TRAN
                     Add(r, CanhBao, msg);
         }
+
+        // [PM-NC-DUP-SVC 2026-11-01] Mã chính trùng trong snapshot PO (dòng dự phòng không xét — như trang Part Master [B6-NC-DUP]).
+        //   Mã so như sổ: Gia công / Bavia / Rửa / KCS / Đóng gói theo NC; Taro theo mã CV (trống thì NC); bỏ khoảng trắng, không phân biệt hoa thường.
+        static string K(string? c) => (c ?? "").Trim().ToUpperInvariant();
+        var snaps = new List<(int Det, string Grp, string Code, string Info)>();
+        var wtsAll = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
+        static string I(int ord, string? nc, string? code, long? src, DateTime at, string? name = null, decimal? std = null)   // [PM-NC-DUP-SVC 02/11] + tên công đoạn + T.Chuẩn
+            => $"#{ord} NC {nc}{(code != null ? " mã " + code : "")}{(string.IsNullOrWhiteSpace(name) ? "" : " \"" + name!.Trim() + "\"")}{(std.HasValue ? $" chuẩn {std:0.##}" : "")} nguồn {src?.ToString() ?? "—"} chụp {at:dd/MM HH:mm}";
+        snaps.AddRange(db.KhPlanRouteSnapshotMachining.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Gia công", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.MachineRegistered))));
+        snaps.AddRange(db.KhPlanRouteSnapshotTaro.Where(x => !x.IsBackup).ToList()
+            .Select(x => (x.KhPlanDetailId, "Taro", K(string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode), I(x.StepOrder, x.NC, x.WtsTaskCode, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        snaps.AddRange(db.KhPlanRouteSnapshotBavia.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Bavia", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        snaps.AddRange(db.KhPlanRouteSnapshotWashing.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Rửa", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        snaps.AddRange(db.KhPlanRouteSnapshotInspection.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "KCS", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        snaps.AddRange(db.KhPlanRouteSnapshotPackaging.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Đóng gói", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        foreach (var g in snaps.GroupBy(x => (x.Det, x.Grp, x.Code)).Where(g => g.Count() > 1))
+            if (plans.TryGetValue(g.Key.Det, out var r))
+            {
+                // [PM-NC-DUP-SVC 02/11] WTS đã ghi mã này ở PO (WTS chỉ ghi mã CV / NC, không biết dòng nào trong các dòng trùng)
+                var pgs = g.Key.Grp switch { "Gia công" => new[] { "GC" }, "Taro" => new[] { "TARO" }, "Bavia" => new[] { "BAVIA" }, "Rửa" => new[] { "WASHING" }, "KCS" => new[] { "KCS" }, _ => new[] { "PKG" } };
+                var used = wtsAll.Where(w => w.KhPlanDetailId == g.Key.Det && pgs.Contains(w.ProcessGroup) && K(w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC)) == g.Key.Code).ToList();
+                var wtsTxt = used.Count == 0 ? "chưa có WTS mã này" : $"WTS mã này {used.Count} dòng (OK {used.Sum(w => w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0))):0.##}, NG {used.Sum(w => w.QtyNg ?? 0):0.##})";
+                Add(r, MaTrung, $"quy trình PO: {g.Key.Grp} có {g.Count()} dòng chính cùng mã {g.Key.Code} · {wtsTxt} ({string.Join("; ", g.Select(x => x.Info))})");
+            }
 
         var wts = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
         res.WtsCount = wts.Count;
@@ -87,7 +113,7 @@ public static class QuetCore
         foreach (var g in byPo.OrderBy(g => g.First().Plan).ThenBy(g => g.First().Po))
         {
             var f0 = g.First();
-            o.WriteLine($"── PO {f0.Po} · KH {f0.Plan} · Workflow {(f0.Workflow ? "ON" : "OFF")} (KhPlanDetailId {f0.DetailId})");
+            o.WriteLine($"── PO {f0.Po} · KH {f0.Plan} · {f0.Part} · Workflow {(f0.Workflow ? "ON" : "OFF")} (KhPlanDetailId {f0.DetailId})");
             foreach (var f in g) o.WriteLine($"   [{f.Kind}] {f.Detail}");
         }
         if (res.Findings.Count == 0) o.WriteLine("KHÔNG PHÁT HIỆN GÌ — mọi PO cân, không ô âm, không WTS vượt trần.");

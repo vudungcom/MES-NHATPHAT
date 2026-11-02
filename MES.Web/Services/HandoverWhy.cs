@@ -304,25 +304,32 @@ namespace MES.Web.Services
             {
                 var input = await new HandoverLedgerService(db).GetInputForDetailAsync(khPlanDetailId);
                 if (input == null || !input.ApplyWorkflow) return "";
+
+                // [WHY-TRAN-DB 2026-11-01] Đọc tên người nhận / người lập của MỌI phiếu + lần nhận của PO TRƯỚC Task.Run.
+                //   Trước: đọc tên SAU khi Plan chạy xong (tới 5 s trên luồng nền) — trong lúc chờ, trang mở cho thao tác khác
+                //   dùng chung DbContext của phiên; câu đọc tên lúc đó có thể đụng thao tác kia ("A second operation was started
+                //   on this context") → gợi ý gỡ rỗng hoặc thao tác kia lỗi. Nay sau Task.Run KHÔNG còn câu DB nào, chỉ ghép chữ.
+                //   Lọc theo PO (không gửi danh sách id). Đọc tên lỗi thì bỏ phần tên — lời báo vẫn đủ các bước.
+                var rNames = new Dictionary<long, string>();
+                var tNames = new Dictionary<long, string>();
+                try
+                {
+                    rNames = (await db.HandoverReceives.AsNoTracking().Where(r => r.Transaction.KhPlanDetailId == khPlanDetailId)
+                        .Select(r => new { r.ReceiveId, N = r.ReceivedByUser != null ? (r.ReceivedByUser.FullName ?? r.ReceivedByUser.Username) : "" }).ToListAsync())
+                        .ToDictionary(x => x.ReceiveId, x => x.N);
+                    tNames = (await db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == khPlanDetailId)
+                        .Select(t => new { t.HandoverTxId, N = t.IssuedByUser != null ? (t.IssuedByUser.FullName ?? t.IssuedByUser.Username) : "" }).ToListAsync())
+                        .ToDictionary(x => x.HandoverTxId, x => x.N);
+                }
+                catch (Exception) { rNames.Clear(); tNames.Clear(); }
+
                 var plan = await Task.Run(() => Plan(input, op, opDocs));   // [WHY-TRAN] tính trên bản sao trong bộ nhớ (không dùng DbContext) → chạy luồng nền, không giữ luồng trang
                 var steps = plan.Steps;
                 var tailList = tail?.ToList() ?? new List<string>();
                 if (!steps.Any() && !tailList.Any())
                     return plan.Complete ? "" : "\nPhần mềm chưa lần ra chứng từ gây vướng — nên mở Lịch sử phiếu và WTS của PO này để kiểm.";
 
-                // Thêm tên người nhận / người lập (InTx / InRecv không mang tên)
-                var rIds = steps.Where(x => x.Kind == "NHAN").Select(x => x.Id).ToList();
-                var tIds = steps.Where(x => x.Kind == "PHIEU").Select(x => x.Id).ToList();
-                var rNames = rIds.Any()
-                    ? (await db.HandoverReceives.AsNoTracking().Where(r => rIds.Contains(r.ReceiveId))
-                        .Select(r => new { r.ReceiveId, N = r.ReceivedByUser != null ? (r.ReceivedByUser.FullName ?? r.ReceivedByUser.Username) : "" }).ToListAsync())
-                        .ToDictionary(x => x.ReceiveId, x => x.N)
-                    : new Dictionary<long, string>();
-                var tNames = tIds.Any()
-                    ? (await db.HandoverTransactions.AsNoTracking().Where(t => tIds.Contains(t.HandoverTxId))
-                        .Select(t => new { t.HandoverTxId, N = t.IssuedByUser != null ? (t.IssuedByUser.FullName ?? t.IssuedByUser.Username) : "" }).ToListAsync())
-                        .ToDictionary(x => x.HandoverTxId, x => x.N)
-                    : new Dictionary<long, string>();
+                // Tên người nhận / người lập (InTx / InRecv không mang tên): đã đọc sẵn trước Task.Run [WHY-TRAN-DB]
 
                 var lines = new List<string>();
                 // Gỡ từ chứng từ mới nhất ngược lên: thứ tự plan.Steps đã là thứ tự làm được

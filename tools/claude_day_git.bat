@@ -5,7 +5,7 @@ chcp 65001 >nul
 cd /d "%~dp0.."
 set OUT=%~dp0ketqua_git.txt
 echo GIT %date% %time%> "%OUT%"
-git add MES.Web tools/GiaoNhanFuzz tools/QuetSo tools/WtsHarness tools/BackfillNghi tools/sql tools/kiemtra.bat tools/claude_tram.bat tools/claude_day_git.bat >> "%OUT%" 2>&1
+git add MES.Web tools/GiaoNhanFuzz tools/QuetSo tools/WtsHarness tools/BackfillNghi tools/sql tools/kiemtra.bat tools/DanhMucKiem.txt tools/claude_tram.bat tools/claude_day_git.bat >> "%OUT%" 2>&1
 git reset -q -- tools/GiaoNhanFuzz/bin2 tools/GiaoNhanFuzz/nang_ketqua tools/BackfillNghi/bin tools/BackfillNghi/obj >> "%OUT%" 2>&1
 echo --- se commit:>> "%OUT%"
 git diff --cached --stat >> "%OUT%" 2>&1

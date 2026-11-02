@@ -284,6 +284,41 @@ public static class LoiScen
             Ok(!v.Ok && v.Error.Contains("… và ") && !v.Error.Contains("Phần mềm dừng tìm ở đây"), "Lời báo thật: 8 bước đầu + '… và N chứng từ nữa', không còn 'dừng tìm'", v.Error);
         }
 
+        Console.WriteLine("[L10] Gợi ý gỡ: sau khi Plan bắt đầu (luồng nền, trang mở cho thao tác khác) KHÔNG còn câu DB nào trên DbContext của trang (WHY-TRAN-DB)");
+        {
+            var (db10, _, _) = await Bench.BuildAsync(3, 2);
+            int atPlan = -1;
+            var baseOp = HandoverWhy.OpVoidReceive(1);
+            Action<LedgerInput> op10 = x =>
+            {
+                if (atPlan < 0) atPlan = System.Threading.Volatile.Read(ref Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsyncQueries);
+                baseOp(x);
+            };
+            var txt10 = await HandoverWhy.ExplainAsync(db10, 1, op10, new HashSet<string> { "R:1" });
+            var after10 = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsyncQueries;
+            Ok(atPlan >= 0 && after10 == atPlan, "Từ lúc Plan chạy tới khi trả lời báo: 0 câu DB", $"câu DB lúc Plan bắt đầu = {atPlan}, lúc xong = {after10}");
+            Ok(txt10.Contains("nên kiểm tra theo các bước sau") && (txt10.Contains(" nhận — ") || txt10.Contains(" lập — ")),
+               "Lời báo vẫn đủ bước + tên người nhận / người lập (đọc sẵn trước Task.Run)", txt10);
+        }
+
+        Console.WriteLine("[L11] Huỷ lần nhận bị K5 chặn: trong lúc tìm gốc rễ, thao tác khác mở giao dịch trên cùng DbContext → lúc trả lời báo KHÔNG được gỡ giao dịch của thao tác kia (WHY-TRAN-DB)");
+        {
+            var (db11, svc11, _) = await Bench.BuildAsync(3, 2);
+            Microsoft.EntityFrameworkCore.StubTransaction? other = null; bool armed = false;
+            Microsoft.EntityFrameworkCore.StubTransaction.OnRollback = () => armed = true;
+            Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.OnQuery = () =>
+            {
+                if (armed && other == null) { armed = false; other = db11.Database.BeginTransactionAsync().GetAwaiter().GetResult(); }
+            };
+            (bool Ok, string Error) v11;
+            try { v11 = await svc11.VoidReceiveAsync(1, "nhan nham", 1, new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" }); }
+            finally { Microsoft.EntityFrameworkCore.StubTransaction.OnRollback = null; Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.OnQuery = null; }
+            Ok(!v11.Ok && v11.Error.Contains("nên kiểm tra theo các bước sau"), "Huỷ lần nhận #1 bị chặn K5 + có gợi ý gỡ", v11.Error);
+            Ok(other != null && db11.Database.CurrentTransaction == other, "Giao dịch của thao tác kia vẫn còn sau khi lời báo trả về",
+               other == null ? "không giả được thao tác chen vào" : "giao dịch của thao tác kia đã bị gỡ khỏi DbContext (Dispose giao dịch cũ lúc thoát hàm)");
+            other?.Dispose();
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

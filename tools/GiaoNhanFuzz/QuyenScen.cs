@@ -281,6 +281,49 @@ public static class QuyenScen
             Ok(err != null && err.Contains("trùng"), "Tách PO thành 'po-7' và ' PO-7': chặn trùng (trước: lọt cả 2)", err);
         }
 
+        Console.WriteLine("[Q6] RS-E10 — đồ gá không mượn chồng / không trả khi không ai mượn; dao SL tồn không âm (dựng lại ca Q1c FIX-NGAM 31/10)");
+        {
+            var db = Seed(); var auth = new AuthService(db);
+            db.DoGas.List.Add(new DoGa { DoGaId = 1, TenDoGa = "DG1", TrangThai = "Sẵn sàng", IsActive = true }); db.Fixup();
+            var dg = new DoGaService(db, auth);
+            var tr0 = await dg.TraDoGaAsync(1, null, CatView, "1111");
+            Ok(!tr0.Success && tr0.Error == "Đồ gá đang không có ai mượn — không cần trả." && db.DoGaMuonTraLogs.List.Count == 0, "Trả đồ gá không ai mượn: chặn, không ghi lịch sử rỗng", tr0.Error);
+            var m1 = await dg.MuonDoGaAsync(1, "Anh A", DateTime.Now, null, "ca 1", CatView, "1111"); db.Fixup();
+            Ok(m1.Success && db.DoGas.List[0].TrangThai == "Đang mượn" && db.DoGas.List[0].NguoiMuonHienTai == "Anh A", "Mượn lần 1 (quyền Xem DO_GA + PIN): được", m1.Error);
+            var m2 = await dg.MuonDoGaAsync(1, "Anh B", DateTime.Now, null, "ca 2", CatView, "1111"); db.Fixup();
+            Ok(!m2.Success && m2.Error!.StartsWith("Đồ gá đang được Anh A mượn") && db.DoGas.List[0].NguoiMuonHienTai == "Anh A"
+               && db.DoGaMuonTraLogs.List.Count(x => x.TrangThai == "Đang mượn") == 1, "Mượn chồng: chặn, vẫn đúng 1 phiếu 'Đang mượn' của Anh A", m2.Error);
+            var m3 = await dg.MuonDoGaAsync(1, "Anh B", DateTime.Now, null, null, NoGroup, "1111");
+            Ok(!m3.Success && m3.Error!.Contains("Đồ gá"), "Không có quyền Xem DO_GA: chặn", m3.Error);
+            var tr1 = await dg.TraDoGaAsync(1, "ok", CatView, "1111"); db.Fixup();
+            Ok(tr1.Success && db.DoGas.List[0].TrangThai != "Đang mượn" && db.DoGaMuonTraLogs.List.Count(x => x.TrangThai == "Đã trả") == 1, "Trả: được, phiếu mượn chốt 'Đã trả'", tr1.Error);
+            var dao = new DaoService(db);
+            var c = await dao.CreateAsync(new Dao { TenDao = "D6", SoLuongTon = -1 }, CatEdit);
+            Ok(!c.Success && c.Error == "SL tồn không được âm." && !db.Daos.List.Any(x => x.TenDao == "D6"), "Dao: tạo SL tồn âm: chặn", c.Error);
+            c = await dao.CreateAsync(new Dao { TenDao = "D6", SoLuongTon = 3 }, CatEdit); db.Fixup();
+            var d6 = db.Daos.List.First(x => x.TenDao == "D6");
+            var u = await dao.UpdateAsync(new Dao { DaoId = d6.DaoId, TenDao = "D6", SoLuongTon = -2 }, "x", CatEdit);
+            Ok(c.Success && !u.Success && u.Error == "SL tồn không được âm." && d6.SoLuongTon == 3, "Dao: sửa SL tồn về âm: chặn, giữ 3", u.Error);
+        }
+
+        Console.WriteLine("[Q7] RS-D9 — số máy đã dùng không đổi số; máy trong Part Master đang dùng / máy loại trừ không xoá (dựng lại ca Q1c FIX-NGAM 31/10)");
+        {
+            var db = Seed(); var auth = new AuthService(db);
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", TenMay = "May 1", IsActive = true });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M7", TenMay = "May 7", IsActive = true });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 3, SoMay = "M8", TenMay = "May 8", IsActive = true });
+            db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 1, SoMay = "M8" });
+            db.Fixup();
+            var tb = new ThietBiService(db, auth);
+            var r = await tb.UpdateAsync(new ThietBi { ThietBiId = 1, SoMay = "M1X", TenMay = "May 1" }, "doi so", null, null, CatEdit, "1111");
+            Ok(!r.Success && r.Error!.Contains("Số máy 'M1' đã dùng ở") && r.Error.Contains("quy trình PO (snapshot)") && db.ThietBis.List[0].SoMay == "M1",
+               "M1 có trong snapshot PO: đổi số máy bị chặn, nêu chỗ dùng", r.Error);
+            r = await tb.UpdateAsync(new ThietBi { ThietBiId = 2, SoMay = "M7X", TenMay = "May 7" }, "doi so", null, null, CatEdit, "1111");
+            Ok(r.Success && db.ThietBis.List[1].SoMay == "M7X", "M7 chưa dùng ở đâu: đổi số được", r.Error);
+            r = await tb.SoftDeleteAsync(3, CatEdit, "1111");
+            Ok(!r.Success && r.Error!.Contains("danh sách máy loại trừ") && db.ThietBis.List[2].IsActive, "M8 trong danh sách máy loại trừ: không xoá", r.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

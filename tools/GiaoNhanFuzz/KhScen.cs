@@ -411,6 +411,17 @@ public static class KhScen
             Ok(w.Status == "DANG_SX" && w.Loi == 2, $"Bài 4: trạng thái {HandoverLedgerService.WhereSummary.StatusLabel(w.Status)} · lỗi {w.Loi}");
         }
 
+        Console.WriteLine("[A10] KHO-4 — Workflow OFF: Kho sửa phôi làm sai số → vẫn lưu nhưng CẢNH BÁO ô nào âm; không âm thì không cảnh báo (dựng lại ca A10 FIX-NGAM 31/10)");
+        {
+            var db = Seed(workflow: false); var svc = new HandoverService(db); var kho = new KhoVatLieuService(db, new UserService(null));
+            await svc.IssueByCellAsync(1, "KHO", "GC", 40, 1, "MOI", false, "MOI");
+            var up = await kho.SaveKhoInputAsync(1, DateTime.Now, 45, "OVL-1", "A1", null, null, null, "nhan them", 1);
+            Ok(up.Success && up.Error == null, "Tăng phôi 40→45 (không ô nào âm): lưu, không cảnh báo", up.Error);
+            var dn = await kho.SaveKhoInputAsync(1, DateTime.Now, 30, "OVL-1", "A1", null, null, null, "dem lai", 1);
+            Ok(dn.Success && dn.Error != null && dn.Error.StartsWith("Đã lưu — nhưng PO đang tắt Workflow") && db.KhoVatLieus.List.Single().SoLuongThucNhan == 30,
+               "Giảm 45→30 khi đã giao 40: lưu 30 + cảnh báo nêu ô âm (trước: lưu im lặng)", dn.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }
