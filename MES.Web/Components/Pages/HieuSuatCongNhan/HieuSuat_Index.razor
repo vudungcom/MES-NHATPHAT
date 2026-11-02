@@ -1346,7 +1346,8 @@ else
 
                                             {
 
-                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                @* [ML41-SELECT-STALE 2026-11-02] @key = danh sách NC của PO: đổi PO → tạo lại ô NC (trình duyệt không giữ dòng đã chọn của PO cũ) *@
+                                                <select @key="grp.AvailableNCs" class="form-select form-select-sm" style="font-size:11px"
 
                                                         @onchange="e => OnGroupNCChanged(grp, e.Value?.ToString())">
 
@@ -1394,7 +1395,10 @@ else
 
                                             {
 
-                                                <select class="form-select form-select-sm" style="font-size:11px"
+                                                @* [ML41-SELECT-STALE 2026-11-02] Master list 41: đổi NC → phần mềm bỏ máy cũ nhưng ô Máy trên màn hình vẫn giữ
+                                                   dòng đã chọn (vd hiện "P01" của NC mới) vì option đánh dấu bằng selected, trình duyệt giữ lựa chọn của người dùng
+                                                   → người dùng tưởng đã chọn máy, chuẩn tham khảo không điền ("không nhảy theo NC"). @key theo NC: đổi NC tạo lại ô → hiện "--". *@
+                                                <select @key="@("may|" + grp.NC)" class="form-select form-select-sm" style="font-size:11px"
 
                                                         @onchange="e => OnGroupMachineChanged(grp, e.Value?.ToString())">
 
@@ -5463,7 +5467,8 @@ else
                 </div>
                 <div class="col-auto" style="min-width:170px">
                     <label class="form-label small mb-0">@NgCaseNo.TermCap đang sửa (tuỳ chọn)</label>
-                    <select class="form-select form-select-sm" @onchange="OnActCaseChanged" disabled="@(_act.RefId == null)">
+                    @* [ML41-SELECT-STALE 2026-11-02] @key = danh sách vụ của PO: đổi PO → tạo lại ô vụ (không giữ vụ của PO cũ trên màn hình) *@
+                    <select @key="_act.Cases" class="form-select form-select-sm" @onchange="OnActCaseChanged" disabled="@(_act.RefId == null)">
                         <option value="" selected="@(_act.NgCaseId == null)">—</option>
                         @foreach (var c in _act.Cases)
                         {

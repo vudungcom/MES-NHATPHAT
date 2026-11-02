@@ -71,6 +71,9 @@ async def main():
         # 2) đổi NC → NC2: phải xoá (bản cũ giữ 5 / 2 / 1 của NC1)
         await row.locator("select").nth(0).select_option("NC2"); await pg.wait_for_timeout(500)
         t = await times(row); ok(all(x == "" for x in t), "[ML41] đổi NC1 → NC2: giờ thực tế NC1 bị xoá (máy về trống)", t)
+        # [ML41-SELECT-STALE 02/11] ô Máy trên MÀN HÌNH phải về "--" (trước: phần mềm bỏ máy nhưng ô vẫn hiện máy cùng vị trí của NC mới)
+        msel = await row.locator("select").nth(1).input_value()
+        ok(msel == "", "[ML41-SELECT-STALE] đổi NC1 → NC2: ô Máy trên màn hình về '--' (không hiện máy của NC mới khi chưa chọn)", repr(msel))
         await pg.screenshot(path=f"ml41_{OUT}_nc.png", full_page=False)
         # 3) chọn M2 → chuẩn NC2 M2 = 4 / 3 / 1
         await row.locator("select").nth(1).select_option("M2"); await pg.wait_for_timeout(500)

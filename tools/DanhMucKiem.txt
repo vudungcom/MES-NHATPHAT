@@ -178,6 +178,7 @@ ALLOC-BREAK | harness:drive_alloc.py | chia giờ qua nghỉ trưa
 NONGC-ALLOC-WEIGHT | harness:drive_alloc.py | chia giờ non-GC
 WF-CEIL-MIN | CHUA | cần ca: trần WTS lấy min (đọc code xác định)
 ML41-NC-RESET | harness:drive_ml41.py | đổi NC / máy xoá giờ cũ
+ML41-SELECT-STALE | harness:drive_ml41.py | đổi NC → ô Máy trên màn hình về "--" (ô NC / ô vụ tạo lại khi đổi PO)
 ACT-PODUP | harness:drive_actpo.py | form việc chọn "PO · Part"
 ML16-ACT | viec:X1; viec:X2; viec:X3; viec:X4; viec:X5; wts:W11; wts:W12; nghi:N3 | Việc không ra SP: đầu vào, nhãn PO / vụ, trùng giờ chính người, sửa = huỷ + mới, không đổi sổ
 ML16-DOCS | CHUA | cần ca: PO có giờ sửa (Việc không ra SP) không còn là PO trắng (PoGuard)
