@@ -394,13 +394,10 @@
         var authState = await AuthState.GetAuthenticationStateAsync();
         var user = authState.User;
 
-        var isUserAdmin = user.IsInRole("ADMIN")
-                       || user.FindFirst("GroupCode")?.Value == "ADMIN"
-                       || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
-                       || user.Identity?.Name?.ToLower() == "admin";
-
         if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
             _currentAdminUserId = uid;
+        // [USER-PERM-SVC 2026-11-03] quyền đọc DB (claim có thể cũ — CLAUDE-RULES mục 7); máy chủ cũng tự kiểm ở UserService
+        var isUserAdmin = await UserSvc.IsAdminAsync(_currentAdminUserId);
 
         if (isUserAdmin)
         {
@@ -443,7 +440,8 @@
             {
                 var dict = permissionMatrix[grp.GroupId];
                 var permsToSave = dict.Values.ToList();
-                await UserSvc.UpdateGroupPermissionsAsync(grp.GroupId, permsToSave);
+                var r = await UserSvc.UpdateGroupPermissionsAsync(grp.GroupId, permsToSave, _currentAdminUserId);   // [USER-PERM-SVC]
+                if (!r.Success) { thongBaoLoi = r.Error ?? "Lỗi"; isProcessing = false; return; }
             }
             thongBaoThanhCong = "Đã lưu ma trận phân quyền thành công. Các thay đổi sẽ áp dụng vào lần đăng nhập tiếp theo của User.";
         }
@@ -470,12 +468,12 @@
         if (userDangSua.UserId == 0) // Thêm mới
         {
             if (string.IsNullOrWhiteSpace(matKhauMoi)) { thongBaoLoi = "Vui lòng nhập mật khẩu khởi tạo."; return; }
-            var res = await UserSvc.CreateUserAsync(userDangSua, matKhauMoi);
+            var res = await UserSvc.CreateUserAsync(userDangSua, matKhauMoi, _currentAdminUserId);   // [USER-PERM-SVC]
             if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
         }
         else // Sửa
         {
-            var res = await UserSvc.UpdateUserAsync(userDangSua);
+            var res = await UserSvc.UpdateUserAsync(userDangSua, _currentAdminUserId);   // [USER-PERM-SVC]
             if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
         }
 
@@ -531,13 +529,13 @@
 
         if (groupMoi.GroupId == 0) // Thêm mới
         {
-            var res = await UserSvc.CreateGroupAsync(groupMoi);
+            var res = await UserSvc.CreateGroupAsync(groupMoi, _currentAdminUserId);   // [USER-PERM-SVC]
             if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
             thongBaoThanhCong = "Tạo nhóm mới thành công.";
         }
         else // Sửa tên hiển thị
         {
-            var res = await UserSvc.UpdateGroupAsync(groupMoi);
+            var res = await UserSvc.UpdateGroupAsync(groupMoi, _currentAdminUserId);   // [USER-PERM-SVC]
             if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
             thongBaoThanhCong = "Cập nhật tên nhóm thành công.";
         }

@@ -26,10 +26,24 @@ public class UserService
         return await db.UserGroups.OrderBy(x => x.GroupId).ToListAsync();
     }
 
-    public async Task<(bool Success, string? Error)> CreateGroupAsync(UserGroup group)
+    // [USER-PERM-SVC 2026-11-03] Tạo / sửa nhóm, ma trận quyền, người dùng: máy chủ tự kiểm người thao tác là ADMIN (đọc DB qua PermCheck).
+    //   Trước: chỉ trang Cài đặt kiểm bằng claim (claim cũ — Admin bị hạ nhóm vẫn còn quyền tới lần đăng nhập sau; CLAUDE-RULES mục 7),
+    //   5 hàm dưới không kiểm gì — cùng loại lỗ RS-C1. Nguồn: CLAUDE phát hiện khi viết bộ kiểm 02/11 (sổ PHAT-HIEN-0211 mục 2).
+    public const string NotAdminMsg = "Chỉ ADMIN (đang hoạt động) mới được quản lý người dùng / nhóm / phân quyền — nhờ Admin thực hiện.";
+
+    /// <summary>[USER-PERM-SVC] Trang Cài đặt hỏi quyền theo DB (không theo claim).</summary>
+    public async Task<bool> IsAdminAsync(int userId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await PermCheck.IsAdminAsync(db, userId);
+    }
+
+    public async Task<(bool Success, string? Error)> CreateGroupAsync(UserGroup group, int actorUserId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         group.GroupCode = group.GroupCode.Trim().ToUpper();
         if (await db.UserGroups.AnyAsync(x => x.GroupCode == group.GroupCode))
             return (false, "Mã nhóm đã tồn tại.");
@@ -39,12 +53,15 @@ public class UserService
         return (true, null);
     }
 
-    public async Task<(bool Success, string? Error)> UpdateGroupAsync(UserGroup group)
+    public async Task<(bool Success, string? Error)> UpdateGroupAsync(UserGroup group, int actorUserId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         var dbGroup = await db.UserGroups.FindAsync(group.GroupId);
         if (dbGroup == null) return (false, "Không tìm thấy Nhóm.");
+        // [USER-PERM-SVC] (rà độc lập T7) tắt nhóm ADMIN = không còn ai quản trị (PermCheck đòi nhóm đang hoạt động) → máy chủ chặn
+        if (dbGroup.GroupCode == "ADMIN" && !group.IsActive) return (false, "Không được ngưng nhóm ADMIN (sẽ không còn ai quản trị hệ thống).");
 
         dbGroup.GroupName = group.GroupName.Trim();
         dbGroup.IsActive = group.IsActive;
@@ -53,16 +70,17 @@ public class UserService
         return (true, null);
     }
 
-    public async Task<bool> UpdateGroupPermissionsAsync(int groupId, List<GroupPermissionSetting> perms)
+    public async Task<(bool Success, string? Error)> UpdateGroupPermissionsAsync(int groupId, List<GroupPermissionSetting> perms, int actorUserId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         var group = await db.UserGroups.FindAsync(groupId);
-        if (group == null) return false;
+        if (group == null) return (false, "Không tìm thấy Nhóm.");
 
         group.Permissions = JsonSerializer.Serialize(perms);
         await db.SaveChangesAsync();
-        return true;
+        return (true, null);
     }
 
     public List<GroupPermissionSetting> GetGroupPermissions(string? jsonPermissions)
@@ -119,10 +137,11 @@ public class UserService
         return await db.Users.Include(u => u.Group).OrderBy(u => u.UserId).ToListAsync();
     }
 
-    public async Task<(bool Success, string? Error)> CreateUserAsync(User user, string plainPassword)
+    public async Task<(bool Success, string? Error)> CreateUserAsync(User user, string plainPassword, int actorUserId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         if (await db.Users.AnyAsync(x => x.Username == user.Username.Trim()))
             return (false, "Tên đăng nhập đã tồn tại.");
 
@@ -136,12 +155,25 @@ public class UserService
         return (true, null);
     }
 
-    public async Task<(bool Success, string? Error)> UpdateUserAsync(User user)
+    public async Task<(bool Success, string? Error)> UpdateUserAsync(User user, int actorUserId)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         var dbUser = await db.Users.FindAsync(user.UserId);
         if (dbUser == null) return (false, "Không tìm thấy User.");
+        // [USER-PERM-SVC] (rà độc lập V1) khoá / đổi nhóm làm hệ thống không còn ADMIN đang hoạt động nào → chặn (trước: chỉ cứu được bằng SQL)
+        var adminGroupIds = await db.UserGroups.Where(g => g.GroupCode == "ADMIN" && g.IsActive).Select(g => g.GroupId).ToListAsync();
+        bool IsAdminRow(int? groupId, string? username, bool active)
+            => active && ((groupId.HasValue && adminGroupIds.Contains(groupId.Value)) || (username ?? "").ToLower() == "admin");
+        if (IsAdminRow(dbUser.GroupId, dbUser.Username, dbUser.IsActive) && !IsAdminRow(user.GroupId, dbUser.Username, user.IsActive))
+        {
+            var others = await db.Users.Where(u => u.UserId != dbUser.UserId && u.IsActive).Select(u => new { u.GroupId, u.Username }).ToListAsync();
+            if (!others.Any(o => IsAdminRow(o.GroupId, o.Username, true)))
+                return (false, "Không lưu: đây là tài khoản ADMIN đang hoạt động cuối cùng — khoá / đổi nhóm sẽ không còn ai quản trị. Tạo / bật ADMIN khác trước.");
+            if (dbUser.UserId == actorUserId)
+                return (false, "Không tự khoá hoặc tự rời nhóm ADMIN của chính mình — nhờ ADMIN khác thực hiện.");
+        }
 
         dbUser.FullName = user.FullName;
         dbUser.GroupId = user.GroupId;
@@ -196,8 +228,8 @@ public class UserService
         var requester = await db.Users.Include(u => u.Group)
             .FirstOrDefaultAsync(u => u.UserId == requestedByUserId && u.IsActive);
         if (requester == null) return (false, "Không xác định được người thực hiện.");
-        bool isAdmin = requester.Group?.GroupCode == "ADMIN" || requester.Username.ToLower() == "admin";
-        if (!isAdmin) return (false, "Chỉ ADMIN mới có thể reset PIN.");
+        // [USER-PERM-SVC] (rà độc lập T6) cùng luật PermCheck (tài khoản + nhóm đang hoạt động) — trước: nhóm bị tắt mà tên "admin" vẫn qua
+        if (!await PermCheck.IsAdminAsync(db, requestedByUserId)) return (false, "Chỉ ADMIN mới có thể reset PIN.");
 
         var target = await db.Users.FirstOrDefaultAsync(u => u.UserId == targetUserId);
         if (target == null) return (false, "Không tìm thấy User.");

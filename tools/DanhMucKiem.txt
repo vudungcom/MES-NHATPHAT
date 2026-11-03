@@ -134,7 +134,9 @@ STD-UPDATE-VIEW | giaodien | xem trước Update TG chuẩn
 STD-UPD | std:S2; std:S3; harness:drive_std.py:U2 | máy chủ kiểm quyền ma trận, khoá PO chọn (id tăng dần), đếm theo PO chọn; trang tick sẵn PO (phần "trừ PO đã xong DU" chưa có ca — harness chưa có PO đủ thành phẩm)
 STD-5 | std:S4; harness:drive_std.py:F1 | Part Master đổi sau Xem trước → máy chủ dừng (rollback), trang gửi dấu bản Xem trước
 SAVE-HANG-FIX | harness:drive_ml9.py:H2; harness:drive_ml9.py:H3; harness:drive_ml9.py:H5 | lỗi 1 dòng (trang cũ sửa dòng đã xoá) báo rõ, dòng sau vẫn lưu, lưu lại được
-TIMING-COPY-MAIN | CHUA | cần ca: dòng đồng dạng chép giờ dòng chính (xem RA-CASCADE-PM chờ Hùng chốt)
+TIMING-COPY-MAIN | harness:drive_timing.py:A2; harness:drive_timing.py:A4 | dòng đồng dạng mới chép đồ gá / dao / 5 thời gian dòng chính (không chép từ dòng đồng dạng trước) — nay đi theo tới khi lưu ([RA-CASCADE-PM])
+USER-PERM-SVC | auth:U6; harness:drive_settings.py:G1; harness:drive_settings.py:G2; harness:drive_settings.py:G3; harness:drive_settings.py:G4 | UserService tạo / sửa người dùng, nhóm, ma trận quyền: máy chủ kiểm ADMIN theo DB (PermCheck.IsAdminAsync: tài khoản + nhóm đang hoạt động); trang Cài đặt đọc quyền từ DB thay claim. Đột biến 03/11: IsAdminAsync luôn true → U6 5 SAI; trang truyền người thao tác 0 → G3 G3b G4 SAI. Nguồn: CLAUDE (PHAT-HIEN-0211 mục 2, 02/11)
+RA-CASCADE-PM | harness:drive_timing.py:A1; harness:drive_timing.py:A2; harness:drive_timing.py:A3; harness:drive_timing.py:A4; harness:drive_timing.py:A5; harness:drive_timing.py:A6; harness:drive_timing.py:B2; harness:drive_timing.py:B3; harness:drive_timing.py:B4; harness:drive_timing.py:B5; harness:drive_timing.py:B6; harness:drive_timing.py:B7 | (a) dòng đồng dạng mới đi theo dòng chính tới khi lưu, sửa 1 ô chép thì thôi theo, chọn máy không tính; (b) nút dòng chính giữ dòng giờ riêng (cùng TimingId), gộp dòng giống hệt dùng lại TimingId; modal dòng chính tách máy dòng gộp. Bản HEAD a77a9ea chạy drive_timing.py: 11 SAI (A5 / B1 ĐẠT là bước chuẩn bị). Hùng duyệt 02/11 13:16
 TIMING-PENCIL | giaodien | nút bút chì sửa giờ
 UI-ONE-SAVE | giaodien | 1 nút lưu
 

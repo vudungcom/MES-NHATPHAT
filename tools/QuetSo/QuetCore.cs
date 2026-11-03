@@ -2,6 +2,7 @@
 //   Mọi số tính bằng ĐÚNG hàm sổ chung của phần mềm (HandoverLedgerService) — không công thức riêng.
 //   Phần này dùng chung cho bản thật (RealHost.cs, SQL Server) và bản tự kiểm trong bộ kiểm GiaoNhanFuzz (kịch bản `quet`).
 using MES.Web.Data;
+using MES.Web.Data.Entities;
 using MES.Web.Services;
 
 namespace QuetSo;
@@ -28,6 +29,7 @@ public static class QuetCore
     public const string WtsSoAm    = "WTS_SO_AM";        // dòng WTS có số âm
     public const string CanhBao    = "CANH_BAO_SO";      // cảnh báo khác của sổ (vd PO chưa có snapshot mã CV)
     public const string MaTrung    = "MA_TRUNG";         // [PM-NC-DUP-SVC 2026-11-01] quy trình (snapshot) PO có 2 dòng CHÍNH cùng mã trong 1 nhóm → sổ tính lệch
+    public const string LoaiTruDau = "LOAI_TRU_DAU";     // [N3-FIRST 2026-11-03] quy trình GC (snapshot PO) BẮT ĐẦU bằng NC máy loại trừ (N3 đầu chuỗi)
 
     public sealed class Result
     {
@@ -35,6 +37,7 @@ public static class QuetCore
         public int PoCount { get; set; }
         public int WtsCount { get; set; }
         public int WtsOld { get; set; }   // dòng WTS cũ chưa có QtyOk (sổ lấy QtyDone − NG)
+        public List<string> PartFindings { get; } = new();   // [N3-FIRST] Part Master (chưa thành PO) có NC đầu GC là máy loại trừ
     }
 
     public static async Task<Result> ScanAsync(AppDbContext db, HandoverLedgerService led)
@@ -87,6 +90,53 @@ public static class QuetCore
                 Add(r, MaTrung, $"quy trình PO: {g.Key.Grp} có {g.Count()} dòng chính cùng mã {g.Key.Code} · {wtsTxt} ({string.Join("; ", g.Select(x => x.Info))})");
             }
 
+        // [N3-FIRST 2026-11-03] NC đầu chuỗi Gia công là máy loại trừ (sổ luật N3; Hùng duyệt phương án A 02/11 13:16 — quét TRƯỚC khi sửa sổ).
+        //   Sổ hiện tại: NC loại trừ không có ô số, NC kế tiếp thành "NC đầu" nhận thẳng hàng vào Gia công → công đoạn làm hộ không có chứng từ.
+        //   In: các NC loại trừ đứng đầu (máy), NC nhận hàng đầu thực tế + số sổ đang tính, Gia công đã nhận / giao làm hộ, WTS đã ghi các NC đó —
+        //   để biết dữ liệu nào sẽ đổi cách tính khi sổ có ô "Nhận vào, chưa qua NC". Máy loại trừ của PO = snapshot (KhPlanRouteSnapshotMachineExclude).
+        var exclAll = db.KhPlanRouteSnapshotMachineExclude.ToList();
+        var gcSnap = db.KhPlanRouteSnapshotMachining.Where(x => !x.IsBackup).ToList();
+        foreach (var grp in gcSnap.GroupBy(x => x.KhPlanDetailId))
+        {
+            if (!plans.TryGetValue(grp.Key, out var r)) continue;
+            var ex = exclAll.Where(e => e.KhPlanDetailId == grp.Key && !string.IsNullOrWhiteSpace(e.SoMay)).Select(e => e.SoMay.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (ex.Count == 0) continue;
+            var chain = grp.OrderBy(x => x.StepOrder).ToList();
+            bool IsEx(KhPlanRouteSnapshotMachining s) => !string.IsNullOrWhiteSpace(s.MachineRegistered) && ex.Contains(s.MachineRegistered!.Trim());
+            var lead = chain.TakeWhile(IsEx).ToList();
+            if (lead.Count == 0) continue;
+            var firstReal = chain.Skip(lead.Count).FirstOrDefault();
+            var G = r.G("GC");
+            string WtsOf(string? nc)
+            {
+                var ls = wtsAll.Where(w => w.KhPlanDetailId == grp.Key && w.ProcessGroup == "GC" && K(w.NC) == K(nc)).ToList();
+                return ls.Count == 0 ? "chưa có WTS" : $"WTS {ls.Count} dòng (OK {ls.Sum(w => w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0))):0.##}, NG {ls.Sum(w => w.QtyNg ?? 0):0.##})";
+            }
+            var line = firstReal == null ? null : G.Steps.FirstOrDefault(s => s.Pg == "GC" && !s.IsExcluded && K(s.Code) == K(firstReal.NC));
+            Add(r, LoaiTruDau,
+                $"Gia công bắt đầu bằng NC máy loại trừ: {string.Join(", ", lead.Select(s => $"NC {s.NC} (máy {s.MachineRegistered?.Trim()}, {WtsOf(s.NC)})"))}"
+                + (firstReal == null ? " · KHÔNG còn NC nào sau (cả chuỗi loại trừ)"
+                   : $" · NC nhận hàng đầu theo sổ hiện tại: NC {firstReal.NC} (nhận vào {(line?.In ?? 0):0.##}, {WtsOf(firstReal.NC)})")
+                + $" · Gia công đã nhận Hàng mới {G.NhanMoi:0.##}, Hàng làm hộ về {G.NhanLamHoVe:0.##}, đã giao làm hộ {G.GiaoLamHo:0.##}");
+        }
+        // Part Master (PO tạo sau sẽ chụp quy trình này): NC chính đầu tiên (đang dùng) chạy máy loại trừ theo danh sách hiện tại
+        var exNow = db.MachineExcludeSettings.ToList().Where(e => !string.IsNullOrWhiteSpace(e.SoMay)).Select(e => e.SoMay.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (exNow.Count > 0)
+        {
+            var partsAct = db.PartMasters.Where(p => p.IsActive && !p.IsObsolete).ToList().ToDictionary(p => p.PartId);
+            var custs = db.Customers.ToList().ToDictionary(x => x.CustomerId, x => x.CustomerName);
+            foreach (var grp in db.PartMachiningSteps.Where(s => s.IsActive && !s.IsBackup).ToList().GroupBy(s => s.PartId))
+            {
+                if (!partsAct.TryGetValue(grp.Key, out var p)) continue;
+                var chain = grp.OrderBy(s => s.StepOrder).ToList();
+                var lead = chain.TakeWhile(s => !string.IsNullOrWhiteSpace(s.MachineRegistered) && exNow.Contains(s.MachineRegistered!.Trim())).ToList();
+                if (lead.Count == 0) continue;
+                var cn = p.CustomerId.HasValue && custs.TryGetValue(p.CustomerId.Value, out var n) ? n : "—";
+                res.PartFindings.Add($"Part {p.PartNo} · {cn}: NC đầu là máy loại trừ {string.Join(", ", lead.Select(s => $"NC {s.NC} (máy {s.MachineRegistered?.Trim()})"))}"
+                    + $"{(chain.Count > lead.Count ? $" · NC sau: {chain[lead.Count].NC}" : " · không còn NC nào sau")}");
+            }
+        }
+
         var wts = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
         res.WtsCount = wts.Count;
         foreach (var x in wts)
@@ -115,6 +165,12 @@ public static class QuetCore
             var f0 = g.First();
             o.WriteLine($"── PO {f0.Po} · KH {f0.Plan} · {f0.Part} · Workflow {(f0.Workflow ? "ON" : "OFF")} (KhPlanDetailId {f0.DetailId})");
             foreach (var f in g) o.WriteLine($"   [{f.Kind}] {f.Detail}");
+        }
+        if (res.PartFindings.Count > 0)   // [N3-FIRST] Part Master — chưa phải lỗi số, chỉ để biết PO sau sẽ gặp
+        {
+            o.WriteLine();
+            o.WriteLine($"── Part Master: {res.PartFindings.Count} chi tiết có NC đầu Gia công là máy loại trừ ({LoaiTruDau}, PO tạo sau sẽ chụp quy trình này)");
+            foreach (var f in res.PartFindings) o.WriteLine("   " + f);
         }
         if (res.Findings.Count == 0) o.WriteLine("KHÔNG PHÁT HIỆN GÌ — mọi PO cân, không ô âm, không WTS vượt trần.");
     }

@@ -27,5 +27,7 @@ Thứ tự Hùng chốt: chạy MES_TEST trước, rồi MES.
 | WTS_SO_LECH | Dòng WTS QtyDone ≠ QtyOk + QtyNg |
 | WTS_SO_AM | Dòng WTS có số âm |
 | CANH_BAO_SO | Cảnh báo khác của sổ (vd PO chưa có snapshot mã CV) |
+| MA_TRUNG | Quy trình PO có 2 dòng chính cùng mã trong 1 nhóm ([PM-NC-DUP-SVC]) |
+| LOAI_TRU_DAU | Quy trình Gia công (snapshot PO) bắt đầu bằng NC máy loại trừ ([N3-FIRST] 03/11) — kèm mục cuối file: Part Master đang dùng có NC đầu là máy loại trừ (PO tạo sau sẽ gặp) |
 
 Tự kiểm trên DB giả (Claude, sandbox): `tools/GiaoNhanFuzz` kịch bản `quet` (Q1 PO đúng → 0 phát hiện; Q2 cài lỗi cố ý → bắt đủ 4 loại, không ghi gì).

@@ -50,7 +50,7 @@ Dữ liệu thêm CUỐI HarnessSeed (`SeedPmAsync`): PART-ML9 (NC 2 có dữ li
 đọc qua `/harness/dump2` (`Dump2()`, mk.sh thêm endpoint). Mỗi script chạy trên harness mới khởi động (DB giả mới tinh):
 `python3 drive_ml9.py 5101 new` (pha D / P / M / X / B / C / H, mỗi pha mở trang mới — pha dừng giữa chừng ghi "<pha>! SAI") ·
 `python3 drive_std.py 5101 new` (V / U / F / R). Phần máy chủ của Update TG chuẩn kiểm ở `GiaoNhanFuzz std`. Không kiểm Taro trùng mã CV (khách chốt Taro
-dùng chung mã CV giữa 2 NC — chờ sửa) và không kiểm [TIMING-COPY-MAIN] (chờ chốt RA-CASCADE-PM).
+dùng chung mã CV giữa 2 NC — chờ sửa); máy đồng dạng đi theo dòng chính kiểm ở drive_timing.py.
 
 ## drive_rsc5.py / drive_okfb.py / drive_rse11.py ([RS-C5][WTS-OK-FALLBACK][RS-E11] 02/11/2026)
 - `python3 drive_rsc5.py <port> new` — harness đang chạy: "Nhớ tên đăng nhập" chỉ lưu tên, mật khẩu bản cũ đã lưu bị xoá khi mở trang.
@@ -59,3 +59,10 @@ dùng chung mã CV giữa 2 NC — chờ sửa) và không kiểm [TIMING-COPY-M
 - `python3 drive_rse11.py <port> <bin harness> new` — TỰ bật harness (Production) trong mount namespace riêng (`unshare -m`, cần root) với thư mục
   bản quyền tạm hỏng → bản quyền khoá; kiểm chỉ đúng `/about` qua khoá, DetailedErrors tắt, cookie HttpOnly + Secure sau proxy. Thư mục bản quyền chung không bị đụng.
 - Hai file tự bật harness dùng `hk_launch.py` (giết theo pid của chính nó); cổng phải trống trước khi chạy.
+
+## drive_timing.py — máy đồng dạng Part Master ([TIMING-COPY-MAIN][RA-CASCADE-PM] 03/11/2026)
+PART-ML9 (seed sẵn, không thêm dữ liệu). Pha A: dòng đồng dạng mới đi theo dòng chính tới khi lưu (gõ giờ dòng chính SAU khi thêm dòng vẫn chép),
+sửa 1 ô chép thì thôi theo, Xác nhận modal đồ gá không đổi gì thì vẫn theo, dòng đã lưu không tự đổi. Pha B: nút "Chọn nhiều máy đồng dạng" ở dòng chính
+giữ dòng giờ riêng (cùng TimingId), dòng đã lưu chỉ rút máy bỏ tích / xoá khi hết máy, KHÔNG đổi sang máy khác; ✓ chờ lưu của dòng đã xoá không ghi DB.
+`python3 drive_timing.py <port> new` → 03/11: bản mới ĐẠT hết (19 bước); HEAD a77a9ea 11 SAI; 3 đột biến (bản đầu gộp dòng đã lưu / bỏ sửa ✓ dòng xoá /
+bỏ kiểm "không đổi") đều SAI đúng bước (B9 B10 / B10 / A3b).

@@ -98,16 +98,98 @@ public static class AuthScen
             var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
             var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
             // form Sửa gửi đối tượng User mới: không có PIN
-            var r = await us.UpdateUserAsync(new User { UserId = 5, Username = "gc01", FullName = "Nguyen Van A", GroupId = 3, IsActive = true, PIN = null });
+            var r = await us.UpdateUserAsync(new User { UserId = 5, Username = "gc01", FullName = "Nguyen Van A", GroupId = 3, IsActive = true, PIN = null }, 1);
             Ok(r.Success && u.FullName == "Nguyen Van A" && u.GroupId == 3, "Đổi họ tên + nhóm: lưu được", r.Error);
             Ok(u.PIN == "1234", "PIN giữ nguyên '1234' sau khi sửa (trước: mất PIN)", u.PIN ?? "null");
-            r = await us.UpdateUserAsync(new User { UserId = 5, Username = "gc01", FullName = "Nguyen Van A", GroupId = 3, IsActive = false, PIN = "" });
+            r = await us.UpdateUserAsync(new User { UserId = 5, Username = "gc01", FullName = "Nguyen Van A", GroupId = 3, IsActive = false, PIN = "" }, 1);
             Ok(r.Success && !u.IsActive && u.PIN == "1234", "Khoá tài khoản (PIN gửi lên rỗng): PIN vẫn '1234'", u.PIN ?? "null");
             var rp = await us.ResetPinAsync(5, 6);
             Ok(!rp.Success && rp.Error == "Chỉ ADMIN mới có thể reset PIN." && u.PIN == "1234", "Người không phải ADMIN bấm Reset PIN: chặn, PIN còn", rp.Error);
             rp = await us.ResetPinAsync(5, 1);
             Ok(rp.Success && u.PIN == null, "ADMIN Reset PIN: PIN về trống (cách duy nhất xoá PIN)", rp.Error);
             Ok(db.Users.List.Single(x => x.UserId == 6).PIN == "5555", "Người khác không bị đụng PIN");
+        }
+
+        // [USER-PERM-SVC 2026-11-03] Tạo / sửa người dùng, nhóm, ma trận quyền: máy chủ (UserService THẬT) tự kiểm người thao tác là ADMIN theo DB.
+        //   Trước: chỉ trang kiểm bằng claim → Admin bị hạ nhóm vẫn đổi được quyền tới lần đăng nhập sau; gọi service không cần quyền gì.
+        Console.WriteLine("[U6] USER-PERM-SVC — chỉ ADMIN (theo DB, đang hoạt động) tạo / sửa người dùng, nhóm, ma trận quyền");
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", IsActive = true };
+            var gK = new UserGroup { GroupId = 3, GroupCode = "KHO", IsActive = true, Permissions = "[{\"SectionCode\":\"SETTING_ADMIN\",\"CanView\":true,\"CanEdit\":true}]" };
+            var gOff = new UserGroup { GroupId = 4, GroupCode = "ADMIN2", IsActive = true };
+            db.UserGroups.List.AddRange(new[] { gAd, gK, gOff });
+            db.Users.List.Add(new User { UserId = 1, Username = "admin", FullName = "Admin", IsActive = true, Group = gAd, GroupId = 1 });
+            db.Users.List.Add(new User { UserId = 2, Username = "ad2", FullName = "Admin 2", IsActive = true, Group = gAd, GroupId = 1 });
+            db.Users.List.Add(new User { UserId = 6, Username = "kho01", FullName = "Kho", IsActive = true, Group = gK, GroupId = 3 });
+            db.Users.List.Add(new User { UserId = 7, Username = "ad3", FullName = "Admin khoá", IsActive = false, Group = gAd, GroupId = 1 });
+            db.Fixup();
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            string Snap() => System.Text.Json.JsonSerializer.Serialize(new {
+                u = db.Users.List.OrderBy(x => x.UserId).Select(x => new { x.UserId, x.Username, x.FullName, x.GroupId, x.IsActive }),
+                g = db.UserGroups.List.OrderBy(x => x.GroupId).Select(x => new { x.GroupId, x.GroupCode, x.GroupName, x.IsActive, x.Permissions }) });
+            async Task<List<string?>> TryAll(int actor)
+            {
+                var errs = new List<string?>();
+                errs.Add((await us.CreateUserAsync(new User { Username = "moi" + actor, FullName = "Moi", GroupId = 3 }, "123456", actor)).Error);
+                errs.Add((await us.UpdateUserAsync(new User { UserId = 6, Username = "kho01", FullName = "Kho đổi", GroupId = 1, IsActive = true }, actor)).Error);
+                errs.Add((await us.CreateGroupAsync(new UserGroup { GroupCode = "g" + actor, GroupName = "G" }, actor)).Error);
+                errs.Add((await us.UpdateGroupAsync(new UserGroup { GroupId = 3, GroupCode = "KHO", GroupName = "Kho đổi", IsActive = true }, actor)).Error);
+                errs.Add((await us.UpdateGroupPermissionsAsync(3, new List<MES.Web.Constants.GroupPermissionSetting> { new() { SectionCode = "SETTING_ADMIN", CanView = true, CanEdit = true }, new() { SectionCode = "HANDOVER_GC", CanEdit = true } }, actor)).Error);
+                return errs;
+            }
+            var s0 = Snap();
+            var e6 = await TryAll(6);
+            Ok(e6.All(e => e == UserService.NotAdminMsg) && Snap() == s0,
+               "Người nhóm KHO (kể cả nhóm có tích SETTING_ADMIN trong ma trận) gọi 5 hàm: chặn hết, DB không đổi (trước: lưu được — tự cấp quyền / đổi mình sang nhóm ADMIN)", string.Join(" | ", e6));
+            var e7 = await TryAll(7);
+            Ok(e7.All(e => e == UserService.NotAdminMsg) && Snap() == s0, "Admin đã bị khoá tài khoản: chặn hết", string.Join(" | ", e7));
+            var e0 = await TryAll(0);
+            Ok(e0.All(e => e == UserService.NotAdminMsg) && Snap() == s0, "Không xác định người thao tác (id 0): chặn hết", string.Join(" | ", e0));
+            // Admin 2 bị hạ xuống nhóm KHO (claim trên trình duyệt của họ vẫn ghi ADMIN tới lần đăng nhập sau) → máy chủ đọc DB: chặn ngay
+            var r = await us.UpdateUserAsync(new User { UserId = 2, Username = "ad2", FullName = "Admin 2", GroupId = 3, IsActive = true }, 1);
+            Ok(r.Success && db.Users.List.Single(x => x.UserId == 2).GroupId == 3, "Admin hạ ad2 xuống nhóm KHO: lưu được", r.Error);
+            db.Users.List.Single(x => x.UserId == 2).Group = gK;   // DB giả không tự nối User.Group theo GroupId mới (EF thật đọc lại từ DB)
+            var s1 = Snap();
+            var e2 = await TryAll(2);
+            Ok(e2.All(e => e == UserService.NotAdminMsg) && Snap() == s1 && !await us.IsAdminAsync(2), "ad2 vừa bị hạ nhóm gọi 5 hàm: chặn ngay (không chờ đăng nhập lại), IsAdminAsync = false", string.Join(" | ", e2));
+            var e1 = await TryAll(1);
+            Ok(e1.All(e => e == null) && db.Users.List.Any(x => x.Username == "moi1") && db.UserGroups.List.Any(x => x.GroupCode == "G1")
+               && db.UserGroups.List.Single(x => x.GroupId == 3).Permissions!.Contains("HANDOVER_GC"),
+               "Admin (nhóm ADMIN, đang hoạt động) gọi 5 hàm: lưu được", string.Join(" | ", e1));
+            gAd.IsActive = false;
+            Ok(!await us.IsAdminAsync(1), "Nhóm ADMIN bị tắt: IsAdminAsync = false (cùng luật PermCheck: nhóm phải đang hoạt động)");
+        }
+
+        // [USER-PERM-SVC 2026-11-03] (rà độc lập V1 / T7) không để hệ thống mất hết ADMIN: tự khoá / tự rời nhóm ADMIN, hạ ADMIN cuối cùng, tắt nhóm ADMIN
+        Console.WriteLine("[U7] USER-PERM-SVC — không tự khoá mình, không hạ ADMIN cuối cùng, không ngưng nhóm ADMIN");
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = true };
+            var gK = new UserGroup { GroupId = 3, GroupCode = "KHO", GroupName = "Kho", IsActive = true };
+            db.UserGroups.List.AddRange(new[] { gAd, gK });
+            var boss = new User { UserId = 1, Username = "boss", FullName = "Boss", IsActive = true, Group = gAd, GroupId = 1 };
+            var ad2 = new User { UserId = 2, Username = "ad2", FullName = "Admin 2", IsActive = true, Group = gAd, GroupId = 1 };
+            db.Users.List.AddRange(new[] { boss, ad2, new User { UserId = 3, Username = "kho01", FullName = "Kho", IsActive = true, Group = gK, GroupId = 3 } });
+            db.Fixup();
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            var r = await us.UpdateUserAsync(new User { UserId = 1, Username = "boss", FullName = "Boss", GroupId = 1, IsActive = false }, 1);
+            Ok(!r.Success && r.Error!.Contains("Không tự khoá") && boss.IsActive, "boss tự khoá tài khoản mình: chặn (còn ad2 nhưng không tự khoá)", r.Error);
+            r = await us.UpdateUserAsync(new User { UserId = 1, Username = "boss", FullName = "Boss", GroupId = 3, IsActive = true }, 1);
+            Ok(!r.Success && r.Error!.Contains("Không tự khoá") && boss.GroupId == 1, "boss tự chuyển mình sang nhóm KHO: chặn", r.Error);
+            r = await us.UpdateUserAsync(new User { UserId = 2, Username = "ad2", FullName = "Admin 2", GroupId = 3, IsActive = true }, 1);
+            Ok(r.Success && ad2.GroupId == 3, "boss hạ ad2 xuống KHO (boss vẫn là ADMIN): lưu được", r.Error);
+            ad2.Group = gK;
+            r = await us.UpdateUserAsync(new User { UserId = 1, Username = "boss", FullName = "Boss", GroupId = 1, IsActive = false }, 1);
+            Ok(!r.Success && r.Error!.Contains("ADMIN đang hoạt động cuối cùng") && boss.IsActive, "boss là ADMIN cuối cùng tự khoá: chặn, báo \"ADMIN đang hoạt động cuối cùng\"", r.Error);
+            r = await us.UpdateUserAsync(new User { UserId = 1, Username = "boss", FullName = "Boss Moi", GroupId = 1, IsActive = true }, 1);
+            Ok(r.Success && boss.FullName == "Boss Moi", "ADMIN cuối cùng đổi họ tên (vẫn ADMIN): lưu được", r.Error);
+            var g = await us.UpdateGroupAsync(new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = false }, 1);
+            Ok(!g.Success && gAd.IsActive, "Ngưng nhóm ADMIN: chặn", g.Error);
+            g = await us.UpdateGroupAsync(new UserGroup { GroupId = 3, GroupCode = "KHO", GroupName = "Kho", IsActive = false }, 1);
+            Ok(g.Success && !gK.IsActive, "Ngưng nhóm thường (KHO): lưu được", g.Error);
         }
 
         // [C7-LICENSE 2026-11-02] Máy chủ bản quyền trả chữ KHÔNG phải JSON (trang lỗi HTML, "Service invoked too many times"…) = API chưa trả lời được:

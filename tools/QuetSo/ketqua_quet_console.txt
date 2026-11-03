@@ -1,6 +1,6 @@
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 02/11/2026 07:55:10
+QUÉT SỔ (chỉ đọc) · DB MES · 03/11/2026 11:05:46
 PO: 45 · dòng WTS còn hiệu lực: 84 (dòng cũ chưa có QtyOk: 0)
 PO có vấn đề: 23 · tổng phát hiện: 82
   CANH_BAO_SO          8 dòng · 4 PO
@@ -114,4 +114,4 @@ PO có vấn đề: 23 · tổng phát hiện: 82
    [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 3T3 · chưa có WTS mã này (#5 NC 3 mã 3T3 "Kiểm tra ren" chuẩn 1 nguồn 10078 chụp 27/10 13:26; #11 NC 5 mã 3T3 "Kiểm tra ren" chuẩn 0.5 nguồn 10084 chụp 27/10 13:26)
    [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 3T · chưa có WTS mã này (#6 NC 3 mã 3T "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 2.5 nguồn 10079 chụp 27/10 13:26; #12 NC 5 mã 3T "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 1.5 nguồn 10085 chụp 27/10 13:26)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1102075510.txt
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1103110546.txt

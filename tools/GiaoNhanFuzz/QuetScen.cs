@@ -2,6 +2,7 @@
 //   Q1: PO đi đủ đường bằng hàm thật (Kho → GC → WTS → HTSP) → quét KHÔNG báo gì.
 //   Q2: cài lỗi cố ý (giống dữ liệu cũ ngoài đời) → quét phải bắt đúng loại:
 //       dòng WTS QtyDone ≠ OK + NG · WTS vượt trần (OK + NG > nhận vào) · PO không cân · ô âm (giao 16 khi NC sau chưa có WTS).
+//   Q3 [N3-FIRST 03/11]: NC đầu chuỗi Gia công là máy loại trừ → LOAI_TRU_DAU (PO) + mục Part Master.
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
@@ -99,6 +100,46 @@ public static class QuetScen
             var mt = r2.Findings.Where(f => f.Kind == QuetCore.MaTrung).Select(f => f.Detail).ToList();
             Ok(mt.Count == 2 && mt.Any(d => d.Contains("Đóng gói có 2 dòng chính cùng mã PX")) && mt.Any(d => d.Contains("Taro có 2 dòng chính cùng mã 9T")),
                "Bắt MA_TRUNG: Đóng gói PX ×2 (dòng dự phòng không tính), Taro theo mã CV 9T ×2", string.Join(" | ", mt));
+        }
+        Console.WriteLine("[Q3] [N3-FIRST] NC đầu chuỗi Gia công là máy loại trừ → LOAI_TRU_DAU (PO) + danh sách Part Master; NC loại trừ giữa / cuối không báo");
+        {
+            var db = Seed(true); var led = new HandoverLedgerService(db);
+            var r0 = await QuetCore.ScanAsync(db, led);
+            Ok(!r0.Findings.Any(f => f.Kind == QuetCore.LoaiTruDau) && r0.PartFindings.Count == 0, "Chưa có máy loại trừ: không báo LOAI_TRU_DAU",
+               string.Join(" | ", r0.Findings.Where(f => f.Kind == QuetCore.LoaiTruDau).Select(f => f.Detail).Concat(r0.PartFindings)));
+            db.KhPlanRouteSnapshotMachineExclude.List.Add(new KhPlanRouteSnapshotMachineExclude { SnapshotId = 1, KhPlanDetailId = 1, SoMay = "M2" });
+            db.Fixup();
+            var r1 = await QuetCore.ScanAsync(db, led);
+            Ok(!r1.Findings.Any(f => f.Kind == QuetCore.LoaiTruDau), "NC loại trừ đứng CUỐI (NC2 máy M2): không báo LOAI_TRU_DAU (thuộc HL-X)",
+               string.Join(" | ", r1.Findings.Where(f => f.Kind == QuetCore.LoaiTruDau).Select(f => f.Detail)));
+            db.KhPlanRouteSnapshotMachineExclude.List.Clear();
+            db.KhPlanRouteSnapshotMachineExclude.List.Add(new KhPlanRouteSnapshotMachineExclude { SnapshotId = 2, KhPlanDetailId = 1, SoMay = " m1 " });
+            db.Fixup();
+            var r2 = await QuetCore.ScanAsync(db, led);
+            var lt = r2.Findings.Where(f => f.Kind == QuetCore.LoaiTruDau).Select(f => f.Detail).ToList();
+            Ok(lt.Count == 1 && lt[0].Contains("NC NC1 (máy M1") && lt[0].Contains("NC nhận hàng đầu theo sổ hiện tại: NC NC2") && r2.Findings.First(f => f.Kind == QuetCore.LoaiTruDau).Po == "PO1",
+               "NC đầu NC1 chạy máy loại trừ M1 (snapshot ghi \" m1 \" — bỏ khoảng trắng, không phân biệt hoa thường): báo 1 dòng LOAI_TRU_DAU, nêu NC nhận hàng đầu theo sổ = NC2", string.Join(" | ", lt));
+            // Part Master theo danh sách máy loại trừ hiện tại: chỉ Part đang dùng có NC chính đầu tiên chạy máy loại trừ
+            db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 1, SoMay = "MX" });
+            var cust = db.Customers.List.First();
+            void Part(int id, string no, bool obsolete, params (string nc, string may, bool backup)[] st)
+            {
+                db.PartMasters.List.Add(new PartMaster { PartId = id, PartNo = no, IsActive = true, IsObsolete = obsolete, CustomerId = cust.CustomerId });
+                int o = 1;
+                foreach (var s in st)
+                    db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = id * 10 + o, PartId = id, StepOrder = o++, NC = s.nc, MachineRegistered = s.may, IsBackup = s.backup, IsActive = true });
+            }
+            Part(51, "P-DAU", false, ("1", "MX", false), ("2", "M2", false));
+            Part(52, "P-GIUA", false, ("1", "M1", false), ("2", "MX", false));
+            Part(53, "P-BO", true, ("1", "MX", false), ("2", "M2", false));
+            Part(54, "P-DUPHONG", false, ("1", "M1", false), ("1b", "MX", true));
+            db.Fixup();
+            var r3 = await QuetCore.ScanAsync(db, led);
+            Ok(r3.PartFindings.Count == 1 && r3.PartFindings[0].StartsWith("Part P-DAU ") && r3.PartFindings[0].Contains("NC 1 (máy MX)") && r3.PartFindings[0].Contains("NC sau: 2"),
+               "Part Master: chỉ P-DAU (NC đầu máy MX) — không báo P-GIUA (loại trừ giữa), P-BO (đã bỏ), P-DUPHONG (dòng dự phòng)", string.Join(" | ", r3.PartFindings));
+            var sw = new StringWriter(); QuetCore.Write(r3, sw, "GIA");
+            Ok(sw.ToString().Contains("── Part Master: 1 chi tiết có NC đầu Gia công là máy loại trừ") && sw.ToString().Contains("[LOAI_TRU_DAU]"),
+               "File kết quả có mục PO [LOAI_TRU_DAU] và mục Part Master", sw.ToString().Split('\n').FirstOrDefault(l => l.Contains("Part Master")));
         }
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;

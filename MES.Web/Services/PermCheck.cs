@@ -92,6 +92,14 @@ public static class PermCheck
     /// <summary>Lời báo khi không có quyền sửa (tên mục theo chữ trên menu).</summary>
     public static string NoEdit(string ten) => $"Bạn không có quyền Sửa mục {ten} (ma trận phân quyền) — nhờ Admin cấp quyền.";
 
+    /// <summary>[USER-PERM-SVC 2026-11-03] Người dùng là ADMIN (đang hoạt động, nhóm đang hoạt động; nhóm ADMIN hoặc tên "admin") — đọc DB, không đọc claim.
+    /// Dùng cho mục "Cài đặt &amp; Phân quyền" (SETTING_ADMIN — chỉ Admin).</summary>
+    public static async Task<bool> IsAdminAsync(AppDbContext db, int userId)
+    {
+        var p = await ReadAsync(db, userId);
+        return p != null && p.Value.IsAdmin;
+    }
+
     /// <summary>Lời báo khi không có quyền xem.</summary>
     public static string NoView(string ten) => $"Bạn không có quyền Xem mục {ten} (ma trận phân quyền) — nhờ Admin cấp quyền.";
 

@@ -413,6 +413,7 @@ else
                                                     </button>
                                                 }
                                             </div>
+                                            @if (tr.FollowMain) { <span class="d-block small text-muted" style="font-size:0.72rem;" title="@FollowMainTitle">↳ theo dòng chính (chưa lưu)</span> }   @* [RA-CASCADE-PM] *@
                                             @if (TimingRowDup(edit, tr) is string dupT)
                                             {
                                                 @* [ML9-DUP 2026-10-30] dữ liệu cũ: máy của dòng đồng dạng này trùng máy đăng ký / dòng đồng dạng khác trong NC *@
@@ -459,31 +460,31 @@ else
                                         </td>
                                         <td class="@TrSetupCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrMachiningCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrInspectionCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrPreparationCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrTrialRunCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingModified(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
@@ -2336,9 +2337,50 @@ else
             MachiningTime = edit.MachiningTime,
             InspectionTime = edit.InspectionTime,
             PreparationTime = edit.PreparationTime,
-            TrialRunTime = edit.TrialRunTime
+            TrialRunTime = edit.TrialRunTime,
+            FollowMain = true   // [RA-CASCADE-PM (a)] chép 1 lần lúc bấm → dòng chính gõ sau vẫn chép theo tới khi lưu / tới khi sửa 1 ô của dòng này
         });
         MarkAsModified(edit);
+    }
+
+    // ── [RA-CASCADE-PM 2026-11-03] Máy đồng dạng đi theo dòng chính + nút dòng chính giữ dòng có giờ riêng ──
+    // Nguồn: rà độc lập 01/11 (Detail_Partmaster); HÙNG duyệt 02/11 13:16 phương án (a) + (b) ("cứ làm theo bạn").
+    // (a) Dòng đồng dạng MỚI (chưa lưu) chép đồ gá, dao, 5 thời gian của dòng chính và ĐI THEO dòng chính tới khi lưu.
+    //     Sửa 1 ô chép (đồ gá / dao / 1 trong 5 thời gian) của dòng đó → cả dòng thôi theo, giữ số riêng.
+    //     Chọn máy KHÔNG tính là sửa (máy không chép từ dòng chính — chọn máy là bước bắt buộc của dòng mới).
+    //     Trước: chép đúng 1 lần lúc bấm → bấm "Thêm máy đồng dạng" trước khi gõ giờ dòng chính thì dòng đồng dạng lưu ô trống.
+    private readonly HashSet<StepEditBase> _saveFailedSteps = new();   // [RA-CASCADE-PM] T5
+    private const string FollowMainTitle = "Dòng mới: đồ gá, dao và 5 thời gian chép theo dòng chính tới khi lưu. Sửa 1 ô đó của dòng này thì dòng giữ số riêng.";
+
+    private void MarkTimingFieldEdited(MachiningEdit edit, TimingRowEdit tr)
+    {
+        tr.FollowMain = false;   // [RA-CASCADE-PM (a)] sửa ô chép → thôi đi theo dòng chính
+        MarkTimingModified(edit, tr);
+    }
+
+    private static void SyncFollowRows(MachiningEdit edit)
+    {
+        foreach (var tr in edit.TimingRows.Where(t => t.FollowMain && t.State == EditState.New))
+        {
+            tr.FixtureType = edit.FixtureType; tr.ToolType = edit.ToolType;
+            tr.SetupTime = edit.SetupTime; tr.MachiningTime = edit.MachiningTime; tr.InspectionTime = edit.InspectionTime;
+            tr.PreparationTime = edit.PreparationTime; tr.TrialRunTime = edit.TrialRunTime;
+        }
+    }
+
+    // (b) "Giống hệt dòng chính" = cùng đồ gá + dao (so tập, không kể thứ tự / hoa thường) và cùng 5 thời gian (đã làm tròn 1 số lẻ).
+    private static HashSet<string> CsvSet(string? csv)
+        => (csv ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    private static bool SameAsMain(MachiningEdit e, TimingRowEdit t)
+        => CsvSet(e.FixtureType).SetEquals(CsvSet(t.FixtureType)) && CsvSet(e.ToolType).SetEquals(CsvSet(t.ToolType))
+        && e.SetupTime == t.SetupTime && e.MachiningTime == t.MachiningTime && e.InspectionTime == t.InspectionTime
+        && e.PreparationTime == t.PreparationTime && e.TrialRunTime == t.TrialRunTime;
+
+    private static void DropTimingRow(MachiningEdit edit, TimingRowEdit tr)
+    {
+        // dòng đã lưu: đánh dấu xoá (gạch ngang + nút khôi phục [SUBROW-DEL-UNDO]); dòng mới: bỏ luôn
+        if (tr.TimingId > 0) { if (tr.State != EditState.Deleted) { tr.StateBeforeDelete = tr.State; tr.State = EditState.Deleted; tr.IsEditing = false; } }
+        else edit.TimingRows.Remove(tr);
     }
 
     private void RemoveTimingRow(MachiningEdit edit, TimingRowEdit tr)
@@ -2996,8 +3038,12 @@ else
     {
         if (_currentTimingRow != null && _currentTimingEdit != null)
         {
-            _currentTimingRow.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
-            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            var _newFix = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            if (!CsvSet(_newFix).SetEquals(CsvSet(_currentTimingRow.FixtureType)))   // [RA-CASCADE-PM (a)] Xác nhận mà không đổi → vẫn đi theo (rà độc lập T1)
+            {
+                _currentTimingRow.FixtureType = _newFix;
+                MarkTimingFieldEdited(_currentTimingEdit, _currentTimingRow);
+            }
             _currentTimingRow = null;
             _currentTimingEdit = null;
         }
@@ -3038,8 +3084,12 @@ else
     {
         if (_currentTimingRow != null && _currentTimingEdit != null)
         {
-            _currentTimingRow.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
-            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            var _newTool = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            if (!CsvSet(_newTool).SetEquals(CsvSet(_currentTimingRow.ToolType)))   // [RA-CASCADE-PM (a)] Xác nhận mà không đổi → vẫn đi theo (rà độc lập T1)
+            {
+                _currentTimingRow.ToolType = _newTool;
+                MarkTimingFieldEdited(_currentTimingEdit, _currentTimingRow);
+            }
             _currentTimingRow = null;
             _currentTimingEdit = null;
         }
@@ -3059,14 +3109,16 @@ else
         _currentTimingRow = null;    // FIX: clear stale timing state từ lần mở trước
         _currentTimingEdit = null;
         _currentEditingAltMachining = edit;
+        // [RA-CASCADE-PM 2026-11-03] tách từng máy của dòng gộp ("M2, M3") — trước lấy cả chuỗi làm 1 máy → mở lại modal M2 / M3 hiện chưa tích
         _selectedAltMachines = edit.TimingRows
             .Where(t => t.State != EditState.Deleted && !string.IsNullOrEmpty(t.SoMay))
-            .Select(t => t.SoMay!)
+            .SelectMany(t => SplitMay(t.SoMay))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         // [PM-DUP] Trước: khoá rỗng ("mở từ dòng chính — không có row khác") → chọn được cả máy đăng ký.
-        // Nút này thay toàn bộ dòng đồng dạng bằng 1 dòng → chỉ cần khoá máy đăng ký.
+        // Nút này sắp lại các dòng đồng dạng (giữ dòng giờ riêng, gộp dòng giống hệt — [RA-CASCADE-PM (b)]) → chỉ cần khoá máy đăng ký.
         _usedAltReason = UsedMachinesInNc(edit, null, includeTimingRows: false);
         _usedAltMachines = _usedAltReason.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _selectedAltMachines.ExceptWith(_usedAltMachines);   // [RA-CASCADE-PM] dữ liệu cũ dòng đồng dạng mang máy đăng ký: không tích sẵn ô bị khoá (bỏ được khỏi dòng)
         _altMachineSearch = string.Empty;
         _showAltMachineModal = true;
     }
@@ -3138,36 +3190,54 @@ else
         }
         else if (_currentEditingAltMachining != null)
         {
-            // Xóa tất cả timing rows cũ — thay bằng 1 row duy nhất với tất cả máy được chọn
-            // (trừ các row có thời gian riêng đã nhập — giữ lại)
-            var toDelete = _currentEditingAltMachining.TimingRows
-                .Where(t => t.State != EditState.Deleted)
-                .ToList();
-            foreach (var tr in toDelete)
+            // [RA-CASCADE-PM (b) 2026-11-03] Nút ở dòng chính KHÔNG còn xoá mọi dòng đồng dạng rồi thêm 1 dòng gộp.
+            //   Trước: đánh dấu xoá cả dòng đã lưu có giờ riêng (mất giờ chuẩn riêng + dấu ✓ xác nhận, TimingId mới).
+            //   Nay: - dòng ĐÃ LƯU (TimingId > 0) giữ nguyên TimingId + giờ + dấu ✓; máy bỏ tích thì rút khỏi dòng, dòng hết máy thì
+            //          đánh dấu xoá (khôi phục được trước khi lưu). Dòng đã lưu KHÔNG BAO GIỜ được gán sang máy khác — TimingId nối với
+            //          máy, dấu ✓, lịch sử và nguồn snapshot PO (SourceTimingId); gán máy khác vào TimingId cũ = ✓ / snapshot trỏ nhầm máy
+            //          (rà độc lập 03/11 C1 — bản đầu "dùng lại TimingId dòng đã lưu đầu tiên" đổi M2 → M3 khi bỏ tích M2);
+            //        - dòng có giờ riêng chưa lưu: như trên (giữ số riêng, rút máy bỏ tích); dòng chưa chọn máy thì để nguyên (không mất số đã gõ);
+            //        - dòng MỚI chưa lưu đang đi theo / giống hệt dòng chính + máy mới tích → GỘP thành 1 dòng mới đi theo dòng chính (a).
+            var e = _currentEditingAltMachining;
+            var live = e.TimingRows.Where(t => t.State != EditState.Deleted).ToList();
+            var mergeable = live.Where(t => t.TimingId == 0 && (t.FollowMain || SameAsMain(e, t))).ToList();
+            var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tr in live.Where(t => !mergeable.Contains(t)))
             {
-                if (tr.TimingId > 0 && tr.State != EditState.Deleted) { tr.StateBeforeDelete = tr.State; tr.State = EditState.Deleted; tr.IsEditing = false; }   // [SUBROW-DEL-UNDO] nhớ trạng thái để nút khôi phục trả đúng
-                else _currentEditingAltMachining.TimingRows.Remove(tr);
+                var ms = CsvSet(tr.SoMay).OrderBy(m => m).ToList();
+                if (ms.Count == 0) continue;   // dòng giờ riêng chưa chọn máy: để nguyên
+                var keep = ms.Where(m => _selectedAltMachines.Contains(m)).ToList();
+                if (keep.Count == 0) DropTimingRow(e, tr);
+                else if (keep.Count != ms.Count) { tr.SoMay = string.Join(", ", keep); MarkTimingModified(e, tr); }
+                kept.UnionWith(keep);
             }
-            // Thêm 1 row mới với tất cả máy được chọn + copy đồ gá/dao/thời gian từ dòng chính
-            if (_selectedAltMachines.Any())
+            var merged = _selectedAltMachines.Where(m => !kept.Contains(m)).OrderBy(m => m).ToList();
+            var target = mergeable.OrderBy(t => t.DisplayOrder).FirstOrDefault();
+            foreach (var tr in mergeable.Where(t => t != target)) e.TimingRows.Remove(tr);
+            if (merged.Count == 0)
             {
-                var maxOrder = _currentEditingAltMachining.TimingRows.Count == 0
-                    ? 1 : _currentEditingAltMachining.TimingRows.Max(t => t.DisplayOrder) + 1;
-                _currentEditingAltMachining.TimingRows.Add(new TimingRowEdit
+                if (target != null) e.TimingRows.Remove(target);
+            }
+            else if (target == null)
+            {
+                var maxOrder = e.TimingRows.Count == 0 ? 1 : e.TimingRows.Max(t => t.DisplayOrder) + 1;
+                e.TimingRows.Add(new TimingRowEdit
                 {
                     State = EditState.New,
                     DisplayOrder = maxOrder,
-                    SoMay = string.Join(", ", _selectedAltMachines.OrderBy(m => m)),
-                    FixtureType = _currentEditingAltMachining.FixtureType,
-                    ToolType = _currentEditingAltMachining.ToolType,
-                    SetupTime = _currentEditingAltMachining.SetupTime,
-                    MachiningTime = _currentEditingAltMachining.MachiningTime,
-                    InspectionTime = _currentEditingAltMachining.InspectionTime,
-                    PreparationTime = _currentEditingAltMachining.PreparationTime,
-                    TrialRunTime = _currentEditingAltMachining.TrialRunTime
+                    SoMay = string.Join(", ", merged),
+                    FixtureType = e.FixtureType, ToolType = e.ToolType,
+                    SetupTime = e.SetupTime, MachiningTime = e.MachiningTime, InspectionTime = e.InspectionTime,
+                    PreparationTime = e.PreparationTime, TrialRunTime = e.TrialRunTime,
+                    FollowMain = true
                 });
             }
-            MarkAsModified(_currentEditingAltMachining);
+            else
+            {
+                target.SoMay = string.Join(", ", merged);
+                target.FollowMain = true;   // dòng mới giống hệt dòng chính → đi theo tới khi lưu
+            }
+            MarkAsModified(e);
             _currentEditingAltMachining = null;
         }
         _showAltMachineModal = false;
@@ -3209,8 +3279,12 @@ else
     {
         if (_currentTimingRow != null && _currentTimingEdit != null)
         {
-            _currentTimingRow.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
-            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            var _newFix = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            if (!CsvSet(_newFix).SetEquals(CsvSet(_currentTimingRow.FixtureType)))   // [RA-CASCADE-PM (a)] Xác nhận mà không đổi → vẫn đi theo (rà độc lập T1)
+            {
+                _currentTimingRow.FixtureType = _newFix;
+                MarkTimingFieldEdited(_currentTimingEdit, _currentTimingRow);
+            }
         }
         _showAltDoGaModal = false;
         _currentEditingAltDoGa = null;
@@ -3234,8 +3308,12 @@ else
     {
         if (_currentTimingRow != null && _currentTimingEdit != null)
         {
-            _currentTimingRow.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
-            MarkTimingModified(_currentTimingEdit, _currentTimingRow);
+            var _newTool = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            if (!CsvSet(_newTool).SetEquals(CsvSet(_currentTimingRow.ToolType)))   // [RA-CASCADE-PM (a)] Xác nhận mà không đổi → vẫn đi theo (rà độc lập T1)
+            {
+                _currentTimingRow.ToolType = _newTool;
+                MarkTimingFieldEdited(_currentTimingEdit, _currentTimingRow);
+            }
         }
         _showAltDaoModal = false;
         _currentEditingAltDao = null;
@@ -3406,6 +3484,7 @@ else
 
     private void MarkAsModified(StepEditBase edit)
     {
+        if (edit is MachiningEdit me) SyncFollowRows(me);   // [RA-CASCADE-PM (a)] mọi chỗ đổi ô dòng chính GC đều qua đây (5 ô giờ, đồ gá, dao)
         if (edit.State == EditState.Unchanged)
             edit.State = EditState.Modified;
         _hasChanges = true;
@@ -4096,6 +4175,7 @@ else
         //   trùng theo DB → xoá P9 rồi thêm P9 mới, hoặc đổi tên P9 → P10 rồi thêm P9 trong cùng 1 lần lưu không bị báo trùng oan.
         //   Dòng mới giữ đúng thứ tự trên form (StepOrder cấp tăng dần như cũ).
         //   Trong nhóm Sửa: dòng đang giữ mã mà dòng khác đổi sang thì ghi trước (đổi tên nối chuỗi P1→P2, P2→P3 — rà độc lập 02/11 V1).
+        _saveFailedSteps.Clear();   // [RA-CASCADE-PM] T5: dòng lưu lỗi của danh sách đang lưu (GC đọc ngay sau, trước danh sách kế)
         var order = edits.Where(x => x.State == EditState.Deleted)
             .Concat(OrderRenames(edits.Where(x => x.State is EditState.Modified or EditState.Restored).ToList()))
             .Concat(edits.Where(x => x.State == EditState.New))
@@ -4137,6 +4217,7 @@ else
                 // [SAVE-HANG-FIX] Gỡ entity lỗi (VD: Step đang Deleted bị FK chặn) khỏi DbContext dùng chung,
                 // nếu không mọi SaveChanges phía sau sẽ thử lại lệnh lỗi → exception → circuit chết → nút treo "Đang xử lý..."
                 Db.ChangeTracker.Clear();
+                _saveFailedSteps.Add(e);   // [RA-CASCADE-PM] T5
                 errors.Add($"✗ [{label}] NC={e.NC}: {ex.GetBaseException().Message}");
             }
         }
@@ -4145,12 +4226,19 @@ else
     private async Task SaveMachiningTimingsAsync(List<MachiningEdit> edits, List<string> log, List<string> errors)
     {
         var now = DateTime.Now;
+        // [RA-CASCADE-PM] (rà độc lập T5) NC chính lưu lỗi lượt này → DB vẫn số cũ; dòng đi theo mang số chưa lưu được → không ghi, giữ trên form
         foreach (var edit in edits.Where(e => e.State != EditState.Deleted && e.StepId > 0))
         {
             // [ML9-DUP 2026-10-30] Xoá dòng đồng dạng TRƯỚC rồi mới thêm / sửa (đổi máy M3 → dòng mới M3 cùng lượt không bị báo trùng oan);
             //   thứ tự dòng trên form không đổi (chỉ thứ tự ghi DB).
+            SyncFollowRows(edit);   // [RA-CASCADE-PM (a)] chốt số dòng đi theo = số dòng chính lúc lưu
             foreach (var tr in edit.TimingRows.Where(t => t.State == EditState.Deleted).Concat(edit.TimingRows.Where(t => t.State != EditState.Deleted)).ToList())
             {
+                if (tr.FollowMain && tr.State == EditState.New && _saveFailedSteps.Contains(edit))
+                {
+                    errors.Add($"✗ [Timing] NC={edit.NC} {tr.SoMay}: chưa ghi máy đồng dạng đi theo dòng chính vì dòng chính NC này lưu lỗi — sửa lỗi dòng chính rồi Lưu lại.");
+                    continue;
+                }
                 try
                 {
                     // [ML9-DUP] Chốt chặn ở chỗ ghi: đọc lại DB (máy đăng ký + dòng đồng dạng đang hiệu lực) — trùng thì không ghi dòng này
@@ -4169,7 +4257,7 @@ else
                         var ent = new PartMachiningTiming { StepId = edit.StepId, SoMay = tr.SoMay.Trim(), DisplayOrder = tr.DisplayOrder, FixtureType = tr.FixtureType, ToolType = tr.ToolType, SetupTime = tr.SetupTime, MachiningTime = tr.MachiningTime, InspectionTime = tr.InspectionTime, PreparationTime = tr.PreparationTime, TrialRunTime = tr.TrialRunTime, IsActive = true, CreatedBy = _currentUserId, CreatedAt = now };
                         Db.PartMachiningTimings.Add(ent);
                         await Db.SaveChangesAsync();
-                        tr.TimingId = ent.TimingId; tr.State = EditState.Unchanged;
+                        tr.TimingId = ent.TimingId; tr.State = EditState.Unchanged; tr.FollowMain = false;   // [RA-CASCADE-PM] đã lưu → giữ số riêng
                         // Log tạo mới máy đồng dạng
                         Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
                         {
@@ -4239,11 +4327,14 @@ else
 
         // [DEL-NC-FULL] NC đã xóa ở lượt lưu này → bỏ pending xác nhận của nó (step không còn trong DB)
         var deletedStepIds = _machiningEdits.Where(m => m.State == EditState.Deleted && m.StepId > 0).Select(m => m.StepId).ToHashSet();
+        // [RA-CASCADE-PM] (rà độc lập V2) dòng máy đồng dạng đã xoá ở lượt lưu này → bỏ ✓ chờ lưu của nó (trước: vẫn ghi xác nhận + log cho dòng đã tắt)
+        var deletedTimingIds = _machiningEdits.SelectMany(m => m.TimingRows).Where(t => t.State == EditState.Deleted && t.TimingId > 0).Select(t => t.TimingId).ToHashSet();
 
         foreach (var kvp in _pendingConfirms.ToList()) // ToList để tránh collection-modified nếu có retry
         {
             var (stepId, timingId) = kvp.Key;
             if (deletedStepIds.Contains(stepId)) continue;
+            if (timingId.HasValue && deletedTimingIds.Contains(timingId.Value)) { _pendingConfirms.Remove(kvp.Key); continue; }   // [RA-CASCADE-PM] V2
             foreach (var fieldKvp in kvp.Value)
             {
                 var field = fieldKvp.Key;
@@ -4454,6 +4545,8 @@ else
         public bool IsEditing { get; set; }
         /// <summary>[SUBROW-DEL-UNDO] trạng thái trước khi bấm Xoá — khôi phục về đúng trạng thái này (chỉ UI)</summary>
         public EditState StateBeforeDelete { get; set; } = EditState.Unchanged;
+        /// <summary>[RA-CASCADE-PM (a)] Dòng mới chưa ai sửa ô chép → đồ gá / dao / 5 thời gian đi theo dòng chính tới khi lưu (chỉ UI)</summary>
+        public bool FollowMain { get; set; }
 
         private static decimal? R(decimal? v) => v.HasValue ? Math.Round(v.Value, 1) : null;
         private decimal? _setup; public decimal? SetupTime { get => _setup; set => _setup = R(value); }
