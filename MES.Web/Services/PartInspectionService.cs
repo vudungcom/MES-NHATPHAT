@@ -10,6 +10,7 @@ public class PartInspectionService
 {
     private readonly AppDbContext _db;
     private const string TableTag = ProcessStepTable.Inspection;
+    private const string Label = "KCS";   // [PM-NC-DUP-SVC] chữ trong lời báo mã trùng / trống (như trang)
     private const PartMasterArea Area = PartMasterArea.D_KiemTra;
 
     public PartInspectionService(AppDbContext db)
@@ -47,6 +48,13 @@ public class PartInspectionService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
+        // [PM-NC-DUP-SVC 2026-11-02] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId>; dòng chính: mã không trống / '-', không trùng dòng chính khác (đọc DB dưới khoá)
+        return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
+        {
+        if (!newStep.IsBackup)
+            PartStepGuard.CheckMainCode(Label, newStep.NC, await _db.PartInspectionSteps
+                .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => s.NC).ToListAsync());
+
         var maxOrder = await _db.PartInspectionSteps
             .Where(s => s.PartId == partId)
             .MaxAsync(s => (int?)s.StepOrder) ?? 0;
@@ -72,6 +80,7 @@ public class PartInspectionService
         await _db.SaveChangesAsync();
 
         return newStep.StepId;
+        });   // [PM-NC-DUP-SVC]
     }
 
     public async Task UpdateAsync(long stepId, PartInspectionStep updated, int userId, string reason)
@@ -79,9 +88,20 @@ public class PartInspectionService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
+        // [PM-NC-DUP-SVC 2026-11-02] Sửa = giao dịch + khoá MES_PM_STEPS_<PartId> (Part của dòng không đổi khi sửa → đọc trước khoá được);
+        //   đổi mã / dự phòng thành dòng chính thì kiểm mã như lúc thêm, đọc DB dưới khoá
+        var lockPid = await _db.PartInspectionSteps.Where(s => s.StepId == stepId).Select(s => (int?)s.PartId).FirstOrDefaultAsync();
+        if (lockPid == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
+        await PartStepGuard.RunLockedAsync(_db, lockPid.Value, async () =>
+        {
         var existing = await _db.PartInspectionSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
+        // [PM-NC-DUP-SVC] mã / dự phòng đọc lại từ DB dưới khoá (existing có thể là bản EF trang đang giữ từ lần lưu trước — rà độc lập 02/11 T1)
+        var dbNow = await _db.PartInspectionSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup }).FirstAsync();
+        if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
+            PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartInspectionSteps
+                .Where(s => s.PartId == existing.PartId && s.IsActive && !s.IsBackup && s.StepId != stepId).Select(s => s.NC).ToListAsync());
 
         var pid = existing.PartId;
         var changedCount = 0;
@@ -93,7 +113,7 @@ public class PartInspectionService
         changedCount += LogStringDiff("ParentNC",     existing.ParentNC,     updated.ParentNC,     stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("StandardTime", existing.StandardTime, updated.StandardTime, stepId, pid, userId, reason, now);
 
-        if (changedCount == 0) return;
+        if (changedCount == 0) return 0;
 
         existing.NC = updated.NC;
         existing.StepName = updated.StepName;
@@ -121,6 +141,8 @@ public class PartInspectionService
         }
 
         await _db.SaveChangesAsync();
+        return 0;
+        });   // [PM-NC-DUP-SVC]
     }
 
     /// <summary>

@@ -4039,6 +4039,48 @@ else
             if (same > 1)
                 errs.Add($"{label}: NC / mã CV {nc} bị trùng ở {same} dòng — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng).");
         }
+        // [PM-NC-DUP-SVC 02/11] Đổi chéo mã giữa các dòng chính trong 1 lần lưu (P1 ↔ P2, P1→P2→P3→P1): máy chủ ghi từng dòng nên dòng nào ghi trước
+        //   cũng trùng mã dòng kia đang giữ → chặn ngay ở đây, báo cách làm (rà độc lập 02/11 V1). Taro (codeOf) chưa áp — gói TARO-NC-MA.
+        if (codeOf == null)
+        {
+            var ren = live.Where(x => !x.IsBackup && x.State == EditState.Modified && !string.IsNullOrWhiteSpace(x.OriginalNC)
+                                      && !PartStepGuard.SameCode(x.OriginalNC, x.NC)).ToList();
+            var seen = new HashSet<T>();
+            foreach (var r in ren)
+            {
+                if (seen.Contains(r)) continue;
+                var chain = new List<T> { r };
+                var cur = r;
+                while (true)
+                {
+                    var nxt = ren.FirstOrDefault(o => !chain.Contains(o) && PartStepGuard.SameCode(o.OriginalNC, cur.NC));
+                    if (nxt == null) break;
+                    chain.Add(nxt); cur = nxt;
+                }
+                if (chain.Count > 1 && PartStepGuard.SameCode(cur.NC, r.OriginalNC))
+                {
+                    foreach (var c in chain) seen.Add(c);
+                    errs.Add($"{label}: đổi chéo mã {string.Join(", ", chain.Select(c => $"{c.OriginalNC}→{c.NC}"))} trong 1 lần lưu — đổi 1 dòng sang mã tạm (vd {r.OriginalNC}-TAM), lưu, rồi đổi tiếp.");
+                }
+            }
+        }
+    }
+
+    /// <summary>[PM-NC-DUP-SVC 02/11] Thứ tự ghi các dòng sửa: dòng R chờ khi còn dòng O (chưa ghi) đang giữ trong DB đúng mã R muốn đổi sang
+    /// và O cũng đổi mã. Vòng (đổi chéo) đã bị CheckNcList chặn trước khi lưu; còn sót thì giữ thứ tự form (máy chủ chặn).</summary>
+    private static List<T> OrderRenames<T>(List<T> mods) where T : StepEditBase
+    {
+        bool Renamed(T x) => !x.IsBackup && !string.IsNullOrWhiteSpace(x.OriginalNC) && !PartStepGuard.SameCode(x.OriginalNC, x.NC);
+        var rest = mods.ToList();
+        var outp = new List<T>();
+        while (rest.Count > 0)
+        {
+            var next = rest.FirstOrDefault(r => r.IsBackup || !rest.Any(o => !ReferenceEquals(o, r) && Renamed(o) && PartStepGuard.SameCode(o.OriginalNC, r.NC)));
+            if (next == null) next = rest[0];
+            outp.Add(next);
+            rest.Remove(next);
+        }
+        return outp;
     }
 
     private async Task SaveStepListAsync<T>(List<T> edits, Func<T, Task<long>> addFn, Func<long, T, Task> updateFn, Func<long, Task> deleteFn, Func<long, Task> restoreFn, string label, List<string> log, List<string> errors) where T : StepEditBase
@@ -4050,7 +4092,15 @@ else
                                            && !string.IsNullOrWhiteSpace(x.OriginalNC) && !string.Equals(x.OriginalNC, x.NC, StringComparison.Ordinal)))
             foreach (var c in edits.Where(x => x.IsBackup && string.Equals(x.ParentNC, m.OriginalNC, StringComparison.OrdinalIgnoreCase)))
                 c.ParentNC = m.NC;
-        foreach (var e in edits.ToList())
+        // [PM-NC-DUP-SVC 2026-11-02] Thứ tự GHI: Xoá → Sửa / Khôi phục → Thêm (thứ tự dòng trên form không đổi). Service nay chặn mã chính
+        //   trùng theo DB → xoá P9 rồi thêm P9 mới, hoặc đổi tên P9 → P10 rồi thêm P9 trong cùng 1 lần lưu không bị báo trùng oan.
+        //   Dòng mới giữ đúng thứ tự trên form (StepOrder cấp tăng dần như cũ).
+        //   Trong nhóm Sửa: dòng đang giữ mã mà dòng khác đổi sang thì ghi trước (đổi tên nối chuỗi P1→P2, P2→P3 — rà độc lập 02/11 V1).
+        var order = edits.Where(x => x.State == EditState.Deleted)
+            .Concat(OrderRenames(edits.Where(x => x.State is EditState.Modified or EditState.Restored).ToList()))
+            .Concat(edits.Where(x => x.State == EditState.New))
+            .ToList();
+        foreach (var e in order)
         {
             try
             {

@@ -207,6 +207,19 @@ public static class ChuoiHelp
         var steps = db.PartMachiningSteps.List.Where(s => s.PartId == partId && s.IsActive).OrderBy(s => s.StepOrder).ToList();
         var mains = steps.Where(s => !s.IsBackup).ToList();
         if (kind < 0) kind = rnd.Next(9);
+        // [PM-NC-DUP-SVC 2026-11-02] Thao tác có thể tạo mã chính trùng (đổi tên NC, thêm NC, thêm KCS K9 / ĐG P9 lần 2): service PHẢI chặn
+        //   đúng khi trùng (đọc Part Master trước thao tác) và KHÔNG chặn oan khi không trùng. Bị chặn → trả "bị chặn …" (Part Master không đổi).
+        static async Task<string> Guarded(bool dupExpected, string what, Func<Task> act)
+        {
+            try { await act(); }
+            catch (PartStepCodeException ex)
+            {
+                if (!dupExpected) throw new Exception($"[PM-NC-DUP-SVC chặn oan] {what}: {ex.Message}");
+                return "bị chặn " + what;
+            }
+            if (dupExpected) throw new Exception($"[PM-NC-DUP-SVC lọt] {what}: mã chính đã có mà service vẫn lưu");
+            return what;
+        }
         switch (kind)
         {
             case 0:   // đổi tên NC + thời gian
@@ -214,14 +227,14 @@ public static class ChuoiHelp
                 if (!mains.Any()) return "bỏ qua";
                 var s = mains[rnd.Next(mains.Count)]; var oldNc = s.NC;
                 var up = Clone(s); up.NC = s.NC + "X"; up.SetupTime = (s.SetupTime ?? 0) + 1;
-                await gc.UpdateAsync(s.StepId, up, Admin, Reason);
-                return $"PM đổi tên NC {oldNc}→{up.NC}";
+                return await Guarded(mains.Any(m => m.StepId != s.StepId && PartStepGuard.SameCode(m.NC, up.NC)), $"PM đổi tên NC {oldNc}→{up.NC}",
+                    () => gc.UpdateAsync(s.StepId, up, Admin, Reason));   // [PM-NC-DUP-SVC]
             }
             case 1:   // thêm NC mới
             {
                 var n = steps.Count + 1;
-                await gc.AddAsync(partId, new PartMachiningStep { NC = $"NC{n:00}N", MachineRegistered = "MN" + n, SetupTime = 9, MachiningTime = 4 }, Admin, Reason);
-                return $"PM thêm NC NC{n:00}N";
+                return await Guarded(mains.Any(m => PartStepGuard.SameCode(m.NC, $"NC{n:00}N")), $"PM thêm NC NC{n:00}N",   // [PM-NC-DUP-SVC]
+                    () => gc.AddAsync(partId, new PartMachiningStep { NC = $"NC{n:00}N", MachineRegistered = "MN" + n, SetupTime = 9, MachiningTime = 4 }, Admin, Reason));
             }
             case 2:   // xoá NC (hard delete + máy đồng dạng)
             {
@@ -271,8 +284,12 @@ public static class ChuoiHelp
             }
             default:  // KCS / Đóng gói thêm dòng
             {
-                if (rnd.NextDouble() < 0.5) { await new PartInspectionService(db).AddAsync(partId, new PartInspectionStep { NC = "K9", StepName = "KCS thêm", StandardTime = 1 }, Admin, Reason); return "PM thêm KCS K9"; }
-                await new PartPackagingService(db).AddAsync(partId, new PartPackagingStep { NC = "P9", StepName = "ĐG thêm", StandardTime = 1 }, Admin, Reason); return "PM thêm ĐG P9";
+                // [PM-NC-DUP-SVC] lần 2 trên cùng Part = mã trùng → phải bị chặn (trước: thành 2 dòng chính K9 / P9 → lỗi seed 27253 PO16)
+                if (rnd.NextDouble() < 0.5)
+                    return await Guarded(db.PartInspectionSteps.List.Any(x => x.PartId == partId && x.IsActive && !x.IsBackup && PartStepGuard.SameCode(x.NC, "K9")), "PM thêm KCS K9",
+                        () => new PartInspectionService(db).AddAsync(partId, new PartInspectionStep { NC = "K9", StepName = "KCS thêm", StandardTime = 1 }, Admin, Reason));
+                return await Guarded(db.PartPackagingSteps.List.Any(x => x.PartId == partId && x.IsActive && !x.IsBackup && PartStepGuard.SameCode(x.NC, "P9")), "PM thêm ĐG P9",
+                    () => new PartPackagingService(db).AddAsync(partId, new PartPackagingStep { NC = "P9", StepName = "ĐG thêm", StandardTime = 1 }, Admin, Reason));
             }
         }
     }

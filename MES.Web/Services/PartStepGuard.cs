@@ -1,0 +1,78 @@
+using MES.Web.Data;
+
+namespace MES.Web.Services;
+
+// ================================================================
+// [PM-NC-DUP-SVC 2026-11-02] Chặn mã chính trùng / trống ở MÁY CHỦ cho quy trình Part Master
+//   (Gia công, Bavia, Rửa, KCS, Đóng gói — Taro làm riêng trong gói TARO-NC-MA vì khách chốt 02/11 giữ mã CV chung nhiều NC).
+//   Nguồn: CLAUDE (lỗi ngầm kiem 01/11 17:19, seed 27253 chuoi_loaitru PO16) — Hùng duyệt 02/11 13:16.
+//   Trước: chỉ trang Detail_Partmaster chặn ([B6-NC-DUP], xét danh sách đang hiện trên màn hình). 2 người cùng mở 1 Part,
+//   mỗi người thêm P9 → 2 dòng chính P9 → snapshot PO mới có mã trùng → sổ trừ NG mã đó 2 lần, trần WTS chỉ thấy 1 dòng → lệch số.
+//   Nay: mỗi lần THÊM / SỬA dòng chính chạy trong giao dịch + khoá "MES_PM_STEPS_<PartId>" (sp_getapplock, LockOwner = Transaction),
+//   đọc lại DB dưới khoá rồi mới kiểm → 2 người lưu cùng lúc thì người sau thấy dòng người trước vừa ghi.
+//   Luật kiểm (như trang): mã = NC đã Trim; trống hoặc "-" = chưa nhập; so không phân biệt hoa thường; dòng dự phòng (IsBackup) không xét.
+//   Sửa: chỉ kiểm khi đổi mã hoặc dòng dự phòng thành dòng chính — dữ liệu cũ đã trùng mà không đụng tới mã thì vẫn sửa được ô khác.
+// ================================================================
+
+/// <summary>[PM-NC-DUP-SVC] Lỗi mã chính trống / trùng — trang hiện nguyên lời báo.</summary>
+public sealed class PartStepCodeException : InvalidOperationException
+{
+    public PartStepCodeException(string message) : base(message) { }
+}
+
+public static class PartStepGuard
+{
+    public static string LockName(int partId) => "MES_PM_STEPS_" + partId;
+
+    public static string Norm(string? code) => (code ?? "").Trim();
+
+    public static bool IsBlank(string? code)
+    {
+        var n = Norm(code);
+        return n.Length == 0 || n == "-";
+    }
+
+    public static bool SameCode(string? a, string? b) => string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Chạy <paramref name="body"/> dưới khoá quy trình của Part. Có giao dịch ngoài thì dùng (khoá nhả khi giao dịch đó kết thúc),
+    /// không thì tự mở + Commit / Rollback (như KhPlanService.CreateAsync [RS-E16]).
+    /// Lưu ý (rà độc lập 02/11): EF thật không trả trạng thái entity khi Rollback — nơi gọi bắt lỗi rồi dùng tiếp DbContext phải
+    /// ChangeTracker.Clear() (trang Detail_Partmaster đã làm [SAVE-HANG-FIX]), không thì SaveChanges sau ghi lại phần dở.
+    /// </summary>
+    public static async Task<T> RunLockedAsync<T>(AppDbContext db, int partId, Func<Task<T>> body)
+    {
+        var ownTx = db.Database.CurrentTransaction == null ? await db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            if (!await PoGuard.TryLockInTransactionAsync(db, LockName(partId)))
+                throw new InvalidOperationException("Đang có người khác lưu quy trình của Part này — chờ vài giây rồi bấm lưu lại.");
+            var r = await body();
+            if (ownTx != null) await ownTx.CommitAsync();
+            return r;
+        }
+        catch
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
+    }
+
+    /// <summary>Mã dòng chính phải có và không trùng dòng chính khác (đọc từ DB dưới khoá).</summary>
+    public static void CheckMainCode(string label, string? code, IEnumerable<string?> otherMainCodes)
+    {
+        if (IsBlank(code))
+            throw new PartStepCodeException($"{label}: dòng chính chưa nhập NC / mã CV — nhập mã hoặc xoá dòng.");
+        var n = Norm(code);
+        if (otherMainCodes.Any(o => SameCode(o, n)))
+            throw new PartStepCodeException($"{label}: NC / mã CV {n} đã có ở dòng chính khác của Part này (có thể vừa được người khác lưu) — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng). Tải lại trang rồi kiểm tra.");
+    }
+
+    /// <summary>Lúc sửa: chỉ kiểm khi dòng (sau sửa) là dòng chính VÀ (đổi mã hoặc từ dự phòng thành chính).</summary>
+    public static bool NeedCheckOnUpdate(string? oldCode, bool oldIsBackup, string? newCode, bool newIsBackup)
+        => !newIsBackup && (oldIsBackup || !SameCode(oldCode, newCode));
+}

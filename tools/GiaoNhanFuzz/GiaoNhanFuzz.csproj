@@ -45,6 +45,7 @@
     <Compile Include="../../MES.Web/Services/PartWashingService.cs" />
     <Compile Include="../../MES.Web/Services/PartInspectionService.cs" />
     <Compile Include="../../MES.Web/Services/PartPackagingService.cs" />
+    <Compile Include="../../MES.Web/Services/PartStepGuard.cs" />   <!-- [PM-NC-DUP-SVC] khoá + chặn mã chính trùng / trống -->
     <!-- [STD-UPDATE] kịch bản `std`: Update TG chuẩn bằng service thật (StdUpdateService) + xác nhận T.Chuẩn C/D/E -->
     <Compile Include="../../MES.Web/Services/StdUpdateService.cs" />
     <Compile Include="../../MES.Web/Services/PartStepStdTimeConfirmService.cs" />

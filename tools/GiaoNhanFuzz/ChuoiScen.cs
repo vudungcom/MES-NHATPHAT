@@ -413,6 +413,102 @@ public static class ChuoiScen
             Ok(vr3.Ok && Clean(row), "Huỷ lần nhận HTSP → Gia công: lưu được, cân, không ô âm", vr3.Error);
         }
 
+        Console.WriteLine("[C15] [PM-NC-DUP-SVC] Service Part Master chặn mã chính trùng / trống (Gia công, Bavia, Rửa, KCS, Đóng gói) dưới khoá MES_PM_STEPS_<Part>");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-015", Full());
+            var lk = "MES_PM_STEPS_" + pid;
+            var pkg = new PartPackagingService(db); var kcs = new PartInspectionService(db); var gc = new PartMachiningService(db);
+            var bav = new PartBaviaService(db); var rua = new PartWashingService(db); var taro = new PartTaroService(db);
+            async Task<string?> Err(Func<Task> a) { try { await a(); return null; } catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; } }
+            int Pk(string nc) => db.PartPackagingSteps.List.Count(x => x.PartId == pid && x.IsActive && !x.IsBackup && PartStepGuard.SameCode(x.NC, nc));
+            int nPkg0 = db.PartPackagingSteps.List.Count(x => x.PartId == pid);
+
+            // (1) thêm trùng / trống
+            var e1 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P1", StepName = "dup", StandardTime = 1 }, 1, "thu dup"));
+            var e2 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = " p1 ", StepName = "dup", StandardTime = 1 }, 1, "thu dup"));
+            var e3 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "-", StepName = "trong", StandardTime = 1 }, 1, "thu trong"));
+            var e4 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "  ", StepName = "trong", StandardTime = 1 }, 1, "thu trong"));
+            Ok(e1 != null && e1.StartsWith("PartStepCodeException") && e1.Contains("P1") && e2 != null && e2.StartsWith("PartStepCodeException") && e3 != null && e3.Contains("chưa nhập") && e4 != null && e4.Contains("chưa nhập")
+               && db.PartPackagingSteps.List.Count(x => x.PartId == pid) == nPkg0 && Pk("P1") == 1 && db.Database.CurrentTransaction == null,
+               "Đóng gói: thêm P1 (đã có) / ' p1 ' (khác hoa thường + khoảng trắng) / '-' / trống → chặn, không thêm dòng, giao dịch đã đóng", $"{e1} | {e2} | {e3} | {e4}");
+            var e5 = await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = "nc02", MachineRegistered = "M9", SetupTime = 1 }, 1, "thu dup"));
+            var e6 = await Err(() => bav.AddAsync(pid, new PartBaviaStep { NC = "B1", StepName = "dup", StandardTime = 1 }, 1, "thu dup"));
+            var e7 = await Err(() => rua.AddAsync(pid, new PartWashingStep { NC = "1R", StepName = "dup", StandardTime = 1 }, 1, "thu dup"));
+            var e8 = await Err(() => kcs.AddAsync(pid, new PartInspectionStep { NC = "K2", StepName = "dup", StandardTime = 1 }, 1, "thu dup"));
+            Ok(new[] { e5, e6, e7, e8 }.All(e => e != null && e.StartsWith("PartStepCodeException")) && e5!.StartsWith("PartStepCodeException: Gia công") && e6!.Contains("Bavia") && e7!.Contains("Rửa") && e8!.Contains("KCS"),
+               "Gia công 'nc02' / Bavia B1 / Rửa 1R (mã chuẩn bị cũng là dòng chính) / KCS K2 trùng → chặn, lời báo nêu đúng mục", $"{e5} | {e6} | {e7} | {e8}");
+            // (2) dòng dự phòng không xét; mã mới không trùng thì thêm được
+            var e9 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P1", IsBackup = true, ParentNC = "P1", StepName = "DP", StandardTime = 1 }, 1, "du phong"));
+            var e10 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P2", StepName = "moi", StandardTime = 1 }, 1, "them P2"));
+            Ok(e9 == null && e10 == null && Pk("P2") == 1, "Thêm dòng dự phòng mã P1 + dòng chính P2 (chưa có) → lưu được (không chặn oan)", e9 ?? e10);
+            // (3) sửa
+            var k2 = db.PartInspectionSteps.List.Single(x => x.PartId == pid && x.IsActive && x.NC == "K2");
+            var u1 = await Err(() => kcs.UpdateAsync(k2.StepId, new PartInspectionStep { NC = "K1", StepName = k2.StepName, StandardTime = k2.StandardTime }, 1, "doi ma"));
+            var u2 = await Err(() => kcs.UpdateAsync(k2.StepId, new PartInspectionStep { NC = "k2", StepName = k2.StepName, StandardTime = 3 }, 1, "doi hoa thuong"));
+            var u3 = await Err(() => kcs.UpdateAsync(k2.StepId, new PartInspectionStep { NC = "K3", StepName = k2.StepName, StandardTime = 3 }, 1, "doi ma K3"));
+            Ok(u1 != null && u1.StartsWith("PartStepCodeException") && u2 == null && u3 == null && k2.NC == "K3" && db.Database.CurrentTransaction == null,
+               "KCS: đổi K2 → K1 (đã có) chặn; K2 → k2 (chỉ đổi hoa thường) + K2 → K3 lưu được", $"{u1} | {u2} | {u3} | NC={k2.NC}");
+            var nc2 = db.PartMachiningSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "NC02");
+            var u4 = await Err(() => gc.UpdateAsync(nc2.StepId, new PartMachiningStep { NC = "NC01", MachineRegistered = nc2.MachineRegistered, SetupTime = 7 }, 1, "doi ten"));
+            Ok(u4 != null && u4.StartsWith("PartStepCodeException: Gia công") && nc2.NC == "NC02" && nc2.SetupTime != 7, "Gia công: đổi NC02 → NC01 (đã có) chặn, dòng giữ nguyên", u4);
+            // dữ liệu cũ đã trùng (trước khi có chặn) → sửa ô khác vẫn được; đổi sang mã trùng khác vẫn chặn
+            var old = new PartPackagingStep { StepId = 9001, PartId = pid, StepOrder = 99, NC = "P1", StepName = "cu trung", StandardTime = 1, IsActive = true, CreatedBy = 1, CreatedAt = DateTime.Now };
+            db.PartPackagingSteps.List.Add(old); db.Fixup();
+            var u5 = await Err(() => pkg.UpdateAsync(9001, new PartPackagingStep { NC = "P1", StepName = "cu trung", StandardTime = 4 }, 1, "sua gio"));
+            var u6 = await Err(() => pkg.UpdateAsync(9001, new PartPackagingStep { NC = "P2", StepName = "cu trung", StandardTime = 4 }, 1, "doi ma"));
+            Ok(u5 == null && old.StandardTime == 4 && u6 != null && u6.StartsWith("PartStepCodeException"), "Dòng cũ đã trùng P1 (dữ liệu trước 02/11): sửa giờ vẫn lưu; đổi sang P2 (đã có) chặn", $"{u5} | {u6}");
+            // dự phòng → chính với mã đã có: chặn
+            var dp = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.IsBackup && x.NC == "P1");
+            var u7 = await Err(() => pkg.UpdateAsync(dp.StepId, new PartPackagingStep { NC = "P1", IsBackup = false, StepName = "DP", StandardTime = 2 }, 1, "thanh chinh"));
+            Ok(u7 != null && u7.StartsWith("PartStepCodeException") && dp.IsBackup, "Dòng dự phòng P1 chuyển thành dòng chính (P1 đã có dòng chính) → chặn", u7);
+            // (4) khoá: thêm / sửa đều khoá đúng tên, trong giao dịch, nhả xong
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "P3", StepName = "moi", StandardTime = 1 }, 1, "them P3");
+            var p3 = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.NC == "P3");
+            await pkg.UpdateAsync(p3.StepId, new PartPackagingStep { NC = "P4", StepName = "moi", StandardTime = 2 }, 1, "doi P4");
+            Ok(string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == lk + "," + lk && db.Database.CurrentTransaction == null && p3.NC == "P4",
+               $"Thêm + sửa: khoá {lk} trong giao dịch (2 lần), giao dịch đóng sau khi lưu", string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+            // (5) người khác vừa lưu P5 đúng lúc mình chờ khoá → mình phải thấy (kiểm SAU khoá)
+            bool fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (!fired && n == lk) { fired = true; db.PartPackagingSteps.List.Add(new PartPackagingStep { StepId = 9002, PartId = pid, StepOrder = 98, NC = "P5", StepName = "nguoi khac", StandardTime = 1, IsActive = true, CreatedBy = 2, CreatedAt = DateTime.Now }); db.Fixup(); } };
+            var r1 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P5", StepName = "minh", StandardTime = 1 }, 1, "them P5"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(fired && r1 != null && r1.StartsWith("PartStepCodeException") && !db.PartPackagingSteps.List.Any(x => x.PartId == pid && x.NC == "P5" && x.StepName == "minh"),
+               "2 người cùng thêm P5: người kia lưu xong ngay lúc mình chờ khoá → mình bị chặn (kiểm đọc DB SAU khoá)", r1);
+            // (5b) cùng kiểu cho SỬA (Gia công) và THÊM (Bavia): người khác lưu mã đích đúng lúc mình chờ khoá (rà độc lập K3)
+            var nc3 = db.PartMachiningSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "NC03");
+            fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (!fired && n == lk) { fired = true; db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 9003, PartId = pid, StepOrder = 97, NC = "NC77", MachineRegistered = "M7", IsActive = true, CreatedBy = 2, CreatedAt = DateTime.Now }); db.Fixup(); } };
+            var r1b = await Err(() => gc.UpdateAsync(nc3.StepId, new PartMachiningStep { NC = "NC77", MachineRegistered = nc3.MachineRegistered, SetupTime = nc3.SetupTime }, 1, "doi NC77"));
+            fired = false;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (!fired && n == lk) { fired = true; db.PartBaviaSteps.List.Add(new PartBaviaStep { StepId = 9004, PartId = pid, StepOrder = 96, NC = "B7", StepName = "nguoi khac", StandardTime = 1, IsActive = true, CreatedBy = 2, CreatedAt = DateTime.Now }); db.Fixup(); } };
+            var r1c = await Err(() => bav.AddAsync(pid, new PartBaviaStep { NC = "B7", StepName = "minh", StandardTime = 1 }, 1, "them B7"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(r1b != null && r1b.StartsWith("PartStepCodeException") && nc3.NC == "NC03" && r1c != null && r1c.StartsWith("PartStepCodeException") && db.Database.CurrentTransaction == null,
+               "Như trên cho SỬA Gia công (NC03 → NC77 vừa có) và THÊM Bavia B7: đều bị chặn, giao dịch đóng", $"{r1b} | {r1c}");
+            // (5c) thao tác ngẫu nhiên của nang (ChuoiHelp.MutateAsync kiểu 8: thêm KCS K9 / ĐG P9): lần lặp lại trên cùng Part PHẢI ra "bị chặn" (rà độc lập K2)
+            var rm = new Random(5); var got = new List<string>();
+            for (int k = 0; k < 8 && !got.Any(g => g.StartsWith("bị chặn")); k++) got.Add(await ChuoiHelp.MutateAsync(db, rm, pid, 8));
+            Ok(got.Any(g => g.StartsWith("bị chặn")) && db.PartPackagingSteps.List.Count(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "P9") <= 1 && db.PartInspectionSteps.List.Count(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "K9") <= 1,
+               "Thao tác ngẫu nhiên pmedit (thêm K9 / P9) lặp lại: lần 2 ra \"bị chặn\", Part chỉ 1 dòng K9 / P9", string.Join(" · ", got));
+            // (6) không lấy được khoá → không lưu, báo thử lại
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            var r2 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P6", StepName = "moi", StandardTime = 1 }, 1, "them P6"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
+            Ok(r2 != null && r2.Contains("Đang có người khác lưu quy trình") && !db.PartPackagingSteps.List.Any(x => x.PartId == pid && x.NC == "P6") && db.Database.CurrentTransaction == null,
+               "Khoá đang bị giữ quá 10 giây → không lưu, báo chờ rồi lưu lại, giao dịch đóng", r2);
+            // (7) có giao dịch ngoài → dùng giao dịch đó (không mở lồng), khoá nhả khi giao dịch ngoài kết thúc
+            var outer = await db.Database.BeginTransactionAsync();
+            var r3 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P7", StepName = "moi", StandardTime = 1 }, 1, "them P7"));
+            var still = db.Database.CurrentTransaction != null;
+            await outer.RollbackAsync();
+            Ok(r3 == null && still && !db.PartPackagingSteps.List.Any(x => x.PartId == pid && x.NC == "P7"), "Đang có giao dịch ngoài: thêm P7 chạy trong giao dịch đó; giao dịch ngoài Rollback → P7 không còn", r3);
+            // (8) Taro chưa chặn (khách chốt 02/11 giữ mã CV chung nhiều NC — gói TARO-NC-MA)
+            var r4 = await Err(() => taro.AddAsync(pid, new PartTaroStep { NC = "T9", WtsTaskCode = "3T", StepName = "Taro NC khac", StandardTime = 1 }, 1, "taro chung ma"));
+            Ok(r4 == null, "Taro: thêm dòng dùng chung mã CV 3T (NC khác) vẫn lưu — chờ gói TARO-NC-MA, không chặn ở service", r4);
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

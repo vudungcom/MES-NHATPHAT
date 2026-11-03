@@ -555,6 +555,15 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var what = await ChuoiHelp.MutateAsync(db, rnd, pmId);
                     desc = "pmedit " + what;
                     if (what == "bỏ qua") { Inc("skip.pmedit"); continue; }
+                    if (what.StartsWith("bị chặn"))   // [PM-NC-DUP-SVC] mã chính trùng bị service chặn: Part Master + snapshot + sổ không đổi
+                    {
+                        Inc("pmedit.chan.matrung");
+                        if (ChuoiHelp.Picture(db, pmId).Sig != pmBefore) fails.Add($"[Mã trùng bị chặn mà Part Master vẫn đổi] PO{po} op{op} {desc}");
+                        if (ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!) != before) fails.Add($"[Mã trùng bị chặn mà sổ PO đổi] PO{po} op{op} {desc}");
+                        if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Mã trùng bị chặn mà snapshot PO đổi] PO{po} op{op} {desc}");
+                        if (db.Database.Current != null) { fails.Add($"[Giao dịch treo] PO{po} op{op} {desc}"); db.Database.Current = null; }   // (rà độc lập K1: nhánh này continue trước chỗ kiểm chung)
+                        continue;
+                    }
                     if (ChuoiHelp.Picture(db, pmId).Sig == pmBefore) fails.Add($"[Sửa Part Master không có tác dụng] PO{po} op{op} {desc}");
                     if (ChuoiHelp.SnapPicture(db, 1).Sig != snapSig0) fails.Add($"[Sửa Part Master làm đổi snapshot PO] PO{po} op{op} {desc}");
                     var after = ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!);
