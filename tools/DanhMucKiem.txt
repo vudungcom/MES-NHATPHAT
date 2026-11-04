@@ -77,9 +77,9 @@ RS-C2 | quyen:Q1 | giao / nhận kiểm quyền máy chủ
 RS-D10 | loi:L8 | deadlock 1205 tự thử lại (Giao nhận)
 RS-D10c | loi:L8; wts:W11 | khoá −3 tự thử lại
 D10-REASON | loi:L13 | lý do huỷ lần nhận / huỷ phiếu cắt 200 ký tự (ô 500 ký tự ở trang: giaodien)
-PAGE-ERR | CHUA | cần ca harness: Giao nhận bắt lỗi máy chủ lạ, báo rõ
-PAGE-ERR2 | CHUA | cần ca harness: lưu xong mà tải lại lỗi → báo "Đã lưu xong… không bấm lưu lại"
-PAGE-ERR2-PO | CHUA | cần ca harness: lời báo trong cửa sổ chỉ ở đúng PO
+PAGE-ERR | harness:drive_pageerr.py:P12; harness:drive_pageerr.py:P13; harness:drive_pageerr.py:P14; harness:drive_pageerr.py:P15; harness:drive_pageerr.py:P42; harness:drive_pageerr.py:P43; harness:drive_pageerr.py:P44; harness:drive_pageerr.py:P45 | Giao / Nhận gặp lỗi máy chủ lạ (giả SaveChanges ném): cửa sổ báo "Lỗi máy chủ … xem đã lưu chưa", DB không đổi, trang còn phản hồi, bấm lại ghi đúng 1 chứng từ. Đột biến 03/11: bỏ catch ConfirmIssueAsync → P12 P13 P15 P16 SAI (phiên chết, các bước sau cũng hỏng). Nguồn: CLAUDE (KIEM-CHUA 03/11)
+PAGE-ERR2 | harness:drive_pageerr.py:P22; harness:drive_pageerr.py:P23; harness:drive_pageerr.py:P24; harness:drive_pageerr.py:P32; harness:drive_pageerr.py:P33; harness:drive_pageerr.py:P46 | đã ghi xong, chỉ bước tải lại lỗi (giả lỗi câu đọc đầu tiên sau Commit): đầu trang + cửa sổ Nhận còn mở báo "Đã lưu xong… Không bấm lưu lại", không "Lỗi máy chủ", DB đúng 1 chứng từ; lần lưu sau tải lại được thì bỏ lời báo. Đột biến 03/11: catch ném lại → P23 P33 P35 P37 SAI
+PAGE-ERR2-PO | harness:drive_pageerr.py:P34; harness:drive_pageerr.py:P35; harness:drive_pageerr.py:P36; harness:drive_pageerr.py:P37 | lời báo trong cửa sổ Nhận / Lịch sử chỉ hiện ở PO vừa lưu (PO khác không), đầu trang giữ. Đột biến 03/11: bỏ điều kiện đúng PO → P34 P36 SAI
 B1-STALE | wts:W4; nang | có khoá PO rồi mới đọc, bỏ bản EF đang giữ
 
 EVER-NG-TP | nang | lọc "có phát sinh lỗi" xét sổ vụ (nang kiểm EverHadNg sau mỗi thao tác)
@@ -106,6 +106,8 @@ WORKFLOW | chuoi:C8; wts:W4 | công tắc Workflow
 RS-E5 | harness:drive_rse5.py | Sửa KH trạng thái theo sổ
 KHO-4 | kh:A10 | Kho Workflow OFF sửa phôi làm sai số → lưu + cảnh báo ô âm
 KHO-5 | harness:drive_kho.py:K5; harness:drive_kho.py:K9b; harness:drive_kho.py:K10b; harness:drive_kho.py:K11; harness:drive_kho.py:K12; harness:drive_kho.py:K13d | cột N / O / Còn lại đọc sổ, lọc + sắp xếp theo chữ / số trên ô, Excel (.xlsx đọc lại) cùng số
+KHO-FILTER-TEXT | harness:drive_kho.py:K9c | chữ danh sách lọc cột O = đúng chữ ô "0 (+10⏳)" (trước "(+10 chờ nhận)"). Nguồn: CLAUDE (PHAT-HIEN-0211 mục 4)
+PG-DEAD | chung | bỏ PoGuard.PoDocCount.HasActiveFlow không còn chỗ gọi (PHAT-HIEN-0211 mục 3)
 KHO-ACTIVE | kh:A14; harness:drive_kho.py:K2a | Kho / xem 1 PO / danh sách KH / lưu Kho chỉ dòng đang dùng
 KHO-LEDGER | harness:drive_kho.py:K6a; harness:drive_kho.py:K6c; harness:drive_kho.py:K7; harness:drive_kho.py:K8 | trang Kho trạng thái + lọc Đã giao hết / Chưa giao hết theo sổ
 KHO-STALE | kh:A13; harness:drive_kho.py:K15b | Kho không ghi đè khi trang để cũ (nhập lần đầu)
@@ -116,6 +118,7 @@ PM-ORDER | giaodien | dự phòng nằm dưới NC gốc
 PM-DUP | harness:drive_ml9.py:D1; harness:drive_ml9.py:D4; harness:drive_ml9.py:D5; harness:drive_ml9.py:P1; harness:drive_ml9.py:P2; harness:drive_ml9.py:P3 | máy đăng ký trùng máy đồng dạng báo đỏ, modal khoá máy đăng ký + máy dòng khác, Lưu chặn trùng ở NC đang sửa, NC cũ không đụng không chặn oan
 B6-NC-DUP | harness:drive_ml9.py:B1; harness:drive_ml9.py:B2; harness:drive_ml9.py:B3; harness:drive_ml9.py:B4; harness:drive_ml9.py:B5; harness:drive_ml9.py:B6; harness:drive_ml9.py:B7; harness:drive_ml9.py:B8 | GC / Bavia / Rửa / KCS / Đóng gói: NC trống / trùng dòng mới bị chặn, dữ liệu cũ không chặn oan; KHÔNG kiểm Taro (khách chốt 02/11 Taro dùng chung mã CV — TARO-NC-MA)
 PM-NC-DUP-SVC | chuoi:C15; nang; harness:drive_pmdup.py:N1; harness:drive_pmdup.py:N2; harness:drive_pmdup.py:N3; harness:drive_pmdup.py:N4; harness:drive_pmdup.py:O1; harness:drive_pmdup.py:O2; harness:drive_pmdup.py:O3; harness:drive_pmdup.py:O4 | 5 service GC / Bavia / Rửa / KCS / Đóng gói chặn mã chính trống / "-" / trùng dưới khoá MES_PM_STEPS_<Part>. Đột biến đã thử 02/11: bỏ kiểm → C15 + nang seed 27253 PO16 SAI; kiểm mọi lần sửa → C15 SAI; kiểm trước khoá (Đóng gói thêm / Gia công sửa) → C15 SAI; trang giữ thứ tự form khi đổi tên nối chuỗi → O3 SAI; bỏ chặn đổi chéo → O4 SAI. Thứ tự Xoá → Sửa → Thêm: O1 / O2 chỉ kiểm không báo oan (dòng mới luôn ở cuối danh sách). Harness 1 DbContext chung nên N không chứng minh khoá (khoá chứng minh ở C15). Chưa có ca SQL thật (tools/SqlDongThoi) cho khoá này. KHÔNG kiểm Taro (TARO-NC-MA)
+PM-NC-DUP-THAP | chuoi:C17; harness:drive_pmdup.py:N3 | T2 đổi dự phòng ↔ chính có lưu + ChangeLog IsBackup; T5 xoá dòng (5 bảng) dưới khoá MES_PM_STEPS_<Part>, khoá bị giữ thì không xoá, người khác đổi tên lúc chờ khoá → xoá theo dữ liệu sau khoá; T6 lời báo trang không lặp tên bảng, nhãn "Gia công" (trước "Machining"). HEAD c991636: C17 9 SAI. Nguồn: CLAUDE (rà độc lập 02/11)
 RS-E2 | harness:drive_quyen.py | Part Master không "Xác nhận OK" khi lưu lỗi giữa chừng
 RS-E8 | quyen:Q3 | mã trùng sau xoá mềm
 RS-C1 | quyen:Q2; harness:drive_quyen.py | quyền ma trận danh mục
@@ -199,13 +202,13 @@ RA-SOCHUNG | harness:drive_cungso.py | bỏ chỗ tự cộng, đọc sổ
 RS-E6 | wts:W14 | WTS GC không mượn số chuẩn máy đồng dạng đầu tiên / Part Master live (nay [RS-E6-Q] cũng không mượn NC chính)
 RS-E6-Q | wts:W14; wts:W2 | máy không có trong quy trình PO → để trống chuẩn; máy chủ kiểm dòng chuẩn trang gửi đúng NC + đúng máy (Hùng duyệt 02/11)
 ML16-Q | viec:X7; wts:W9 | lưu WTS sản xuất chồng giờ việc không ra SP của chính mình → chặn; khoá người → máy → PO (Hùng duyệt 02/11)
-STD-CONFIRM-ROW | CHUA | cần ca: ô xác nhận chuẩn từng dòng WTS (wts:W2 kiểm 1 phần — xác định rồi trỏ)
-STD-ACTUAL-DEFAULT | CHUA | cần ca: T.Thực tế mặc định theo chuẩn
-SERIAL-EST-ACTUAL | CHUA | cần ca: Dự kiến Hàng loạt theo thực tế
-TRIAL-EST-ACTUAL | CHUA | cần ca: Dự kiến Chạy thử theo thực tế
-FIX-ACTUAL-EST | CHUA | cần ca: sửa Dự kiến theo thực tế
-FIX-EST-CONV | CHUA | cần ca: đổi đơn vị Dự kiến
-FIX-PO-CLEAR | CHUA | cần ca harness: bỏ chọn PO xoá ô phụ thuộc
+STD-CONFIRM-ROW | harness:drive_est.py:N3; wts:W2 | ô T.Chuẩn non-GC xanh chỉ khi ĐÚNG dòng snapshot đã xác nhận (Taro T1 có; 1T / Bavia / Rửa / KCS / Đóng gói không). Đột biến 03/11: xanh khi có dòng chuẩn → N3 5 SAI
+STD-ACTUAL-DEFAULT | harness:drive_est.py:N1; harness:drive_est.py:N2; harness:drive_ml41.py | bật Tham khảo chuẩn: T.Thực tế/pc = T.Chuẩn/pc mã vừa chọn (Taro T1 / 1T, Bavia, Rửa, KCS, Đóng gói). Đột biến 03/11: bỏ gán → N1 6 SAI
+SERIAL-EST-ACTUAL | harness:drive_est.py:S1; harness:drive_est.py:S2; harness:drive_est.py:S3; harness:drive_est.py:S4; harness:drive_est.py:S5 | Hàng loạt: đã nhập ≥ 1 ô thực tế → chỉ tính ô thực tế (ô trống = 0), 3 ô trống → chuẩn; SL = OK + NG. Đáp án đi từng phút trong drive. Đột biến 03/11: T.GC trống lấy chuẩn → S2 SAI
+TRIAL-EST-ACTUAL | harness:drive_est.py:T1; harness:drive_est.py:T2; harness:drive_est.py:T3 | Chạy thử: nhập T.CB hoặc T.Chạy → ô còn lại = 0, cả 2 trống → chuẩn, không nhân SL. Đột biến 03/11: T.Chạy trống lấy chuẩn → T2 SAI
+FIX-ACTUAL-EST | harness:drive_est.py:A1; harness:drive_est.py:A2 | không có chuẩn (chưa chọn máy): chưa nhập thực tế → không hiện Dự kiến; đã nhập → vẫn tính. Đột biến 03/11: không chuẩn là bỏ → A2 SAI
+FIX-EST-CONV | harness:drive_est.py:C1; harness:drive_est.py:C2; harness:drive_est.py:C3; harness:drive_est.py:C4; harness:drive_est.py:C5 | Dự kiến nhảy qua nghỉ ca (12:00–13:00): đúng mốc 12:00 không nhảy, qua nghỉ, bắt đầu trong nghỉ. (Ghi chú cũ "đổi đơn vị" sai — tag là cách cộng phút qua nghỉ.) Đột biến 03/11: cộng thẳng không trừ nghỉ → C2 C3 C5 SAI
+FIX-PO-CLEAR | harness:drive_est.py:X1; harness:drive_est.py:X2; harness:drive_est.py:X3; harness:drive_est.py:X4; harness:drive_est.py:X5 | xoá PO dòng đang có KH → NC / máy / SL / giờ thực tế về trống, giữ giờ bắt đầu / kết thúc, nhóm hết KH → danh sách PO lọc lại đủ. Đột biến 03/11: bỏ khối xoá → X2 SAI
 FIX-CA-FIRST-CLICK | giaodien | chọn ca lần đầu
 FIX-CA-TOGGLE | giaodien | bật / tắt ca
 FIX-CLICK | giaodien | sửa bấm
@@ -230,6 +233,7 @@ WTS-OK-FALLBACK | harness:drive_okfb.py | dòng WTS cũ QtyOk trống: Sửa dò
 W2-REMOVEROW | chung | hàm chết đã bỏ (không còn code để kiểm)
 WTS-DEAD | chung | hàm chết đã bỏ
 WTS-STD-PM-DEAD | chung | hàm chết đã bỏ
+WTS-LOAI2-DEAD | chung | bỏ nhánh "Loại 2" SaveRowAsync (không tới được: nhóm GC bắt NC, non-GC NC = Mã CV) — nay báo lỗi rõ thay vì ghi WorkerActivityLogs không qua kiểm (PHAT-HIEN-0211 mục 5)
 
 # ═══ BÁO CÁO / HIỆU SUẤT / QUYỀN / HỆ THỐNG ═══
 RPT-4 | nghi:N7 | báo cáo WTS kiểm quyền Xem ở máy chủ (3 hàm)

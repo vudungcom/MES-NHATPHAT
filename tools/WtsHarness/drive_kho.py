@@ -213,6 +213,9 @@ async def main():
         norm = lambda s: re.sub(r"\s*\(\+([\d.]+)(?:⏳| chờ nhận)\)", r" (+\1)", s)
         ok(sorted(set(map(norm, vals))) == sorted(set(norm(r["o"]) for r in ra)),
            "K9a danh sách lọc cột O = các số đang hiện trên cột O (so phần số)", (vals, sorted(set(r["o"] for r in ra))))
+        cell_txt = lambda s: re.sub(r"\s+", " ", s).strip()
+        ok(sorted(set(map(cell_txt, vals))) == sorted(set(cell_txt(r["o"]) for r in ra)) and "0 (+10⏳)" in map(cell_txt, vals),
+           "K9c [KHO-FILTER-TEXT] chữ trong danh sách lọc cột O GIỐNG HỆT chữ ô (vd '0 (+10⏳)', không phải '(+10 chờ nhận)')", (vals, sorted(set(r["o"] for r in ra))))
         await pick_only(A, "12"); rf = await rows(A)
         ok(rf and all(r["o"] == "12" for r in rf) and "PO-K2" in pos(rf) and len(rf) == sum(r["o"] == "12" for r in ra),
            "K9b chọn '12' ở cột O → chỉ còn các dòng O = 12 (có PO-K2)", pos(rf))

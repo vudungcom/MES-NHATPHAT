@@ -10,7 +10,7 @@ mkdir -p "$DST/Stubs"
 cp "$TOOLS/EfStub.cs" "$TOOLS/EfCompile2.cs" "$DST/Stubs/"
 # [KHO-5 02/11] ClosedXML tối thiểu ghi .xlsx thật (thay XlStub chỉ-để-biên-dịch) — drive_kho.py đọc file Excel trang Kho xuất ra
 cp "$H/Stubs/XlMini.cs" "$DST/Stubs/"
-cp "$H/Stubs/WebStub.cs" "$H/Stubs/HarnessFixup.cs" "$H/Stubs/HarnessSeed.cs" "$H/Stubs/HarnessLedger.cs" "$DST/Stubs/"
+cp "$H/Stubs/WebStub.cs" "$H/Stubs/HarnessFixup.cs" "$H/Stubs/HarnessSeed.cs" "$H/Stubs/HarnessLedger.cs" "$H/Stubs/HarnessFail.cs" "$DST/Stubs/"   # [KIEM-CHUA 03/11] HarnessFail = giả lỗi máy chủ + dữ liệu KH-PE (drive_pageerr.py)
 # DbContext giả: thêm ctor nhận options
 python3 - "$DST" <<'PY'
 import sys,re
@@ -49,7 +49,7 @@ s=s.replace("<RootNamespace>MES.Web</RootNamespace>","<RootNamespace>MES.Web</Ro
 open(p,'w').write(s)
 p=d+'/Program.cs'; s=open(p).read()
 s=s.replace("        SeedData.EnsureSeeded(db);","        SeedData.EnsureSeeded(db);\n        await HarnessSeed.RunAsync(db);   // [harness]")
-s=s.replace("app.UseStaticFiles();","app.UseStaticFiles();\napp.MapGet(\"/harness/dump\", (AppDbContext d) => Results.Json(HarnessSeed.Dump(d)));   // [harness]\napp.MapGet(\"/harness/dump2\", (AppDbContext d) => Results.Json(HarnessSeed.Dump2(d)));   // [harness][ML9-DUP] Part Master drive_ml9 / drive_std\napp.MapGet(\"/harness/ledger\", async (HandoverLedgerService l, AppDbContext d) => Results.Json(await HarnessLedger.SnapshotAsync(l, d)));   // [harness][WTS-PANEL-QTY]\napp.MapPost(\"/harness/kho-seed\", async (AppDbContext d) => Results.Json(await HarnessSeed.SeedKhoAsync(d)));   // [harness][KHO-5] dữ liệu trang Kho dựng khi drive_kho.py gọi\napp.MapGet(\"/harness/kho\", async (AppDbContext d, HandoverLedgerService l) => Results.Json(await HarnessSeed.DumpKhoAsync(d, l)));   // [harness][KHO-5]")
+s=s.replace("app.UseStaticFiles();","app.UseStaticFiles();\napp.MapGet(\"/harness/dump\", (AppDbContext d) => Results.Json(HarnessSeed.Dump(d)));   // [harness]\napp.MapGet(\"/harness/dump2\", (AppDbContext d) => Results.Json(HarnessSeed.Dump2(d)));   // [harness][ML9-DUP] Part Master drive_ml9 / drive_std\napp.MapGet(\"/harness/ledger\", async (HandoverLedgerService l, AppDbContext d) => Results.Json(await HarnessLedger.SnapshotAsync(l, d)));   // [harness][WTS-PANEL-QTY]\napp.MapPost(\"/harness/kho-seed\", async (AppDbContext d) => Results.Json(await HarnessSeed.SeedKhoAsync(d)));   // [harness][KHO-5] dữ liệu trang Kho dựng khi drive_kho.py gọi\napp.MapGet(\"/harness/kho\", async (AppDbContext d, HandoverLedgerService l) => Results.Json(await HarnessSeed.DumpKhoAsync(d, l)));   // [harness][KHO-5]\napp.MapPost(\"/harness/fail\", (string? kind, int? n) => Results.Json(HarnessFail.Set(kind ?? \"off\", n ?? 1)));   // [harness][KIEM-CHUA] giả lỗi máy chủ\napp.MapGet(\"/harness/fail\", () => Results.Json(HarnessFail.Stat()));   // [harness][KIEM-CHUA]\napp.MapPost(\"/harness/pe-seed\", async (AppDbContext d) => Results.Json(await HarnessFail.SeedPeAsync(d)));   // [harness][KIEM-CHUA] KH-PE")
 assert "HarnessSeed.RunAsync" in s and "/harness/dump" in s
 open(p,'w').write(s)
 p=d+'/appsettings.json'; s=open(p).read()

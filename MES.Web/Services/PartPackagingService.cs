@@ -96,12 +96,20 @@ public class PartPackagingService
         {
         var existing = await _db.PartPackagingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
+        // [PM-NC-DUP-THAP 2026-11-03] V1: đọc lại dòng từ DB dưới khoá — DbContext dùng chung cả phiên trang, FirstOrDefaultAsync trả bản EF đang giữ
+        //   (giá trị cũ nếu người khác vừa đổi tên) → dò dự phòng theo mã cũ, dự phòng mồ côi. Nguồn: CLAUDE (rà độc lập 03/11).
+        await _db.Entry(existing).ReloadAsync();
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
         // [PM-NC-DUP-SVC] mã / dự phòng đọc lại từ DB dưới khoá (existing có thể là bản EF trang đang giữ từ lần lưu trước — rà độc lập 02/11 T1)
         var dbNow = await _db.PartPackagingSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup }).FirstAsync();
         if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
             PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartPackagingSteps
                 .Where(s => s.PartId == existing.PartId && s.IsActive && !s.IsBackup && s.StepId != stepId).Select(s => s.NC).ToListAsync());
+        // [PM-NC-DUP-THAP 2026-11-03] T3: dòng chính đổi thành dự phòng mà còn dự phòng con (ParentNC = mã này) → con mồ côi, sổ không gộp WTS về đâu (N2) → chặn.
+        //   Nguồn: CLAUDE (rà độc lập 03/11; trang chưa có nút đổi, chặn ở máy chủ cho chắc).
+        if (!dbNow.IsBackup && updated.IsBackup && await _db.PartPackagingSteps.AsNoTracking()
+                .AnyAsync(s => s.PartId == existing.PartId && s.IsActive && s.IsBackup && s.StepId != stepId && s.ParentNC == dbNow.NC))
+            throw new PartStepCodeException($"{Label}: NC / mã CV {PartStepGuard.Norm(dbNow.NC)} đang có dòng dự phòng — xoá dòng dự phòng trước khi đổi dòng này thành dự phòng.");
 
         var pid = existing.PartId;
         var changedCount = 0;
@@ -111,6 +119,9 @@ public class PartPackagingService
         changedCount += LogStringDiff("NC",           existing.NC,           updated.NC,           stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("StepName",     existing.StepName,     updated.StepName,     stepId, pid, userId, reason, now);
         changedCount += LogStringDiff("ParentNC",     existing.ParentNC,     updated.ParentNC,     stepId, pid, userId, reason, now);
+        // [PM-NC-DUP-THAP 2026-11-03] T2: Đổi dự phòng ↔ chính cũng là thay đổi: trước không đếm → chỉ đổi ô này thì không lưu, ChangeLog không ghi.
+        //   Nguồn: CLAUDE (rà độc lập gói PM-NC-DUP-SVC 02/11, dòng PM-NC-DUP-THAP). Kiểm mã khi dự phòng thành chính đã có ở NeedCheckOnUpdate.
+        changedCount += LogStringDiff("IsBackup", existing.IsBackup ? "1" : "0", updated.IsBackup ? "1" : "0", stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("StandardTime", existing.StandardTime, updated.StandardTime, stepId, pid, userId, reason, now);
 
         if (changedCount == 0) return 0;
@@ -154,8 +165,19 @@ public class PartPackagingService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
+        // [PM-NC-DUP-THAP 2026-11-03] T5: Xoá cũng chạy dưới khoá MES_PM_STEPS_<PartId> (như Thêm / Sửa [PM-NC-DUP-SVC]).
+        //   Trước: người A xoá dòng chính (kéo theo dự phòng ParentNC = mã cũ) đúng lúc người B đổi tên mã đó → dự phòng mồ côi.
+        //   Nguồn: CLAUDE (rà độc lập 02/11, dòng PM-NC-DUP-THAP).
+        var lockPidDel = await _db.PartPackagingSteps.Where(s => s.StepId == stepId).Select(s => (int?)s.PartId).FirstOrDefaultAsync();
+        if (lockPidDel == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
+        await PartStepGuard.RunLockedAsync(_db, lockPidDel.Value, async () =>
+        {
+
         var existing = await _db.PartPackagingSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException("Không tìm thấy dòng công đoạn");
+        // [PM-NC-DUP-THAP 2026-11-03] V1: đọc lại dòng từ DB dưới khoá — DbContext dùng chung cả phiên trang, FirstOrDefaultAsync trả bản EF đang giữ
+        //   (giá trị cũ nếu người khác vừa đổi tên) → dò dự phòng theo mã cũ, dự phòng mồ côi. Nguồn: CLAUDE (rà độc lập 03/11).
+        await _db.Entry(existing).ReloadAsync();
 
         var snapshot = JsonSerializer.Serialize(new
         {
@@ -192,6 +214,8 @@ public class PartPackagingService
 
         _db.PartPackagingSteps.Remove(existing);
         await _db.SaveChangesAsync();
+        return 0;
+        });   // [PM-NC-DUP-THAP] T5
     }
 
     private static void ValidateReason(string reason)

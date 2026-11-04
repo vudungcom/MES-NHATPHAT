@@ -354,7 +354,8 @@ namespace Microsoft.EntityFrameworkCore
         public HashSet<int> PoLocked = new();   // [ISO-FIX] các PO giao dịch này đã khoá MES_PO_<id> (sp_getapplock)
         public static int Rollbacks;
         internal StubTransaction(DbContext c, DatabaseFacade f, Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> snap) { _c = c; _f = f; _snap = snap; }
-        public Task CommitAsync(CancellationToken ct = default) { _done = true; _f.Current = null; return Task.CompletedTask; }
+        public Task CommitAsync(CancellationToken ct = default) { _done = true; _f.Current = null; OnCommit?.Invoke(); return Task.CompletedTask; }
+        public static Action? OnCommit;   // [KIEM-CHUA 2026-11-03] harness drive_pageerr.py: giả lỗi tải lại NGAY SAU khi giao dịch ghi xong (PAGE-ERR2)
         public static Action? OnRollback;   // [WHY-TRAN-DB] kịch bản loi L11
         public Task RollbackAsync(CancellationToken ct = default) { if (!_done) { _c.Restore(_snap); Rollbacks++; } _done = true; _f.Current = null; OnRollback?.Invoke(); return Task.CompletedTask; }
         // [WHY-TRAN-DB 2026-11-01] Giống EF thật: Dispose lần 2 không làm gì (cờ _disposed); Dispose lần đầu — kể cả sau Rollback —

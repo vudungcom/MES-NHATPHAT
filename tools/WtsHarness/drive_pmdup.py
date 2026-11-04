@@ -72,7 +72,8 @@ async def main():
             ok([x["nc"] for x in cde(d, "pkg")].count("P9") == 1 and [x["nc"] for x in cde(d, "kcs")].count("K9") == 1 and [s["nc"] for s in gc_main(d)].count("9") == 1,
                "N2 người B (trang mở trước khi A lưu) lưu cùng mã: DB VẪN mỗi mã 1 dòng chính (trước: thành 2 dòng P9 / K9 / NC 9)",
                f"P9×{[x['nc'] for x in cde(d, 'pkg')].count('P9')} K9×{[x['nc'] for x in cde(d, 'kcs')].count('K9')} NC9×{[s['nc'] for s in gc_main(d)].count('9')}")
-            ok("✗ [Đóng gói] NC=P9" in tb and "P9 đã có ở dòng chính khác" in tb and "✗ [Kiểm tra] NC=K9" in tb and "✗ [Machining] NC=9" in tb,
+            ok("✗ [Đóng gói] NC=P9" in tb and "P9 đã có ở dòng chính khác" in tb and "✗ [Kiểm tra] NC=K9" in tb and "✗ [Gia công] NC=9" in tb   # [PM-NC-DUP-THAP T6 03/11] trước "[Machining]"
+               and "NC=P9: Đóng gói:" not in tb and "NC=9: Gia công:" not in tb,   # [PM-NC-DUP-THAP T6] không lặp tên bảng
                "N3 người B thấy lời báo từng dòng \"✗ [Đóng gói] NC=P9: … P9 đã có ở dòng chính khác … Tải lại trang\" (KCS, Gia công tương tự)", lines(tb, "✗", "⚠"))
             ok("Đang xử lý" not in body and "Lỗi hệ thống" not in tb, "N4 trang B không treo, không báo lỗi hệ thống", lines(body, "Đang xử lý", "Lỗi hệ thống"))
         except Exception as e:

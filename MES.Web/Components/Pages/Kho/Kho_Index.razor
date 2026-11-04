@@ -675,7 +675,7 @@ else
     private static string NgayGiaoText(KhoVatLieuViewItem r) => r.GiaoGcNgayDau.HasValue ? r.GiaoGcNgayDau.Value.ToString("dd/MM/yyyy") : "No";
     private static string SlGiaoText(KhoVatLieuViewItem r)
         => r.GiaoGcXacNhan > 0 || r.GiaoGcChoNhan > 0
-            ? r.GiaoGcXacNhan.ToString("0.##") + (r.GiaoGcChoNhan > 0 ? $" (+{r.GiaoGcChoNhan:0.##} chờ nhận)" : "")
+            ? r.GiaoGcXacNhan.ToString("0.##") + (r.GiaoGcChoNhan > 0 ? $" (+{r.GiaoGcChoNhan:0.##}⏳)" : "")   // [KHO-FILTER-TEXT 2026-11-03] đúng chữ ô "0 (+10⏳)" (trước "(+10 chờ nhận)" — lọc hiện chữ khác ô). Nguồn: CLAUDE (PHAT-HIEN-0211 mục 4)
             : "—";
 
     // ================================================================

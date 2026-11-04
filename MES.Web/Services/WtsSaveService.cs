@@ -837,57 +837,15 @@ namespace MES.Web.Services
                     return;
                 }
             }
-            // ── Loại 2: Mã WTS khác (không link PO) → WorkerActivityLog ──
+            // [WTS-LOAI2-DEAD 2026-11-03] Bỏ nhánh "Loại 2" (dòng không NC → ghi WorkerActivityLogs từ form nhóm): không tới được —
+            //   SaveGroupOnceAsync đầu hàm bắt Gia công phải chọn NC nhóm, mọi dòng phải có PO, non-GC NC = Mã CV (không Mã CV → báo "Chọn NC
+            //   hoặc Mã WTS khác" ở trên), nên dòng tới đây luôn có NC. Nhánh cũ ghi
+            //   WorkerActivityLogs KHÔNG qua kiểm chồng giờ / PO / ca của "Việc không ra sản phẩm" (SaveActivityAsync [ML16-ACT]) → nếu sau này
+            //   có đường lọt tới thì chặn rõ thay vì ghi lặng lẽ. Nguồn: CLAUDE (PHAT-HIEN-0211 mục 5, viết bộ kiểm 02/11).
             else
             {
-                try
-                {
-                    var actLog = new WorkerActivityLog
-                    {
-                        WorkerId  = grp.UserId,
-                        WorkDate  = DateOnly.FromDateTime(grp.WorkDate),
-                        StartTime = row.StartTime,
-                        EndTime   = row.EndTime,
-                        WtsCode   = row.WtsCode,
-                        WtsName   = row.WtsName,
-                        Notes     = row.Notes,
-                        CreatedAt = DateTime.Now,
-                        IsVoided  = false,
-                    };
-                    _db.WorkerActivityLogs.Add(actLog);
-                    await _db.SaveChangesAsync();
-                    row.ActivityLogId = actLog.ActivityLogId;
-                    if (row.BreakRows is { Count: > 0 } _brkA)   // [ML17-XN]
-                    {
-                        _db.WtsBreakWorkLogs.AddRange(WorkMinutes.ToEntities(_brkA, null, actLog.ActivityLogId));
-                        await _db.SaveChangesAsync();
-                    }
-
-                    // Lưu từng dòng phát sinh chi tiết
-                    if (row.ExtraItems.Any())
-                    {
-                        foreach (var ei in row.ExtraItems.Where(e => e.Minutes > 0))
-                        {
-                            _db.WtsExtraItems.Add(new WtsExtraItemLog
-                            {
-                                ActivityLogId = actLog.ActivityLogId,
-                                WtsCode       = ei.WtsCode,
-                                WtsName       = ei.WtsName,
-                                Minutes       = ei.Minutes,
-                                Notes         = ei.Notes,
-                                CreatedAt     = DateTime.Now,
-                            });
-                        }
-                        await _db.SaveChangesAsync();
-                    }
-                    _db.ChangeTracker.Clear();
-                }
-                catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10b] deadlock: đi ra SaveGroupAsync để tự lưu lại cả nhóm
-                {
-                    var inner = ex.InnerException?.Message ?? ex.Message;
-                    row.ErrorMsg = "Lỗi khi lưu: " + inner;
-                    return;
-                }
+                row.ErrorMsg = "Dòng chưa có NC / Mã CV — chọn NC (Gia công) hoặc Mã CV; việc không ra sản phẩm nhập bằng nút \"+ Việc không ra sản phẩm\".";
+                return;
             }
 
             row.Saved = true;

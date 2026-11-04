@@ -3887,7 +3887,7 @@ else
                     (id, e) => MachiningSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => MachiningSvc.SoftDeleteAsync(id, _currentUserId, reason),
                     id => Task.CompletedTask, 
-                    "Machining", log, errors);
+                    "Gia công", log, errors);   // [PM-NC-DUP-THAP 2026-11-03] T6: nhãn lời báo tiếng Việt như các bảng khác (trước "Machining"); chỉ dùng cho chữ ✓ / ✗
 
                 // Save timing rows per-máy
                 await SaveMachiningTimingsAsync(_machiningEdits, log, errors);
@@ -4218,9 +4218,22 @@ else
                 // nếu không mọi SaveChanges phía sau sẽ thử lại lệnh lỗi → exception → circuit chết → nút treo "Đang xử lý..."
                 Db.ChangeTracker.Clear();
                 _saveFailedSteps.Add(e);   // [RA-CASCADE-PM] T5
-                errors.Add($"✗ [{label}] NC={e.NC}: {ex.GetBaseException().Message}");
+                errors.Add($"✗ [{label}] NC={e.NC}: {StepErrText(ex)}");   // [PM-NC-DUP-THAP] T6
             }
         }
+    }
+
+    // [PM-NC-DUP-THAP 2026-11-03] T6: Lời báo mã trùng / trống của service đã mở đầu bằng tên bảng ("Đóng gói: NC / mã CV …")
+    //   → trang bỏ phần đó để không lặp "✗ [Đóng gói] NC=P9: Đóng gói: …". Lỗi khác giữ nguyên chữ. Nguồn: CLAUDE (rà độc lập 02/11).
+    private static string StepErrText(Exception ex)
+    {
+        var msg = ex.GetBaseException().Message;
+        if (ex.GetBaseException() is PartStepCodeException)
+        {
+            var i = msg.IndexOf(": ", StringComparison.Ordinal);
+            if (i > 0 && i < 20) msg = msg[(i + 2)..];
+        }
+        return msg;
     }
 
     private async Task SaveMachiningTimingsAsync(List<MachiningEdit> edits, List<string> log, List<string> errors)

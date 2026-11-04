@@ -509,6 +509,91 @@ public static class ChuoiScen
             Ok(r4 == null, "Taro: thêm dòng dùng chung mã CV 3T (NC khác) vẫn lưu — chờ gói TARO-NC-MA, không chặn ở service", r4);
         }
 
+        Console.WriteLine("[C17] [PM-NC-DUP-THAP] T2 đổi dự phòng ↔ chính có lưu + ChangeLog; T5 xoá dòng dưới khoá MES_PM_STEPS_<Part>");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-017", Full());
+            var lk = "MES_PM_STEPS_" + pid;
+            var pkg = new PartPackagingService(db); var gc = new PartMachiningService(db); var bav = new PartBaviaService(db);
+            var rua = new PartWashingService(db); var kcs = new PartInspectionService(db);
+            async Task<string?> Err(Func<Task> a) { try { await a(); return null; } catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; } }
+            // T2: chỉ đổi IsBackup (chính → dự phòng) — trước: changedCount = 0 → không lưu
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "P8", StepName = "doi", StandardTime = 1 }, 1, "them P8");
+            var p8 = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.NC == "P8");
+            var nLog0 = db.PartProcessStepChangeLogs.List.Count(l => l.StepId == p8.StepId);
+            var t2a = await Err(() => pkg.UpdateAsync(p8.StepId, new PartPackagingStep { NC = "P8", IsBackup = true, ParentNC = "P1", StepName = "doi", StandardTime = 1 }, 1, "thanh du phong"));
+            var logs = db.PartProcessStepChangeLogs.List.Where(l => l.StepId == p8.StepId).Skip(nLog0).ToList();
+            Ok(t2a == null && p8.IsBackup && p8.ParentNC == "P1" && logs.Any(l => l.FieldName == "IsBackup" && l.OldValue == "0" && l.NewValue == "1"),
+               "T2 Đóng gói: chỉ đổi dòng chính P8 → dự phòng của P1 (giờ, tên giữ nguyên) → lưu được, ChangeLog ghi IsBackup 0 → 1", $"{t2a} · IsBackup={p8.IsBackup} ParentNC={p8.ParentNC} · log={string.Join(",", logs.Select(l => l.FieldName + ":" + l.OldValue + "→" + l.NewValue))}");
+            var t2b = await Err(() => pkg.UpdateAsync(p8.StepId, new PartPackagingStep { NC = "P8", IsBackup = false, ParentNC = "P1", StepName = "doi", StandardTime = 1 }, 1, "lai thanh chinh"));
+            Ok(t2b == null && !p8.IsBackup, "T2: dự phòng P8 → lại dòng chính (P8 chưa có dòng chính khác) → lưu được", t2b);
+            // T3: dòng chính có dự phòng con → không cho đổi thành dự phòng (con mồ côi)
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PC", StepName = "chinh", StandardTime = 1 }, 1, "them PC");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PC", IsBackup = true, ParentNC = "PC", StepName = "dp PC", StandardTime = 1 }, 1, "them dp PC");
+            var pc = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "PC");
+            var t3 = await Err(() => pkg.UpdateAsync(pc.StepId, new PartPackagingStep { NC = "PC", IsBackup = true, ParentNC = "P1", StepName = "chinh", StandardTime = 1 }, 1, "thanh du phong"));
+            Ok(t3 != null && t3.StartsWith("PartStepCodeException") && t3.Contains("đang có dòng dự phòng") && !pc.IsBackup && db.Database.CurrentTransaction == null,
+               "T3: dòng chính PC còn dự phòng con → đổi thành dự phòng bị chặn, dòng giữ nguyên", t3);
+            var nLogAll = db.PartProcessStepChangeLogs.List.Count;
+            var t2c = await Err(() => kcs.UpdateAsync(db.PartInspectionSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup).StepId,
+                new PartInspectionStep { NC = db.PartInspectionSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup).NC, IsBackup = false,
+                    StepName = db.PartInspectionSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup).StepName,
+                    StandardTime = db.PartInspectionSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup).StandardTime }, 1, "khong doi"));
+            Ok(t2c == null && db.PartProcessStepChangeLogs.List.Count == nLogAll, "T2: lưu không đổi gì (KCS) → không lỗi, không ghi ChangeLog", t2c);
+            // T5: xoá dòng của mỗi bảng đều khoá đúng tên, trong giao dịch, nhả xong; dự phòng đi theo vẫn xoá
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "P9", StepName = "xoa", StandardTime = 1 }, 1, "them P9");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "P9", IsBackup = true, ParentNC = "P9", StepName = "dp P9", StandardTime = 1 }, 1, "them dp P9");
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var p9 = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "P9");
+            var d1 = await Err(() => pkg.SoftDeleteAsync(p9.StepId, 1, "xoa P9"));
+            Ok(d1 == null && !db.PartPackagingSteps.List.Any(x => x.PartId == pid && x.NC == "P9") && string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == lk && db.Database.CurrentTransaction == null,
+               $"T5 Đóng gói: xoá P9 (kéo theo dự phòng P9) khoá {lk} 1 lần, giao dịch đóng", $"{d1} · khoá={string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames)}");
+            var idGc = db.PartMachiningSteps.List.Last(x => x.PartId == pid && x.IsActive && !x.IsBackup).StepId;
+            var idBv = db.PartBaviaSteps.List.Last(x => x.PartId == pid && x.IsActive).StepId;
+            var idRu = db.PartWashingSteps.List.Last(x => x.PartId == pid && x.IsActive).StepId;
+            var idKc = db.PartInspectionSteps.List.Last(x => x.PartId == pid && x.IsActive).StepId;
+            var del = new List<(string ten, string tb, long id, Func<Task> f, Func<bool> con)>
+            {
+                ("Gia công", ProcessStepTable.Machining, idGc, () => gc.SoftDeleteAsync(idGc, 1, "xoa"), () => db.PartMachiningSteps.List.Any(x => x.StepId == idGc)),
+                ("Bavia", ProcessStepTable.Bavia, idBv, () => bav.SoftDeleteAsync(idBv, 1, "xoa"), () => db.PartBaviaSteps.List.Any(x => x.StepId == idBv)),
+                ("Rửa", ProcessStepTable.Washing, idRu, () => rua.SoftDeleteAsync(idRu, 1, "xoa"), () => db.PartWashingSteps.List.Any(x => x.StepId == idRu)),
+                ("KCS", ProcessStepTable.Inspection, idKc, () => kcs.SoftDeleteAsync(idKc, 1, "xoa"), () => db.PartInspectionSteps.List.Any(x => x.StepId == idKc)),
+            };
+            foreach (var (ten, tb, id, f, con) in del)
+            {
+                Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+                var de = await Err(f);
+                var logDel = db.PartProcessStepChangeLogs.List.Any(l => l.StepTable == tb && l.StepId == id && l.FieldName == ProcessStepAction.Deleted && !string.IsNullOrEmpty(l.OldValue));
+                Ok(de == null && !con() && logDel && string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames) == lk && db.Database.CurrentTransaction == null,
+                   $"T5 {ten}: xoá dòng khoá {lk}, dòng mất khỏi bảng, ChangeLog có ảnh chụp dòng xoá, giao dịch đóng", $"{de} · còn={con()} · log={logDel} · khoá={string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames)}");
+            }
+            // T5: khoá đang bị giữ → không xoá, báo thử lại
+            var pk1 = db.PartPackagingSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            var d2 = await Err(() => pkg.SoftDeleteAsync(pk1.StepId, 1, "xoa khi bi giu"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
+            Ok(d2 != null && d2.Contains("Đang có người khác lưu quy trình") && db.PartPackagingSteps.List.Any(x => x.StepId == pk1.StepId) && db.Database.CurrentTransaction == null,
+               "T5: khoá quy trình đang bị giữ → không xoá, báo chờ rồi lưu lại, giao dịch đóng", d2);
+            // T5: người khác đổi tên dòng chính đúng lúc mình chờ khoá xoá → mình xoá theo tên MỚI (dự phòng trỏ tên mới cũng đi theo, không mồ côi)
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", StepName = "chinh", StandardTime = 1 }, 1, "them PA");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", IsBackup = true, ParentNC = "PA", StepName = "dp", StandardTime = 1 }, 1, "them dp PA");
+            var pa = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "PA");
+            var pad = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.IsBackup && x.ParentNC == "PA");
+            bool fired = false;
+            // Giả "đọc lại DB": người khác lưu → thay bằng object MỚI mang tên PB (bản cũ trong tay mình không đổi) — chỉ code đọc dòng SAU khoá mới thấy PB
+            //   (EF thật: dòng đang theo dõi phải ReloadAsync — stub không mô phỏng được theo dõi, xem DanhMucKiem PM-NC-DUP-THAP)
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (!fired && n == lk) { fired = true;
+                db.PartPackagingSteps.List.Remove(pa); db.PartPackagingSteps.List.Remove(pad);
+                db.PartPackagingSteps.List.Add(new PartPackagingStep { StepId = pa.StepId, PartId = pid, StepOrder = pa.StepOrder, NC = "PB", StepName = pa.StepName, StandardTime = pa.StandardTime, IsActive = true, CreatedBy = 2, CreatedAt = DateTime.Now });
+                db.PartPackagingSteps.List.Add(new PartPackagingStep { StepId = pad.StepId, PartId = pid, StepOrder = pad.StepOrder, NC = "PB", IsBackup = true, ParentNC = "PB", StepName = pad.StepName, StandardTime = pad.StandardTime, IsActive = true, CreatedBy = 2, CreatedAt = DateTime.Now });
+                db.Fixup(); } };
+            var d3 = await Err(() => pkg.SoftDeleteAsync(pa.StepId, 1, "xoa PA"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null;
+            Ok(fired && d3 == null && !db.PartPackagingSteps.List.Any(x => x.StepId == pa.StepId || x.StepId == pad.StepId),
+               "T5: người khác đổi PA → PB (cả dự phòng) đúng lúc mình chờ khoá xoá → xoá theo dữ liệu SAU khoá: dòng chính + dự phòng PB đều xoá, không mồ côi", d3);
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

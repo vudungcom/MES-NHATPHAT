@@ -27,8 +27,8 @@ namespace MES.Web.Services
 
             /// <summary>Có bất kỳ chứng từ nào (kể cả đã huỷ) — dùng cho Xoá / Tách PO.</summary>
             public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0 || GioSuaAll > 0;   // [E3-NGREP] + báo lỗi · [ML16-DOCS] + giờ việc không ra SP
-            /// <summary>Đang có số chạy (WTS / phiếu chưa huỷ) — dùng cho Cập nhật quy trình (K6).</summary>
-            public bool HasActiveFlow => WtsActive > 0 || PhieuActive > 0 || BaoLoiActive > 0;   // [E3-NGREP] + báo lỗi
+            // [PG-DEAD 2026-11-03] Đã bỏ HasActiveFlow (WtsActive / PhieuActive / BaoLoiActive > 0): không còn chỗ nào gọi (tìm cả MES.Web + tools 03/11;
+            //   Cập nhật quy trình nay theo K6-NOTRUN ở KhPlanService). Các số đếm Active vẫn dùng cho Text(). Nguồn: CLAUDE (PHAT-HIEN-0211 mục 3)
 
             public string Text()
             {
