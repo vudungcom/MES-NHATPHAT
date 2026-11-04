@@ -90,8 +90,14 @@ namespace MES.Web.Services
         public static string NormalizeCode(string? code) => (code ?? "").Trim().ToUpperInvariant();
 
         /// <summary>Thêm (id null) hoặc sửa loại lỗi. Mã duy nhất, viết hoa, ≤ 20 ký tự; tên ≤ 200.</summary>
+        // [PHAT-HIEN-0311 2026-11-04] Thêm / sửa / ngưng dùng / xoá loại lỗi: máy chủ tự kiểm quyền SỬA "DS Lỗi" (DS_LOI) theo DB
+        //   (PermCheck, cùng luật RS-C1). Trước: service không kiểm, trang lấy quyền theo claim lúc mở (Admin bị hạ nhóm vẫn sửa được
+        //   tới khi AuthGuard đá ra). Nguồn: CLAUDE rà độc lập 03/11, Hùng duyệt 04/11 08:24.
+        public const string TenMuc = "DS Lỗi";
+
         public async Task<(bool Ok, string Error)> SaveCategoryAsync(int? id, string? code, string? name, string? description, int sortOrder, int userId)
         {
+            if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.DsLoi)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
             var c = NormalizeCode(code);
             var n = (name ?? "").Trim();
             var d = string.IsNullOrWhiteSpace(description) ? null : description!.Trim();
@@ -131,6 +137,7 @@ namespace MES.Web.Services
         /// <summary>Ngưng dùng / dùng lại (ẩn / hiện trong danh sách chọn).</summary>
         public async Task<(bool Ok, string Error)> SetActiveAsync(int id, bool active, int userId)
         {
+            if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.DsLoi)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
             var cur = await _db.NgCategories.FirstOrDefaultAsync(x => x.NgCategoryId == id);
             if (cur == null) return (false, "Loại lỗi không còn.");
             if (cur.IsActive == active) return (true, "");
@@ -144,6 +151,7 @@ namespace MES.Web.Services
         /// <summary>Xoá hẳn — chỉ khi chưa dùng trong vụ lỗi nào (đã dùng thì Ngưng dùng).</summary>
         public async Task<(bool Ok, string Error)> DeleteCategoryAsync(int id, int userId)
         {
+            if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.DsLoi)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
             var cur = await _db.NgCategories.FirstOrDefaultAsync(x => x.NgCategoryId == id);
             if (cur == null) return (false, "Loại lỗi không còn.");
             if (await _db.NgCases.AsNoTracking().AnyAsync(x => x.NgCategoryId == id))

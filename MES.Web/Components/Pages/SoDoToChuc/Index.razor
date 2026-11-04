@@ -37,7 +37,7 @@
             </button>
 
             <!-- Nút Thêm vị trí mới -->
-            <button type="button" class="btn btn-success btn-sm" @onclick="() => MoPopupThemTuDo()">
+            <button type="button" class="btn btn-success btn-sm" @onclick="() => MoPopupThemTuDo()" disabled="@(!_canEdit)">
                 <i class="bi bi-plus-lg"></i> Thêm vị trí mới
             </button>
 
@@ -290,7 +290,7 @@
                     <div class="text-muted small">Đơn vị: <b>@deptXemAnh.DepartmentName</b> (@deptXemAnh.DepartmentCode)</div>
                 </div>
                 <div class="modal-footer bg-light py-2 justify-content-between">
-                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => { DongXemAnhLon(); MoPopupSua(deptXemAnh); }">
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="XemAnhSangSua">
                         <i class="bi bi-pencil-square"></i> Đổi ảnh / Cập nhật
                     </button>
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongXemAnhLon">Đóng</button>
@@ -386,7 +386,7 @@
                                 <div class="upload-preview-placeholder"><i class="bi bi-image"></i></div>
                             }
                             <div class="flex-grow-1">
-                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: false))" accept="image/*" class="form-control form-control-sm" />
+                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: false))" accept=".jpg,.jpeg,.png,.webp" class="form-control form-control-sm" />
                                 <div class="text-muted" style="font-size: 0.72rem;">Định dạng: JPG, PNG (tối đa 5MB)</div>
                             </div>
                         </div>
@@ -472,7 +472,7 @@
                                 <div class="upload-preview-placeholder"><i class="bi bi-image"></i></div>
                             }
                             <div class="flex-grow-1">
-                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: true))" accept="image/*" class="form-control form-control-sm" />
+                                <InputFile OnChange="@(e => XuLyTaiAnh(e, isEdit: true))" accept=".jpg,.jpeg,.png,.webp" class="form-control form-control-sm" />
                                 <div class="text-muted" style="font-size: 0.72rem;">Tải ảnh chân dung mới để cập nhật</div>
                             </div>
                         </div>
@@ -494,10 +494,10 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-sm btn-outline-danger me-auto" @onclick="() => { DongPopupSua(); MoPopupXoa(deptDangSua); }">
+                    <button type="button" class="btn btn-sm btn-outline-danger me-auto" @onclick="SuaSangXoa">
                         <i class="bi bi-trash"></i> Xóa vị trí
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => { DongPopupSua(); MoPopupLichSu(deptDangSua); }">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="SuaSangLichSuAsync">
                         <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupSua" disabled="@isProcessing">Hủy</button>
@@ -871,11 +871,32 @@
     private string tenGocLucMoPopup = "";
     private bool isNewAvatarUploaded = false;
 
+    // [PHAT-HIEN-0311 2026-11-04] quyền ma trận SO_DO_TC đọc DB (máy chủ DepartmentService cũng kiểm lại lúc lưu / tải ảnh).
+    //   Trước: trang không kiểm quyền — ai đăng nhập gõ /so-do-to-chuc là thấy + sửa (chỉ cần PIN của chính mình).
+    private bool _canView = false;
+    private bool _canEdit = false;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         currentUserId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
+        _canView = await DeptSvc.CanViewAsync(currentUserId);   // [PHAT-HIEN-0311]
+        _canEdit = await DeptSvc.CanEditAsync(currentUserId);
+        if (!_canView)
+        {
+            thongBaoLoi = MES.Web.Services.PermCheck.NoView(MES.Web.Services.DepartmentService.TenMuc);
+            isLoading = false;
+            return;
+        }
         await LoadDataAsync();
+    }
+
+    /// <summary>[PHAT-HIEN-0311] Mở form Thêm / Sửa / Xoá khi không có quyền Sửa → báo, không mở.</summary>
+    private bool ChanKhongQuyenSua()
+    {
+        if (_canEdit) return false;
+        thongBaoLoi = MES.Web.Services.PermCheck.NoEdit(MES.Web.Services.DepartmentService.TenMuc);
+        return true;
     }
 
     private async Task LoadDataAsync()
@@ -891,6 +912,7 @@
     // Xuất Excel
     private async Task XuatExcelAsync()
     {
+        if (!_canView) return;   // [PHAT-HIEN-0311]
         try
         {
             isExporting = true;
@@ -951,26 +973,16 @@
 
         try
         {
-            var folderPath = Path.Combine(Env.WebRootPath ?? "wwwroot", "uploads", "avatars");
-            if (!Directory.Exists(folderPath))
-            {
-                Directory.CreateDirectory(folderPath);
-            }
-
-            var ext = Path.GetExtension(file.Name);
-            if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-
-            var randomCode = Guid.NewGuid().ToString("N").Substring(0, 8);
-            var fileName = $"nv_{DateTime.Now:yyyyMMddHHmmss}_{randomCode}{ext}";
-            var fullPath = Path.Combine(folderPath, fileName);
-
+            // [PHAT-HIEN-0311 2026-11-04] lưu ảnh qua máy chủ: cần quyền Sửa Sơ đồ tổ chức, chỉ .jpg / .jpeg / .png / .webp
+            //   (đuôi + mấy byte đầu file). Trước: không kiểm đuôi, file trống đuôi thì gán ".jpg", .html / .js cũng lưu vào wwwroot.
+            string relativeUrl;
             using (var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024))
-            using (var fileStream = new FileStream(fullPath, FileMode.Create))
             {
-                await stream.CopyToAsync(fileStream);
+                var (okA, errA, urlA) = await DeptSvc.SaveAvatarAsync(stream, file.Name, file.Size, currentUserId, Env.WebRootPath ?? "wwwroot");
+                if (!okA || urlA == null) { loiPopup = errA ?? "Lỗi lưu file ảnh."; return; }
+                relativeUrl = urlA;
             }
 
-            var relativeUrl = $"/uploads/avatars/{fileName}";
             if (isEdit && deptDangSua != null)
             {
                 deptDangSua.AvatarUrl = relativeUrl;
@@ -991,6 +1003,7 @@
     // Thêm
     private void MoPopupThemTuDo()
     {
+        if (ChanKhongQuyenSua()) return;   // [PHAT-HIEN-0311]
         deptMoi = new Department { DisplayOrder = 1 };
         pinXacNhan = "";
         loiPopup = "";
@@ -999,6 +1012,7 @@
 
     private void MoPopupThemNhanh(Department targetDept, bool isChild)
     {
+        if (ChanKhongQuyenSua()) return;   // [PHAT-HIEN-0311]
         deptMoi = new Department();
         if (isChild)
         {
@@ -1049,6 +1063,7 @@
     // Sửa
     private void MoPopupSua(Department dept)
     {
+        if (ChanKhongQuyenSua()) return;   // [PHAT-HIEN-0311]
         deptDangSua = new Department
         {
             DepartmentId = dept.DepartmentId,
@@ -1069,6 +1084,25 @@
         isHienThiPopupSua = true;
     }
     private void DongPopupSua() { isHienThiPopupSua = false; deptDangSua = null; }
+
+    // [SODO-NULL 2026-11-04] Nút Xóa / Lịch sử trong form Sửa và nút Sửa trong khung xem ảnh: trước gọi Dong…() (đặt về null) RỒI mới truyền
+    //   chính biến đó → MoPopupLichSu(null) / MoPopupSua(null) lỗi NullReference, trang chết; Xóa thì không mở được hộp xác nhận.
+    //   Nay giữ bản ghi vào biến tạm trước khi đóng. Nguồn: CLAUDE (rà độc lập PHAT-HIEN-0311, 04/11).
+    private void SuaSangXoa()
+    {
+        var d = deptDangSua; DongPopupSua();
+        if (d != null) MoPopupXoa(d);
+    }
+    private async Task SuaSangLichSuAsync()
+    {
+        var d = deptDangSua; DongPopupSua();
+        if (d != null) await MoPopupLichSu(d);
+    }
+    private void XemAnhSangSua()
+    {
+        var d = deptXemAnh; DongXemAnhLon();
+        if (d != null) MoPopupSua(d);
+    }
 
     private async Task LuuSuaDeptAsync()
     {
@@ -1106,6 +1140,7 @@
     // Xóa
     private void MoPopupXoa(Department dept)
     {
+        if (ChanKhongQuyenSua()) return;   // [PHAT-HIEN-0311]
         deptCanXoa = dept;
         pinXacNhan = "";
         loiPopup = "";
@@ -1142,6 +1177,7 @@
     // Lịch sử
     private async Task MoPopupLichSu(Department dept)
     {
+        if (!_canView) return;   // [PHAT-HIEN-0311]
         deptDangXem = dept;
         isHienThiPopupLichSu = true;
         isLoadingLogs = true;
@@ -1149,4 +1185,4 @@
         isLoadingLogs = false;
     }
     private void DongPopupLichSu() { isHienThiPopupLichSu = false; }
-}
+}

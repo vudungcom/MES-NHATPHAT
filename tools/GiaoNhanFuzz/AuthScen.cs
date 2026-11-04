@@ -192,6 +192,176 @@ public static class AuthScen
             Ok(g.Success && !gK.IsActive, "Ngưng nhóm thường (KHO): lưu được", g.Error);
         }
 
+        // [PHAT-HIEN-0311 2026-11-04] Ca làm việc / Sơ đồ tổ chức / DS Lỗi: máy chủ (service THẬT) tự kiểm quyền Sửa theo DB (PermCheck), không theo claim.
+        //   Người dùng: 1 = ADMIN · 2 = chỉ Xem mục · 3 = có Sửa mục · 4 = có Sửa nhưng tài khoản khoá · 5 = Admin cũ đã bị hạ sang nhóm chỉ Xem.
+        static AppDbContext PermDb(string sec)
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", IsActive = true };
+            var gV = new UserGroup { GroupId = 2, GroupCode = "XEM", IsActive = true, Permissions = "[{\"SectionCode\":\"" + sec + "\",\"CanView\":true,\"CanEdit\":false}]" };
+            var gE = new UserGroup { GroupId = 3, GroupCode = "SUA", IsActive = true, Permissions = "[{\"SectionCode\":\"" + sec + "\",\"CanView\":true,\"CanEdit\":true}]" };
+            db.UserGroups.List.AddRange(new[] { gAd, gV, gE });
+            db.Users.List.Add(new User { UserId = 1, Username = "boss", FullName = "Boss", IsActive = true, Group = gAd, GroupId = 1, PIN = "1111" });
+            db.Users.List.Add(new User { UserId = 2, Username = "xem", FullName = "Xem", IsActive = true, Group = gV, GroupId = 2, PIN = "2222" });
+            db.Users.List.Add(new User { UserId = 3, Username = "sua", FullName = "Sua", IsActive = true, Group = gE, GroupId = 3, PIN = "3333" });
+            db.Users.List.Add(new User { UserId = 4, Username = "khoa", FullName = "Khoa", IsActive = false, Group = gE, GroupId = 3, PIN = "4444" });
+            db.Users.List.Add(new User { UserId = 5, Username = "adcu", FullName = "Admin cu", IsActive = true, Group = gV, GroupId = 2, PIN = "5555" });
+            db.Fixup();
+            return db;
+        }
+
+        Console.WriteLine("[U8] PHAT-HIEN-0311 — Ca làm việc: Lưu / Ẩn / Xoá cần quyền Sửa CA_LAM_VIEC (DB); ca đã dùng ở WTS không xoá được, chỉ Ẩn");
+        {
+            var db = PermDb(MES.Web.Constants.SystemPermissions.CaLamViec);
+            var ca1 = new CaLamViec { CaId = 1, TenCa = "Hành chính", GioBatDau = new TimeOnly(7, 30), GioKetThuc = new TimeOnly(16, 30), IsActive = true };
+            ca1.NghiGiaiLaos.Add(new CaLamViec_NghiGiaiLao { NghiId = 1, CaId = 1, NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0) });
+            var ca2 = new CaLamViec { CaId = 2, TenCa = "Ca 2", GioBatDau = new TimeOnly(14, 0), GioKetThuc = new TimeOnly(22, 0), IsActive = true };
+            var ca3 = new CaLamViec { CaId = 3, TenCa = "Ca 3", GioBatDau = new TimeOnly(22, 0), GioKetThuc = new TimeOnly(6, 0), IsActive = true };
+            var ca4 = new CaLamViec { CaId = 4, TenCa = "Ca thử", GioBatDau = new TimeOnly(8, 0), GioKetThuc = new TimeOnly(9, 0), IsActive = true };
+            db.CaLamViecs.List.AddRange(new[] { ca1, ca2, ca3, ca4 });
+            db.CaLamViec_NghiGiaiLaos.List.AddRange(ca1.NghiGiaiLaos);
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 1, CaId = 1, IsVoided = true });   // dòng đã huỷ vẫn giữ lịch sử ca
+            db.WtsBreakWorkLogs.List.Add(new WtsBreakWorkLog { Id = 1, CaId = 2 });
+            db.Fixup();
+            var cs = new CaLamViecService(db);
+            CaLamViec Form(int id, string ten) => new CaLamViec { CaId = id, TenCa = ten, GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0), IsActive = true };
+            List<CaLamViec_NghiGiaiLao> Nghi() => new() { new() { NghiBatDau = new TimeOnly(11, 30), NghiKetThuc = new TimeOnly(12, 30) } };
+
+            foreach (var (uid, who) in new[] { (2, "người chỉ có quyền Xem"), (4, "tài khoản bị khoá (nhóm có Sửa)"), (5, "Admin cũ đã bị hạ sang nhóm chỉ Xem"), (0, "không đăng nhập (id 0)") })
+            {
+                var sv = await cs.SaveAsync(Form(1, "Đổi giờ"), Nghi(), uid);
+                var tg = await cs.ToggleActiveAsync(3, false, uid);
+                var dl = await cs.DeleteAsync(4, uid);
+                Ok(!sv.Ok && !tg.Ok && !dl.Ok && sv.Error.Contains("không có quyền Sửa mục Cài đặt ca làm việc")
+                   && ca1.TenCa == "Hành chính" && ca1.GioBatDau == new TimeOnly(7, 30) && db.CaLamViec_NghiGiaiLaos.List.Count(x => x.CaId == 1) == 1
+                   && db.CaLamViec_NghiGiaiLaos.List.Single(x => x.CaId == 1).NghiBatDau == new TimeOnly(12, 0)
+                   && ca3.IsActive && db.CaLamViecs.List.Any(x => x.CaId == 4),
+                   $"{who}: Lưu / Ẩn / Xoá đều bị chặn, ca + giờ nghỉ không đổi", $"{sv.Error} | {tg.Error} | {dl.Error}");
+                var add = await cs.SaveAsync(Form(0, "Ca lạ " + uid), new(), uid);
+                Ok(!add.Ok && !db.CaLamViecs.List.Any(x => x.TenCa == "Ca lạ " + uid), $"{who}: Thêm ca mới bị chặn", add.Error);
+            }
+
+            var s3 = await cs.SaveAsync(Form(1, "Hành chính mới"), Nghi(), 3);
+            Ok(s3.Ok && ca1.TenCa == "Hành chính mới" && ca1.GioBatDau == new TimeOnly(7, 0)
+               && db.CaLamViec_NghiGiaiLaos.List.Where(x => x.CaId == 1).Select(x => x.NghiBatDau).SequenceEqual(new[] { new TimeOnly(11, 30) }),
+               "Người có quyền Sửa CA_LAM_VIEC: đổi giờ ca + giờ nghỉ lưu được", s3.Error);
+            var t3 = await cs.ToggleActiveAsync(3, false, 3);
+            var t3b = await cs.ToggleActiveAsync(3, false, 3);   // bấm Ẩn lần 2 (trang cũ / bản EF cũ): vẫn Tắt, không đảo lại thành Bật
+            Ok(t3.Ok && t3b.Ok && !ca3.IsActive, "Người có quyền Sửa: Ẩn ca 3 được; gửi Ẩn lần nữa vẫn Tắt (gửi trạng thái muốn, không đảo)", t3.Error + t3b.Error);
+            // [CA-SAVE-TRACK] Ẩn xong sửa ngay ca đó (bản sao của trang, Bật/Tắt trên form là bản cũ) → lưu đúng, Bật/Tắt giữ theo DB
+            var f3 = Form(3, "Ca 3 đêm"); f3.GioBatDau = new TimeOnly(22, 0); f3.GioKetThuc = new TimeOnly(6, 0); f3.IsActive = true;
+            var e3 = await cs.SaveAsync(f3, new(), 3);
+            Ok(e3.Ok && ca3.TenCa == "Ca 3 đêm" && !ca3.IsActive && db.CaLamViecs.List.Count(x => x.CaId == 3) == 1,
+               "Ẩn ca rồi Sửa ngay ca đó: lưu tên mới, ca vẫn Ẩn (form không đổi Bật/Tắt), không sinh dòng trùng", e3.Error);
+            var s1 = await cs.SaveAsync(Form(0, "Ca mới"), new(), 1);
+            Ok(s1.Ok && db.CaLamViecs.List.Any(x => x.TenCa == "Ca mới"), "ADMIN thêm ca mới: lưu được", s1.Error);
+            var gone = await cs.SaveAsync(Form(99, "Không có"), new(), 1);
+            Ok(!gone.Ok && gone.Error.Contains("không còn"), "Sửa ca đã bị xoá (id không còn): báo, không thêm ca mới", gone.Error);
+
+            var d1 = await cs.DeleteAsync(1, 1);
+            Ok(!d1.Ok && d1.Error.Contains("đã được dùng (1 dòng WTS") && d1.Error.Contains("bấm Ẩn") && db.CaLamViecs.List.Any(x => x.CaId == 1),
+               "Xoá ca đã có dòng WTS (kể cả dòng đã huỷ): chặn, gợi ý Ẩn, ca còn", d1.Error);
+            var d2 = await cs.DeleteAsync(2, 3);
+            Ok(!d2.Ok && d2.Error.Contains("0 dòng WTS, 1 dòng giờ nghỉ đã lưu") && db.CaLamViecs.List.Any(x => x.CaId == 2),
+               "Xoá ca chỉ có giờ nghỉ đã chép (WtsBreakWorkLogs): chặn, ca còn", d2.Error);
+            var d4 = await cs.DeleteAsync(4, 3);
+            Ok(d4.Ok && !db.CaLamViecs.List.Any(x => x.CaId == 4), "Xoá ca chưa ai dùng (người có quyền Sửa): xoá được như cũ", d4.Error);
+            // EfStub Remove xoá ngay khỏi List → giả SQL "không xoá" bằng cách trả ca lại vào bảng lúc SaveChanges ném lỗi
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = () => { if (!db.CaLamViecs.List.Contains(ca3)) db.CaLamViecs.List.Add(ca3); return new InvalidOperationException("FK WtsProductionLogs.CaId"); };
+            try
+            {
+                var dx = await cs.DeleteAsync(3, 1);
+                Ok(!dx.Ok && dx.Error.Contains("Không xoá được ca Ca 3 đêm") && db.CaLamViecs.List.Contains(ca3), "Xoá ca mà SQL báo lỗi (vd dòng WTS vừa ghi ca này): báo, ca còn, trang không chết", dx.Error);
+                Microsoft.EntityFrameworkCore.DbContext.OnSave = () => new InvalidOperationException("0 dòng bị xoá (người khác xoá trước)");
+                var dy = await cs.DeleteAsync(3, 1);
+                Ok(!dy.Ok && dy.Error.Contains("vừa bị người khác xoá"), "Xoá ca mà ca đã bị người khác xoá ngay trước: báo đúng (không đổ cho dòng WTS)", dy.Error);
+            }
+            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; db.ChangeTracker.Clear(); }
+        }
+
+        Console.WriteLine("[U9] PHAT-HIEN-0311 — Sơ đồ tổ chức: Thêm / Sửa / Xoá / tải ảnh cần quyền Sửa SO_DO_TC (DB); ảnh chỉ .jpg / .jpeg / .png / .webp thật");
+        {
+            var db = PermDb(MES.Web.Constants.SystemPermissions.SoDoTc);
+            var root = new Department { DepartmentId = 1, DepartmentCode = "GD", DepartmentName = "Giám đốc", Level = 1, IsActive = true, ManagerName = "A", AvatarUrl = "/uploads/avatars/cu.gif" };
+            db.Departments.List.Add(root);
+            db.Departments.List.Add(new Department { DepartmentId = 2, DepartmentCode = "SX", DepartmentName = "Sản xuất", ParentId = 1, Level = 2, IsActive = true });
+            db.Fixup();
+            var ds = new DepartmentService(db, new AuthService(db));
+            Ok(await ds.CanViewAsync(2) && !await ds.CanEditAsync(2) && await ds.CanEditAsync(3) && await ds.CanEditAsync(1) && !await ds.CanViewAsync(4) && !await ds.CanEditAsync(5),
+               "Quyền đọc DB: Xem-only xem được không sửa; Sửa / ADMIN sửa được; tài khoản khoá không xem; Admin cũ bị hạ không sửa");
+            foreach (var (uid, pin, who) in new[] { (2, "2222", "người chỉ có quyền Xem"), (4, "4444", "tài khoản bị khoá"), (5, "5555", "Admin cũ đã bị hạ") })
+            {
+                var c = await ds.CreateAsync(new Department { DepartmentCode = "X" + uid, DepartmentName = "Lạ", ParentId = 1 }, uid, pin);
+                var u = await ds.UpdateAsync(new Department { DepartmentId = 2, DepartmentCode = "SX", DepartmentName = "Đổi tên", ParentId = 1 }, "thử", uid, pin, false, "");
+                var d = await ds.SoftDeleteAsync(2, uid, pin);
+                Ok(!c.Success && !u.Success && !d.Success && c.Error!.Contains("không có quyền Sửa mục Sơ đồ tổ chức")
+                   && db.Departments.List.Count == 2 && db.Departments.List.Single(x => x.DepartmentId == 2).DepartmentName == "Sản xuất"
+                   && db.Departments.List.Single(x => x.DepartmentId == 2).IsActive && db.DepartmentChangeLogs.List.Count == 0,
+                   $"{who} (PIN đúng): Thêm / Sửa / Xoá đều bị chặn, sơ đồ không đổi", $"{c.Error} | {u.Error} | {d.Error}");
+            }
+            var c3 = await ds.CreateAsync(new Department { DepartmentCode = "kt", DepartmentName = "Kế toán", ParentId = 1, AvatarUrl = "/uploads/avatars/nv_20261104100000_ab12cd34.png" }, 3, "3333");
+            Ok(c3.Success && db.Departments.List.Any(x => x.DepartmentCode == "KT"), "Người có quyền Sửa + PIN đúng: thêm được", c3.Error);
+            var cBad = await ds.CreateAsync(new Department { DepartmentCode = "HACK", DepartmentName = "x", AvatarUrl = "/uploads/avatars/x.html" }, 3, "3333");
+            Ok(!cBad.Success && !db.Departments.List.Any(x => x.DepartmentCode == "HACK"), "Thêm với đường dẫn ảnh .html (gửi thẳng, không qua nút tải): chặn", cBad.Error);
+            var cPin = await ds.CreateAsync(new Department { DepartmentCode = "P1", DepartmentName = "x" }, 3, "0000");
+            Ok(!cPin.Success && cPin.Error!.Contains("PIN"), "Có quyền nhưng PIN sai: vẫn chặn như cũ", cPin.Error);
+            var uKeep = await ds.UpdateAsync(new Department { DepartmentId = 1, DepartmentCode = "GD", DepartmentName = "Ban giám đốc", ManagerName = "A", AvatarUrl = "/uploads/avatars/cu.gif" }, "đổi tên", 3, "3333", false, "A");
+            Ok(uKeep.Success && root.DepartmentName == "Ban giám đốc" && root.AvatarUrl == "/uploads/avatars/cu.gif", "Sửa tên, giữ ảnh cũ (đuôi .gif có từ trước): lưu được, ảnh không đổi", uKeep.Error);
+            var uBad = await ds.UpdateAsync(new Department { DepartmentId = 1, DepartmentCode = "GD", DepartmentName = "Ban giám đốc", ManagerName = "A", AvatarUrl = "javascript:alert(1)" }, "x", 3, "3333", true, "A");
+            Ok(!uBad.Success && root.AvatarUrl == "/uploads/avatars/cu.gif", "Sửa đổi ảnh sang đường dẫn lạ (javascript:, .html…): chặn", uBad.Error);
+
+            var dir = Path.Combine(Path.GetTempPath(), "mes_u9_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                byte[] png = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13 };
+                byte[] jpg = { 0xFF, 0xD8, 0xFF, 0xE0, 0, 16 };
+                byte[] webp = System.Text.Encoding.ASCII.GetBytes("RIFF\x10\0\0\0WEBPVP8 ");
+                byte[] html = System.Text.Encoding.UTF8.GetBytes("<html><script>alert(1)</script></html>");
+                async Task<(bool Ok, string? Error, string? Url)> Up(byte[] b, string name, int uid) { using var ms = new MemoryStream(b); return await ds.SaveAvatarAsync(ms, name, b.Length, uid, dir); }
+                int Files() => Directory.Exists(Path.Combine(dir, "uploads", "avatars")) ? Directory.GetFiles(Path.Combine(dir, "uploads", "avatars")).Length : 0;
+                var a1 = await Up(png, "anh.PNG", 3); var a2 = await Up(jpg, "a.jpeg", 3); var a3 = await Up(jpg, "b.jpg", 1); var a4 = await Up(webp, "c.webp", 3);
+                Ok(a1.Ok && a2.Ok && a3.Ok && a4.Ok && Files() == 4 && a1.Url!.EndsWith(".png") && DepartmentService.AvatarUrlOk(a1.Url) && DepartmentService.AvatarUrlOk(a4.Url),
+                   "Ảnh .PNG / .jpeg / .jpg / .webp thật (người có quyền Sửa / ADMIN): lưu được, đường dẫn hợp lệ", $"{a1.Error} {a2.Error} {a3.Error} {a4.Error} · file {Files()}");
+                var b1 = await Up(html, "x.html", 3); var b2 = await Up(html, "x.js", 3); var b3 = await Up(png, "khongduoi", 3); var b4 = await Up(png, "a.svg", 3); var b5 = await Up(png, "a.gif", 3);
+                Ok(!b1.Ok && !b2.Ok && !b3.Ok && !b4.Ok && !b5.Ok && b1.Error == DepartmentService.MsgAvatarType && Files() == 4,
+                   "File .html / .js / không đuôi / .svg / .gif: chặn, không ghi file", $"{b1.Error} | {b3.Error} | file {Files()}");
+                var b6 = await Up(html, "gia.png", 3);
+                Ok(!b6.Ok && b6.Error!.Contains("không khớp đuôi") && Files() == 4, "File HTML đổi tên thành .png (nội dung không phải ảnh): chặn", b6.Error);
+                var b7 = await Up(png, "a.png", 2); var b8 = await Up(png, "a.png", 5);
+                Ok(!b7.Ok && !b8.Ok && b7.Error!.Contains("không có quyền Sửa") && Files() == 4, "Người chỉ có quyền Xem / Admin cũ bị hạ tải ảnh: chặn, không ghi file", b7.Error);
+                var big = new byte[DepartmentService.AvatarMaxBytes + 1]; png.CopyTo(big, 0);
+                var b9 = await Up(big, "to.png", 3);
+                Ok(!b9.Ok && b9.Error!.Contains("5MB") && Files() == 4, "Ảnh > 5MB: chặn", b9.Error);
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
+        Console.WriteLine("[U10] PHAT-HIEN-0311 — DS Lỗi: thêm / sửa / ngưng dùng / xoá loại lỗi cần quyền Sửa DS_LOI (DB)");
+        {
+            var db = PermDb(MES.Web.Constants.SystemPermissions.DsLoi);
+            db.NgCategories.List.Add(new NgCategory { NgCategoryId = 1, Code = "XUOC", Name = "Xước", IsActive = true });
+            db.NgCategories.List.Add(new NgCategory { NgCategoryId = 2, Code = "MOP", Name = "Móp", IsActive = true });
+            db.Fixup();
+            var ng = new NgCaseService(db);
+            foreach (var (uid, who) in new[] { (2, "người chỉ có quyền Xem"), (4, "tài khoản bị khoá"), (5, "Admin cũ đã bị hạ"), (0, "id 0") })
+            {
+                var a = await ng.SaveCategoryAsync(null, "LA" + uid, "Lạ", null, 0, uid);
+                var e = await ng.SaveCategoryAsync(1, "XUOC", "Đổi", null, 0, uid);
+                var t = await ng.SetActiveAsync(1, false, uid);
+                var d = await ng.DeleteCategoryAsync(2, uid);
+                Ok(!a.Ok && !e.Ok && !t.Ok && !d.Ok && a.Error.Contains("không có quyền Sửa mục DS Lỗi")
+                   && db.NgCategories.List.Count == 2 && db.NgCategories.List[0].Name == "Xước" && db.NgCategories.List[0].IsActive && db.NgCategoryChangeLogs.List.Count == 0,
+                   $"{who}: Thêm / Sửa / Ngưng dùng / Xoá đều bị chặn, danh mục không đổi", $"{a.Error} | {e.Error} | {t.Error} | {d.Error}");
+            }
+            var a3 = await ng.SaveCategoryAsync(null, "ba via", "Ba via", null, 1, 3);
+            var e3 = await ng.SaveCategoryAsync(1, "XUOC", "Xước cạnh", null, 0, 3);
+            var t3 = await ng.SetActiveAsync(1, false, 3);
+            var d3 = await ng.DeleteCategoryAsync(2, 1);
+            Ok(a3.Ok && e3.Ok && t3.Ok && d3.Ok && db.NgCategories.List.Any(x => x.Code == "BA VIA") && db.NgCategories.List.Single(x => x.NgCategoryId == 1).Name == "Xước cạnh"
+               && !db.NgCategories.List.Single(x => x.NgCategoryId == 1).IsActive && !db.NgCategories.List.Any(x => x.NgCategoryId == 2),
+               "Người có quyền Sửa DS_LOI / ADMIN: thêm / sửa / ngưng dùng / xoá được như cũ", $"{a3.Error} | {e3.Error} | {t3.Error} | {d3.Error}");
+        }
+
         // [C7-LICENSE 2026-11-02] Máy chủ bản quyền trả chữ KHÔNG phải JSON (trang lỗi HTML, "Service invoked too many times"…) = API chưa trả lời được:
         //   ParseApiResponse phải NÉM lỗi để PerformOnlineCheck giữ nguyên bản quyền đang có (như mất mạng) — trước: nuốt lỗi → Inactive → ghi đè cache → khoá xưởng.
         //   Chỉ gọi hàm đọc phản hồi (riêng tư) bằng phản chiếu — KHÔNG gọi API thật, không ghi cache / file bản quyền.

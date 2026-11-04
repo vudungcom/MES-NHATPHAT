@@ -1,4 +1,5 @@
 using ClosedXML.Excel;
+using MES.Web.Constants;
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,69 @@ public class DepartmentService
     {
         _db = db;
         _authSvc = authSvc;
+    }
+
+    // =====================================================================
+    // [PHAT-HIEN-0311 2026-11-04] Sơ đồ tổ chức: máy chủ kiểm quyền ma trận SO_DO_TC theo DB (PermCheck, cùng luật RS-C1).
+    //   Trước: Thêm / Sửa / Xoá chỉ hỏi PIN, cả trang lẫn service không kiểm quyền → ai đăng nhập + có PIN gõ URL là sửa được.
+    //   Ảnh đại diện: chỉ nhận .jpg / .jpeg / .png / .webp (kiểm cả đuôi lẫn mấy byte đầu file), cần quyền Sửa — trước không kiểm
+    //   đuôi, file .html / .js tải lên nằm trong wwwroot/uploads và chạy được. Ô AvatarUrl chỉ nhận đường dẫn ảnh do máy chủ cấp.
+    //   Nguồn: CLAUDE rà độc lập 03/11, Hùng duyệt 04/11 08:24.
+    // =====================================================================
+    public const string TenMuc = "Sơ đồ tổ chức";
+    public const long AvatarMaxBytes = 5 * 1024 * 1024;
+    public static readonly string[] AvatarExts = { ".jpg", ".jpeg", ".png", ".webp" };
+
+    public Task<bool> CanViewAsync(int userId) => PermCheck.CanViewAsync(_db, userId, SystemPermissions.SoDoTc);
+    public Task<bool> CanEditAsync(int userId) => PermCheck.CanEditAsync(_db, userId, SystemPermissions.SoDoTc);
+
+    /// <summary>Đuôi file ảnh hợp lệ (không phân biệt hoa thường).</summary>
+    public static bool AvatarExtOk(string? fileName)
+        => AvatarExts.Contains((Path.GetExtension(fileName ?? "") ?? "").ToLowerInvariant());
+
+    /// <summary>Mấy byte đầu đúng kiểu ảnh của đuôi file (JPEG FF D8 FF · PNG 89 50 4E 47 0D 0A 1A 0A · WEBP "RIFF"....“WEBP”).</summary>
+    public static bool AvatarBytesOk(string ext, byte[] b)
+    {
+        ext = (ext ?? "").ToLowerInvariant();
+        if (ext is ".jpg" or ".jpeg") return b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
+        if (ext == ".png") return b.Length >= 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47 && b[4] == 0x0D && b[5] == 0x0A && b[6] == 0x1A && b[7] == 0x0A;
+        if (ext == ".webp") return b.Length >= 12 && b[0] == (byte)'R' && b[1] == (byte)'I' && b[2] == (byte)'F' && b[3] == (byte)'F'
+                                 && b[8] == (byte)'W' && b[9] == (byte)'E' && b[10] == (byte)'B' && b[11] == (byte)'P';
+        return false;
+    }
+
+    /// <summary>Đường dẫn ảnh do <see cref="SaveAvatarAsync"/> cấp: /uploads/avatars/&lt;tên chỉ chữ số, chữ, _&gt;.&lt;đuôi ảnh&gt;.</summary>
+    public static bool AvatarUrlOk(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return true;
+        return System.Text.RegularExpressions.Regex.IsMatch(url.Trim(), @"^/uploads/avatars/[A-Za-z0-9_]+\.(jpg|jpeg|png|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    public const string MsgAvatarType = "Ảnh đại diện chỉ nhận file .jpg, .jpeg, .png hoặc .webp.";
+
+    /// <summary>Lưu ảnh đại diện vào wwwroot/uploads/avatars (cần quyền Sửa Sơ đồ tổ chức). Trả đường dẫn tương đối.</summary>
+    public async Task<(bool Ok, string? Error, string? Url)> SaveAvatarAsync(Stream src, string? fileName, long size, int actorUserId, string webRootPath)
+    {
+        if (!await CanEditAsync(actorUserId)) return (false, PermCheck.NoEdit(TenMuc), null);
+        if (size > AvatarMaxBytes) return (false, "Kích thước ảnh vượt quá 5MB!", null);
+        var ext = (Path.GetExtension(fileName ?? "") ?? "").ToLowerInvariant();
+        if (!AvatarExtOk(fileName)) return (false, MsgAvatarType, null);
+        byte[] bytes;
+        using (var ms = new MemoryStream())
+        {
+            await src.CopyToAsync(ms);
+            bytes = ms.ToArray();
+        }
+        if (bytes.Length > AvatarMaxBytes) return (false, "Kích thước ảnh vượt quá 5MB!", null);
+        if (!AvatarBytesOk(ext, bytes)) return (false, "File không phải ảnh " + ext + " thật (nội dung không khớp đuôi file). " + MsgAvatarType, null);
+
+        var folderPath = Path.Combine(webRootPath, "uploads", "avatars");
+        if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+        var randomCode = Guid.NewGuid().ToString("N").Substring(0, 8);
+        var name = $"nv_{DateTime.Now:yyyyMMddHHmmss}_{randomCode}{ext}";
+        await File.WriteAllBytesAsync(Path.Combine(folderPath, name), bytes);
+        return (true, null, $"/uploads/avatars/{name}");
     }
 
     public async Task<List<Department>> GetAllActiveAsync()
@@ -325,6 +389,8 @@ public class DepartmentService
 
     public async Task<(bool Success, string? Error)> CreateAsync(Department model, int currentUserId, string pin)
     {
+        if (!await CanEditAsync(currentUserId)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
+        if (!AvatarUrlOk(model.AvatarUrl)) return (false, MsgAvatarType + " Tải lại ảnh bằng nút chọn file.");   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
@@ -382,12 +448,16 @@ public class DepartmentService
         bool isNewAvatarUploaded,
         string oldManagerNameOriginal)
     {
+        if (!await CanEditAsync(currentUserId)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
         var dept = await _db.Departments.FirstOrDefaultAsync(d => d.DepartmentId == updatedModel.DepartmentId);
         if (dept == null) return (false, "Không tìm thấy bộ phận.");
+        // [PHAT-HIEN-0311] ảnh đổi thì phải là đường dẫn ảnh do máy chủ cấp (ảnh cũ giữ nguyên thì không xét)
+        if ((updatedModel.AvatarUrl ?? "").Trim() != (dept.AvatarUrl ?? "").Trim() && !AvatarUrlOk(updatedModel.AvatarUrl))
+            return (false, MsgAvatarType + " Tải lại ảnh bằng nút chọn file.");
 
         var now = DateTime.Now;
         var newManager = updatedModel.ManagerName?.Trim() ?? "";
@@ -458,7 +528,7 @@ public class DepartmentService
             dept.DepartmentCode = updatedModel.DepartmentCode.Trim().ToUpper();
             dept.RoleTitle = updatedModel.RoleTitle?.Trim() ?? "";
             dept.ManagerName = newManager;
-            dept.AvatarUrl = string.IsNullOrWhiteSpace(newManager) ? null : updatedModel.AvatarUrl;
+            dept.AvatarUrl = string.IsNullOrWhiteSpace(newManager) || string.IsNullOrWhiteSpace(updatedModel.AvatarUrl) ? null : updatedModel.AvatarUrl.Trim();   // [PHAT-HIEN-0311] lưu bản đã kiểm (bỏ khoảng trắng)
             dept.UpdatedAt = now;
             dept.UpdatedBy = currentUserId;
 
@@ -471,6 +541,7 @@ public class DepartmentService
 
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int departmentId, int currentUserId, string pin)
     {
+        if (!await CanEditAsync(currentUserId)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");

@@ -122,6 +122,19 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseForwardedHeaders();   // [RS-E11] trước mọi middleware khác
+// [UPLOAD-STATIC 2026-11-04] Thư mục /uploads (ảnh đại diện Sơ đồ tổ chức…) chỉ phát file ảnh .jpg / .jpeg / .png / .webp,
+//   file khác (vd .html / .js / .svg tải lên trước khi có [PHAT-HIEN-0311]) trả 404; thêm nosniff để trình duyệt không đoán kiểu.
+//   Nguồn: CLAUDE (rà độc lập PHAT-HIEN-0311, 04/11).
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/uploads"))
+    {
+        var ext = Path.GetExtension(ctx.Request.Path.Value ?? "").ToLowerInvariant();
+        if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp")) { ctx.Response.StatusCode = 404; return; }
+        ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    }
+    await next();
+});
 app.UseStaticFiles();
 app.UseAntiforgery();
 app.UseAuthentication();

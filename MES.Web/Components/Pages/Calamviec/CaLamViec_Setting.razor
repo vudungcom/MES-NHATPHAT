@@ -42,6 +42,15 @@ else
     </button>
 </div>
 
+@* [PHAT-HIEN-0311 2026-11-04] lời báo khi máy chủ chặn Ẩn / Xoá (không quyền, ca đang dùng) *@
+@if (!string.IsNullOrEmpty(_pageError))
+{
+    <div class="alert alert-danger py-2 small">
+        <i class="bi bi-exclamation-triangle me-1"></i>@_pageError
+        <button type="button" class="btn-close float-end" @onclick="ClearPageError"></button>
+    </div>
+}
+
 @* ── Danh sách ca ── *@
 <div class="row g-3 mb-4">
     @foreach (var ca in _list)
@@ -87,14 +96,15 @@ else
                 </div>
                 <div class="card-footer d-flex justify-content-between align-items-center py-1 px-3 bg-transparent">
                     <div class="d-flex gap-1">
-                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditCa(ca)">
+                        @* [PHAT-HIEN-0311] Sửa / Ẩn / Xoá chỉ bấm được khi có quyền Sửa (máy chủ cũng kiểm) *@
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => EditCa(ca)" disabled="@(!_canEdit)">
                             <i class="bi bi-pencil"></i>
                         </button>
                         <button class="btn btn-sm @(ca.IsActive ? "btn-outline-secondary" : "btn-outline-success")"
-                                @onclick="() => ToggleActive(ca)">
+                                @onclick="() => ToggleActive(ca)" disabled="@(!_canEdit || _busy)">
                             <i class="bi @(ca.IsActive ? "bi-eye-slash" : "bi-eye")"></i>
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(ca)">
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(ca)" disabled="@(!_canEdit)">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
@@ -237,14 +247,19 @@ else
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title text-danger"><i class="bi bi-trash me-2"></i>Xóa ca?</h5>
-                    <button class="btn-close" @onclick="() => _deletingId = null"></button>
+                    <button class="btn-close" @onclick="CancelDelete"></button>
                 </div>
                 <div class="modal-body">
                     Xóa ca <strong>@_deletingName</strong>? Thao tác này không thể hoàn tác.
+                    <div class="form-text">Ca đã được dùng trong WTS thì không xoá được — chỉ Ẩn.</div>
+                    @if (!string.IsNullOrEmpty(_deleteError))
+                    {
+                        <div class="alert alert-danger py-2 small mt-2 mb-0">@_deleteError</div>
+                    }
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" @onclick="() => _deletingId = null">Hủy</button>
-                    <button class="btn btn-danger" @onclick="DoDelete">Xóa</button>
+                    <button class="btn btn-secondary" @onclick="CancelDelete">Hủy</button>
+                    <button class="btn btn-danger" @onclick="DoDelete" disabled="@_busy">Xóa</button>
                 </div>
             </div>
         </div>
@@ -263,26 +278,24 @@ else
     private bool   _saving = false;
     private int?   _deletingId;
     private string _deletingName = "";
+    private string _deleteError = "";   // [PHAT-HIEN-0311] máy chủ chặn xoá (ca đang dùng / không quyền)
+    private string _pageError = "";     // [PHAT-HIEN-0311] máy chủ chặn Ẩn / Hiện
+    private int    _currentUserId;      // [PHAT-HIEN-0311] người thao tác — service tự kiểm quyền theo DB
+    private bool   _busy;               // [PHAT-HIEN-0311] bấm 2 lần khi đang gọi máy chủ → 2 thao tác cùng DbContext (trang chết)
 
     protected override async Task OnInitializedAsync()
     {
         var auth   = await AuthState.GetAuthenticationStateAsync();
         var user   = auth.User;
-        bool isAdmin = user.IsInRole("ADMIN")
-                    || user.FindFirst("GroupCode")?.Value == "ADMIN"
-                    || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
-                    || user.Identity?.Name?.ToLower() == "admin";
-
-        if (isAdmin)
+        // [PHAT-HIEN-0311 2026-11-04] quyền đọc DB (GetAllUserPermissionsAsync: tài khoản + nhóm đang hoạt động, ADMIN = toàn quyền),
+        //   bỏ nhánh "ADMIN theo claim" — claim cũ (Admin vừa bị hạ nhóm) không còn mở nút; máy chủ kiểm lại lúc lưu.
+        if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
         {
-            _canView = _canEdit = true;
-        }
-        else if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
-        {
+            _currentUserId = uid;
             var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
             if (perms.TryGetValue(SystemPermissions.CaLamViec, out var p))
             {
-                _canView = p.CanView;
+                _canView = p.CanView || p.CanEdit;   // [PHAT-HIEN-0311] có Sửa thì xem được (như PermCheck.CanViewAsync)
                 _canEdit = p.CanEdit;
             }
         }
@@ -369,7 +382,7 @@ else
         _saving = true; _error = "";
         try
         {
-            var (ok, err) = await CaSvc.SaveAsync(_editing, _nghiList);
+            var (ok, err) = await CaSvc.SaveAsync(_editing, _nghiList, _currentUserId);   // [PHAT-HIEN-0311]
             if (!ok) { _error = err; return; }
             _editing = null;
             _list = await CaSvc.GetAllAsync();
@@ -379,20 +392,40 @@ else
 
     private async Task ToggleActive(CaLamViec ca)
     {
-        await CaSvc.ToggleActiveAsync(ca.CaId);
-        _list = await CaSvc.GetAllAsync();
+        if (_busy) return;
+        _busy = true;
+        try
+        {
+            var (ok, err) = await CaSvc.ToggleActiveAsync(ca.CaId, !ca.IsActive, _currentUserId);   // [PHAT-HIEN-0311] gửi trạng thái muốn
+            _pageError = ok ? "" : err;
+            _list = await CaSvc.GetAllAsync();
+        }
+        finally { _busy = false; }
     }
+
+    private void ClearPageError() { _pageError = ""; }
 
     private void ConfirmDelete(CaLamViec ca)
     {
         _deletingId   = ca.CaId;
         _deletingName = ca.TenCa;
+        _deleteError  = "";
     }
+
+    private void CancelDelete() { _deletingId = null; _deleteError = ""; }
 
     private async Task DoDelete()
     {
-        if (_deletingId.HasValue) await CaSvc.DeleteAsync(_deletingId.Value);
-        _deletingId = null;
-        _list = await CaSvc.GetAllAsync();
+        if (!_deletingId.HasValue || _busy) return;
+        _busy = true;
+        try
+        {
+            // [PHAT-HIEN-0311] máy chủ kiểm quyền + chặn xoá ca đã dùng → giữ hộp xác nhận, hiện lời báo (gợi ý Ẩn)
+            var (ok, err) = await CaSvc.DeleteAsync(_deletingId.Value, _currentUserId);
+            if (!ok) { _deleteError = err; return; }
+            _deletingId = null; _deleteError = "";
+            _list = await CaSvc.GetAllAsync();
+        }
+        finally { _busy = false; }
     }
 }

@@ -456,4 +456,39 @@ public static class HarnessSeed
                 .Cast<object>().Select(x => { dynamic d = x; return new { Wts = (long?)d.WtsLogId, Act = (long?)d.ActivityLogId, Bs = D((DateTime)d.BreakStart), Be = D((DateTime)d.BreakEnd), Ov = (int)d.OverlapMin, Wk = (int)d.WorkedMin, Ca = (int?)d.CaId, Bf = (bool)d.IsBackfill }; }),
         };
     }
+
+    // ── [PHAT-HIEN-0311 04/11] dữ liệu drive_p0311.py (dựng khi drive gọi POST /harness/p0311-seed — KHÔNG trong seed khởi động,
+    //    để /harness/dump của drive.py không đổi). xem0311 = chỉ Xem 3 mục, sua0311 = Xem + Sửa 3 mục (CA_LAM_VIEC / SO_DO_TC / DS_LOI);
+    //    mật khẩu 123456, PIN 1111. Ca 1 đã có WTS (seed) → không xoá được; "Ca thử xoá" chưa ai dùng; Sơ đồ: Giám đốc + Sản xuất.
+    public static async Task<object> SeedP0311Async(AppDbContext db)
+    {
+        static string PermsP(bool e) => JsonSerializer.Serialize(new[] { SystemPermissions.CaLamViec, SystemPermissions.SoDoTc, SystemPermissions.DsLoi }
+            .Select(c => new GroupPermissionSetting { SectionCode = c, CanView = true, CanEdit = e }).ToList());
+        if (!db.Users.List.Any(u => u.Username == "xem0311"))
+        {
+            var gX = new UserGroup { GroupCode = "XEM0311", GroupName = "Xem ca / sơ đồ / lỗi", IsActive = true, Permissions = PermsP(false) };
+            var gS = new UserGroup { GroupCode = "SUA0311", GroupName = "Sửa ca / sơ đồ / lỗi", IsActive = true, Permissions = PermsP(true) };
+            db.UserGroups.AddRange(gX, gS); await db.SaveChangesAsync();
+            var hash = PasswordHasher.Hash("123456");
+            db.Users.AddRange(
+                new User { Username = "xem0311", FullName = "Xem 0311", PasswordHash = hash, GroupId = gX.GroupId, IsActive = true, PIN = "1111" },
+                new User { Username = "sua0311", FullName = "Sửa 0311", PasswordHash = hash, GroupId = gS.GroupId, IsActive = true, PIN = "1111" });
+            db.CaLamViecs.Add(new CaLamViec { TenCa = "Ca thử xoá", GioBatDau = new TimeOnly(18, 0), GioKetThuc = new TimeOnly(20, 0), IsActive = true, SortOrder = 9 });
+            db.Departments.Add(new Department { DepartmentId = 1, DepartmentCode = "GD", DepartmentName = "Giám đốc", RoleTitle = "Giám đốc", ManagerName = "Anh A", Level = 1, IsActive = true, CreatedAt = T0, CreatedBy = 1 });
+            db.Departments.Add(new Department { DepartmentId = 2, DepartmentCode = "SX", DepartmentName = "Sản xuất", RoleTitle = "Quản đốc", ManagerName = "Anh B", ParentId = 1, Level = 2, IsActive = true, CreatedAt = T0, CreatedBy = 1 });
+            await db.SaveChangesAsync(); db.Fixup();
+        }
+        return DumpP0311(db);
+    }
+
+    public static object DumpP0311(AppDbContext db) => new
+    {
+        ca = db.CaLamViecs.List.OrderBy(c => c.CaId).Select(c => new { c.CaId, c.TenCa, Bd = c.GioBatDau.ToString("HH:mm"), Kt = c.GioKetThuc.ToString("HH:mm"), c.IsActive,
+            nghi = db.CaLamViec_NghiGiaiLaos.List.Where(n => n.CaId == c.CaId).OrderBy(n => n.NghiBatDau).Select(n => n.NghiBatDau.ToString("HH:mm") + "-" + n.NghiKetThuc.ToString("HH:mm")) }),
+        dept = db.Departments.List.OrderBy(d => d.DepartmentId).Select(d => new { d.DepartmentId, d.DepartmentName, d.AvatarUrl, d.IsActive }),
+        deptLog = db.DepartmentChangeLogs.List.Count,
+        ngCat = db.NgCategories.List.OrderBy(c => c.NgCategoryId).Select(c => new { c.NgCategoryId, c.Code, c.Name, c.IsActive }),
+        avatarFiles = Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot", "uploads", "avatars"))
+            ? Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "wwwroot", "uploads", "avatars")).Select(Path.GetFileName).OrderBy(x => x).ToArray() : Array.Empty<string?>(),
+    };
 }

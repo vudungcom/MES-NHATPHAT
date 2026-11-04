@@ -366,9 +366,9 @@ public static class NghiScen
         // CaLamViecService: 2 nghỉ chồng → chặn; tách rời → lưu
         var cs = new CaLamViecService(db);
         var bad = await cs.SaveAsync(new CaLamViec { CaId = 0, TenCa = "X", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0) },
-            new List<CaLamViec_NghiGiaiLao> { new() { NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0) }, new() { NghiBatDau = new TimeOnly(12, 30), NghiKetThuc = new TimeOnly(12, 45) } });
+            new List<CaLamViec_NghiGiaiLao> { new() { NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0) }, new() { NghiBatDau = new TimeOnly(12, 30), NghiKetThuc = new TimeOnly(12, 45) } }, 1);   // [PHAT-HIEN-0311] người thao tác = user 1 (ADMIN)
         var good = await cs.SaveAsync(new CaLamViec { CaId = 0, TenCa = "Y", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0) },
-            new List<CaLamViec_NghiGiaiLao> { new() { NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0) }, new() { NghiBatDau = new TimeOnly(13, 0), NghiKetThuc = new TimeOnly(13, 15) } });
+            new List<CaLamViec_NghiGiaiLao> { new() { NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0) }, new() { NghiBatDau = new TimeOnly(13, 0), NghiKetThuc = new TimeOnly(13, 15) } }, 1);
         Say(!bad.Ok && bad.Error.Contains("chồng nhau") && good.Ok, "Ca 2 nghỉ chồng → chặn; nghỉ liền nhau → lưu", bad.Error + " | " + good.Error);
         // dữ liệu ca cũ có 2 nghỉ chồng → gộp, không trừ 2 lần
         var ov = new CaLamViec { CaId = 77, GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0) };

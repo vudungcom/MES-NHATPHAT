@@ -387,12 +387,9 @@ else
         var auth = await AuthState.GetAuthenticationStateAsync();
         var user = auth.User;
         int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out _userId);
-        var isAdmin = user.IsInRole("ADMIN")
-                   || user.FindFirst("GroupCode")?.Value == "ADMIN"
-                   || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
-                   || user.Identity?.Name?.ToLower() == "admin";
-        if (isAdmin) { _canView = true; _canEdit = true; }
-        else if (_userId > 0)
+        // [PHAT-HIEN-0311 2026-11-04] quyền đọc DB (GetAllUserPermissionsAsync: ADMIN đang hoạt động = toàn quyền), bỏ nhánh ADMIN theo claim;
+        //   NgCaseService kiểm lại ở máy chủ lúc lưu.
+        if (_userId > 0)
         {
             var perms = await UserSvc.GetAllUserPermissionsAsync(_userId);
             if (perms.TryGetValue(SystemPermissions.DsLoi, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
