@@ -288,7 +288,7 @@ namespace MES.Web.Services
                         var dauVao = b.Origin == HandoverNgSource.DauVao;
                         var e = New("BAO_LOI", b.Group, null, b.Qty, $"Báo lỗi #{b.Id}", b.Id,
                             $"{GL(b.Group)} phát hiện {b.Qty:0.##} lỗi sau khi nhận · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
-                            + (string.IsNullOrEmpty(b.NC) ? "" : $" NC {b.NC}"));
+                            + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}"));   // [N3-FIRST] chữ @VAO
                         e.Code = b.NC; e.Who = b.Who; e.Reason = b.Reason; e.PhatSinh = b.Qty; e.DetectedAt = b.Group;
                         e.CausedBy = dauVao ? (b.Cause ?? "?") : b.Group;
                         e.OriginText = HandoverNgSource.OriginLabel(b.Origin, b.Cause);
@@ -312,7 +312,7 @@ namespace MES.Web.Services
                         if (purpose == HandoverPurpose.NgReturn && fc == HandoverCell.Loi)
                         {
                             var e = New("TRA_TRUOC", t.From, t.To, q0, $"Phiếu #{t.Id}", t.Id,
-                                $"{GL(t.From)} phát hiện {q0:0.##} lỗi công đoạn trước" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ở NC {t.FromNC}")
+                                $"{GL(t.From)} phát hiện {q0:0.##} lỗi công đoạn trước" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ở {HandoverLedgerService.NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
                                 + $" → giao trả {GL(t.To)} ô {HandoverCell.Label(HandoverLedgerService.DesigCellOf(t, purpose))}");
                             e.Code = t.FromNC; e.Reason = t.NgReason; e.Who = who; e.PhatSinh = q0; e.DetectedAt = t.From; e.CausedBy = t.To;
                             transit += q0;

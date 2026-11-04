@@ -816,7 +816,7 @@ namespace MES.Web.Services
 
         static string TxText(InTx t, string purpose)
             => $"Phiếu #{t.Id} · {GroupLabel(t.From)} → {GroupLabel(t.To)} · {PairLabel(t, purpose)}"
-               + (string.IsNullOrEmpty(t.FromNC) ? "" : $" · từ NC {t.FromNC}")
+               + (string.IsNullOrEmpty(t.FromNC) ? "" : $" · từ {NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
                + (string.IsNullOrEmpty(t.ToNC) ? "" : $" · vào NC {t.ToNC}")
                + (t.Status == "COMPLETED" ? "" : $" · {(Received(t) > 0 ? "nhận dở" : "chờ nhận")} (phiếu {t.Issued:0.##})");
 
@@ -1063,7 +1063,7 @@ namespace MES.Web.Services
                     {
                         Add(t.From, "ghSend", "Giao theo NC (máy loại trừ)", giao, txDoc);
                         if (t.From == "GC" && !string.IsNullOrEmpty(t.FromNC))
-                            Add("GC", "helpOut:" + t.FromNC, "Giao theo NC " + t.FromNC, giao, txDoc);
+                            Add("GC", "helpOut:" + t.FromNC, IsVao(t.FromNC) ? "Giao theo NC từ " + VaoLabel : "Giao theo NC " + t.FromNC, giao, txDoc);   // [N3-FIRST] chữ @VAO (NC thường giữ chữ cũ)
                     }
                     else Add(t.From, "ghRet", "Trả về Gia công theo NC", giao, txDoc);
                 }
@@ -1081,7 +1081,7 @@ namespace MES.Web.Services
                             CHop(csT, "PS", t.From, t.To, HandoverCell.Loi, giao, txDocName, t.Id, t.At);
                             // [GN-NC-PIN] Gia công: phiếu mới chốt NC phát hiện lỗi (FromNC) → trừ đúng NC đó, không trôi theo dữ liệu sau (để K5 bắt được)
                             if (t.From == "GC" && !string.IsNullOrEmpty(t.FromNC))
-                                Add("GC", "rrNc:" + t.FromNC, "Trả hàng lỗi phát hiện ở NC " + t.FromNC, giao,
+                                Add("GC", "rrNc:" + t.FromNC, "Trả hàng lỗi phát hiện ở " + NcText(t.FromNC), giao,   // [N3-FIRST] chữ @VAO
                                     new LedgerDoc { Kind = "PHIEU", RefId = t.Id, At = t.At, Text = TxText(t, purpose) });
                         }
                         else if (desig == HandoverCell.Sua) Add(t.From, "glGui", "Giao Hàng lỗi (gửi sửa)", giao, txDoc);
@@ -1204,7 +1204,7 @@ namespace MES.Web.Services
                 {
                     Add(nr.Group, "blChua", "Báo hàng lỗi (lấy từ hàng chưa làm)", nr.Qty, BDoc());
                     if (nr.Group == "GC" && !string.IsNullOrEmpty(nr.NC))
-                        Add("GC", "blNc:" + nr.NC, "Báo hàng lỗi ở NC " + nr.NC, nr.Qty, BDoc());
+                        Add("GC", "blNc:" + nr.NC, "Báo hàng lỗi ở " + NcText(nr.NC), nr.Qty, BDoc());   // [N3-FIRST] chữ @VAO
                 }
                 else Add(nr.Group, "blDa", nr.Group == "KHO" ? "Báo phôi lỗi (lấy từ phôi còn)" : "Báo hàng lỗi (lấy từ hàng đã làm chưa giao)", nr.Qty, BDoc());
                 if (nr.Origin == HandoverNgSource.DauVao) Add(nr.Group, "blDau", "Báo lỗi đầu vào", nr.Qty, BDoc());
@@ -1632,11 +1632,11 @@ namespace MES.Web.Services
                 {
                     HandoverPurpose.Scrap      => $"{GroupLabel(t.From)} huỷ {t.Issued:0.##} · ô Hàng lỗi",
                     HandoverPurpose.CustReturn => $"{GroupLabel(t.From)} trả khách {t.Issued:0.##} · ô Hàng lỗi",
-                    HandoverPurpose.HelpSend   => $"{GroupLabel(t.From)} giao theo NC {t.Issued:0.##}" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" (NC {t.FromNC})") + $" → {GroupLabel(t.To)}",
+                    HandoverPurpose.HelpSend   => $"{GroupLabel(t.From)} giao theo NC {t.Issued:0.##}" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ({NcText(t.FromNC)})") + $" → {GroupLabel(t.To)}",   // [N3-FIRST] chữ @VAO
                     HandoverPurpose.HelpReturn => $"{GroupLabel(t.From)} trả về Gia công {t.Issued:0.##} → {GroupLabel(t.To)}" + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})"),
                     _ => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô {HandoverCell.Label(cell)}"
                          + (purpose == HandoverPurpose.NgReturn ? " ☑ lỗi công đoạn trước" : "")
-                         + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? $" (phát hiện ở NC {t.FromNC})" : "")   // [GN-NC-PIN]
+                         + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? $" (phát hiện ở {NcText(t.FromNC)})" : "")   // [GN-NC-PIN] [N3-FIRST] chữ @VAO
                          + $" → {GroupLabel(t.To)} ô {HandoverCell.Label(DesigCellOf(t, purpose))}"   // [GN-CELL2] ô bên giao chỉ định
                          + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})")
                 };
@@ -1834,7 +1834,8 @@ namespace MES.Web.Services
             // [GN-WTS-CAP][N10] Phiếu Trả hàng lỗi của GC (phát hiện lỗi khâu trước SAU khi nhận): chiếc lỗi được lấy từ
             // NC đang có hàng chờ, NC đầu trước rồi tới NC sau. Trước: luôn trừ ở NC đầu → NC đầu đã làm xong thì âm giả.
             // [GN-NC-PIN] Phiếu mới chốt NC phát hiện (FromNC) → trừ cố định ở NC đó; chỉ phiếu cũ (không có FromNC) còn trôi theo NC đầu còn hàng chờ.
-            var pinnedTotal = inp.GcSteps.Where(s => !s.IsBackup).Select(s => s.NC).Distinct().Sum(nc => V("rrNc:" + nc));
+            var pinnedTotal = inp.GcSteps.Where(s => !s.IsBackup).Select(s => s.NC).Distinct().Sum(nc => V("rrNc:" + nc))
+                            + V("rrNc:" + VaoCode);   // [N3-FIRST] trả hàng lỗi chốt ở dòng "Nhận vào (chưa qua NC)"
             var rrLeft = V("glTra") - recvNg - pinnedTotal;
             LedgerStepLine? lastLine = null;
             var logs = inp.Wts.Where(w => w.ProcessGroup == "GC").ToList();
@@ -1846,6 +1847,41 @@ namespace MES.Web.Services
             decimal prevOk = 0, prevHelpOut = 0;
             bool first = true;
             bool afterExcluded = false; // [GN-WTS-CAP][N3] vừa đi qua 1 NC máy loại trừ
+
+            // [N3-FIRST 2026-11-04] NC ĐẦU chuỗi là máy loại trừ (và sau đó còn NC thường): hàng nhận vào Gia công nằm ở dòng ảo
+            //   "@VAO" = Nhận vào (chưa qua NC). Từ đây Gia công giao theo NC cho nhóm làm máy loại trừ; NC thường đầu tiên chỉ nhận
+            //   hàng trả về (như NC sau máy loại trừ giữa chuỗi — nhánh afterExcluded bên dưới).
+            //   Trước: NC thường đầu tiên nhận thẳng mọi hàng vào Gia công, công đoạn máy loại trừ không có chứng từ, không có NC nguồn để giao theo NC.
+            //   Dòng @VAO không có WTS (OK = NG = 0): Nhận vào = như NC đầu cũ; còn chờ = Nhận vào − đã giao theo NC từ đây (K5 canh ô GC|GC|@VAO).
+            //   Σ chờ các dòng (gồm @VAO) = Chưa GC khi không có máy loại trừ GIỮA chuỗi (bộ kiểm canh).
+            if (all[0].IsExcluded && all.Any(s => !s.IsExcluded))
+            {
+                var x0 = all[0];
+                var vline = new LedgerStepLine
+                {
+                    Pg = "GC", SubGroup = "GC", Code = VaoCode, StepOrder = x0.StepOrder, Machine = null,
+                    HelpOut = V("helpOut:" + VaoCode)
+                };
+                var vin = G.NhanMoi + G.NhanLoiXl + V("nhRet") - targeted - recvNg;
+                vline.Note = $"nhận vào = Nhận Hàng mới + Nhận Hàng lỗi đã xử lý + hàng trả về (không chọn NC) − NG đếm lúc nhận; chưa qua NC — NC đầu {x0.NC} là máy loại trừ ({x0.Machine}): giao theo NC từ đây";
+                var vpin = V("rrNc:" + VaoCode);
+                if (vpin != 0) { vin -= vpin; vline.Note += $" − trả hàng lỗi phát hiện ở đây {vpin:0.##}"; }
+                var vbl = V("blNc:" + VaoCode);
+                if (vbl != 0) { vin -= vbl; vline.Note += $" − báo hàng lỗi ở đây {vbl:0.##}"; }
+                if (rrLeft > 0)
+                {
+                    var take = Math.Min(Math.Max(0, vin - vline.HelpOut), rrLeft);   // như NC đầu cũ: phiếu trả lỗi cũ (không chốt NC) lấy hàng đang chờ ở đây trước
+                    if (take > 0) { vin -= take; rrLeft -= take; vline.Note += $" − trả hàng lỗi {take:0.##}"; }
+                }
+                if (vline.HelpOut != 0) vline.Note += $"; đã giao theo NC {vline.HelpOut:0.##}";
+                vline.In = vin;
+                vline.Waiting = vin - vline.HelpOut;
+                if (vline.Waiting < 0)
+                    G.Warnings.Add($"Gia công {VaoLabel}: đã giao theo NC ({vline.HelpOut:0.##}) nhiều hơn số nhận vào ({vin:0.##}) — N3");
+                lastLine = vline;
+                G.Steps.Add(vline);
+                first = false;   // NC máy loại trừ ngay sau → afterExcluded → NC thường đầu tiên chỉ nhận hàng trả về
+            }
             foreach (var s in all)
             {
                 var codes = NcCodes(inp, s.NC);
@@ -1991,6 +2027,14 @@ namespace MES.Web.Services
                 return new WtsCapInfo { Max = G.ChuaLam, Locked = G.NhanSanXuat <= 0, Code = main, Explain = e };
             }
 
+            // [N3-FIRST] dòng "Nhận vào (chưa qua NC)" không phải NC thật — không ghi WTS ở đây
+            if (IsVao(line.Code))
+                return new WtsCapInfo
+                {
+                    Max = 0, Locked = true, Code = main,
+                    Explain = new LedgerExplain { Title = VaoLabel, Rule = "N3",
+                        Note = "Hàng nhận vào Gia công chưa qua NC nào (NC đầu là máy loại trừ): không ghi WTS ở đây — giao theo NC cho nhóm làm máy loại trừ, hàng trả về NC sau thì ghi WTS ở NC đó." }
+                };
             if (line.IsExcluded)
                 return new WtsCapInfo
                 {
@@ -2022,7 +2066,7 @@ namespace MES.Web.Services
         // ================================================================
         public static string NgRepText(InNgRep b)
             => $"Báo lỗi #{b.Id} · {GroupLabel(b.Group)} phát hiện {b.Qty:0.##} chiếc lỗi sau khi nhận · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
-               + (string.IsNullOrEmpty(b.NC) ? "" : $" NC {b.NC}")
+               + (string.IsNullOrEmpty(b.NC) ? "" : $" {NcText(b.NC)}")   // [N3-FIRST] chữ @VAO
                + $" · {HandoverNgSource.OriginLabel(b.Origin, b.Cause)}"
                + (string.IsNullOrEmpty(b.Reason) ? "" : $" · lỗi: {b.Reason}")
                + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}");
@@ -2044,7 +2088,7 @@ namespace MES.Web.Services
                 var st = G.Steps.FirstOrDefault(s => s.Code == nc && !s.IsExcluded);
                 if (st == null) return (0, new LedgerExplain { Title = "Chọn NC đang chứa hàng lỗi" });
                 var w = st.Waiting ?? 0;
-                var ex = new LedgerExplain { Title = $"Gia công · NC {nc} · chưa gia công", Rule = "L3, N1",
+                var ex = new LedgerExplain { Title = $"Gia công · {NcText(nc)} · chưa gia công", Rule = "L3, N1",   // [N3-FIRST] chữ @VAO
                     Formula = "Hàng chờ của NC (không vượt Chưa GC của cả nhóm)", Result = Math.Min(w, G.ChuaLam),
                     Note = "Chiếc lỗi đang nằm ở NC này, chưa gia công qua NC này." };
                 return (Math.Max(0, Math.Min(w, G.ChuaLam)), ex);
@@ -2125,6 +2169,13 @@ namespace MES.Web.Services
                         decimal sumNc = 0;
                         foreach (var st in G.Steps.Where(s => !s.IsExcluded && s.Waiting != null))
                         {
+                            if (IsVao(st.Code))   // [N3-FIRST] hàng nhận vào chưa qua NC nào, chờ giao theo NC cho nhóm làm máy loại trừ đầu chuỗi
+                            {
+                                var xn = G.Steps.SkipWhile(s => !IsVao(s.Code)).Skip(1).FirstOrDefault();
+                                Put(code, "CHUA", "nhận vào, chưa giao làm " + (xn != null ? $"NC {xn.Code} (máy loại trừ{(string.IsNullOrEmpty(xn.Machine) ? "" : " " + xn.Machine)})" : "NC máy loại trừ"),
+                                    st.Waiting!.Value, "đã nhận vào Gia công, chưa giao theo NC cho nhóm làm máy loại trừ đầu chuỗi", st.Code);
+                            }
+                            else
                             Put(code, "CHUA", "chờ NC " + st.Code, st.Waiting!.Value, "đã nhận, chưa gia công qua NC này", st.Code);
                             sumNc += st.Waiting!.Value;
                         }
@@ -2170,7 +2221,9 @@ namespace MES.Web.Services
                 Put(G.Code + "|LamHoGiu", G.LamHoGiu, $"{G.Label}: Tồn hàng giao theo NC");
                 // Ô theo NC (GC) là ô bảo toàn thật (N1).
                 foreach (var s in G.Steps.Where(s => s.Pg == "GC" && s.Waiting.HasValue && !s.IsExcluded && !s.IsPrep))
-                    Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, $"{G.Label} {NcName(s.Code)}: chưa làm");   // [GN-WHY] chữ: bỏ "NC NC1"
+                    Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, IsVao(s.Code)
+                        ? $"{G.Label} {VaoLabel}: hàng nhận vào chưa giao theo NC"   // [N3-FIRST]
+                        : $"{G.Label} {NcName(s.Code)}: chưa làm");   // [GN-WHY] chữ: bỏ "NC NC1"
                 // [GN-VOID-RULE] Gia công giao theo NC mà NC sau là máy loại trừ (hoặc không có NC sau): số đã giao từ NC không vượt OK NC đó.
                 //   NC sau thường đã tự canh (nhận vào = OK NC trước − đã giao đi), riêng NC sau là máy loại trừ thì không có ô nào canh.
                 //   Trước: xoá WTS NC nguồn sau khi đã giao theo NC vẫn cho (fuzz 26/10: OK NC1 còn 1, đã giao theo NC 4).
@@ -2179,6 +2232,7 @@ namespace MES.Web.Services
                     {
                         var s = G.Steps[i];
                         if (s.IsExcluded || s.IsPrep || s.HelpOut <= 0) continue;
+                        if (IsVao(s.Code)) continue;   // [N3-FIRST] dòng @VAO không có OK (WTS): đã canh bằng ô GC|GC|@VAO (còn chờ = Nhận vào − đã giao theo NC)
                         var next = i + 1 < G.Steps.Count ? G.Steps[i + 1] : null;
                         if (next != null && !next.IsExcluded) continue;
                         Put($"GC|helpOut|{s.Code}", s.Ok - s.HelpOut, $"{G.Label} {NcName(s.Code)}: đã giao theo NC nhiều hơn OK của NC (WTS)");
@@ -2208,7 +2262,18 @@ namespace MES.Web.Services
 
         /// <summary>[GN-WHY] Tên NC để hiện: "NC1" giữ nguyên, mã không bắt đầu bằng NC thì thêm chữ "NC ".</summary>
         public static string NcName(string? code)
-            => string.IsNullOrEmpty(code) ? "NC" : code.StartsWith("NC", StringComparison.OrdinalIgnoreCase) ? code : "NC " + code;
+            => IsVao(code) ? VaoLabel   // [N3-FIRST]
+             : string.IsNullOrEmpty(code) ? "NC" : code.StartsWith("NC", StringComparison.OrdinalIgnoreCase) ? code : "NC " + code;
+
+        // [N3-FIRST 2026-11-04] Dòng ảo "Nhận vào, chưa qua NC" của Gia công khi NC ĐẦU chuỗi là máy loại trừ (Hùng duyệt phương án A 02/11,
+        //   thiết kế @VAO duyệt 04/11). Mã "@VAO" không bao giờ là NC thật (Part Master không cho ký tự @ đầu mã NC? — không dựa vào đó:
+        //   máy chủ chặn WTS / phiếu nhận vào NC "@VAO", chỉ cho làm NC nguồn của Giao theo NC / Trả hàng lỗi / Báo lỗi).
+        public const string VaoCode  = "@VAO";
+        public const string VaoLabel = "Nhận vào (chưa qua NC)";
+        /// <summary>[N3-FIRST] Mã là dòng ảo @VAO? Bỏ khoảng trắng, không phân biệt hoa thường (rà độc lập 04/11 M1: "@vao" lọt WTS khi Workflow OFF).</summary>
+        public static bool IsVao(string? code) => code != null && string.Equals(code.Trim(), VaoCode, StringComparison.OrdinalIgnoreCase);
+        /// <summary>[N3-FIRST] Chữ "NC x" để hiện; riêng @VAO hiện "Nhận vào (chưa qua NC)". Mã khác giữ đúng chữ cũ "NC " + mã.</summary>
+        public static string NcText(string? code) => IsVao(code) ? VaoLabel : "NC " + code;
 
         /// <summary>[GN-WHY] Như NewNegatives nhưng trả khoá ô (để lần ra chứng từ đang trừ vào ô đó).</summary>
         public static List<string> NewNegativeKeys(LedgerRow before, LedgerRow after)
@@ -2257,9 +2322,9 @@ namespace MES.Web.Services
                         if (ln == null)
                             return (0, new LedgerExplain { Title = "Trả hàng lỗi theo NC", Note = $"NC {fromNC} không có trong snapshot (hoặc là NC máy loại trừ)." });
                         var w = ln.Waiting ?? 0;
-                        var ex = new LedgerExplain { Title = $"Gia công · NC {fromNC} chưa làm", Rule = "N10", Formula = $"Nhận vào NC {fromNC} − OK − NG",
+                        var ex = new LedgerExplain { Title = $"Gia công · {NcText(fromNC)} chưa làm", Rule = "N10", Formula = $"Nhận vào {NcText(fromNC)} − OK − NG",   // [N3-FIRST] chữ @VAO
                             Note = "Chiếc lỗi phát hiện ở NC này, lấy từ hàng đang chờ của NC (chưa làm).", Result = Math.Min(w, G.ChuaLam) };
-                        ex.Terms.Add(new LedgerTerm { Label = $"Nhận vào NC {fromNC}", Value = ln.In ?? 0, Sign = 1 });
+                        ex.Terms.Add(new LedgerTerm { Label = $"Nhận vào {NcText(fromNC)}", Value = ln.In ?? 0, Sign = 1 });
                         ex.Terms.Add(new LedgerTerm { Label = "OK + NG đã làm", Value = ln.Ok + ln.Ng, Sign = -1 });
                         return (Math.Max(0, Math.Min(w, G.ChuaLam)), ex);
                     }
@@ -2282,6 +2347,20 @@ namespace MES.Web.Services
                     var line = G.Steps.FirstOrDefault(s => s.Code == fromNC && !s.IsExcluded);
                     if (line == null)
                         return (0, new LedgerExplain { Title = "Giao theo NC", Note = $"NC {fromNC} không có trong snapshot (hoặc là NC máy loại trừ)." });
+                    // [N3-FIRST 2026-11-04] Giao theo NC từ dòng "Nhận vào (chưa qua NC)": trần = hàng nhận vào chưa giao (dòng này không có OK WTS)
+                    if (IsVao(line.Code))
+                    {
+                        var ev = new LedgerExplain
+                        {
+                            Title = $"Gia công · {VaoLabel} · còn giao được", Rule = "N3, N4",
+                            Formula = $"{VaoLabel} − đã giao theo NC từ đây",
+                            Note = "NC đầu của Gia công là máy loại trừ: hàng nhận vào giao theo NC cho nhóm làm máy đó, nhóm đó trả về NC sau."
+                        };
+                        ev.Terms.Add(new LedgerTerm { Label = VaoLabel, Value = line.In ?? 0, Sign = 1 });
+                        ev.Terms.Add(new LedgerTerm { Label = "Đã giao theo NC", Value = line.HelpOut, Sign = -1 });
+                        ev.Result = line.Waiting ?? 0;
+                        return (Math.Max(0, Math.Min(ev.Result, G.ChuaLam)), ev);
+                    }
                     var next = G.Steps.SkipWhile(s => s.Code != fromNC).Skip(1).FirstOrDefault();
                     // [GN-HELP-LAST] NC cuối không giao theo NC: OK của NC cuối đã là "Đã làm chưa giao" của Gia công → giao bằng Hàng mới.
                     //   Trước: giao theo NC từ NC cuối trừ Chưa GC nhưng không trừ NC nào → Σ chờ các NC > Chưa GC → WTS nhập vượt, Chưa GC âm.

@@ -197,7 +197,7 @@ namespace MES.Web.Services
                 foreach (var b in s.NgReps.Where(b => b.Id > 0 && f(b)))
                     c.Add(new WhyStep { Kind = "BAOLOI", Id = b.Id, At = b.At,
                         Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
-                             + (string.IsNullOrEmpty(b.NC) ? "" : $" NC {b.NC}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" });
+                             + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" });
             }
             void AddTx(Func<InTx, bool> f)
             {

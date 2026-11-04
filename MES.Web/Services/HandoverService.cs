@@ -618,9 +618,13 @@ namespace MES.Web.Services
                 return (false, "Trả về Gia công: bắt buộc chọn NC nhận vào (K3).");
             // [N3-TONC 2026-10-30] NC nhận vào phải là NC thường có trong snapshot của PO (trang chỉ cho chọn các NC này; máy chủ kiểm lại).
             //   Trước: NC máy loại trừ / NC không có trong quy trình vẫn lưu được → sổ dồn số đó vào NC đầu, không vào NC đã ghi trên phiếu (lệch truy vết).
+            //   [N3-FIRST 2026-11-04] dòng "Nhận vào (chưa qua NC)" (@VAO) không phải NC nhận: hàng vào Gia công không chọn NC đã tự nằm ở đó
+            //   (sổ chỉ trừ "in:" của NC thường khỏi dòng này — cho nhận vào @VAO sẽ đếm 2 lần).
             if (toGroupCode == "GC" && gcHasNc && !string.IsNullOrEmpty(toNC) && !isOut
-                && !row.G("GC").Steps.Any(s => !s.IsExcluded && s.Code == toNC))   // so đúng chữ như sổ ("in:" + NC)
-                return (false, $"NC {toNC} không phải NC nhận hàng của PO này (không có trong quy trình hoặc là máy loại trừ). Chọn lại NC nhận vào.");
+                && (HandoverLedgerService.IsVao(toNC) || !row.G("GC").Steps.Any(s => !s.IsExcluded && s.Code == toNC)))   // so đúng chữ như sổ ("in:" + NC)
+                return (false, HandoverLedgerService.IsVao(toNC)
+                    ? $"\"{HandoverLedgerService.VaoLabel}\" không phải NC nhận hàng: hàng vào Gia công không chọn NC đã tự nằm ở đó, hàng trả về chọn NC sau máy loại trừ. Chọn lại NC nhận vào."   // [N3-FIRST]
+                    : $"NC {toNC} không phải NC nhận hàng của PO này (không có trong quy trình hoặc là máy loại trừ). Chọn lại NC nhận vào.");
 
             // [GN-NC-PIN] Gia công trả hàng lỗi công đoạn trước: bắt buộc chọn NC phát hiện lỗi (chốt NC, không trôi theo dữ liệu sau)
             if (purpose == HandoverPurpose.NgReturn && fromGroupCode == "GC" && row.G("GC").Steps.Any(s => !s.IsExcluded))
@@ -628,7 +632,7 @@ namespace MES.Web.Services
                 if (string.IsNullOrEmpty(fromNC))
                     return (false, "Gia công trả hàng lỗi: bắt buộc chọn NC phát hiện lỗi.");
                 if (!row.G("GC").Steps.Any(s => s.Code == fromNC && !s.IsExcluded))
-                    return (false, $"NC {fromNC} không có trong snapshot của PO (hoặc là máy loại trừ).");
+                    return (false, $"{HandoverLedgerService.NcText(fromNC)} không có trong snapshot của PO (hoặc là máy loại trừ).");   // [N3-FIRST] chữ @VAO
             }
             // [VULOI] Vụ lấy hàng phải thuộc PO này và đang có hàng ở ô bên giao; không chọn vụ = hàng lỗi cũ chưa có mã (chỉ khi còn)
             if (takesCase)

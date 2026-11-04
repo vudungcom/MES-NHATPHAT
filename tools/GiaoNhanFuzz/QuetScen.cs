@@ -117,8 +117,8 @@ public static class QuetScen
             db.Fixup();
             var r2 = await QuetCore.ScanAsync(db, led);
             var lt = r2.Findings.Where(f => f.Kind == QuetCore.LoaiTruDau).Select(f => f.Detail).ToList();
-            Ok(lt.Count == 1 && lt[0].Contains("NC NC1 (máy M1") && lt[0].Contains("NC nhận hàng đầu theo sổ hiện tại: NC NC2") && r2.Findings.First(f => f.Kind == QuetCore.LoaiTruDau).Po == "PO1",
-               "NC đầu NC1 chạy máy loại trừ M1 (snapshot ghi \" m1 \" — bỏ khoảng trắng, không phân biệt hoa thường): báo 1 dòng LOAI_TRU_DAU, nêu NC nhận hàng đầu theo sổ = NC2", string.Join(" | ", lt));
+            Ok(lt.Count == 1 && lt[0].Contains("NC NC1 (máy M1") && lt[0].Contains("NC thường đầu tiên: NC NC2") && lt[0].Contains("Nhận vào (chưa qua NC)") && r2.Findings.First(f => f.Kind == QuetCore.LoaiTruDau).Po == "PO1",
+               "NC đầu NC1 chạy máy loại trừ M1 (snapshot ghi \" m1 \" — bỏ khoảng trắng, không phân biệt hoa thường): báo 1 dòng LOAI_TRU_DAU, nêu NC thường đầu tiên NC2 + hàng ở \"Nhận vào (chưa qua NC)\" (chữ đổi 04/11 [N3-FIRST])", string.Join(" | ", lt));
             // Part Master theo danh sách máy loại trừ hiện tại: chỉ Part đang dùng có NC chính đầu tiên chạy máy loại trừ
             db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 1, SoMay = "MX" });
             var cust = db.Customers.List.First();

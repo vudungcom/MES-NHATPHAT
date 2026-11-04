@@ -247,7 +247,8 @@
         if (!string.IsNullOrWhiteSpace(e.OriginText)) parts.Add(e.OriginText!);
         if (e.PhatSinh != 0 && !string.IsNullOrEmpty(e.CausedBy) && e.CausedBy != e.DetectedAt)
             parts.Add("do " + (e.CausedBy == "KHACH" ? "phôi khách" : HandoverLedgerService.GroupLabel(e.CausedBy!)));
-        if (!string.IsNullOrEmpty(e.Code)) parts.Add((e.Type == "WTS_NG" && e.Group != "GC" ? "mã " : "NC ") + e.Code);
+        if (!string.IsNullOrEmpty(e.Code)) parts.Add(HandoverLedgerService.IsVao(e.Code) ? HandoverLedgerService.VaoLabel   // [N3-FIRST] chữ @VAO
+                                                      : (e.Type == "WTS_NG" && e.Group != "GC" ? "mã " : "NC ") + e.Code);
         return parts.Count == 0 ? "" : string.Join(" · ", parts);
     }
 

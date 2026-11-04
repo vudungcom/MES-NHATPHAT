@@ -89,7 +89,7 @@ for (int po = startPo; po < startPo + poCount; po++)
             await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(nbId, DateTime.Now, q2, "OVL", "A2", null, null, null, "nhan phoi", 1);
             var nsvc = new HandoverService(db);
             var nbRow0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(nbId))!;   // [N3-TONC] NC thường đầu tiên (NC đầu có thể là máy loại trừ)
-            var nc0 = nbRow0.G("GC").Steps.First(s => !s.IsExcluded).Code;
+            var nc0 = nbRow0.G("GC").Steps.First(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Code;   // [N3-FIRST] @VAO không phải NC nhận
             var gi = await nsvc.IssueByCellAsync(nbId, "KHO", "GC", q2, 1, "MOI", false, "MOI", null, nc0);
             if (!gi.Ok) fails.Add($"[CHUOI] PO{po} PO hàng xóm giao Kho → GC lỗi: {gi.Error}");
             if (gi.Ok) await nsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, q2 - 1, 1, "loi", 2, null, null, null, 2);
@@ -101,7 +101,7 @@ for (int po = startPo; po < startPo + poCount; po++)
         snapSig0 = ChuoiHelp.SnapPicture(db, 1).Sig;
         (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, 1);
         if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] PO{po} SL={q1} Part Master:\n   " + snapSig0.Replace("\n", "\n   "));
-        Inc("chuoi.po"); if (twoPo) Inc("chuoi.2po"); if (shape.ExclAt >= 0) Inc("chuoi.excl"); if (shape.DuPhong) Inc("chuoi.duphong"); if (shape.DongDang) Inc("chuoi.dongdang");
+        Inc("chuoi.po"); if (twoPo) Inc("chuoi.2po"); if (shape.ExclAt >= 0) Inc("chuoi.excl"); if (shape.ExclAt == 0 && shape.Gc >= 2) Inc("chuoi.exclfirst"); if (shape.DuPhong) Inc("chuoi.duphong"); if (shape.DongDang) Inc("chuoi.dongdang");
     }
     else
     {
@@ -157,15 +157,29 @@ for (int po = startPo; po < startPo + poCount; po++)
                 case "issue":
                 {
                     var from = groups[rnd.Next(groups.Length)];
-                    var special = rnd.NextDouble() < 0.12;
+                    // [N3-FIRST 2026-11-04] PO có dòng "Nhận vào (chưa qua NC)": đường duy nhất qua máy loại trừ đầu chuỗi là giao theo NC → trả về,
+                    //   nên tăng tỉ lệ phiếu đặc biệt / giao theo NC / trả về cho các PO này (PO khác giữ y tỉ lệ cũ)
+                    bool vaoPo = row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code));
+                    var special = rnd.NextDouble() < (vaoPo ? 0.35 : 0.12);
                     if (special)
                     {
-                        var p = Pick(rnd, (HandoverPurpose.Scrap, 3), (HandoverPurpose.CustReturn, 2), (HandoverPurpose.HelpSend, 3), (HandoverPurpose.HelpReturn, 3));
+                        var p = vaoPo ? Pick(rnd, (HandoverPurpose.Scrap, 2), (HandoverPurpose.CustReturn, 1), (HandoverPurpose.HelpSend, 6), (HandoverPurpose.HelpReturn, 5))
+                                      : Pick(rnd, (HandoverPurpose.Scrap, 3), (HandoverPurpose.CustReturn, 2), (HandoverPurpose.HelpSend, 3), (HandoverPurpose.HelpReturn, 3));
                         var to = p == HandoverPurpose.HelpReturn ? "GC" : groups[rnd.Next(groups.Length)];
                         if (p == HandoverPurpose.HelpSend) from = "GC";
                         var fnc = p == HandoverPurpose.HelpSend ? ncs[rnd.Next(ncs.Length)] : null;
-                        var ncsIn = row.G("GC").Steps.Where(x => !x.IsExcluded).Select(x => x.Code).ToArray();   // [N3-TONC] NC nhận vào hợp lệ (như trang)
+                        // [N3-FIRST 2026-11-04] NC đầu là máy loại trừ: giao theo NC từ dòng "Nhận vào (chưa qua NC)" (như trang: ô NC nguồn có dòng này)
+                        bool hasVao = row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code));
+                        if (p == HandoverPurpose.HelpSend && hasVao && rnd.NextDouble() < 0.8) fnc = HandoverLedgerService.VaoCode;
+                        var ncsIn = row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => x.Code).ToArray();   // [N3-TONC] NC nhận vào hợp lệ (như trang) [N3-FIRST] trừ @VAO
                         var tnc = p == HandoverPurpose.HelpReturn ? (ncsIn.Length > 0 ? ncsIn[rnd.Next(ncsIn.Length)] : ncs[rnd.Next(ncs.Length)]) : null;
+                        if (p == HandoverPurpose.HelpReturn && hasVao && rnd.NextDouble() < 0.08)
+                        {   // [N3-FIRST] trả về vào "@VAO" phải bị chặn (trang không cho chọn; máy chủ kiểm lại)
+                            var nb = db.HandoverTransactions.List.Count;
+                            var bad = await svc.IssueSpecialAsync(1, from, "GC", 1, Uid(from), p, null, HandoverLedgerService.VaoCode, "ghi chu");
+                            Inc("vao.tonc");
+                            if (bad.Ok || db.HandoverTransactions.List.Count != nb) fails.Add($"[N3-FIRST trả về vào @VAO không bị chặn] PO{po} op{op} {from}");
+                        }
                         // [VULOI] Huỷ / Trả khách: chọn 1 vụ đang giữ ở ô Hàng lỗi bên giao (trần theo vụ)
                         long? vu = null;
                         if (p is HandoverPurpose.Scrap or HandoverPurpose.CustReturn)
@@ -181,6 +195,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                         desc = $"special {p} {from}->{to} {q} max={max} vu={vu} fnc={fnc} tnc={tnc}";
                         var r = await svc.IssueSpecialAsync(1, from, to, q, Uid(from), p, fnc, tnc, "ghi chu", null, vu);
                         ok = r.Ok; if (!ok) Inc("rej.issue");
+                        if (ok && HandoverLedgerService.IsVao(fnc)) Inc("vao.helpsend.ok");   // [N3-FIRST]
+                        if (ok && vaoPo && p == HandoverPurpose.HelpReturn) Inc("vao.helpreturn.ok");
                         if (ok && q > max) fails.Add($"[Giao vượt trần vụ] PO{po} op{op} {desc}");
                     }
                     else
@@ -290,6 +306,13 @@ for (int po = startPo; po < startPo + poCount; po++)
                             var cp = HandoverLedgerService.WtsCap(row, p2, c2);
                             if (cp.Max != null && !cp.Locked && cp.Max > 0) { g = gg; pg = p2; code = c2; cap = cp; break; }
                         }
+                    }
+                    if (row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code)) && rnd.NextDouble() < 0.05)
+                    {   // [N3-FIRST] WTS ghi vào "@VAO" phải bị chặn (không phải NC thật)
+                        var nWtsVao = db.WtsProductionLogs.List.Count;
+                        var bv = await WtsSvcHelp.SaveAsync(db, 1, "GC", HandoverLedgerService.VaoCode, null, 1, 0, Uid("GC"));
+                        Inc("vao.wts");
+                        if (bv.Ok || db.WtsProductionLogs.List.Count != nWtsVao) fails.Add($"[N3-FIRST WTS ghi vào @VAO không bị chặn] PO{po} op{op}");
                     }
                     if (cap.Max == null || cap.Locked || cap.Max <= 0) { Inc("skip.wts"); continue; }
                     var q = rnd.Next(1, (int)cap.Max.Value + 1);
@@ -729,7 +752,12 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     // GC: Σ chờ các NC = Chưa GC
     var gc = row.G("GC");
     var gcLines = gc.Steps.Where(s => !s.IsExcluded && s.Waiting.HasValue).ToList();
-    if (gcLines.Any() && !gc.Steps.Any(s => s.IsExcluded))   // có NC loại trừ: hàng chờ gửi làm hộ nằm trong Chưa GC, không thuộc NC nào
+    // [N3-FIRST 2026-11-04] siết: chỉ bỏ qua khi có máy loại trừ GIỮA 2 NC thường (hàng OK NC trước chờ gửi làm hộ không thuộc dòng nào).
+    //   Máy loại trừ đầu chuỗi (dòng @VAO giữ hàng chờ gửi) / cuối chuỗi: Σ chờ các dòng phải = Chưa GC. Trước: bỏ qua mọi PO có máy loại trừ.
+    bool exclMid = false;
+    { bool seenNormal = false, seenExclAfterNormal = false;
+      foreach (var s in gc.Steps) { if (s.IsExcluded) { if (seenNormal) seenExclAfterNormal = true; } else if (!HandoverLedgerService.IsVao(s.Code)) { if (seenExclAfterNormal) exclMid = true; seenNormal = true; } } }
+    if (gcLines.Any() && !exclMid)
     {
         checks++;
         var sum = gcLines.Sum(s => s.Waiting!.Value);

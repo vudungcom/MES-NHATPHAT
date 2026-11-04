@@ -562,7 +562,9 @@ namespace MES.Web.Services
                         {   // (mã trống → SaveRowAsync báo "Chọn NC (nếu có PO) hoặc Mã WTS khác" như cũ)
                             var cp = HandoverLedgerService.WtsCap(basis, pg, CodeOf(s));
                             if (cp.Max == null) continue;   // mã chuẩn bị
-                            if (!G.Steps.Any(l => l.Pg == pg && string.Equals(l.Code, cp.Code, StringComparison.OrdinalIgnoreCase)))
+                            // [N3-FIRST 2026-11-04] dòng ảo "Nhận vào (chưa qua NC)" (@VAO) của sổ không phải NC — coi như không có trong quy trình
+                            //   (Workflow OFF bỏ qua trần nên phải chặn ở đây; trang WTS chỉ cho chọn NC của snapshot nên bình thường không gặp).
+                            if (HandoverLedgerService.IsVao(cp.Code) || !G.Steps.Any(l => l.Pg == pg && !HandoverLedgerService.IsVao(l.Code) && string.Equals(l.Code, cp.Code, StringComparison.OrdinalIgnoreCase)))
                             {
                                 var what = grp.IsGc ? $"NC {cp.Code}" : $"mã {cp.Code}";
                                 // HTSP: PO có snapshot Taro nhưng không có Bavia/Rửa (hoặc ngược lại) → nói rõ "chưa có quy trình nhóm nhỏ" thay vì "sai mã"

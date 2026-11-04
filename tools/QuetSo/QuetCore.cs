@@ -57,7 +57,7 @@ public static class QuetCore
                 Add(r, OAm, $"{kv.Value.Text} = {kv.Value.Value:0.##}");
             foreach (var G in r.Groups.Values)
                 foreach (var s in G.Steps.Where(s => !s.IsPrep && !s.IsExcluded && s.Waiting.HasValue && s.Waiting.Value < 0))
-                    Add(r, WtsVuot, $"{G.Label} {(s.Pg == "GC" ? "NC" : s.SubGroup)} {s.Code}: nhận vào {(s.In ?? 0):0.##} − đã ghi WTS OK {s.Ok:0.##} − đã ghi WTS NG {s.Ng:0.##} = {s.Waiting:0.##}");
+                    Add(r, WtsVuot, $"{G.Label} {(HandoverLedgerService.IsVao(s.Code) ? HandoverLedgerService.VaoLabel : (s.Pg == "GC" ? "NC " : s.SubGroup + " ") + s.Code)}: nhận vào {(s.In ?? 0):0.##} − đã ghi WTS OK {s.Ok:0.##} − đã ghi WTS NG {s.Ng:0.##} = {s.Waiting:0.##}");
             var w = HandoverLedgerService.WhereIs(r);
             if (!w.Balanced)
                 Add(r, DangODau, $"cộng các ô {w.Total:0.##} ≠ phôi {w.Phoi:0.##}");
@@ -116,7 +116,7 @@ public static class QuetCore
             Add(r, LoaiTruDau,
                 $"Gia công bắt đầu bằng NC máy loại trừ: {string.Join(", ", lead.Select(s => $"NC {s.NC} (máy {s.MachineRegistered?.Trim()}, {WtsOf(s.NC)})"))}"
                 + (firstReal == null ? " · KHÔNG còn NC nào sau (cả chuỗi loại trừ)"
-                   : $" · NC nhận hàng đầu theo sổ hiện tại: NC {firstReal.NC} (nhận vào {(line?.In ?? 0):0.##}, {WtsOf(firstReal.NC)})")
+                   : $" · NC thường đầu tiên: NC {firstReal.NC} (nhận vào {(line?.In ?? 0):0.##} — từ 04/11 [N3-FIRST] chỉ nhận hàng trả về; hàng chưa giao theo NC nằm ở \"{HandoverLedgerService.VaoLabel}\" {(G.Steps.FirstOrDefault(s => HandoverLedgerService.IsVao(s.Code))?.Waiting ?? 0):0.##}, {WtsOf(firstReal.NC)})")
                 + $" · Gia công đã nhận Hàng mới {G.NhanMoi:0.##}, Hàng làm hộ về {G.NhanLamHoVe:0.##}, đã giao làm hộ {G.GiaoLamHo:0.##}");
         }
         // Part Master (PO tạo sau sẽ chụp quy trình này): NC chính đầu tiên (đang dùng) chạy máy loại trừ theo danh sách hiện tại

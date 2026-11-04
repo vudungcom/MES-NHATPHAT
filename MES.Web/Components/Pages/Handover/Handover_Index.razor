@@ -564,7 +564,7 @@ else
                                             <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC --</option>
                                             @foreach (var s in G.Steps.Where(x => !x.IsExcluded))
                                             {
-                                                <option value="@s.Code" selected="@(_issueFromNC == s.Code)">NC @s.Code (chưa làm @((s.Waiting ?? 0).ToString("0.##")))</option>
+                                                <option value="@s.Code" selected="@(_issueFromNC == s.Code)">@HandoverLedgerService.NcText(s.Code) (chưa làm @((s.Waiting ?? 0).ToString("0.##")))</option>
                                             }
                                         </select>
                                     </div>
@@ -616,7 +616,7 @@ else
                                     <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC đã làm xong --</option>
                                     @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !x.IsLast))
                                     {
-                                        <option value="@s.Code" selected="@(_issueFromNC == s.Code)">NC @s.Code (OK @s.Ok.ToString("0.##"))</option>
+                                        <option value="@s.Code" selected="@(_issueFromNC == s.Code)">@HelpSrcLabel(s)</option>
                                     }
                                 </select>
                             </div>
@@ -688,8 +688,8 @@ else
                                         Nhận vào NC @(purpose == HandoverPurpose.HelpReturn ? "*" : "(tuỳ chọn)")
                                     </label>
                                     <select class="form-select form-select-sm" @onchange="OnToNcChanged">
-                                        <option value="" selected="@(string.IsNullOrEmpty(_issueToNC))">-- NC đầu (mặc định) --</option>
-                                        @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded))
+                                        <option value="" selected="@(string.IsNullOrEmpty(_issueToNC))">@ToNcDefaultLabel</option>
+                                        @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)))
                                         {
                                             <option value="@s.Code" selected="@(_issueToNC == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
                                         }
@@ -836,7 +836,7 @@ else
                                 <option value="" selected="@(string.IsNullOrEmpty(_ngNc))">-- Chọn NC --</option>
                                 @foreach (var st in NG.Steps.Where(x => !x.IsExcluded))
                                 {
-                                    <option value="@st.Code" selected="@(_ngNc == st.Code)">NC @st.Code (chưa gia công @((st.Waiting ?? 0).ToString("0.##")))</option>
+                                    <option value="@st.Code" selected="@(_ngNc == st.Code)">@HandoverLedgerService.NcText(st.Code) (chưa gia công @((st.Waiting ?? 0).ToString("0.##")))</option>
                                 }
                             </select>
                         </div>
@@ -1210,7 +1210,7 @@ else
                         </div>
                         <div class="small mb-1 text-muted">
                             Giao: <strong class="text-dark">@tx.QtyIssued.ToString("0.##") chiếc</strong>
-                            @if (!string.IsNullOrEmpty(tx.FromNC)) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">từ NC @tx.FromNC</span> }
+                            @if (!string.IsNullOrEmpty(tx.FromNC)) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">từ @HandoverLedgerService.NcText(tx.FromNC)</span> }
                             @if (!string.IsNullOrEmpty(tx.ToNC)) { <span class="badge bg-info text-dark ms-1" style="font-size:10px">vào NC @tx.ToNC</span> }
                             @if (!string.IsNullOrEmpty(tx.Notes)) { <span class="ms-1"> — @tx.Notes</span> }
                         </div>
@@ -1647,13 +1647,13 @@ else
                         {
                             <tr class="@(s.IsExcluded ? "table-warning" : "")">
                                 <td>
-                                    <code>@s.Code</code>
+                                    @if (HandoverLedgerService.IsVao(s.Code)) { <span class="fst-italic">@HandoverLedgerService.VaoLabel</span> } else { <code>@s.Code</code> }
                                     @if (s.IsLast) { <span class="badge bg-secondary ms-1" style="font-size:8.5px">cuối</span> }
                                     @if (s.IsExcluded) { <span class="badge bg-danger ms-1" style="font-size:8.5px">loại trừ</span> }
                                 </td>
                                 <td class="text-muted">@(s.Machine ?? "—")</td>
                                 <td class="text-end">@(s.In.HasValue ? s.In.Value.ToString("0.##") : "·")</td>
-                                <td class="text-end text-primary">@s.Ok.ToString("0.##")</td>
+                                <td class="text-end text-primary">@GcStepOkText(s)</td>
                                 <td class="text-end text-danger">@(s.Ng == 0 ? "—" : s.Ng.ToString("0.##"))</td>
                                 <td class="text-end fw-semibold @((s.Waiting ?? 0) < 0 ? "gn-neg" : "")">@(s.Waiting.HasValue ? s.Waiting.Value.ToString("0.##") : "·")</td>
                                 <td class="text-end">@(s.HelpOut == 0 ? "—" : s.HelpOut.ToString("0.##"))</td>
@@ -2046,7 +2046,7 @@ else
     }
     string CaseFrom(LedgerCase cs)
         => cs.Id == 0 ? "dữ liệu trước khi có mã vụ"
-         : "phát hiện ở " + (cs.DetectGroup == null ? "?" : HandoverLedgerService.GroupLabel(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + cs.DetectNc))
+         : "phát hiện ở " + (cs.DetectGroup == null ? "?" : HandoverLedgerService.GroupLabel(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + (HandoverLedgerService.IsVao(cs.DetectNc) ? HandoverLedgerService.VaoLabel : cs.DetectNc)))   // [N3-FIRST] chữ @VAO
            + (string.IsNullOrEmpty(cs.Cause) || cs.Cause == cs.DetectGroup ? "" : " · do " + HandoverNgSource.CauseLabel(cs.Cause));
     static string CaseRadioId(long id) => "vuIssue_" + id;
 
@@ -2242,6 +2242,17 @@ else
         }
         _issueQty = IssueCapNow(purpose).Max;   // [VULOI] trước: IssueCap — nay theo vụ (chỉ 1 vụ thì tự chọn)
     }
+
+    // [N3-FIRST 2026-11-04] dòng ảo "Nhận vào (chưa qua NC)" (@VAO) khi NC đầu Gia công là máy loại trừ
+    static string HelpSrcLabel(LedgerStepLine s)
+        => HandoverLedgerService.IsVao(s.Code)
+            ? $"{HandoverLedgerService.VaoLabel} (còn {(s.Waiting ?? 0):0.##})"
+            : $"NC {s.Code} (OK {s.Ok:0.##})";
+    static string GcStepOkText(LedgerStepLine s) => HandoverLedgerService.IsVao(s.Code) ? "—" : s.Ok.ToString("0.##");
+    //   Trả về Gia công (bắt buộc chọn NC — K3) thì không gợi ý "Nhận vào" (rà độc lập 04/11 L2)
+    string ToNcDefaultLabel => _selectedRow != null && _selectedRow.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code))
+        ? (_issueSpecial == HandoverPurpose.HelpReturn ? "-- Chọn NC --" : $"-- {HandoverLedgerService.VaoLabel} (mặc định) --")
+        : "-- NC đầu (mặc định) --";
 
     void OnFromNcChanged(ChangeEventArgs e)
     {
