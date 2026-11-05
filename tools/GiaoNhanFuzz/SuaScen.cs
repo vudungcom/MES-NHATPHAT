@@ -188,7 +188,10 @@ public static class SuaScen
             var b5 = await Check(db, "S5 trước");
             var failLoi = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, w2.NgCaseId, 1, 1, "NC3", null, Gc);
             Ok(!failLoi.Ok && failLoi.Error.Contains("chỉ ghi số đạt"), "Lấy từ ô Hàng lỗi mà ghi không đạt bị chặn", failLoi.Error);
-            var c5 = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, w2.NgCaseId, 2, 0, "NC3", null, Gc);
+            // [GN-FORM1][K2] hàng hỏng lúc chạy NC2 → sửa đạt làm tiếp NC2 (khách 05/11 15:39); chọn NC3 (bỏ qua NC2) bị chặn. Trước: bộ kiểm dùng NC3.
+            var skip5 = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, w2.NgCaseId, 2, 0, "NC3", null, Gc);
+            Ok(!skip5.Ok && skip5.Error.Contains("NC2") && skip5.Error.Contains("không bỏ qua NC"), "[K2] NC làm tiếp NC3 (sau NC của vụ NC2) bị chặn", skip5.Error);
+            var c5 = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, w2.NgCaseId, 2, 0, "NC2", null, Gc);
             var a5 = await Check(db, "S5 ghi");
             Ok(c5.Ok && a5.G("GC").LoiGiu == b5.G("GC").LoiGiu - 2 && a5.G("GC").ChoKcs == 2, "Ô Hàng lỗi GC −2, Chờ KCS 2", c5.Error);
             await svc.ConfirmRepairAsync(LastRep(db), 1, 0, null, Kcs);
@@ -197,16 +200,16 @@ public static class SuaScen
             var a5b = await Check(db, "S5 KCS lần 2");
             var cs = a5b.Cases[w2.NgCaseId!.Value];
             Ok(a5b.G("GC").ChoKcs == 0 && a5b.G("GC").LoiGiu == b5.G("GC").LoiGiu - 1 && cs.HeldAt("GC", HandoverCell.Loi) == 1 && cs.DaXuLy["GC"] == 1,
-               "KCS từng phần: đạt 1 vào NC3, loại 1 về ô Hàng lỗi GC cùng vụ", $"loi {a5b.G("GC").LoiGiu} held {cs.HeldAt("GC", HandoverCell.Loi)}");
-            Ok(a5b.G("GC").Steps.First(s => s.Code == "NC3").Waiting == b5.G("GC").Steps.First(s => s.Code == "NC3").Waiting + 1, "Chờ NC3 +1");
+               "KCS từng phần: đạt 1 vào NC2, loại 1 về ô Hàng lỗi GC cùng vụ", $"loi {a5b.G("GC").LoiGiu} held {cs.HeldAt("GC", HandoverCell.Loi)}");
+            Ok(a5b.G("GC").Steps.First(s => s.Code == "NC2").Waiting == b5.G("GC").Steps.First(s => s.Code == "NC2").Waiting + 1, "Chờ NC2 +1");
             Ok(cs.TuXuLy.Contains("GC"), "Vụ ghi GC tự xử lý");
         }
 
         Console.WriteLine("[S6] K5: hàng đạt đã nhập WTS → huỷ lần KCS xác nhận bị chặn + gợi ý gỡ chỉ dòng WTS");
         {
-            var nc3 = (await led.GetLedgerForDetailAsync(1))!.G("GC").Steps.First(s => s.Code == "NC3");
-            var w = await VuHelp.Wts(db, "GC", "NC3", null, nc3.Waiting ?? 0, 0, Gc, 0);
-            await Check(db, "S6 WTS NC3");
+            var nc3 = (await led.GetLedgerForDetailAsync(1))!.G("GC").Steps.First(s => s.Code == "NC2");   // [GN-FORM1] hàng đạt nay vào NC2 (K2)
+            var w = await VuHelp.Wts(db, "GC", "NC2", null, nc3.Waiting ?? 0, 0, Gc, 0);
+            await Check(db, "S6 WTS NC2");
             var okChk = db.HandoverRepairChecks.List.Where(c => !c.IsVoided && c.QtyOk > 0).Max(c => c.HandoverRepairCheckId);
             var v = await svc.VoidRepairCheckAsync(okChk, "xac nhan nham", Kcs);
             Ok(!v.Ok && v.Error.Contains("K5") && v.Error.Contains($"WTS #{w.WtsLogId}"), "Huỷ lần xác nhận khi hàng đạt đã WTS bị chặn, gợi ý dòng WTS", v.Error);
@@ -297,7 +300,7 @@ public static class SuaScen
             var list = await svc.GetRepairsAsync(1);
             Ok(list.Count == 3 && list.Count(x => x.IsVoided) == 1 && list.All(x => x.Checks.Count >= 0) && list.First().CaseLabel.StartsWith("VL"), "GetRepairsAsync: 3 dòng (1 đã huỷ), có nhãn vụ",
                string.Join(" | ", list.Select(x => $"{x.Id} void={x.IsVoided} {x.CaseLabel}")));
-            await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, db.WtsProductionLogs.List.Single(w => w.NC == "NC2").NgCaseId, 1, 0, "NC3", null, Gc);
+            await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, db.WtsProductionLogs.List.Single(w => w.NC == "NC2" && w.QtyNg > 0).NgCaseId, 1, 0, "NC2", null, Gc);   // [GN-FORM1][K2] NC của vụ
             var pend = await svc.GetRepairPendingCountPerDetailAsync(new[] { 1 });
             Ok(pend.TryGetValue(1, out var n) && n == 1, "Số Kết quả sửa chờ KCS của PO = 1", $"{n}");
             await Check(db, "S12");
@@ -470,9 +473,11 @@ public static class SuaScen
             var b = await Check(d, "S20 trước");
             Ok(b.CaseHeld(0, "GC", HandoverCell.Loi) == 2, "GC giữ 2 hàng lỗi cũ (vụ 0)", $"{b.CaseHeld(0, "GC", HandoverCell.Loi)}");
             var sig0 = Sig(b);
-            var over = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, null, 3, 0, "NC1", null, Gc);
+            var over = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, null, 3, 0, "NC1", null, Gc);   // [GN-FORM1] vòng 3 C1b: vụ 0 ở Gia công mặc định như hàng mới (NC1)
             Ok(!over.Ok && over.Error.Contains("tối đa 2"), "Ghi vượt số hàng cũ (3 > 2) bị chặn theo trần vụ 0", over.Error);
-            var k = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, null, 2, 0, "NC1", "sua hang cu", Gc);
+            var nr = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, null, 2, 0, "NC3", null, Gc);
+            Ok(!nr.Ok && nr.Error.Contains("lý do") && Sig((await new HandoverLedgerService(d).GetLedgerForDetailAsync(1))!) == sig0, "Hàng cũ chưa mã vụ: chọn NC3 (sau mặc định) không lý do bị chặn, không ghi gì", nr.Error);
+            var k = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, null, 2, 0, "NC1", "sua hang cu", Gc, "hang cu lam lai tu NC1");   // [GN-FORM1] rà V2: lùi NC1 cần lý do
             var a = await Check(d, "S20 ghi");
             Ok(k.Ok && a.CaseHeld(0, "GC", HandoverCell.Loi) == 0 && a.G("GC").ChoKcs == 2, "Không chọn vụ: lấy 2 hàng cũ, Chờ KCS 2", k.Error);
             var hist = await s.GetRepairsAsync(1);

@@ -28,6 +28,8 @@
      (Hàng mới / Hàng lỗi / Hàng sửa) + ô tích "Hàng lỗi công đoạn trước" (= "Trả hàng NG ngược" cũ).
      Phần mềm tự suy loại phiếu, ô bên nhận và trần. Không còn "loại phiếu" tự đặt.
    - Form đặc biệt giữ: Giao theo NC (máy loại trừ) / Trả về Gia công — nhận vào NC, Huỷ hàng lỗi, Trả khách — trong mục "Khác".
+   - [GN-FORM1 2026-11-05] Nút Giao mở form "Giao / xử lý hàng" 1 form 4 bước (GiaoXuLyModal.razor): gộp form Giao theo ô, mục "Khác",
+     Báo hàng lỗi phát hiện sau khi nhận, Kết quả sửa (khách 05/11 15:43, Hùng 17:35). Nhận / KCS xác nhận / Lịch sử giữ như cũ.
    - [GN-TEXT 2026-10-23] Chữ hiện cho xưởng chỉ dùng chữ của file Excel khách hoặc trang cũ (7a9e508).
      Bảng chi tiết (tồn từng loại, từng NC, từng mã CV) chỉ hiện khi bật "Hiện công thức".
      Ô Excel mà quy trình không bao giờ ghi vào (Giao · Hàng lỗi đã xử lý; Kho · Hàng Sửa) tô xám, có ghi chú.
@@ -467,516 +469,13 @@ else
     </div>
 }
 
-@* ── MODAL GIAO HÀNG — form cũ + chọn Ô GIAO theo Excel ── *@
-@if (_showIssueModal && _selectedRow != null)
+@* ── [GN-FORM1 2026-11-05] FORM "GIAO / XỬ LÝ HÀNG" — 1 form 4 bước, thay modal Giao cũ + modal Báo hàng lỗi phát hiện sau khi nhận
+      + modal Kết quả sửa + mục Khác (khách 04/11 16:09 hỏi link đỏ thừa; khách 05/11 15:43 gộp 1 form; Hùng 17:35 duyệt).
+      Bản cũ của 3 modal còn trong git (trước commit [GN-FORM1]). ── *@
+@if (_showFormModal && _selectedRow != null)
 {
-    var G = string.IsNullOrEmpty(_issueFrom) ? null : _selectedRow.G(_issueFrom);
-    var purpose = EffectivePurpose;
-    <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:90vh;overflow-y:auto">
-            <div class="mes-modal-header">
-                <h6 class="mb-0"><i class="bi bi-box-arrow-right me-2"></i>Giao hàng</h6>
-                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
-            </div>
-            <div class="mes-modal-body">
-                <div class="mb-2 p-2 bg-light rounded" style="font-size:12px">
-                    <strong>@_selectedRow.PartNo</strong>
-                    <span class="text-muted ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label form-label-sm fw-semibold">Giao từ nhóm</label>
-                    @if (_issueGroups.Count == 1)
-                    {
-                        <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(_issueGroups[0])</strong></div>
-                    }
-                    else if (_issueGroups.Count > 1)
-                    {
-                        <select class="form-select form-select-sm" @onchange="OnIssueFromChanged">
-                            <option value="" selected="@(string.IsNullOrEmpty(_issueFrom))">-- Chọn nhóm giao --</option>
-                            @foreach (var g in _issueGroups)
-                            {
-                                <option value="@g" selected="@(_issueFrom == g)">@HandoverLedgerService.GroupLabel(g)</option>
-                            }
-                        </select>
-                    }
-                    else
-                    {
-                        <div class="alert alert-warning py-1 small">
-                            <i class="bi bi-exclamation-triangle me-1"></i>Tài khoản chưa được phân quyền nhóm Giao nhận. Liên hệ Admin cấp quyền HANDOVER_*.
-                        </div>
-                    }
-                </div>
-
-                @if (G != null)
-                {
-                    @if (!_issueSpecialMode)
-                    {
-                        @* ── Ô GIAO (đúng 3 ô Excel bên giao dùng) ── *@
-                        @* [GN-PLH] mục 36: trước "Giao từ ô" *@
-                        <label class="form-label form-label-sm fw-semibold mb-1">Phân loại hàng <span class="text-muted fw-normal">(cột Giao trên bảng)</span></label>
-                        <div class="d-flex gap-2 mb-2">
-                            @foreach (var c in HandoverCell.IssueCells)
-                            {
-                                var have = CellHave(G, c);
-                                var canPrev = c == HandoverCell.Loi && _issueFrom != "KHO" && G.ChuaLam > 0;
-                                var dis = have <= 0 && !canPrev;
-                                <button type="button" class="gn-cellbtn @(_issueCell == c ? "on" : "")" disabled="@dis" @onclick="() => SelectCell(c)"
-                                        title="@CellTitle(c)">
-                                    <div class="fw-semibold">@HandoverCell.Label(c)</div>
-                                    <div class="small @(have > 0 ? "text-success" : "text-muted")">
-                                        @(c == HandoverCell.Moi ? (_issueFrom == "KHO" ? "phôi còn" : "đã làm, chưa giao") : "tồn") @have.ToString("0.##")
-                                    </div>
-                                    @if (c == HandoverCell.Loi && _issueFrom != "KHO")
-                                    {
-                                        <div class="small text-muted">chưa làm @G.ChuaLam.ToString("0.##")</div>
-                                    }
-                                </button>
-                            }
-                        </div>
-
-                        @if (_issueCell == HandoverCell.Loi)
-                        {
-                            <div class="mb-2 p-2 border rounded @(_issuePrev ? "border-danger bg-danger bg-opacity-10" : "bg-light")">
-                                <div class="form-check mb-1">
-                                    <input class="form-check-input" type="checkbox" id="prevNg" checked="@_issuePrev" disabled="@(_issueFrom == "KHO")"
-                                           @onchange="e => OnPrevChanged((bool)(e.Value ?? false))" />
-                                    <label class="form-check-label fw-semibold @(_issuePrev ? "text-danger" : "")" for="prevNg">
-                                        Hàng lỗi công đoạn trước
-                                        <i class="bi bi-info-circle text-muted fw-normal ms-1"
-                                           title="Tích khi phát hiện lỗi do nhóm trước gây ra, chiếc đó chưa làm. Trả về nhóm trước, lấy từ hàng chưa làm. (Trước đây gọi là 'Trả hàng NG ngược'.)"></i>
-                                    </label>
-                                </div>
-                                @if (_issueFrom == "KHO")
-                                {
-                                    <div class="small text-muted">Kho không có công đoạn trước (không tích). Phôi lỗi tồn ở Kho: chọn ô nhận bên dưới (gửi nhờ sửa / tự sửa xong trả về), hoặc Huỷ / Trả khách (mục Khác).</div>
-                                }
-                                @if (_issuePrev)
-                                {
-                                    <div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Toàn bộ số giao là hàng lỗi, trừ khỏi Chưa làm của nhóm. Bên nhận vẫn phải xác nhận.</div>
-                                }
-                                @if (_issuePrev && _issueFrom == "GC" && G.Steps.Any(x => !x.IsExcluded))
-                                {
-                                    @* [GN-NC-PIN] Gia công: chốt NC phát hiện lỗi — trừ đúng hàng chờ của NC đó *@
-                                    <div class="mt-2">
-                                        <label class="form-label form-label-sm fw-semibold mb-1">Phát hiện lỗi ở NC <span class="text-danger">*</span></label>
-                                        <select class="form-select form-select-sm" @onchange="OnFromNcChanged">
-                                            <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC --</option>
-                                            @foreach (var s in G.Steps.Where(x => !x.IsExcluded))
-                                            {
-                                                <option value="@s.Code" selected="@(_issueFromNC == s.Code)">@HandoverLedgerService.NcText(s.Code) (chưa làm @((s.Waiting ?? 0).ToString("0.##")))</option>
-                                            }
-                                        </select>
-                                    </div>
-                                }
-                            </div>
-                        }
-
-                        @if (!string.IsNullOrEmpty(_issueCell))
-                        {
-                            @* [GN-CELL2] Bên giao chỉ định ô bên nhận (bên nhận được chọn lại khi nhận, đổi phải ghi lý do) *@
-                            <label class="form-label form-label-sm fw-semibold mb-1">Bên nhận vào ô <span class="text-muted fw-normal">(bên nhận được chọn lại khi nhận)</span></label>
-                            <div class="d-flex gap-1 mb-1 flex-wrap">
-                                @foreach (var c in HandoverCell.ReceiveCells)
-                                {
-                                    <button type="button" class="gn-cellbtn @(IssueToCellNow == c ? "on" : "")" style="flex:1;min-width:92px;padding:4px 6px" @onclick="() => SelectIssueToCell(c)" title="@ToCellTitle(c)">
-                                        <div class="fw-semibold small">@HandoverCell.Label(c)</div>
-                                    </button>
-                                }
-                            </div>
-                            @if (!HandoverCell.IsUsualPair(_issueCell, _issuePrev, IssueToCellNow))
-                            {
-                                <div class="small text-warning-emphasis mb-2"><i class="bi bi-exclamation-triangle me-1"></i>Cặp ô ít gặp: giao từ @HandoverCell.Label(_issueCell) vào @HandoverCell.Label(IssueToCellNow) bên nhận. Kiểm lại trước khi giao.</div>
-                            }
-                        }
-                    }
-                    else
-                    {
-                        @* ── Form đặc biệt (ngoài 4 ô Excel): Làm hộ / Huỷ / Trả khách ── *@
-                        <label class="form-label form-label-sm fw-semibold mb-1">Phiếu khác</label>
-                        @foreach (var p in SpecialOptions(_issueFrom))
-                        {
-                            var cap = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, p.Code, p.Code == HandoverPurpose.HelpSend ? _issueFromNC : null, HandoverCell.Loi).Max;
-                            <button type="button" class="gn-cellbtn w-100 mb-1 @(_issueSpecial == p.Code ? "on" : "")" @onclick="() => SelectSpecial(p.Code)">
-                                <div class="d-flex justify-content-between">
-                                    <strong>@p.Label</strong>
-                                    @if (p.Code != HandoverPurpose.HelpSend)
-                                    {
-                                        <span class="small @(cap > 0 ? "text-success" : "text-muted")">tối đa @cap.ToString("0.##")</span>
-                                    }
-                                </div>
-                                <div class="small text-muted">@p.Hint</div>
-                            </button>
-                        }
-                        @if (_issueSpecial == HandoverPurpose.HelpSend)
-                        {
-                            <div class="mb-2 mt-2">
-                                <label class="form-label form-label-sm fw-semibold">NC nguồn <span class="text-danger">*</span></label>
-                                <select class="form-select form-select-sm" @onchange="OnFromNcChanged">
-                                    <option value="" selected="@(string.IsNullOrEmpty(_issueFromNC))">-- Chọn NC đã làm xong --</option>
-                                    @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !x.IsLast))
-                                    {
-                                        <option value="@s.Code" selected="@(_issueFromNC == s.Code)">@HelpSrcLabel(s)</option>
-                                    }
-                                </select>
-                            </div>
-                        }
-                    }
-
-                    <div class="text-end mb-2">
-                        <button type="button" class="btn btn-link btn-sm p-0" style="font-size:11.5px" @onclick="ToggleSpecial">
-                            @(_issueSpecialMode ? "← Quay lại giao theo ô (Hàng mới / Hàng lỗi / Hàng sửa)" : "Khác: giao theo NC (máy loại trừ) · huỷ hàng lỗi · trả khách →")
-                        </button>
-                        @* [GN-NG-AFTER] hàng đã nhận (đang là hàng tốt) mới phát hiện lỗi → báo trước, rồi giao từ ô Hàng lỗi *@
-                        <div>
-                            <button type="button" class="btn btn-link btn-sm p-0 text-danger" style="font-size:11.5px" @onclick="OpenNgFromIssue">
-                                Hàng đã nhận, sau mới phát hiện lỗi? Báo hàng lỗi phát hiện sau khi nhận →
-                            </button>
-                        </div>
-                        @* [GC-SUA-TAI-CHO] sửa tại nhóm (hàng ô Hàng sửa / Hàng lỗi), không giao đi — đạt chờ KCS xác nhận *@
-                        <div>
-                            <button type="button" class="btn btn-link btn-sm p-0 text-success" style="font-size:11.5px" @onclick="OpenRepairFromIssue">
-                                Sửa xong tại nhóm (không giao đi)? Ghi Kết quả sửa →
-                            </button>
-                        </div>
-                    </div>
-
-                    @if (purpose != null)
-                    {
-                        @if (HandoverPurpose.IsOut(purpose))
-                        {
-                            <div class="mb-3 p-2 border rounded" style="background:#fff7ed;font-size:12px">
-                                <strong>Ra khỏi PO → @HandoverLedgerService.GroupLabel(_issueTo)</strong>
-                                <div class="text-muted">Lấy từ tồn hàng lỗi của nhóm. Cân PO tính vào Đã huỷ / Đã trả khách. Ghi sai thì huỷ phiếu trong Lịch sử.</div>
-                            </div>
-                        }
-                        else
-                        {
-                            var targets = TargetOptions(purpose);
-                            <div class="mb-3">
-                                <label class="form-label form-label-sm fw-semibold">Giao đến nhóm</label>
-                                @if (targets.Count == 1)
-                                {
-                                    <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(targets[0])</strong>
-                                        <span class="text-muted small ms-2">@TargetHint(purpose)</span></div>
-                                }
-                                else
-                                {
-                                    <select class="form-select form-select-sm" @onchange="OnIssueToChanged">
-                                        <option value="" selected="@(string.IsNullOrEmpty(_issueTo))">-- Chọn nhóm nhận --</option>
-                                        @foreach (var g in targets)
-                                        {
-                                            <option value="@g" selected="@(_issueTo == g)">@HandoverLedgerService.GroupLabel(g)</option>
-                                        }
-                                    </select>
-                                    <div class="small text-muted mt-1">@TargetHint(purpose)</div>
-                                }
-                                @if (purpose == HandoverPurpose.New && !string.IsNullOrEmpty(_issueTo) && _issueTo != NextGroup(_issueFrom))
-                                {
-                                    @* [GN-ROUTE-FREE] Hàng mới không giao cho nhóm kế tiếp: nhắc, không chặn *@
-                                    <div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle me-1"></i>@NewRouteNote(_issueFrom, _issueTo)</div>
-                                }
-                                @if (purpose == HandoverPurpose.NgReturn && IsLaterGroup(_issueFrom, _issueTo))
-                                {
-                                    @* [GN-NGRET-TO] nhóm nhận đứng sau: nhắc chỉ chọn khi hàng đã qua nhóm đó (VD gia công theo NC) *@
-                                    <div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle me-1"></i>@HandoverLedgerService.GroupLabel(_issueTo) đứng sau @HandoverLedgerService.GroupLabel(_issueFrom) — chỉ chọn khi hàng đã qua nhóm đó (VD giao theo NC).</div>
-                                }
-                                @if (RouteError != null)
-                                {
-                                    <div class="small text-danger mt-1"><i class="bi bi-x-circle me-1"></i>@RouteError</div>
-                                }
-                            </div>
-
-                            @if (_issueTo == "GC" && _selectedRow.G("GC").Steps.Any() && (purpose == HandoverPurpose.HelpReturn || (!_issueSpecialMode && IssueToCellNow is HandoverCell.Moi or HandoverCell.Xl)))
-                            {
-                                <div class="mb-3 p-2 border rounded" style="background:#f5f9ff">
-                                    <label class="form-label form-label-sm fw-semibold mb-1">
-                                        Nhận vào NC @(purpose == HandoverPurpose.HelpReturn ? "*" : "(tuỳ chọn)")
-                                    </label>
-                                    <select class="form-select form-select-sm" @onchange="OnToNcChanged">
-                                        <option value="" selected="@(string.IsNullOrEmpty(_issueToNC))">@ToNcDefaultLabel</option>
-                                        @foreach (var s in _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)))
-                                        {
-                                            <option value="@s.Code" selected="@(_issueToNC == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
-                                        }
-                                    </select>
-                                    <div class="small text-muted mt-1">Hàng trả về sau máy loại trừ: chọn NC ngay sau NC đó. Hàng lỗi đã xử lý: chọn NC sẽ làm tiếp.</div>
-                                </div>
-                            }
-
-                            @* Bên nhận sẽ ghi vào ô nào — phần mềm quyết, 2 bên không lệch ô *@
-                            var rc = _issueSpecialMode ? HandoverCell.ReceiveCellOf(purpose) : IssueToCellNow;   // [GN-CELL2] ô bên giao chỉ định
-                            @if (!string.IsNullOrEmpty(_issueTo))
-                            {
-                                <div class="mb-2 p-2 border rounded" style="background:#f0fdf4;font-size:12px">
-                                    <i class="bi bi-arrow-return-right me-1"></i>
-                                    <strong>@HandoverLedgerService.GroupLabel(_issueTo)</strong> sẽ nhận vào ô
-                                    <strong>@(rc != null ? HandoverCell.Label(rc) : "theo NC (ngoài 8 ô Excel)")</strong>
-                                    <span class="text-muted"> — @ToCellTitle(rc ?? "")</span>
-                                </div>
-                            }
-                        }
-
-                        @* [VULOI] Lấy từ ô Hàng lỗi / Hàng sửa, Huỷ, Trả khách: chọn vụ lỗi đang giữ (1 phiếu = 1 vụ; chỉ 1 vụ thì tự chọn) *@
-                        @if (TakesCaseNow(purpose))
-                        {
-                            @VuPicker(purpose)
-                        }
-                        var capEx = IssueCapNow(purpose);   // [VULOI] trước: IssueCap — nay trần theo vụ đang chọn
-                        <div class="mb-3 p-2 border rounded" style="font-size:12px">
-                            <div class="d-flex justify-content-between">
-                                <span>@capEx.Explain.Title</span>
-                                <strong class="@(capEx.Max > 0 ? "text-success" : "text-danger")">tối đa @capEx.Max.ToString("0.##")</strong>
-                            </div>
-                            @if (!string.IsNullOrEmpty(capEx.Explain.Formula))
-                            {
-                                <div class="text-muted">@capEx.Explain.Formula</div>
-                                <div class="fw-semibold">@capEx.Explain.Arithmetic</div>
-                            }
-                            @if (!string.IsNullOrEmpty(capEx.Explain.Note))
-                            {
-                                <div class="text-muted fst-italic">@capEx.Explain.Note</div>
-                            }
-                        </div>
-
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm fw-semibold">Số lượng</label>
-                            <input type="number" class="form-control form-control-sm @(_issueQty > capEx.Max ? "border-danger" : "")"
-                                   @bind="_issueQty" min="0" step="1" />
-                            @if (_issueQty > capEx.Max)
-                            {
-                                <div class="small text-danger">Vượt tối đa @capEx.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
-                            }
-                        </div>
-                        @if (purpose == HandoverPurpose.NgReturn)
-                        {
-                            @* [VULOI][DS-LOI] Hàng lỗi công đoạn trước: CHỌN loại lỗi trong DS Lỗi (trước: gõ "Lỗi cụ thể") → phần mềm tự đặt mã vụ lỗi *@
-                            <div class="mb-2">
-                                <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi (DS Lỗi) <span class="text-danger">*</span></label>
-                                <NgCategoryPicker Categories="_ngCats" @bind-Value="_issueCatId" Required="true" />
-                                <div class="small text-muted mt-1">Chọn trong danh sách, không tự gõ. Lưu xong phần mềm tự đặt mã @NgCaseNo.Term.</div>
-                            </div>
-                        }
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm @(purpose == HandoverPurpose.HelpSend ? "fw-semibold text-danger" : "")">
-                                Ghi chú @(purpose == HandoverPurpose.HelpSend ? "*" : "(tuỳ chọn)")
-                            </label>
-                            <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_issueNotes" />   @* [D10-REASON] cột 500 ký tự *@
-                        </div>
-                    }
-                }
-
-                @if (!string.IsNullOrEmpty(_modalError))
-                {
-                    <div class="alert alert-danger py-1 small">@_modalError</div>
-                }
-            </div>
-            <div class="mes-modal-footer">
-                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
-                <button class="btn btn-sm btn-primary" @onclick="ConfirmIssueAsync" disabled="@(_saving || purpose == null)">
-                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Xác nhận giao
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-@* ── [GN-NG-AFTER 2026-10-27] MODAL BÁO HÀNG LỖI PHÁT HIỆN SAU KHI NHẬN (chứng từ nội bộ của 1 nhóm, không phải phiếu giao) ── *@
-@if (_showNgModal && _selectedRow != null)
-{
-    var NG = string.IsNullOrEmpty(_ngGroup) ? null : _selectedRow.G(_ngGroup);
-    var ngCap = NgCapNow;
-    <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-height:90vh;overflow-y:auto">
-            <div class="mes-modal-header">
-                <h6 class="mb-0 text-danger"><i class="bi bi-exclamation-octagon me-2"></i>Báo hàng lỗi phát hiện sau khi nhận</h6>
-                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
-            </div>
-            <div class="mes-modal-body">
-                <div class="mb-2 p-2 bg-light rounded" style="font-size:12px">
-                    <strong>@_selectedRow.PartNo</strong>
-                    <span class="text-muted ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
-                </div>
-                <div class="mb-3 p-2 border rounded" style="background:#fff7ed;font-size:12px">
-                    Không phải phiếu giao: hàng vẫn ở nhóm, chỉ chuyển từ ô hàng tốt sang <strong>Tồn hàng lỗi</strong> (tồn nhóm không đổi).
-                    Sau đó dùng <strong>Giao · Hàng lỗi</strong> để chuyển cho nơi gây lỗi / gửi nhờ sửa, hoặc mục Khác để huỷ / trả khách.
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label form-label-sm fw-semibold">Nhóm phát hiện</label>
-                    @if (_issueGroups.Count == 1)
-                    {
-                        <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(_issueGroups[0])</strong></div>
-                    }
-                    else
-                    {
-                        <select class="form-select form-select-sm" @onchange="OnNgGroupChanged">
-                            <option value="" selected="@(string.IsNullOrEmpty(_ngGroup))">-- Chọn nhóm --</option>
-                            @foreach (var g in _issueGroups)
-                            {
-                                <option value="@g" selected="@(_ngGroup == g)">@HandoverLedgerService.GroupLabel(g)</option>
-                            }
-                        </select>
-                    }
-                </div>
-
-                @if (NG != null)
-                {
-                    <label class="form-label form-label-sm fw-semibold mb-1">Hàng lỗi đang nằm ở</label>
-                    <div class="d-flex gap-2 mb-2">
-                        @foreach (var src in NgSources(_ngGroup))
-                        {
-                            var have = NgHave(NG, src.Code);
-                            <button type="button" class="gn-cellbtn @(_ngSource == src.Code ? "on" : "")" disabled="@(have <= 0)" @onclick="() => SelectNgSource(src.Code)">
-                                <div class="fw-semibold">@src.Label</div>
-                                <div class="small @(have > 0 ? "text-success" : "text-muted")">có @have.ToString("0.##")</div>
-                            </button>
-                        }
-                    </div>
-                    @if (_ngGroup == "GC" && _ngSource == HandoverNgSource.Chua && NG.Steps.Any(x => !x.IsExcluded))
-                    {
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm fw-semibold mb-1">Hàng lỗi đang chờ ở NC <span class="text-danger">*</span></label>
-                            <select class="form-select form-select-sm" @onchange="OnNgNcChanged">
-                                <option value="" selected="@(string.IsNullOrEmpty(_ngNc))">-- Chọn NC --</option>
-                                @foreach (var st in NG.Steps.Where(x => !x.IsExcluded))
-                                {
-                                    <option value="@st.Code" selected="@(_ngNc == st.Code)">@HandoverLedgerService.NcText(st.Code) (chưa gia công @((st.Waiting ?? 0).ToString("0.##")))</option>
-                                }
-                            </select>
-                        </div>
-                    }
-
-                    <label class="form-label form-label-sm fw-semibold mb-1">Nguồn lỗi</label>
-                    <div class="d-flex gap-2 mb-2">
-                        <button type="button" class="gn-cellbtn @(_ngOrigin == HandoverNgSource.DauVao ? "on" : "")" @onclick="() => SelectNgOrigin(HandoverNgSource.DauVao)"
-                                title="Lỗi có sẵn khi nhận về (phôi khách / nhóm trước làm hỏng) — không tính hiệu suất nhóm mình">
-                            <div class="fw-semibold">Đầu vào</div>
-                            <div class="small text-muted">lỗi có sẵn khi nhận</div>
-                        </button>
-                        <button type="button" class="gn-cellbtn @(_ngOrigin == HandoverNgSource.DauRa ? "on" : "")" @onclick="() => SelectNgOrigin(HandoverNgSource.DauRa)"
-                                title="Nhóm mình làm hỏng">
-                            <div class="fw-semibold">Đầu ra</div>
-                            <div class="small text-muted">nhóm mình làm hỏng</div>
-                        </button>
-                    </div>
-                    @if (_ngOrigin == HandoverNgSource.DauVao)
-                    {
-                        <div class="mb-2">
-                            <label class="form-label form-label-sm fw-semibold mb-1">Nơi gây lỗi <span class="text-danger">*</span></label>
-                            <select class="form-select form-select-sm" @onchange="OnNgCauseChanged">
-                                <option value="" selected="@(string.IsNullOrEmpty(_ngCause))">-- Chọn --</option>
-                                @foreach (var c in NgCauses(_ngGroup))
-                                {
-                                    <option value="@c" selected="@(_ngCause == c)">@HandoverNgSource.CauseLabel(c)</option>
-                                }
-                            </select>
-                        </div>
-                    }
-
-                    @if (!string.IsNullOrEmpty(_ngSource))
-                    {
-                        <div class="mb-3 p-2 border rounded" style="font-size:12px">
-                            <div class="d-flex justify-content-between">
-                                <span>@ngCap.Explain.Title</span>
-                                <strong class="@(ngCap.Max > 0 ? "text-success" : "text-danger")">tối đa @ngCap.Max.ToString("0.##")</strong>
-                            </div>
-                            @if (!string.IsNullOrEmpty(ngCap.Explain.Formula))
-                            {
-                                <div class="text-muted">@ngCap.Explain.Formula</div>
-                            }
-                        </div>
-                    }
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm fw-semibold">Số lượng lỗi</label>
-                        <input type="number" class="form-control form-control-sm @(_ngQty > ngCap.Max ? "border-danger" : "")" @bind="_ngQty" min="0" step="1" />
-                        @if (_ngQty > ngCap.Max && !string.IsNullOrEmpty(_ngSource))
-                        {
-                            <div class="small text-danger">Vượt tối đa @ngCap.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
-                        }
-                    </div>
-                    <div class="mb-2">
-                        @* [VULOI][DS-LOI] chọn loại lỗi (trước: gõ "Lỗi cụ thể") — lưu xong phần mềm tự đặt mã vụ lỗi *@
-                        <label class="form-label form-label-sm fw-semibold text-danger">Loại lỗi (DS Lỗi) <span class="text-danger">*</span></label>
-                        <NgCategoryPicker Categories="_ngCats" @bind-Value="_ngCatId" Required="true" />
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
-                        <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_ngNotes" />
-                    </div>
-                }
-
-                @if (!string.IsNullOrEmpty(_modalError))
-                {
-                    <div class="alert alert-danger py-1 small" style="white-space:pre-line">@_modalError</div>
-                }
-            </div>
-            <div class="mes-modal-footer">
-                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
-                <button class="btn btn-sm btn-danger" @onclick="ConfirmNgAsync" disabled="@_saving">
-                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Lưu báo lỗi
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-@* ── [GC-SUA-TAI-CHO 2026-11-04] MODAL KẾT QUẢ SỬA (chứng từ nội bộ nhóm sửa; đạt chờ KCS xác nhận) ── *@
-@if (_showRepairModal && _selectedRow != null)
-{
-    <div class="mes-modal-backdrop">
-        <div class="mes-modal" @onclick:stopPropagation style="width:540px;max-height:90vh;overflow-y:auto">
-            <div class="mes-modal-header">
-                <h6 class="mb-0 text-success"><i class="bi bi-tools me-2"></i>Kết quả sửa</h6>
-                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
-            </div>
-            <div class="mes-modal-body">
-                <div class="mb-2 p-2 bg-light rounded" style="font-size:12px">
-                    <strong>@_selectedRow.PartNo</strong>
-                    <span class="text-muted ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
-                </div>
-                <div class="mb-3 p-2 border rounded" style="background:#f0fdf4;font-size:12px">
-                    Không phải phiếu giao: hàng vẫn ở nhóm. Chiếc <strong>đạt</strong> chờ <strong>KCS xác nhận</strong> rồi mới vào làm tiếp ở nhóm này (ô Hàng lỗi đã xử lý).
-                    Chiếc <strong>không đạt</strong> ở lại ô Hàng lỗi của nhóm, cùng @NgCaseNo.Term — xử lý tiếp như hàng lỗi bình thường.
-                    Hàng phải trả về nơi gửi sửa thì dùng <strong>Giao · Hàng sửa</strong>, không dùng form này.
-                </div>
-                <div class="mb-3">
-                    <label class="form-label form-label-sm fw-semibold">Nhóm sửa</label>
-                    @if (_issueGroups.Count == 1)
-                    {
-                        <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(_issueGroups[0])</strong></div>
-                    }
-                    else
-                    {
-                        <select class="form-select form-select-sm" @onchange="OnRepairGroupChanged">
-                            <option value="" selected="@(string.IsNullOrEmpty(_rpGroup))">-- Chọn nhóm --</option>
-                            @foreach (var g in _issueGroups)
-                            {
-                                <option value="@g" selected="@(_rpGroup == g)">@HandoverLedgerService.GroupLabel(g)</option>
-                            }
-                        </select>
-                    }
-                </div>
-                @if (!string.IsNullOrEmpty(_rpGroup))
-                {
-                    @RepairForm()
-                }
-                @if (!string.IsNullOrEmpty(_modalError))
-                {
-                    <div class="alert alert-danger py-1 small" style="white-space:pre-line">@_modalError</div>
-                }
-            </div>
-            <div class="mes-modal-footer">
-                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Huỷ</button>
-                <button class="btn btn-sm btn-success" @onclick="ConfirmRepairSaveAsync" disabled="@_saving">
-                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Lưu Kết quả sửa
-                </button>
-            </div>
-        </div>
-    </div>
+    <GiaoXuLyModal Row="_selectedRow" Groups="_myEditGroups" UserId="_currentUserId" Cats="_ngCats"
+                   OnClose="CloseModals" OnSaved="OnFormSavedAsync" OnFailed="OnFormFailedAsync" />
 }
 
 @* ── MODAL NHẬN HÀNG (như cũ — thêm dòng "ghi vào ô …" do phần mềm điền) ── *@
@@ -1485,26 +984,11 @@ else
     string _explainKey = "";
 
     // ── Modal ─────────────────────────────────────────────────────────
-    bool   _showIssueModal;
-    bool   _showReceiveModal;
+    bool   _showReceiveModal;   // [GN-FORM1] _showIssueModal → _showFormModal (form Giao / xử lý hàng)
     bool   _showLogModal;
     bool   _saving;
     string _modalError = "";
 
-    List<string> _issueGroups = new();
-    string  _issueFrom    = "";
-    string  _issueTo      = "";
-    // [GN-CELL] form Giao theo ô
-    string  _issueCell     = "";      // MOI | LOI | SUA
-    bool    _issuePrev;               // tích "Hàng lỗi công đoạn trước"
-    string  _issueToCell = "";        // [GN-CELL2] ô bên giao chỉ định cho bên nhận ("" = mặc định theo ô lấy). Trước: bool _issueRepaired
-    bool    _issueSpecialMode;        // mục "Khác": làm hộ / huỷ / trả khách
-    string  _issueSpecial  = "";      // HELP_SEND | HELP_RETURN | SCRAP | CUST_RETURN
-    string  _issueFromNC  = "";
-    string  _issueToNC    = "";
-    decimal _issueQty;
-    // [VULOI] _issueReason bỏ: lỗi chọn từ DS Lỗi / theo vụ, không gõ tay
-    string  _issueNotes   = "";
 
     string  _receiveToGroup  = "";
     List<HandoverTxPending> _pendingTxs = new();
@@ -1523,35 +1007,14 @@ else
     string _voidReason = "";
     bool   _showVoidConfirm;
     string _voidMode = "ISSUE";     // [GN-VOID-RULE] ISSUE = huỷ phiếu giao · RECV = huỷ lần nhận · CLOSE = huỷ phần chưa nhận · NG = huỷ báo lỗi ([GN-NG-AFTER])
-    // [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận
-    bool    _showNgModal;
-    string  _ngGroup  = "";
-    string  _ngSource = "";      // PHOI | CHUA | DA
-    string  _ngNc     = "";
-    decimal _ngQty;
-    string  _ngOrigin = "";      // DAU_VAO | DAU_RA
-    string  _ngCause  = "";
-    string  _ngReason = "";
     // [VULOI][DS-LOI 2026-10-28] Danh mục lỗi + vụ lỗi trên các form
     List<NgCategory> _ngCats = new();   // loại lỗi đang dùng (DS Lỗi)
-    long? _issueCaseKey;                // form Giao: vụ đang chọn (0 = hàng lỗi cũ chưa có mã); null = chưa chọn
-    int?  _issueCatId;                  // form Giao: loại lỗi khi tích Hàng lỗi công đoạn trước
     int?  _receiveCatId;                // form Nhận: loại lỗi khi lần nhận sinh vụ mới
-    int?  _ngCatId;                     // form Báo lỗi sau khi nhận
-    string  _ngNotes  = "";
     long    _voidingNgId;
     List<HandoverNgReportItem> _ngLogs = new();
     long   _voidingReceiveId;       // [GN-VOID-RULE]
 
-    // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
-    bool    _showRepairModal;
-    string  _rpGroup = "";
-    string  _rpCell  = "";        // SUA | LOI
-    long?   _rpCaseKey;           // vụ đang chọn (0 = hàng lỗi cũ chưa có mã); null = chưa chọn
-    decimal _rpPass;
-    decimal _rpFail;
-    string  _rpNc    = "";        // Gia công: NC làm tiếp ("@NEW" = như hàng mới)
-    string  _rpNotes = "";
+    // [GC-SUA-TAI-CHO] KCS xác nhận hàng sửa (ghi Kết quả sửa: GiaoXuLyModal [GN-FORM1])
     List<HandoverRepairItem> _repairLogs = new();
     List<HandoverRepairItem> _kcsRepairs = new();
     long    _expandedRepairId;
@@ -1560,7 +1023,6 @@ else
     string  _kcsNotes = "";
     long    _voidingRepairId;
     long    _voidingRepairCheckId;
-    const string RepairNewNc = "@NEW";
 
     Dictionary<int, int> _pendingCountPerDetail = new();
     Dictionary<int, int> _pendingIssuedCountPerDetail = new();
@@ -2111,88 +1573,29 @@ else
     void CloseExplain() { _explain = null; _explainKey = ""; }
 
     // =================================================================
-    // [GN-CELL] Modal Giao — theo ô Excel
+    // [GN-FORM1 2026-11-05] Form "Giao / xử lý hàng" (GiaoXuLyModal) thay modal Giao cũ (ô Excel + mục Khác).
+    //   Bản cũ (OpenIssueModal / SelectCell / SpecialOptions / VuPicker / ConfirmIssueAsync …) còn trong git trước commit [GN-FORM1].
     // =================================================================
-    record SpecialOpt(string Code, string Label, string Hint);
+    bool _showFormModal;
 
-    static List<SpecialOpt> SpecialOptions(string from)
+    void OpenIssueModal(LedgerRow row)
     {
-        var list = new List<SpecialOpt>();
-        if (from == "GC")
-            list.Add(new(HandoverPurpose.HelpSend, "Giao theo NC cụ thể — NC dùng máy loại trừ",
-                "Gia công giao hàng đã làm xong ở NC nguồn sang nhóm khác làm tiếp (máy loại trừ). Chọn NC nguồn, ghi chú bắt buộc."));
-        if (from != "GC" && from != "KHO")
-            list.Add(new(HandoverPurpose.HelpReturn, "Trả về Gia công — nhận vào NC",
-                "Hàng Gia công giao theo NC, làm xong trả về Gia công. Chọn NC nhận vào."));
-        list.Add(new(HandoverPurpose.Scrap, "Huỷ hàng lỗi — không sửa được",
-            "Lấy từ tồn hàng lỗi, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
-        list.Add(new(HandoverPurpose.CustReturn, "Trả khách hàng lỗi",
-            from == "KHO" ? "Phôi lỗi tồn ở Kho: trả lại khách, ra khỏi PO. Bắt buộc ghi lỗi cụ thể."
-                          : "Tồn hàng lỗi trả lại khách (khách đồng ý nhận lại), ra khỏi PO. Bắt buộc ghi lỗi cụ thể."));
-        return list;
+        _selectedRow   = row;
+        _modalError    = "";
+        _showFormModal = true;
     }
 
-    // ── [VULOI 2026-10-28] Vụ lỗi trên form Giao / Nhận ─────────────────────
-    /// <summary>Ô lấy hàng của phiếu đang lập (Huỷ / Trả khách: ô Hàng lỗi).</summary>
-    string? TakeCellOf(string purpose) => _issueSpecialMode ? (HandoverPurpose.IsOut(purpose) ? HandoverCell.Loi : null) : _issueCell;
-    bool TakesCaseNow(string? purpose) => purpose != null && _selectedRow != null && HandoverLedgerService.TakesHeldCase(purpose, TakeCellOf(purpose));
-    List<LedgerCase> HeldCasesNow(string purpose)
-        => _selectedRow == null || TakeCellOf(purpose) is not string cell ? new() : _selectedRow.CasesHeldAt(_issueFrom, cell);
-    /// <summary>Vụ đang dùng: vụ bấm chọn (nếu còn hàng), hoặc tự chọn khi chỉ có 1 vụ. Null = phải chọn.</summary>
-    long? EffIssueCaseKey(string purpose)
+    async Task OnFormSavedAsync(int detailId)
     {
-        var held = HeldCasesNow(purpose);
-        if (_issueCaseKey != null && held.Any(h => h.Id == _issueCaseKey)) return _issueCaseKey;
-        return held.Count == 1 ? held[0].Id : null;
+        CloseModals();
+        await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));   // [PAGE-ERR2] đã lưu: lỗi tải lại báo ở trang
     }
-    (decimal Max, LedgerExplain Explain) IssueCapNow(string purpose)
-    {
-        if (_selectedRow == null) return (0m, new LedgerExplain());
-        if (!TakesCaseNow(purpose))
-            return HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, purpose, _issueFromNC, _issueSpecialMode ? null : _issueCell);
-        var key = EffIssueCaseKey(purpose);
-        if (key == null)
-            return (0m, new LedgerExplain { Title = $"Chọn {NgCaseNo.Term} ở trên", Note = "Số tối đa tính theo vụ đang chọn." });
-        return HandoverLedgerService.IssueCapCase(_selectedRow, _issueFrom, purpose, _issueFromNC, TakeCellOf(purpose), key == 0 ? null : key);
-    }
-    void SelectIssueCase(long id)
-    {
-        _issueCaseKey = id;
-        if (EffectivePurpose is string p) _issueQty = IssueCapNow(p).Max;
-    }
-    string CaseFrom(LedgerCase cs)
-        => cs.Id == 0 ? "dữ liệu trước khi có mã vụ"
-         : "phát hiện ở " + (cs.DetectGroup == null ? "?" : HandoverLedgerService.GroupLabel(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + (HandoverLedgerService.IsVao(cs.DetectNc) ? HandoverLedgerService.VaoLabel : cs.DetectNc)))   // [N3-FIRST] chữ @VAO
-           + (string.IsNullOrEmpty(cs.Cause) || cs.Cause == cs.DetectGroup ? "" : " · do " + HandoverNgSource.CauseLabel(cs.Cause));
-    static string CaseRadioId(long id) => "vuIssue_" + id;
 
-    RenderFragment VuPicker(string purpose) => __builder =>
+    async Task OnFormFailedAsync(int detailId)
     {
-        var cell = TakeCellOf(purpose) ?? "";
-        var held = HeldCasesNow(purpose);
-        var eff = EffIssueCaseKey(purpose);
-        <div class="mb-3 p-2 border border-danger-subtle rounded" style="background:#fff5f5;font-size:12px">
-            <div class="fw-semibold text-danger mb-1">@NgCaseNo.TermCap <span class="text-danger">*</span> <span class="text-muted fw-normal">— 1 phiếu chỉ 1 vụ; lỗi ghi theo vụ</span></div>
-            @if (held.Count == 0)
-            {
-                <div class="text-muted">Ô @HandoverCell.Label(cell) của @HandoverLedgerService.GroupLabel(_issueFrom) không có @NgCaseNo.Term nào đang giữ.</div>
-            }
-            @foreach (var cs in held)
-            {
-                var id = cs.Id;
-                <div class="form-check mb-0">
-                    <input class="form-check-input" type="radio" name="vuIssue" id="@CaseRadioId(id)" checked="@(eff == id)" @onchange="() => SelectIssueCase(id)" />
-                    <label class="form-check-label" for="@CaseRadioId(id)">
-                        <strong>@(id == 0 ? "Hàng lỗi cũ" : cs.No)</strong> · @cs.CatLabel · <span class="text-muted">@CaseFrom(cs)</span> · còn <strong>@cs.HeldAt(_issueFrom, cell).ToString("0.##")</strong>
-                    </label>
-                </div>
-            }
-            @if (held.Count == 1)
-            {
-                <div class="text-muted fst-italic mt-1">Chỉ có 1 vụ — phần mềm tự chọn.</div>
-            }
-        </div>
-    };
+        try { await ReloadRowAsync(detailId); }   // số trong form đọc lại sổ (lựa chọn giữ nguyên)
+        catch (Exception ex) { _pageError = ServerErr(ex); _pageErrorDetailId = detailId; }
+    }
 
     /// <summary>[VULOI] Phiếu chờ nhận có mang vụ không (phiếu trả tự lập, phiếu lấy từ ô Hàng lỗi / Hàng sửa). Bên nhận không chọn vụ.</summary>
     static bool RecvCarry(HandoverTxPending p)
@@ -2207,102 +1610,6 @@ else
         }
     };
 
-    static bool IsNgPurpose(string p) => p is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.Scrap or HandoverPurpose.CustReturn;
-
-    /// <summary>Loại phiếu suy từ ô + tích + lựa chọn (hoặc mục Khác). null = chưa chọn xong.</summary>
-    string? EffectivePurpose
-    {
-        get
-        {
-            if (string.IsNullOrEmpty(_issueFrom)) return null;
-            if (_issueSpecialMode) return string.IsNullOrEmpty(_issueSpecial) ? null : _issueSpecial;
-            if (string.IsNullOrEmpty(_issueCell)) return null;
-            return HandoverCell.ResolveCells(_issueCell, _issuePrev, IssueToCellNow).Purpose;   // [GN-CELL2]
-        }
-    }
-
-    /// <summary>Số đang có trong ô để giao (hiện trên nút chọn ô).</summary>
-    static decimal CellHave(LedgerGroup g, string cell) => cell switch
-    {
-        HandoverCell.Moi => Math.Max(0, g.ConGiao),
-        HandoverCell.Loi => Math.Max(0, g.LoiGiu),
-        HandoverCell.Sua => Math.Max(0, g.SuaGiu),
-        _ => 0
-    };
-
-    string CellTitle(string cell) => cell switch
-    {
-        HandoverCell.Moi => _issueFrom == "KHO" ? "Phôi tốt cấp cho Gia công (Kho ghi Giao · Hàng Mới)." : "Hàng OK đã nhập WTS, giao xuôi cho nhóm sau (ghi Giao · Hàng Mới).",
-        HandoverCell.Loi => "Ghi Giao · Hàng lỗi. Tích 'Hàng lỗi công đoạn trước' = trả nơi gây lỗi (lấy từ hàng chưa làm). Không tích = tồn hàng lỗi của mình: chọn ô nhận Hàng sửa (gửi nhờ sửa) hoặc Hàng lỗi đã xử lý (tự sửa xong trả về).", // [GN-CELL2]
-        HandoverCell.Sua => "Hàng nhóm khác gửi nhờ sửa, sửa xong trả về nơi phát hiện (ghi Giao · Hàng Sửa; bên nhận ghi Hàng lỗi đã xử lý).",
-        _ => ""
-    };
-
-    List<string> TargetOptions(string purpose)
-        => HandoverLedgerService.GroupCodes.Where(x => x != _issueFrom && HandoverLedgerService.CheckRoute(_issueFrom, x, purpose) == null).ToList();
-
-    static string TargetHint(string purpose) => purpose switch
-    {
-        HandoverPurpose.New          => "Mặc định nhóm kế tiếp; chọn nhóm khác nếu cần (Đóng gói → Kho = nhập thành phẩm).", // [GN-ROUTE-FREE] trước: chỉ giao xuôi
-        HandoverPurpose.NgReturn     => "Mặc định nhóm đứng trước; chọn nhóm khác nếu lỗi do nhóm đó gây ra.", // [GN-NGRET-TO] trước: chỉ trả về nhóm đứng trước
-        HandoverPurpose.RepairSend   => "Chọn nhóm sửa hàng.", // [GN-ROUTE-FREE] trước: Kho không sửa hàng
-        HandoverPurpose.RepairReturn => "Trả thẳng về nơi phát hiện lỗi (không qua nơi gây lỗi).",
-        HandoverPurpose.HelpSend     => "Nhóm làm NC dùng máy loại trừ.",
-        HandoverPurpose.HelpReturn   => "Chỉ trả về Gia công.",
-        _ => ""
-    };
-
-    string? RouteError => string.IsNullOrEmpty(_issueFrom) || string.IsNullOrEmpty(_issueTo) || EffectivePurpose == null
-        ? null : HandoverLedgerService.CheckRoute(_issueFrom, _issueTo, EffectivePurpose);
-
-    void OpenIssueModal(LedgerRow row)
-    {
-        _selectedRow  = row;
-        _issueGroups  = _myEditGroups.ToList();
-        _issueFrom    = _issueGroups.Count == 1 ? _issueGroups[0] : "";
-        ResetIssueInputs();
-        _modalError   = "";
-        _showIssueModal = true;
-    }
-
-    void ResetIssueInputs()
-    {
-        _issueTo = ""; _issueCell = ""; _issuePrev = false; _issueToCell = "";
-        _issueSpecialMode = false; _issueSpecial = "";
-        _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _issueNotes = "";
-        _issueCaseKey = null; _issueCatId = null;   // [VULOI]
-    }
-
-    void OnIssueFromChanged(ChangeEventArgs e)
-    {
-        _issueFrom = e.Value?.ToString() ?? "";
-        ResetIssueInputs();
-    }
-
-    void SelectCell(string cell)
-    {
-        _issueCell = cell; _issuePrev = false; _issueToCell = ""; _issueToNC = ""; _issueFromNC = ""; _modalError = "";
-        // Hàng lỗi ở nhóm sản xuất: mặc định tích "công đoạn trước" khi ô Hàng lỗi đang giữ trống (TH1/TH2/TH3 B1)
-        if (cell == HandoverCell.Loi && _issueFrom != "KHO" && _selectedRow != null && _selectedRow.G(_issueFrom).LoiGiu <= 0)
-            _issuePrev = true;
-        DefaultFromNcForPrev();
-        AfterPurposeChanged();
-    }
-
-    void OnPrevChanged(bool v) { _issuePrev = v; _issueToCell = ""; _issueFromNC = ""; DefaultFromNcForPrev(); AfterPurposeChanged(); }
-
-    // [GN-CELL2] ô bên nhận đang chọn (mặc định theo ô lấy + tích)
-    string IssueToCellNow => !string.IsNullOrEmpty(_issueToCell) ? _issueToCell
-        : string.IsNullOrEmpty(_issueCell) ? "" : HandoverCell.DefaultToCell(_issueCell, _issuePrev);
-
-    void SelectIssueToCell(string c)
-    {
-        var keepTo = _issueTo;
-        _issueToCell = c; _issueToNC = "";
-        AfterPurposeChanged();
-        if (!string.IsNullOrEmpty(keepTo) && EffectivePurpose != null && TargetOptions(EffectivePurpose).Contains(keepTo)) _issueTo = keepTo;   // giữ nhóm nhận đã chọn
-    }
-
     static string ToCellTitle(string c) => c switch
     {
         HandoverCell.Moi => "vào Chưa làm, nhập WTS được (Kho: như phôi; Đóng gói → Kho: nhập thành phẩm).",
@@ -2312,132 +1619,7 @@ else
         _ => ""
     };
 
-    // [GN-NC-PIN] Gia công tích "công đoạn trước": điền sẵn NC đầu còn hàng chờ (đúng luật N10 cũ), đổi được
-    void DefaultFromNcForPrev()
-    {
-        if (!_issuePrev || _issueFrom != "GC" || _selectedRow == null) return;
-        var first = _selectedRow.G("GC").Steps.FirstOrDefault(x => !x.IsExcluded && (x.Waiting ?? 0) > 0);
-        _issueFromNC = first?.Code ?? "";
-    }
-
-    void ToggleSpecial()
-    {
-        _issueSpecialMode = !_issueSpecialMode; _issueToCell = ""; _issuePrev = false;
-        _issueCell = ""; _issueSpecial = ""; _issueTo = ""; _issueFromNC = ""; _issueToNC = ""; _issueQty = 0; _modalError = "";
-    }
-
-    void SelectSpecial(string code)
-    {
-        _issueSpecial = code; _issueFromNC = ""; _issueToNC = ""; _modalError = "";
-        AfterPurposeChanged();
-    }
-
-    /// <summary>Sau khi loại phiếu đổi: tự điền nhóm nhận khi chỉ có 1 lựa chọn / là hàng mới, và điền số tối đa.</summary>
-    void AfterPurposeChanged()
-    {
-        var purpose = EffectivePurpose;
-        _issueTo = "";
-        _issueCaseKey = null;   // [VULOI] đổi loại phiếu / ô → chọn lại vụ
-        if (purpose == null || _selectedRow == null) { _issueQty = 0; return; }
-        if (HandoverPurpose.IsOut(purpose)) _issueTo = HandoverPurpose.OutTarget(purpose)!;
-        else
-        {
-            var targets = TargetOptions(purpose);
-            if (purpose == HandoverPurpose.New)
-            {
-                var next = NextGroup(_issueFrom);   // [GN-ROUTE-FREE] dùng chung với dòng nhắc
-                _issueTo = targets.Contains(next) ? next : (targets.Count == 1 ? targets[0] : "");
-            }
-            else if (purpose == HandoverPurpose.NgReturn)
-            {
-                // [GN-NGRET-TO] Chọn tự do, mặc định điền sẵn nhóm đứng trước (trường hợp hay gặp nhất)
-                var prev = _issueFrom switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => "" };
-                _issueTo = targets.Contains(prev) ? prev : (targets.Count == 1 ? targets[0] : "");
-            }
-            else if (targets.Count == 1) _issueTo = targets[0];
-        }
-        _issueQty = IssueCapNow(purpose).Max;   // [VULOI] trước: IssueCap — nay theo vụ (chỉ 1 vụ thì tự chọn)
-    }
-
-    // [N3-FIRST 2026-11-04] dòng ảo "Nhận vào (chưa qua NC)" (@VAO) khi NC đầu Gia công là máy loại trừ
-    static string HelpSrcLabel(LedgerStepLine s)
-        => HandoverLedgerService.IsVao(s.Code)
-            ? $"{HandoverLedgerService.VaoLabel} (còn {(s.Waiting ?? 0):0.##})"
-            : $"NC {s.Code} (OK {s.Ok:0.##})";
     static string GcStepOkText(LedgerStepLine s) => HandoverLedgerService.IsVao(s.Code) ? "—" : s.Ok.ToString("0.##");
-    //   Trả về Gia công (bắt buộc chọn NC — K3) thì không gợi ý "Nhận vào" (rà độc lập 04/11 L2)
-    string ToNcDefaultLabel => _selectedRow != null && _selectedRow.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code))
-        ? (_issueSpecial == HandoverPurpose.HelpReturn ? "-- Chọn NC --" : $"-- {HandoverLedgerService.VaoLabel} (mặc định) --")
-        : "-- NC đầu (mặc định) --";
-
-    void OnFromNcChanged(ChangeEventArgs e)
-    {
-        _issueFromNC = e.Value?.ToString() ?? "";
-        if (_selectedRow != null && !string.IsNullOrEmpty(_issueFromNC) && EffectivePurpose != null)
-            _issueQty = HandoverLedgerService.IssueCap(_selectedRow, _issueFrom, EffectivePurpose, _issueFromNC).Max;
-        else if (string.IsNullOrEmpty(_issueFromNC)) _issueQty = 0;   // [RA-CASCADE 2026-11-01] bỏ chọn NC → không giữ trần của NC cũ
-    }
-
-    // [GN-NGRET-TO] nhóm nhận đứng sau nhóm giao trong dòng KHO → GC → HTSP → KCS → Đóng gói
-    static int GrpOrder(string g) => Array.IndexOf(HandoverLedgerService.GroupCodes, g);
-    // [GN-ROUTE-FREE] nhóm kế tiếp mặc định của Hàng mới + dòng nhắc khi chọn nhóm khác
-    static string NextGroup(string from) => from switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
-    static string NewRouteNote(string from, string to)
-        => to == "KHO" ? $"Kho nhận vào ô Hàng mới như phôi (không phải nhập thành phẩm — chỉ Đóng gói → Kho mới là thành phẩm)."
-         : GrpOrder(to) < GrpOrder(from) ? $"{HandoverLedgerService.GroupLabel(to)} đứng trước {HandoverLedgerService.GroupLabel(from)}: hàng vào Chưa làm của {HandoverLedgerService.GroupLabel(to)} và phải làm lại (nhập WTS lại)."
-         : $"Không qua các nhóm ở giữa — {HandoverLedgerService.GroupLabel(to)} nhận thẳng từ {HandoverLedgerService.GroupLabel(from)}.";
-    static bool IsLaterGroup(string from, string to) => !string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(to) && GrpOrder(to) > GrpOrder(from);
-
-    void OnIssueToChanged(ChangeEventArgs e) { _issueTo = e.Value?.ToString() ?? ""; _issueToNC = ""; }
-    void OnToNcChanged(ChangeEventArgs e) => _issueToNC = e.Value?.ToString() ?? "";
-
-    async Task ConfirmIssueAsync()
-    {
-        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
-        if (_selectedRow == null) return;
-        _modalError = "";
-        var purpose = EffectivePurpose;
-        if (string.IsNullOrEmpty(_issueFrom)) { _modalError = "Chọn nhóm giao."; return; }
-        if (purpose == null)                  { _modalError = _issueSpecialMode ? "Chọn loại phiếu." : "Chọn phân loại hàng (Hàng mới / Hàng lỗi / Hàng sửa)." /* [GN-PLH] mục 36 */; return; }
-        if (string.IsNullOrEmpty(_issueTo))   { _modalError = "Chọn nhóm nhận."; return; }
-        if (RouteError != null)               { _modalError = RouteError; return; }
-        // [VULOI] vụ lấy hàng / loại lỗi
-        long? caseArg = null; int? catArg = null;
-        if (TakesCaseNow(purpose))
-        {
-            var key = EffIssueCaseKey(purpose);
-            if (key == null) { _modalError = $"Chọn {NgCaseNo.Term} đang giữ."; return; }
-            caseArg = key == 0 ? null : key;
-        }
-        if (purpose == HandoverPurpose.NgReturn)
-        {
-            if (_issueCatId == null) { _modalError = NgCaseService.MsgPickCategory; return; }
-            catArg = _issueCatId;
-        }
-        if (_issueQty <= 0)                   { _modalError = "Số lượng phải lớn hơn 0."; return; }
-        _saving = true;
-        var detailId = _selectedRow.KhPlanDetailId;
-        try   // [PAGE-ERR 2026-10-31]
-        {
-        (bool ok, string err) = _issueSpecialMode
-            ? await HandoverSvc.IssueSpecialAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId, purpose,
-                fromNC: string.IsNullOrEmpty(_issueFromNC) ? null : _issueFromNC,
-                toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-                notes:  _issueNotes, reason: null, ngCaseId: caseArg)   // [VULOI] lỗi theo vụ (trước: _issueReason gõ tay)
-            : await HandoverSvc.IssueByCellAsync(detailId, _issueFrom, _issueTo, _issueQty, _currentUserId,
-                _issueCell, _issuePrev, IssueToCellNow,   // [GN-CELL2] trước: _issueRepaired
-                fromNC: _issuePrev && _issueFrom == "GC" && !string.IsNullOrEmpty(_issueFromNC) ? _issueFromNC : null,   // [GN-NC-PIN]
-                toNC:   string.IsNullOrEmpty(_issueToNC) ? null : _issueToNC,
-                notes:  _issueNotes, reason: null, ngCategoryId: catArg, ngCaseId: caseArg);   // [VULOI]
-        _saving = false;
-        if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
-        CloseModals();
-        await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));   // [PAGE-ERR2] đã lưu: lỗi tải lại báo ở trang (trước: rơi vào cửa sổ vừa đóng)
-        }
-        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
-        finally { _saving = false; }
-    }
-
     // [PAGE-ERR 2026-10-31] Lỗi máy chủ lạ khi Giao / Nhận / Huỷ / Báo lỗi (lời báo nghiệp vụ đã trả qua (ok, err); deadlock đã tự thử lại [RS-D10]):
     //   hiện trong cửa sổ + bỏ dữ liệu dở khỏi DbContext dùng chung (để lần lưu sau không ghi kèm). Trước: không bắt → hỏng phiên trang, phải F5.
     // [PAGE-ERR2 2026-10-31] Lưu / nhận / huỷ ĐÃ ghi xong, chỉ bước tải lại số lỗi: trước rơi vào ServerErr ("…xem đã lưu chưa")
@@ -2480,94 +1662,7 @@ else
         return "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
     }
 
-    // ── [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận ──────────────
-    void OpenNgFromIssue()
-    {
-        if (_selectedRow == null) return;
-        _ngGroup = !string.IsNullOrEmpty(_issueFrom) ? _issueFrom : (_issueGroups.Count == 1 ? _issueGroups[0] : "");
-        ResetNgInputs();
-        _modalError     = "";
-        _showIssueModal = false;
-        _showNgModal    = true;
-    }
-
-    void ResetNgInputs()
-    {
-        _ngSource = _ngGroup == "KHO" ? HandoverNgSource.Phoi : "";
-        _ngNc = ""; _ngQty = 0; _ngOrigin = ""; _ngCause = ""; _ngReason = ""; _ngNotes = "";
-        _ngCatId = null;   // [VULOI]
-    }
-
-    void OnNgGroupChanged(ChangeEventArgs e)
-    {
-        _ngGroup = e.Value?.ToString() ?? "";
-        ResetNgInputs();
-    }
-
-    static List<(string Code, string Label)> NgSources(string g) => g == "KHO"
-        ? new List<(string, string)> { (HandoverNgSource.Phoi, "Phôi còn") }
-        : new List<(string, string)> { (HandoverNgSource.Chua, g == "GC" ? "Chưa gia công" : "Chưa làm"), (HandoverNgSource.Da, "Đã làm chưa giao") };
-
-    static decimal NgHave(LedgerGroup G, string src) => src == HandoverNgSource.Chua ? G.ChuaLam : G.ConGiao;
-
-    /// <summary>Nơi gây lỗi đầu vào: phôi khách + các nhóm khác (nhóm đứng trước lên đầu).</summary>
-    static List<string> NgCauses(string g)
-    {
-        var order = HandoverLedgerService.GroupCodes.ToList();
-        var idx = order.IndexOf(g);
-        var before = order.Take(Math.Max(0, idx)).Reverse();
-        var after = order.Skip(idx + 1);
-        return new[] { "KHACH" }.Concat(before).Concat(after).ToList();
-    }
-
-    void SelectNgSource(string src)
-    {
-        _ngSource = src; _ngNc = ""; _ngQty = 0; _modalError = "";
-    }
-
-    void SelectNgOrigin(string o)
-    {
-        _ngOrigin = o;
-        if (o == HandoverNgSource.DauRa) _ngCause = "";
-        else if (string.IsNullOrEmpty(_ngCause)) _ngCause = NgDefaultCause(_ngGroup);
-    }
-
-    static string NgDefaultCause(string g) => g switch { "KHO" => "KHACH", "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => "" };
-
-    void OnNgNcChanged(ChangeEventArgs e) { _ngNc = e.Value?.ToString() ?? ""; _ngQty = 0; }
-    void OnNgCauseChanged(ChangeEventArgs e) { _ngCause = e.Value?.ToString() ?? ""; }
-
-    (decimal Max, LedgerExplain Explain) NgCapNow
-        => _selectedRow == null || string.IsNullOrEmpty(_ngGroup) || string.IsNullOrEmpty(_ngSource)
-            ? (0m, new LedgerExplain())
-            : HandoverLedgerService.NgReportCap(_selectedRow, _ngGroup, _ngSource, string.IsNullOrEmpty(_ngNc) ? null : _ngNc);
-
-    async Task ConfirmNgAsync()
-    {
-        if (_saving) return;   // [D10-DBLCLICK 29/10] bấm đúp: lần 2 tới trước khi nút kịp khoá → bỏ qua (trước: 2 phiếu / 2 lần nhận cùng lọt trần)
-        if (_selectedRow == null) return;
-        _modalError = "";
-        if (string.IsNullOrEmpty(_ngGroup))  { _modalError = "Chọn nhóm phát hiện."; return; }
-        if (string.IsNullOrEmpty(_ngSource)) { _modalError = "Chọn hàng lỗi đang nằm ở ô nào."; return; }
-        if (string.IsNullOrEmpty(_ngOrigin)) { _modalError = "Chọn nguồn lỗi (đầu vào / đầu ra)."; return; }
-        if (_ngQty <= 0)                     { _modalError = "Số lượng lỗi phải lớn hơn 0."; return; }
-        if (_ngCatId == null)                { _modalError = NgCaseService.MsgPickCategory; return; }   // [VULOI]
-        _saving = true;
-        var detailId = _selectedRow.KhPlanDetailId;
-        try   // [PAGE-ERR 2026-10-31]
-        {
-        (bool ok, string err) = await HandoverSvc.ReportNgAfterReceiveAsync(detailId, _ngGroup, _ngSource,
-            string.IsNullOrEmpty(_ngNc) ? null : _ngNc, _ngQty, _ngOrigin,
-            string.IsNullOrEmpty(_ngCause) ? null : _ngCause, _ngReason, _ngNotes, _currentUserId, _myEditGroups, _ngCatId);   // [VULOI] + loại lỗi
-        _saving = false;
-        if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
-        CloseModals();
-        await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));   // [PAGE-ERR2] đã lưu: lỗi tải lại báo ở trang (trước: rơi vào cửa sổ vừa đóng)
-        }
-        catch (Exception ex) { _modalError = ServerErr(ex); }   // [PAGE-ERR]
-        finally { _saving = false; }
-    }
-
+    // ── [GN-NG-AFTER] Huỷ phiếu báo lỗi (Lịch sử). Form báo lỗi cũ gộp vào GiaoXuLyModal [GN-FORM1]. ──
     bool ShowVoidNgBtn(HandoverNgReportItem b)
         => !b.IsVoided && HandoverService.CanVoidNgReport(b.CreatedBy, b.GroupCode, _currentUserId, _myEditGroups);
 
@@ -2582,92 +1677,7 @@ else
         _showVoidConfirm = true;
     }
 
-    // ── [GC-SUA-TAI-CHO 2026-11-04] Kết quả sửa + KCS xác nhận ─────────
-    void OpenRepairFromIssue()
-    {
-        if (_selectedRow == null) return;
-        _rpGroup = !string.IsNullOrEmpty(_issueFrom) ? _issueFrom : (_issueGroups.Count == 1 ? _issueGroups[0] : "");
-        ResetRepairInputs();
-        _modalError      = "";
-        _showIssueModal  = false;
-        _showRepairModal = true;
-    }
-
-    void ResetRepairInputs()
-    {
-        _rpCell = ""; _rpCaseKey = null; _rpPass = 0; _rpFail = 0; _rpNc = ""; _rpNotes = "";
-        if (_selectedRow == null || string.IsNullOrEmpty(_rpGroup)) return;
-        var G = _selectedRow.G(_rpGroup);
-        if (G.SuaGiu > 0) SelectRepairCell(HandoverCell.Sua);
-        else if (G.LoiGiu > 0) SelectRepairCell(HandoverCell.Loi);
-    }
-
-    void OnRepairGroupChanged(ChangeEventArgs e)
-    {
-        _rpGroup = e.Value?.ToString() ?? "";
-        ResetRepairInputs();
-    }
-
-    void SelectRepairCell(string c)
-    {
-        _rpCell = c; _rpCaseKey = null; _rpPass = 0; _rpFail = 0; _modalError = "";
-        var cs = RepairCases;
-        if (cs.Count == 1) _rpCaseKey = cs[0].Id;   // chỉ 1 vụ thì tự chọn
-    }
-
-    List<LedgerCase> RepairCases
-        => _selectedRow == null || string.IsNullOrEmpty(_rpGroup) || string.IsNullOrEmpty(_rpCell)
-            ? new List<LedgerCase>() : _selectedRow.CasesHeldAt(_rpGroup, _rpCell);
-
-    void OnRepairCaseChanged(ChangeEventArgs e)
-    {
-        var v = e.Value?.ToString();
-        _rpCaseKey = long.TryParse(v, out var k) ? k : null;
-        _rpPass = 0; _rpFail = 0;
-    }
-
-    void OnRepairNcChanged(ChangeEventArgs e) => _rpNc = e.Value?.ToString() ?? "";
-
-    (decimal Max, LedgerExplain Explain) RepairCapNow
-        => _selectedRow == null || string.IsNullOrEmpty(_rpGroup) || string.IsNullOrEmpty(_rpCell) || _rpCaseKey == null
-            ? (0m, new LedgerExplain())
-            : HandoverLedgerService.RepairCap(_selectedRow, _rpGroup, _rpCell, _rpCaseKey == 0 ? null : _rpCaseKey);
-
-    bool RepairNeedsNc => _selectedRow != null && _rpGroup == "GC"
-        && _selectedRow.G("GC").Steps.Any(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code));
-
-    List<LedgerStepLine> RepairNcOptions => _selectedRow == null ? new()
-        : _selectedRow.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).ToList();
-
-    static string RepairCaseText(LedgerCase c, decimal held) => (c.Id == 0 ? "Hàng lỗi cũ (chưa có mã)" : c.No + " · " + c.CatLabel) + $" — đang giữ {held:0.##}";
-
-    async Task ConfirmRepairSaveAsync()
-    {
-        if (_saving) return;   // [D10-DBLCLICK] bấm đúp
-        if (_selectedRow == null) return;
-        _modalError = "";
-        if (string.IsNullOrEmpty(_rpGroup)) { _modalError = "Chọn nhóm sửa."; return; }
-        if (string.IsNullOrEmpty(_rpCell))  { _modalError = "Chọn hàng sửa lấy từ ô Hàng sửa hay ô Hàng lỗi."; return; }
-        if (_rpCaseKey == null)             { _modalError = $"Chọn {NgCaseNo.Term}."; return; }
-        var fail = _rpCell == HandoverCell.Sua ? _rpFail : 0m;
-        if (_rpPass < 0 || fail < 0 || _rpPass + fail <= 0) { _modalError = "Nhập số sửa đạt hoặc không đạt."; return; }
-        if (RepairNeedsNc && _rpPass > 0 && string.IsNullOrEmpty(_rpNc)) { _modalError = "Chọn NC làm tiếp cho hàng đạt."; return; }
-        string? toNc = _rpNc == RepairNewNc || string.IsNullOrEmpty(_rpNc) ? null : _rpNc;
-        _saving = true;
-        var detailId = _selectedRow.KhPlanDetailId;
-        try
-        {
-            (bool ok, string err) = await HandoverSvc.CreateRepairResultAsync(detailId, _rpGroup, _rpCell, _rpCaseKey == 0 ? null : _rpCaseKey,
-                _rpPass, fail, toNc, _rpNotes, _currentUserId);
-            _saving = false;
-            if (!ok) { _modalError = err; await ReloadRowAsync(detailId); return; }
-            CloseModals();
-            await ReloadAfterSaveAsync(() => ReloadRowAsync(detailId));
-        }
-        catch (Exception ex) { _modalError = ServerErr(ex); }
-        finally { _saving = false; }
-    }
-
+    // ── [GC-SUA-TAI-CHO 2026-11-04] KCS xác nhận hàng sửa (modal Nhận · KCS) + huỷ trong Lịch sử. Ghi Kết quả sửa gộp vào GiaoXuLyModal [GN-FORM1]. ──
     async Task LoadKcsRepairsAsync()
     {
         _kcsRepairs = new();
@@ -2750,79 +1760,6 @@ else
     static string RepairCellText(HandoverRepairItem r)
         => $"lấy từ ô {HandoverCell.Label(r.SourceCell)} · đạt {r.QtyPass:0.##}" + (r.QtyFail != 0 ? $" · không đạt {r.QtyFail:0.##} → ô Hàng lỗi" : "")
            + (string.IsNullOrEmpty(r.ToNC) ? "" : $" · làm tiếp {HandoverLedgerService.NcText(r.ToNC)}");
-
-    /// <summary>[GC-SUA-TAI-CHO] Phần nhập của modal Kết quả sửa (tách ra để markup không lồng quá sâu).</summary>
-    RenderFragment RepairForm() => __builder =>
-    {
-        var G = _selectedRow!.G(_rpGroup);
-        var cap = RepairCapNow;
-        <label class="form-label form-label-sm fw-semibold mb-1">Hàng sửa lấy từ ô</label>
-        <div class="d-flex gap-2 mb-2">
-            <button type="button" class="gn-cellbtn @(_rpCell == HandoverCell.Sua ? "on" : "")" disabled="@(G.SuaGiu <= 0)" @onclick="() => SelectRepairCell(HandoverCell.Sua)" title="Hàng nhóm khác gửi nhờ sửa">
-                <div class="fw-semibold">Hàng sửa</div>
-                <div class="small @(G.SuaGiu > 0 ? "text-success" : "text-muted")">có @G.SuaGiu.ToString("0.##")</div>
-            </button>
-            <button type="button" class="gn-cellbtn @(_rpCell == HandoverCell.Loi ? "on" : "")" disabled="@(G.LoiGiu <= 0)" @onclick="() => SelectRepairCell(HandoverCell.Loi)" title="Hàng lỗi của nhóm (bị trả về / tự làm hỏng / báo lỗi)">
-                <div class="fw-semibold">Hàng lỗi</div>
-                <div class="small @(G.LoiGiu > 0 ? "text-success" : "text-muted")">có @G.LoiGiu.ToString("0.##")</div>
-            </button>
-        </div>
-        if (!string.IsNullOrEmpty(_rpCell))
-        {
-            <div class="mb-2">
-                <label class="form-label form-label-sm fw-semibold mb-1">@NgCaseNo.TermCap <span class="text-danger">*</span></label>
-                <select class="form-select form-select-sm" @onchange="OnRepairCaseChanged">
-                    <option value="" selected="@(_rpCaseKey == null)">-- Chọn @NgCaseNo.Term --</option>
-                    @foreach (var c in RepairCases)
-                    {
-                        <option value="@c.Id" selected="@(_rpCaseKey == c.Id)">@RepairCaseText(c, c.HeldAt(_rpGroup, _rpCell))</option>
-                    }
-                </select>
-            </div>
-            <div class="mb-2 p-2 border rounded" style="font-size:12px">
-                <div class="d-flex justify-content-between">
-                    <span>@cap.Explain.Title</span>
-                    <strong class="@(cap.Max > 0 ? "text-success" : "text-danger")">tối đa @cap.Max.ToString("0.##")</strong>
-                </div>
-            </div>
-            <div class="row g-2 mb-2">
-                <div class="col-6">
-                    <label class="form-label form-label-sm fw-semibold text-success">Sửa đạt (chờ KCS)</label>
-                    <input type="number" class="form-control form-control-sm border-success" @bind="_rpPass" min="0" />
-                </div>
-                <div class="col-6">
-                    <label class="form-label form-label-sm fw-semibold @(_rpCell == HandoverCell.Sua ? "text-danger" : "text-muted")">Không đạt</label>
-                    <input type="number" class="form-control form-control-sm border-danger" @bind="_rpFail" min="0" disabled="@(_rpCell != HandoverCell.Sua)" />
-                    @if (_rpCell != HandoverCell.Sua)
-                    {
-                        <div class="text-muted" style="font-size:10px">Lấy từ ô Hàng lỗi: chiếc không đạt vẫn ở ô Hàng lỗi</div>
-                    }
-                </div>
-            </div>
-            if (_rpPass + (_rpCell == HandoverCell.Sua ? _rpFail : 0) > cap.Max)
-            {
-                <div class="small text-danger mb-2">Vượt tối đa @cap.Max.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
-            }
-            if (RepairNeedsNc)
-            {
-                <div class="mb-2">
-                    <label class="form-label form-label-sm fw-semibold mb-1">NC làm tiếp cho hàng đạt <span class="text-danger">*</span></label>
-                    <select class="form-select form-select-sm" @onchange="OnRepairNcChanged">
-                        <option value="" selected="@(string.IsNullOrEmpty(_rpNc))">-- Chọn NC --</option>
-                        <option value="@RepairNewNc" selected="@(_rpNc == RepairNewNc)">Như hàng mới (@(_selectedRow.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code)) ? HandoverLedgerService.VaoLabel : "NC đầu"))</option>
-                        @foreach (var s in RepairNcOptions)
-                        {
-                            <option value="@s.Code" selected="@(_rpNc == s.Code)">NC @s.Code @(s.IsLast ? "(cuối)" : "")</option>
-                        }
-                    </select>
-                </div>
-            }
-            <div class="mb-2">
-                <label class="form-label form-label-sm">Ghi chú (tuỳ chọn)</label>
-                <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_rpNotes" />
-            </div>
-        }
-    };
 
     /// <summary>[GC-SUA-TAI-CHO] Mục "Hàng sửa chờ KCS xác nhận" trong modal Nhận (nhóm KCS).</summary>
     RenderFragment KcsRepairSection() => __builder =>
@@ -3161,10 +2098,9 @@ else
 
     void CloseModals()
     {
-        _showIssueModal = false; _showReceiveModal = false;
+        _showFormModal  = false; _showReceiveModal = false;   // [GN-FORM1]
         _showLogModal   = false; _showVoidConfirm  = false;
-        _showNgModal    = false;   // [GN-NG-AFTER]
-        _showRepairModal = false; _kcsRepairs = new(); _expandedRepairId = 0;   // [GC-SUA-TAI-CHO]
+        _kcsRepairs = new(); _expandedRepairId = 0;   // [GC-SUA-TAI-CHO]
         _selectedRow    = null;  _modalError       = "";
         _expandedTxId   = 0;     _pendingTxs       = new();
         ResetReceiveInputs();

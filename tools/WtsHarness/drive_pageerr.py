@@ -49,14 +49,16 @@ async def alive(pg, kind):
     return gone and await m.locator("input.border-success").count() == 1
 
 async def open_issue(pg, po, qty):
+    # [GN-FORM1 05/11] form "Giao / xử lý hàng": nhóm Kho → Hàng tốt → Phôi còn (chưa giao) → giao Gia công (mặc định) → số lượng
     await pg.locator("tr", has_text=po).first.locator("button:has-text('Giao')").click(); await pg.wait_for_timeout(1500)
     m = modal(pg)
     await m.locator("select").first.select_option(label="Kho"); await pg.wait_for_timeout(900)
-    await m.locator("button.gn-cellbtn", has_text="Hàng mới").first.click(); await pg.wait_for_timeout(700)
-    await m.locator("select").nth(1).select_option(label="Gia công"); await pg.wait_for_timeout(700)
-    await m.locator("input[type=number]").fill(str(qty)); await pg.wait_for_timeout(300)
+    await m.locator("button.gn-cellbtn", has_text="Hàng tốt").first.click(); await pg.wait_for_timeout(700)
+    await m.locator("button.gn-cellbtn", has_text="Phôi còn (chưa giao)").first.click(); await pg.wait_for_timeout(700)
+    await m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first.select_option(label="Gia công"); await pg.wait_for_timeout(700)
+    q = m.locator("input[type=number]"); await q.fill(str(qty)); await q.dispatch_event("change"); await pg.wait_for_timeout(400)
 async def confirm_issue(pg):
-    await modal(pg).locator("button.btn-primary:has-text('Xác nhận giao')").click(); await pg.wait_for_timeout(2500)
+    await modal(pg).locator(".mes-modal-footer button.btn-primary:has-text('Xác nhận')").click(); await pg.wait_for_timeout(2500)
 async def close_modal(pg):
     if await pg.locator(".mes-modal").count():
         await modal(pg).locator(".mes-modal-footer button.btn-secondary").first.click(); await pg.wait_for_timeout(600)

@@ -77,12 +77,15 @@ namespace MES.Web.Services
         // ----------------------------------------------------------------
         public Task<(bool Ok, string Error)> CreateRepairResultAsync(
             int khPlanDetailId, string groupCode, string sourceCell, long? ngCaseId,
-            decimal qtyPass, decimal qtyFail, string? toNC, string? notes, int userId)
-            => RetryDeadlockAsync(() => CreateRepairResultOnceAsync(khPlanDetailId, groupCode, sourceCell, ngCaseId, qtyPass, qtyFail, toNC, notes, userId));
+            decimal qtyPass, decimal qtyFail, string? toNC, string? notes, int userId,
+            string? ncReason = null)   // [GN-FORM1][K2] lý do khi làm lại từ NC đứng trước NC của vụ
+            => RetryDeadlockAsync(() => CreateRepairResultOnceAsync(khPlanDetailId, groupCode, sourceCell, ngCaseId, qtyPass, qtyFail, toNC, notes, userId, ncReason));
 
         private async Task<(bool Ok, string Error)> CreateRepairResultOnceAsync(
             int khPlanDetailId, string groupCode, string sourceCell, long? ngCaseId,
-            decimal qtyPass, decimal qtyFail, string? toNC, string? notes, int userId)
+            decimal qtyPass, decimal qtyFail, string? toNC, string? notes, int userId,
+            string? ncReason = null,
+            FormTx? ftx = null)   // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync)
         {
             if (!HandoverLedgerService.GroupCodes.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
             var deny = await DenyGroupAsync(userId, groupCode, "ghi Kết quả sửa");
@@ -98,9 +101,12 @@ namespace MES.Web.Services
             notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
             if (notes != null && notes.Length > 500) notes = notes[..500];
 
-            using var trx = await _db.Database.BeginTransactionAsync();
-            var lockErr = await LockPoAsync(khPlanDetailId);
-            if (lockErr != null) return (false, lockErr);
+            using var trx = ftx == null ? await _db.Database.BeginTransactionAsync() : null;
+            if (ftx == null)   // [GN-FORM1] form đã mở giao dịch + khoá PO
+            {
+                var lockErr = await LockPoAsync(khPlanDetailId);
+                if (lockErr != null) return (false, lockErr);
+            }
             var row = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
 
@@ -123,6 +129,20 @@ namespace MES.Web.Services
                         ? $"\"{HandoverLedgerService.VaoLabel}\" không phải NC làm tiếp — chọn \"như hàng mới\" nếu hàng đạt quay lại từ đầu."
                         : $"NC {toNC} không phải NC nhận hàng của PO này (không có trong quy trình hoặc là máy loại trừ). Chọn lại NC làm tiếp.");
             }
+            // [GN-FORM1][K2 2026-11-05] Nguồn: KHÁCH 05/11 15:39 ("sửa xong làm tiếp NC2 chứ không phải NC1 hay NC3"), HÙNG 17:35 duyệt.
+            //   NC làm tiếp của hàng đạt = NC của vụ (chiếc đang chờ NC nào thì làm tiếp NC đó); chỉ cho làm lại từ NC ĐỨNG TRƯỚC + lý do
+            //   (ghi vào Ghi chú để truy); NC sau bị chặn (bỏ qua NC = mất truy vết công đoạn). Trước: chọn NC nào cũng lưu.
+            if (groupCode == "GC" && qtyPass > 0)
+            {
+                var defNc = HandoverForm.CaseNextNc(row, ngCaseId ?? 0, groupCode);   // [GN-FORM1] vòng 2 C1: nhóm giữ (vụ 0)
+                var (ncErr, ncNote) = HandoverForm.CheckNextNc(row, defNc, toNC, ncReason, free: (ngCaseId ?? 0) == 0);   // [GN-FORM1] vòng 3 C1b: hàng cũ chưa mã vụ
+                if (ncErr != null) return (false, ncErr);
+                if (ncNote != null)
+                {
+                    notes = notes == null ? ncNote : ncNote + " | " + notes;
+                    if (notes.Length > 500) notes = notes[..500];
+                }
+            }
 
             var (max, ex) = HandoverLedgerService.RepairCap(row, groupCode, sourceCell, ngCaseId);
             if (qtyPass + qtyFail > max)
@@ -142,9 +162,10 @@ namespace MES.Web.Services
                 CreatedAt      = DateTime.Now,
             });
             await _db.SaveChangesAsync();
+            if (ftx != null) return (true, string.Empty);   // [GN-FORM1] K5 + Commit ở SaveFormAsync
             var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);   // [GN-K8][K5]
             if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
-            await trx.CommitAsync();
+            await trx!.CommitAsync();
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE]
             _db.ChangeTracker.Clear();
             return (true, string.Empty);

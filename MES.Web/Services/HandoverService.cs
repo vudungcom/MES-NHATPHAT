@@ -564,7 +564,8 @@ namespace MES.Web.Services
             string? fromCell = null,   // [GN-CELL] ô bên giao chọn (null = gọi từ chỗ cũ → suy từ purpose)
             string? toCell = null,     // [GN-CELL2] ô bên giao chỉ định cho bên nhận (null = theo loại phiếu)
             int? ngCategoryId = null,  // [VULOI] Hàng lỗi công đoạn trước: loại lỗi → sinh vụ mới
-            long? ngCaseId = null)     // [VULOI] Hàng lỗi / Hàng sửa đang giữ, Huỷ, Trả khách: vụ lấy hàng
+            long? ngCaseId = null,     // [VULOI] Hàng lỗi / Hàng sửa đang giữ, Huỷ, Trả khách: vụ lấy hàng
+            FormTx? ftx = null)        // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync). null = như cũ
         {
             fromCell ??= HandoverCell.IssueCellOf(purpose, null);
             bool cellPurpose = purpose is HandoverPurpose.New or HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn;
@@ -613,9 +614,13 @@ namespace MES.Web.Services
             //   (BeginTransactionAsync() không chỉ định mức) chạy Serializable ngoài ý muốn: T1 MES_TEST đo ReadCommitted 902 · Serializable 396,
             //   RCSI mất tác dụng, deadlock / "Máy chủ đang bận" tăng. Serializable không bảo vệ thêm: mọi chỗ ghi sổ PO đều khoá MES_PO_
             //   trước khi đọc, mã phiếu / mã vụ là identity (không max+1).
-            using var trx = await _db.Database.BeginTransactionAsync();
-            var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8] khoá chung với trang WTS
-            if (lockErr != null) return (false, lockErr);
+            // [GN-FORM1] ftx != null: giao dịch + khoá PO do SaveFormAsync mở sẵn (2 chứng từ 1 lần lưu) — không mở / khoá lại
+            using var trx = ftx == null ? await _db.Database.BeginTransactionAsync() : null;
+            if (ftx == null)
+            {
+                var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8] khoá chung với trang WTS
+                if (lockErr != null) return (false, lockErr);
+            }
             var ledger = new HandoverLedgerService(_db);
             var row = await ledger.GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
@@ -669,7 +674,7 @@ namespace MES.Web.Services
                     fromGroupCode == "GC" ? fromNC : null, toGroupCode, issuedByUserId);
                 ngCaseId = vu.NgCaseId;
             }
-            _db.HandoverTransactions.Add(new HandoverTransaction
+            var newTx = new HandoverTransaction   // [GN-FORM1] giữ biến để form lấy mã phiếu
             {
                 KhPlanDetailId = khPlanDetailId,
                 FromGroupCode  = fromGroupCode,
@@ -689,12 +694,14 @@ namespace MES.Web.Services
                 IssuedAt       = DateTime.Now,
                 Notes          = notes,
                 CreatedAt      = DateTime.Now,
-            });
+            };
+            _db.HandoverTransactions.Add(newTx);
             await _db.SaveChangesAsync();
+            if (ftx != null) { ftx.TxIds.Add(newTx.HandoverTxId); if (ngCaseId is long fc) ftx.CaseId = fc; return (true, string.Empty); }   // [GN-FORM1] K5 + Commit ở SaveFormAsync
             // [GN-K8] Tính lại sổ trong cùng giao dịch — ô nào mới âm thì không lưu
             var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);
             if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
-            await trx.CommitAsync();
+            await trx!.CommitAsync();
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo mọi màn Giao nhận đang mở tính lại dòng PO này
             _db.ChangeTracker.Clear();
             return (true, string.Empty);
@@ -1274,7 +1281,8 @@ namespace MES.Web.Services
             int khPlanDetailId, string groupCode, string sourceCell, string? nc, decimal qty,
             string origin, string? causeGroupCode, string ngReason, string? notes,
             int userId, IReadOnlyCollection<string> editGroups,
-            int? ngCategoryId = null)   // [VULOI] loại lỗi (DS Lỗi) — bắt buộc; ngReason giữ tham số cũ, không còn dùng chữ gõ tay
+            int? ngCategoryId = null,   // [VULOI] loại lỗi (DS Lỗi) — bắt buộc; ngReason giữ tham số cũ, không còn dùng chữ gõ tay
+            FormTx? ftx = null)         // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync)
         {
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
             if (!validGroups.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
@@ -1294,9 +1302,12 @@ namespace MES.Web.Services
             var repCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
             if (repCat == null) return (false, NgCaseService.MsgPickCategory);
             ngReason = repCat.Label;
-            using var trx = await _db.Database.BeginTransactionAsync();   // [ISO-FIX 2026-10-31] bỏ Serializable (rò qua kết nối pool), giữ khoá PO ngay dưới — xem IssueWithPurposeOnceAsync
-            var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8]
-            if (lockErr != null) return (false, lockErr);
+            using var trx = ftx == null ? await _db.Database.BeginTransactionAsync() : null;   // [ISO-FIX 2026-10-31] bỏ Serializable (rò qua kết nối pool), giữ khoá PO ngay dưới — xem IssueWithPurposeOnceAsync
+            if (ftx == null)   // [GN-FORM1] form đã mở giao dịch + khoá PO
+            {
+                var lockErr = await LockPoAsync(khPlanDetailId);   // [GN-K8]
+                if (lockErr != null) return (false, lockErr);
+            }
             var row = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
 
@@ -1326,9 +1337,10 @@ namespace MES.Web.Services
                 CreatedAt      = DateTime.Now,
             });
             await _db.SaveChangesAsync();
+            if (ftx != null) { ftx.CaseId = repCase.NgCaseId; ftx.CaseNc = nc; return (true, string.Empty); }   // [GN-FORM1] K5 + Commit ở SaveFormAsync
             var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);   // [GN-K8][K5]
             if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
-            await trx.CommitAsync();
+            await trx!.CommitAsync();
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE]
             _db.ChangeTracker.Clear();
             return (true, string.Empty);

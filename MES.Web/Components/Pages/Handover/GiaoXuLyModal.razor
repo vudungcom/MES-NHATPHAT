@@ -1,0 +1,646 @@
+@using MES.Web.Services
+@using MES.Web.Data.Entities
+@using MES.Web.Components.Shared
+@inject HandoverService HandoverSvc
+@inject MES.Web.Data.AppDbContext Db
+
+@* =====================================================================
+   [GN-FORM1 2026-11-05] FORM "GIAO / XỬ LÝ HÀNG" — 1 form 4 bước (thay form Giao cũ + Báo lỗi sau khi nhận + Kết quả sửa + mục Khác)
+   Nguồn: KHÁCH 05/11 15:43 (K1 gộp 1 form, mockup anh Ngọc duyệt https://claude.ai/artifact/NYkjoQBh4Pp8owvX38jLjD),
+          KHÁCH 15:39 (K2 Gia công chọn theo "đã làm xong NC nào", sửa xong làm tiếp đúng NC kế), HÙNG 16:43 (K3 chữ bước 2),
+          KHÁCH 04/11 16:09 + HÙNG 17:35 (K4 bỏ link đỏ Báo lỗi / link Kết quả sửa / mục Khác — gộp vào form này).
+   Trang chỉ hiện + gửi lựa chọn. Số trên từng dòng đọc từ sổ chung (HandoverForm.FormPositions); máy chủ (HandoverService.SaveFormAsync)
+   tự ánh xạ chứng từ, kiểm lại trần / quyền / vụ / NC làm tiếp, ghi 1 giao dịch + K5. Nhận và KCS xác nhận vẫn ở nút Nhận.
+   ===================================================================== *@
+
+<div class="mes-modal-backdrop">
+    <div class="mes-modal" @onclick:stopPropagation style="width:560px;max-height:92vh;overflow-y:auto">
+        <div class="mes-modal-header">
+            <h6 class="mb-0"><i class="bi bi-box-arrow-right me-2"></i>Giao / xử lý hàng</h6>
+            <button class="btn-close btn-sm" @onclick="CloseAsync"></button>
+        </div>
+        <div class="mes-modal-body">
+            <div class="mb-2 p-2 bg-light rounded d-flex justify-content-between" style="font-size:12px">
+                <span><strong>@Row.PartNo</strong> <span class="text-muted ms-1">@Row.PlanNo / @Row.PurchaseOrder</span></span>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label form-label-sm fw-semibold mb-1">Nhóm đang giữ hàng</label>
+                @if (Groups.Count == 1)
+                {
+                    <div class="p-2 border rounded bg-light" style="font-size:13px"><strong>@HandoverLedgerService.GroupLabel(Groups[0])</strong></div>
+                }
+                else if (Groups.Count > 1)
+                {
+                    <select class="form-select form-select-sm" @onchange="OnGroupChanged">
+                        <option value="" selected="@(string.IsNullOrEmpty(_group))">-- Chọn nhóm --</option>
+                        @foreach (var g in Groups)
+                        {
+                            <option value="@g" selected="@(_group == g)">@HandoverLedgerService.GroupLabel(g)</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <div class="alert alert-warning py-1 small mb-0">Tài khoản chưa được phân quyền nhóm Giao nhận. Liên hệ Admin cấp quyền HANDOVER_*.</div>
+                }
+            </div>
+
+            @if (!string.IsNullOrEmpty(_group))
+            {
+                @StepKind()
+                @StepPos()
+                @StepAction()
+                @StepDetail()
+            }
+
+            @if (!string.IsNullOrEmpty(_err))
+            {
+                <div class="alert alert-danger py-1 small mt-2 mb-0" style="white-space:pre-line">@_err</div>
+            }
+        </div>
+        <div class="mes-modal-footer">
+            <button class="btn btn-sm btn-secondary" @onclick="CloseAsync">Huỷ</button>
+            <button class="btn btn-sm btn-primary" @onclick="SaveAsync" disabled="@(_saving || !CanSave)">
+                @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span><span>Đang xử lý...</span> }
+                else { <span>Xác nhận</span> }
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public LedgerRow Row { get; set; } = new();
+    /// <summary>Nhóm người dùng có quyền Sửa (ma trận HANDOVER_*, đọc DB ở trang; máy chủ kiểm lại).</summary>
+    [Parameter] public List<string> Groups { get; set; } = new();
+    [Parameter] public int UserId { get; set; }
+    [Parameter] public List<NgCategory> Cats { get; set; } = new();
+    [Parameter] public EventCallback OnClose { get; set; }
+    /// <summary>Đã lưu (trang đóng form + tải lại PO).</summary>
+    [Parameter] public EventCallback<int> OnSaved { get; set; }
+    /// <summary>Lưu không được (trang tải lại số PO, form giữ nguyên lựa chọn).</summary>
+    [Parameter] public EventCallback<int> OnFailed { get; set; }
+
+    string  _err = "";        // lời báo của lần lưu (máy chủ trả về)
+
+    string  _group = "";
+    string  _kind  = "";      // TOT | LOI
+    string  _pos   = "";      // FormPos.Id
+    long?   _caseId;          // vụ (0 = hàng lỗi cũ)
+    bool    _prev;
+    string  _cause = "";
+    string  _action = "";
+    string  _to    = "";      // "" = mặc định
+    string  _purpose = "";    // TRA | NHO ("" = mặc định)
+    string  _toCell = "";     // "" = theo lựa chọn
+    string  _toNc  = "";
+    decimal _qty;
+    decimal _pass;
+    decimal _fail;
+    string  _ncNext = "";     // "" = mặc định của vụ; "@NEW" = như hàng mới; còn lại = mã NC
+    string  _ncReason = "";
+    int?    _catId;
+    string  _notes = "";
+    bool    _showOpt;
+    bool    _saving;
+
+    protected override void OnInitialized()
+    {
+        _group = Groups.Count == 1 ? Groups[0] : "";
+    }
+
+    // ── Dữ liệu suy từ sổ (đọc lại mỗi lần vẽ: trang tự cập nhật số khi người khác lưu) ──
+    List<FormPos> Positions => string.IsNullOrEmpty(_group) || string.IsNullOrEmpty(_kind) ? new() : HandoverForm.FormPositions(Row, _group, _kind == HandoverForm.Tot);
+    FormPos? Pos => Positions.FirstOrDefault(p => p.Id == _pos);
+    bool IsTot => _kind == HandoverForm.Tot;
+    bool IsFresh => !IsTot && Pos is { Fresh: true };
+    bool IsHeld => !IsTot && Pos?.HeldCell != null;
+    List<LedgerCase> HeldCases => IsHeld ? Row.CasesHeldAt(_group, Pos!.HeldCell!) : new();
+    LedgerCase? Case => _caseId == null ? null : HeldCases.FirstOrDefault(c => c.Id == _caseId);
+    bool Ready => Pos != null && (!IsHeld || Case != null);
+    string Act => !Ready ? "" : IsTot ? HandoverForm.AGiao : _action;
+    bool IsGiao => Act is HandoverForm.AGiao or HandoverForm.ATraLai or HandoverForm.ASuaXong;
+    bool IsSua => Act == HandoverForm.ASua;
+    bool HelpFrom => Pos?.HelpFrom != null;
+    bool LamHo => IsTot && Pos is { LamHo: true };
+
+    decimal Have => Pos == null ? 0 : IsHeld ? (Case == null ? 0 : Math.Max(0, Case.HeldAt(_group, Pos.HeldCell!))) : Pos.Have;
+
+    /// <summary>Nơi gây lỗi là nhóm khác nhóm mình ((b) Hùng 17:35: chỉ khi đó mới có "Trả nơi gây lỗi").</summary>
+    string? CauseGroup => IsFresh ? (_prev && _group != "KHO" && EffCause != "KHACH" && EffCause != _group ? EffCause : null)
+                        : Case != null ? HandoverForm.CaseCauseGroup(Case, _group) : null;
+    string EffCause => !string.IsNullOrEmpty(_cause) ? _cause : (_group == "KHO" ? "KHACH" : HandoverForm.PrevGroup(_group));
+    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO";
+    string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
+
+    string DefaultDest
+    {
+        get
+        {
+            if (LamHo) return "GC";
+            if (IsTot) return HandoverForm.NextGroup(_group);
+            if (Act is HandoverForm.ATraLai or HandoverForm.ASuaXong) return (Case == null ? null : HandoverForm.CaseSender(Case, _group)) ?? "";
+            if (EffPurpose == HandoverForm.PTra && CauseGroup != null) return CauseGroup;
+            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group) is var p && p != "" ? p : HandoverForm.NextGroup(_group);
+        }
+    }
+    string Dest => LamHo ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;
+
+    /// <summary>Ô bên nhận theo lựa chọn (có thể đổi ở Tuỳ chọn).</summary>
+    string DefaultToCell => IsTot ? HandoverCell.Moi
+        : Act == HandoverForm.ATraLai ? HandoverCell.Loi
+        : Act == HandoverForm.ASuaXong ? HandoverCell.Xl
+        : EffPurpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua;
+    string ToCellNow => !string.IsNullOrEmpty(_toCell) ? _toCell : DefaultToCell;
+    bool CanPickCell => (IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao);
+    bool GcHasNc => Row.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
+    /// <summary>[K2] Hàng của vụ (đã xử lý) giao vào Gia công ô Hàng lỗi đã xử lý / Hàng mới: NC nhận theo vụ, như sửa tại nhóm (rà độc lập V3).</summary>
+    bool CaseToGc => !IsTot && IsGiao && Dest == "GC" && GcHasNc && ToCellNow is HandoverCell.Moi or HandoverCell.Xl;
+    bool NeedToNc => !CaseToGc && Dest == "GC" && GcHasNc
+                     && (LamHo || (!HelpFrom && ToCellNow is HandoverCell.Moi or HandoverCell.Xl));
+    bool NcForSua => IsSua && _group == "GC" && _pass > 0;
+
+    /// <summary>NC làm tiếp mặc định (Gia công: sửa đạt / hàng của vụ vào Gia công) — cùng hàm máy chủ kiểm.</summary>
+    string? NcDefault => !(NcForSua || CaseToGc) ? null
+        : IsFresh ? HandoverForm.CaseNextNc(Row, _group, Pos!.NgNc, NgOrigin.BaoLoi)
+        : HandoverForm.CaseNextNc(Row, _caseId ?? 0, _group);   // [GN-FORM1] vòng 2 C1
+    List<HandoverForm.NcOpt> NcOpts => (NcForSua || CaseToGc) && GcHasNc ? HandoverForm.NcOptions(Row, NcDefault, free: !IsFresh && (_caseId ?? 0) == 0) : new();   // [GN-FORM1] vòng 3 C1b: hàng cũ chưa mã vụ
+    HandoverForm.NcOpt? NcChosen => NcOpts.FirstOrDefault(o => OptKey(o) == _ncNext);
+    bool NcEarlier => NcChosen?.Earlier == true;
+    bool NcLater => NcChosen?.Label.StartsWith("Làm tiếp ở") == true;   // [GN-FORM1] rà vòng 4 L-a: chữ ô lý do khi chọn NC sau (hàng cũ chưa mã vụ)
+    static string OptKey(HandoverForm.NcOpt? o) => o == null ? "" : o.Default ? "" : o.Code ?? HandoverService.FormNewNc;
+
+    bool NeedCat => IsFresh && !string.IsNullOrEmpty(Act)
+                    && !(IsSua && _pass + _fail <= 0);
+    bool NotesRequired => HelpFrom;
+
+    bool CanSave
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(Act)) return false;
+            if (IsSua) { if (_pass < 0 || _fail < 0 || _pass + _fail <= 0 || _pass + _fail > Have) return false; }
+            else if (_qty <= 0 || _qty > Have) return false;
+            if (IsGiao && (string.IsNullOrEmpty(Dest) || Dest == _group)) return false;
+            if (NeedCat && _catId == null) return false;
+            if (NcEarlier && _ncReason.Trim().Length < HandoverForm.NcReasonMin) return false;
+            if (LamHo && NeedToNc && string.IsNullOrEmpty(_toNc)) return false;   // (rà độc lập T2) PO không có NC thường: không bắt chọn
+            if (NotesRequired && string.IsNullOrWhiteSpace(_notes)) return false;
+            return true;
+        }
+    }
+
+    // ── Bước 1 ──────────────────────────────────────────────────────────
+    RenderFragment StepKind() => __builder =>
+    {
+        <div class="mb-3">
+            <div class="fw-semibold small mb-1">@StepNo(1) Hàng gì</div>
+            <div class="d-flex gap-2">
+                <button type="button" class="gn-cellbtn @(_kind == HandoverForm.Tot ? "on" : "")" @onclick="PickTot">
+                    <div class="fw-semibold">Hàng tốt</div>
+                    <div class="small text-muted">@(_group == "KHO" ? "phôi còn, giao đi" : "đã làm, giao tiếp")</div>
+                </button>
+                <button type="button" class="gn-cellbtn @(_kind == HandoverForm.Loi ? "on border-danger" : "")" @onclick="PickLoi">
+                    <div class="fw-semibold">Hàng lỗi</div>
+                    <div class="small text-muted">mới phát hiện, hoặc đang giữ</div>
+                </button>
+            </div>
+        </div>
+    };
+
+    RenderFragment StepNo(int n) => __builder =>
+    {
+        <span class="badge rounded-pill bg-primary me-1">@n</span>
+    };
+
+    // ── Bước 2 ──────────────────────────────────────────────────────────
+    RenderFragment StepPos() => __builder =>
+    {
+        if (string.IsNullOrEmpty(_kind)) return;
+        <div class="mb-3">
+            <div class="fw-semibold small mb-1">@StepNo(2) @(IsTot ? "Hàng đang ở đâu" : "Chiếc lỗi đang ở đâu")</div>
+            <div class="d-flex flex-column gap-1">
+                @foreach (var p in Positions)
+                {
+                    var pid = p.Id;
+                    <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(_pos == pid ? "on" : "")"
+                            disabled="@(p.Have <= 0)" @onclick="() => PickPos(pid)">
+                        @PosText(p)
+                        <span class="small text-nowrap @(p.Have > 0 ? "text-success" : "text-muted")">có @p.Have.ToString("0.##")</span>
+                    </button>
+                }
+            </div>
+            @PrevBox()
+            @CasePicker()
+        </div>
+    };
+
+    RenderFragment PrevBox() => __builder =>
+    {
+        if (!IsFresh) return;
+        <div class="mt-2 p-2 border rounded @(_prev ? "border-danger" : "")">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="gxlPrev" checked="@_prev" @onchange="OnPrevChanged" />
+                <label class="form-check-label fw-semibold text-danger" for="gxlPrev">@(_group == "KHO" ? "Lỗi có sẵn (phôi khách)" : "Lỗi công đoạn trước")</label>
+            </div>
+            @if (_prev && _group != "KHO")
+            {
+                <div class="mt-1">
+                    <label class="form-label form-label-sm mb-1">Nơi gây lỗi</label>
+                    <select class="form-select form-select-sm" @onchange="OnCauseChanged">
+                        @foreach (var c in CauseOptions())
+                        {
+                            <option value="@c" selected="@(EffCause == c)">@HandoverNgSource.CauseLabel(c)</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="small text-muted mt-1">@PrevHint</div>
+        </div>
+    };
+
+    string PrevHint => _prev
+        ? (_group == "KHO" ? "Lỗi đầu vào: phôi khách lỗi sẵn — không phải Kho làm hỏng." : $"Lỗi đầu vào: có sẵn khi nhận, do {HandoverNgSource.CauseLabel(EffCause)} — không phải {HandoverLedgerService.GroupLabel(_group)} làm hỏng.")
+        : $"Không tích = {HandoverLedgerService.GroupLabel(_group)} làm hỏng (lỗi đầu ra).";
+
+    List<string> CauseOptions()
+    {
+        var order = HandoverLedgerService.GroupCodes.ToList();
+        var idx = order.IndexOf(_group);
+        return new[] { "KHACH" }.Concat(order.Take(Math.Max(0, idx)).Reverse()).Concat(order.Skip(idx + 1)).ToList();
+    }
+
+    RenderFragment CasePicker() => __builder =>
+    {
+        if (!IsHeld) return;
+        <div class="mt-2">
+            <div class="small fw-semibold mb-1">@NgCaseNo.TermCap</div>
+            @if (HeldCases.Count == 0)
+            {
+                <div class="small text-muted">Không có @NgCaseNo.Term nào đang giữ ở ô này.</div>
+            }
+            <div class="d-flex flex-column gap-1">
+                @foreach (var c in HeldCases)
+                {
+                    var cid = c.Id;
+                    <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(_caseId == cid ? "on" : "")" @onclick="() => PickCase(cid)">
+                        <span>@CaseText(c)</span>
+                        <span class="small text-nowrap text-success">giữ @c.HeldAt(_group, Pos!.HeldCell!).ToString("0.##")</span>
+                    </button>
+                }
+            </div>
+        </div>
+    };
+
+    RenderFragment PosText(FormPos p) => __builder =>
+    {
+        <span>
+            @p.Label
+            @if (!string.IsNullOrEmpty(p.Sub))
+            {
+                <br /><span class="small text-muted">@p.Sub</span>
+            }
+        </span>
+    };
+
+    string CaseText(LedgerCase c) => (c.Id == 0 ? "Hàng lỗi cũ" : c.No + " · " + c.CatLabel) + " — " + HandoverForm.CaseOriginText(Row, c);
+
+    // ── Bước 3 ──────────────────────────────────────────────────────────
+    record ActOpt(string Code, string Label, bool Red);
+
+    List<ActOpt> Actions()
+    {
+        var list = new List<ActOpt>();
+        if (!Ready || IsTot) return list;
+        if (IsFresh)
+        {
+            list.Add(new(HandoverForm.AGiao, _group == "KHO" ? "Gửi nhóm khác sửa" : "Giao cho nhóm khác", false));
+            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (không giao đi)", false));
+            list.Add(new(HandoverForm.AGiu, "Chỉ báo lỗi, giữ lại xử lý sau", false));
+            list.Add(new(HandoverForm.AHuy, "Huỷ", true));
+            list.Add(new(HandoverForm.AKhach, "Trả khách", true));
+        }
+        else if (Pos!.HeldCell == HandoverCell.Loi)
+        {
+            list.Add(new(HandoverForm.AGiao, "Giao cho nhóm khác", false));
+            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (không giao đi)", false));
+            list.Add(new(HandoverForm.AHuy, "Huỷ", true));
+            list.Add(new(HandoverForm.AKhach, "Trả khách", true));
+        }
+        else
+        {
+            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (ghi kết quả sửa)", false));
+            list.Add(new(HandoverForm.ATraLai, "Trả lại nơi gửi (chưa sửa được)", false));
+            list.Add(new(HandoverForm.ASuaXong, "Sửa xong, trả nơi gửi", false));
+        }
+        return list;
+    }
+
+    RenderFragment StepAction() => __builder =>
+    {
+        if (!Ready || IsTot) return;
+        <div class="mb-3">
+            <div class="fw-semibold small mb-1">@StepNo(3) Làm gì</div>
+            <div class="row g-1">
+                @foreach (var a in Actions())
+                {
+                    var code = a.Code;
+                    <div class="col-6">
+                        <button type="button" class="gn-cellbtn w-100 @(_action == code ? "on" : "") @(a.Red && _action == code ? "border-danger" : "")" @onclick="() => PickAction(code)">@a.Label</button>
+                    </div>
+                }
+            </div>
+        </div>
+    };
+
+    // ── Bước 4 ──────────────────────────────────────────────────────────
+    RenderFragment StepDetail() => __builder =>
+    {
+        if (string.IsNullOrEmpty(Act)) return;
+        <div class="mb-2">
+            <div class="fw-semibold small mb-1">@StepNo(IsTot ? 3 : 4) Chi tiết</div>
+            @GiaoBlock()
+            @SuaBlock()
+            @if (!IsSua)
+            {
+                <div class="mb-2">
+                    <label class="form-label form-label-sm mb-1">Số lượng <span class="text-muted">(tối đa @Have.ToString("0.##"))</span></label>
+                    <input type="number" class="form-control form-control-sm @(_qty > Have ? "border-danger" : "")" min="0" step="1" @bind="_qty" @bind:after="ClearError" />
+                    @if (_qty > Have)
+                    {
+                        <div class="small text-danger">Vượt tối đa @Have.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
+                    }
+                </div>
+            }
+            @if (NeedCat)
+            {
+                <div class="mb-2">
+                    <label class="form-label form-label-sm mb-1 text-danger fw-semibold">Loại lỗi (DS Lỗi) *</label>
+                    <NgCategoryPicker Categories="Cats" @bind-Value="_catId" Required="true" />
+                </div>
+            }
+            <div class="mb-2">
+                <label class="form-label form-label-sm mb-1 @(NotesRequired ? "fw-semibold text-danger" : "")">Ghi chú @(NotesRequired ? "*" : "(tuỳ chọn)")</label>
+                <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_notes" @bind:after="ClearError" />
+            </div>
+            <div class="small text-muted border-top pt-1">@WillWrite()</div>
+        </div>
+    };
+
+    RenderFragment GiaoBlock() => __builder =>
+    {
+        if (!IsGiao) return;
+        <div class="mb-2">
+            <label class="form-label form-label-sm mb-1">Giao đến nhóm</label>
+            @if (LamHo)
+            {
+                <div class="p-2 border rounded bg-light small"><strong>Gia công</strong> <span class="text-muted">— trả hàng làm hộ về Gia công</span></div>
+            }
+            else
+            {
+                <select class="form-select form-select-sm" @onchange="OnDestChanged">
+                    <option value="" selected="@(string.IsNullOrEmpty(Dest))">-- Chọn nhóm nhận --</option>
+                    @foreach (var g in HandoverLedgerService.GroupCodes.Where(x => x != _group))
+                    {
+                        <option value="@g" selected="@(Dest == g)">@HandoverLedgerService.GroupLabel(g)</option>
+                    }
+                </select>
+            }
+        </div>
+        if (ShowPurpose)
+        {
+            <div class="row g-1 mb-2">
+                @if (CauseGroup != null)
+                {
+                    <div class="col-6"><button type="button" class="gn-cellbtn w-100 @(EffPurpose == HandoverForm.PTra ? "on" : "")" @onclick="PickTra">Trả nơi gây lỗi (@HandoverLedgerService.GroupLabel(CauseGroup))</button></div>
+                }
+                <div class="col-6"><button type="button" class="gn-cellbtn w-100 @(EffPurpose == HandoverForm.PNho ? "on" : "")" @onclick="PickNho">Gửi nhờ sửa</button></div>
+            </div>
+        }
+        if (NeedToNc)
+        {
+            <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">Nhận vào NC @(LamHo ? "*" : "(tuỳ chọn)")</label>
+                <select class="form-select form-select-sm" @onchange="OnToNcChanged">
+                    <option value="" selected="@(string.IsNullOrEmpty(_toNc))">@ToNcDefaultLabel</option>
+                    @foreach (var s in Row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)))
+                    {
+                        <option value="@s.Code" selected="@(_toNc == s.Code)">@HandoverLedgerService.NcName(s.Code)@(s.IsLast ? " (cuối)" : "")</option>
+                    }
+                </select>
+            </div>
+        }
+        if (CaseToGc)
+        {
+            @NcSelect("Gia công nhận vào NC (theo vụ)")
+        }
+        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo)
+        {
+            <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow) — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
+        }
+        if (HelpFrom)
+        {
+            <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">Giao theo NC: @HandoverLedgerService.GroupLabel(Dest) làm hộ rồi trả về Gia công (chọn NC nhận lúc trả).</div>
+        }
+        if (CanPickCell)
+        {
+            <div class="mb-2">
+                <button type="button" class="btn btn-link btn-sm p-0" style="font-size:11.5px" @onclick="ToggleOpt">@(_showOpt ? "Ẩn tuỳ chọn ▾" : "Tuỳ chọn: đổi ô bên nhận ▸")</button>
+                @if (_showOpt)
+                {
+                    <div class="d-flex gap-1 flex-wrap mt-1">
+                        @foreach (var c in HandoverCell.ReceiveCells)
+                        {
+                            var cc = c;
+                            <button type="button" class="gn-cellbtn @(ToCellNow == cc ? "on" : "")" style="flex:1;min-width:92px;padding:4px 6px" @onclick="() => PickToCell(cc)">
+                                <span class="small fw-semibold">@HandoverCell.Label(cc)</span>
+                            </button>
+                        }
+                    </div>
+                    @if (ToCellNow != DefaultToCell)
+                    {
+                        <div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Cặp ô ít gặp: bên nhận vào @HandoverCell.Label(ToCellNow) thay vì @HandoverCell.Label(DefaultToCell). Kiểm lại trước khi giao.</div>
+                    }
+                }
+            </div>
+        }
+    };
+
+    string ToNcDefaultLabel => Row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code))
+        ? (LamHo ? "-- Chọn NC --" : $"-- {HandoverLedgerService.VaoLabel} (mặc định) --")
+        : (LamHo ? "-- Chọn NC --" : "-- NC đầu (mặc định) --");
+
+    RenderFragment SuaBlock() => __builder =>
+    {
+        if (!IsSua) return;
+        bool failOk = IsFresh || Pos!.HeldCell == HandoverCell.Sua;
+        <div class="row g-2 mb-1">
+            <div class="col-6">
+                <label class="form-label form-label-sm mb-1 text-success fw-semibold">Sửa đạt</label>
+                <input type="number" class="form-control form-control-sm border-success" min="0" @bind="_pass" @bind:after="ClearError" />
+            </div>
+            <div class="col-6">
+                <label class="form-label form-label-sm mb-1 @(failOk ? "text-danger fw-semibold" : "text-muted")">Không đạt</label>
+                <input type="number" class="form-control form-control-sm border-danger" min="0" @bind="_fail" @bind:after="ClearError" disabled="@(!failOk)" />
+            </div>
+        </div>
+        <div class="small text-muted mb-2">
+            Tối đa @Have.ToString("0.##"). Đạt → chờ KCS xác nhận (người KCS khác người ghi).
+            @(failOk ? "Không đạt → ở lại Tồn hàng lỗi, cùng vụ." : "Lấy từ Tồn hàng lỗi: chiếc không đạt vẫn ở Tồn hàng lỗi.")
+        </div>
+        if (_pass + _fail > Have)
+        {
+            <div class="small text-danger mb-2">Đạt + không đạt vượt tối đa @Have.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
+        }
+        if (NcOpts.Count > 0)
+        {
+            @NcSelect("Sửa đạt thì làm tiếp ở")
+            if (IsFresh && Pos!.IsLast)
+            {
+                <div class="small text-warning-emphasis mb-2">Chờ chốt: chiếc đã làm xong NC cuối, sửa đạt hiện phải làm lại NC cuối.</div>
+            }
+        }
+    };
+
+    /// <summary>[K2] Ô chọn NC làm tiếp (mặc định của vụ + NC đứng trước, bắt lý do) — dùng cho sửa tại nhóm và hàng của vụ vào Gia công.</summary>
+    RenderFragment NcSelect(string label) => __builder =>
+    {
+        if (NcOpts.Count == 0) return;
+        <div class="mb-2">
+            <label class="form-label form-label-sm mb-1">@label</label>
+            <select class="form-select form-select-sm" @onchange="OnNcNextChanged">
+                @foreach (var o in NcOpts)
+                {
+                    <option value="@OptKey(o)" selected="@(OptKey(o) == _ncNext)">@o.Label</option>
+                }
+            </select>
+            @if (NcEarlier)
+            {
+                <label class="form-label form-label-sm mt-1 mb-1">@(NcLater ? "Lý do chọn NC này (hàng cũ chưa mã vụ: đã qua NC nào)" : "Lý do làm lại NC trước") <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" maxlength="200" @bind="_ncReason" @bind:after="ClearError" />
+            }
+        </div>
+    };
+
+    /// <summary>Dòng "Sẽ ghi" — chỉ chữ, máy chủ ánh xạ thật (SaveFormAsync).</summary>
+    string WillWrite()
+    {
+        var G = HandoverLedgerService.GroupLabel(_group);
+        var D = HandoverLedgerService.GroupLabel(Dest);
+        if (IsTot)
+            return LamHo ? $"Sẽ ghi: phiếu trả hàng làm hộ về Gia công (chờ Gia công nhận)."
+                 : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D} (chờ {D} nhận)."
+                 : $"Sẽ ghi: phiếu Hàng mới {G} → {D} (chờ {D} nhận).";
+        if (IsHeld)
+            return Act switch
+            {
+                HandoverForm.ASua     => "Sẽ ghi: Kết quả sửa — đạt chờ KCS xác nhận.",
+                HandoverForm.AHuy     => "Sẽ ghi: phiếu Huỷ hàng lỗi (ra khỏi PO).",
+                HandoverForm.AKhach   => "Sẽ ghi: phiếu Trả khách hàng lỗi (ra khỏi PO).",
+                _                     => $"Sẽ ghi: phiếu giao hàng {(Pos!.HeldCell == HandoverCell.Sua ? "sửa" : "lỗi")} {G} → {D}, cùng vụ."
+            };
+        bool one = Act == HandoverForm.AGiao && _prev && Pos!.Unworked && _group != "KHO" && EffPurpose == HandoverForm.PTra && Dest == EffCause && ToCellNow == HandoverCell.Loi;
+        if (one) return $"Sẽ ghi: phiếu Hàng lỗi công đoạn trước {G} → {D} (1 chứng từ, sinh vụ mới).";
+        var tail = Act switch
+        {
+            HandoverForm.AGiu   => "",
+            HandoverForm.ASua   => " + Kết quả sửa (đạt chờ KCS)",
+            HandoverForm.AHuy   => " + phiếu Huỷ",
+            HandoverForm.AKhach => " + phiếu Trả khách",
+            _                   => (ToCellNow is HandoverCell.Xl or HandoverCell.Moi ? " + phiếu trả hàng đã sửa " : " + phiếu giao hàng lỗi ") + $"{G} → {D}"
+        };
+        return "Sẽ ghi: báo hàng lỗi phát hiện sau khi nhận (sinh vụ mới)" + tail + " — cùng 1 lần lưu.";
+    }
+
+    // ── Sự kiện ─────────────────────────────────────────────────────────
+    void OnGroupChanged(ChangeEventArgs e) { _group = e.Value?.ToString() ?? ""; ResetFrom(1); }
+    void PickTot() { _kind = HandoverForm.Tot; ResetFrom(2); }
+    void PickLoi() { _kind = HandoverForm.Loi; ResetFrom(2); }
+
+    void PickPos(string id)
+    {
+        _pos = id; ResetFrom(3);
+        _prev = false; _cause = "";
+        var hc = HeldCases;
+        _caseId = hc.Count == 1 ? hc[0].Id : null;
+        if (IsTot) _qty = Have;
+    }
+
+    void PickCase(long id) { _caseId = id; ResetFrom(4); _action = ""; }
+    void OnPrevChanged(ChangeEventArgs e) { _prev = e.Value is bool b && b; _cause = ""; _to = ""; _purpose = ""; ClearError(); }
+    void OnCauseChanged(ChangeEventArgs e) { _cause = e.Value?.ToString() ?? ""; _to = ""; _purpose = ""; ClearError(); }
+
+    void PickAction(string code)
+    {
+        _action = code;
+        _to = ""; _purpose = ""; _toCell = ""; _toNc = ""; _ncNext = ""; _ncReason = ""; _showOpt = false;
+        _qty = code == HandoverForm.ASua ? 0 : Have; _pass = 0; _fail = 0;
+        ClearError();
+    }
+
+    void OnDestChanged(ChangeEventArgs e) { _to = e.Value?.ToString() ?? ""; _toNc = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
+    void PickTra() { _purpose = HandoverForm.PTra; _to = ""; _toCell = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
+    void PickNho() { _purpose = HandoverForm.PNho; _to = ""; _toCell = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
+    void OnToNcChanged(ChangeEventArgs e) { _toNc = e.Value?.ToString() ?? ""; ClearError(); }
+    void ToggleOpt() => _showOpt = !_showOpt;
+    void PickToCell(string c) { _toCell = c == DefaultToCell ? "" : c; _toNc = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
+    void OnNcNextChanged(ChangeEventArgs e) { _ncNext = e.Value?.ToString() ?? ""; _ncReason = ""; ClearError(); }
+
+    /// <summary>Đổi bước trên thì bỏ lựa chọn các bước dưới.</summary>
+    void ResetFrom(int step)
+    {
+        if (step <= 1) _kind = "";
+        if (step <= 2) { _pos = ""; _caseId = null; _prev = false; _cause = ""; }
+        if (step <= 3) _action = "";
+        _to = ""; _purpose = ""; _toCell = ""; _toNc = ""; _qty = 0; _pass = 0; _fail = 0;
+        _ncNext = ""; _ncReason = ""; _catId = null; _showOpt = false;
+        ClearError();
+    }
+
+    void ClearError() => _err = "";
+
+    async Task CloseAsync() => await OnClose.InvokeAsync();
+
+    async Task SaveAsync()
+    {
+        if (_saving) return;   // [D10-DBLCLICK] bấm đúp
+        if (!CanSave) return;
+        _saving = true;
+        var detailId = Row.KhPlanDetailId;
+        var req = new FormGiaoRequest
+        {
+            KhPlanDetailId = detailId, Group = _group, UserId = UserId, Kind = _kind, Pos = _pos,
+            CaseId = IsHeld ? _caseId : null,
+            Prev = IsFresh && _prev, Cause = IsFresh && _prev ? EffCause : null,
+            Action = Act,
+            ToGroup = IsGiao ? Dest : null,
+            Purpose = ShowPurpose ? EffPurpose : (IsGiao && !IsTot && _group == "KHO" ? HandoverForm.PNho : null),
+            ToCell = string.IsNullOrEmpty(_toCell) ? null : _toCell,
+            ToNC = CaseToGc ? (NcOpts.Count == 0 || string.IsNullOrEmpty(_ncNext) ? null : _ncNext)   // [K2] "" = mặc định của vụ (máy chủ tự điền)
+                 : NeedToNc && !string.IsNullOrEmpty(_toNc) ? _toNc : null,
+            Qty = IsSua ? 0 : _qty, Pass = IsSua ? _pass : 0, Fail = IsSua ? _fail : 0,
+            NcNext = !NcForSua || NcOpts.Count == 0 || string.IsNullOrEmpty(_ncNext) ? null : _ncNext,
+            NcReason = NcEarlier ? _ncReason : null,
+            CatId = NeedCat ? _catId : null,
+            Notes = _notes,
+        };
+        try
+        {
+            var (ok, err) = await HandoverSvc.SaveFormAsync(req);
+            _saving = false;
+            if (!ok)
+            {
+                _err = err;
+                await OnFailed.InvokeAsync(detailId);   // trang tải lại số PO (form giữ lựa chọn)
+                return;
+            }
+            await OnSaved.InvokeAsync(detailId);
+        }
+        catch (Exception ex)   // [PAGE-ERR] lỗi máy chủ lạ: bỏ dữ liệu dở khỏi DbContext dùng chung
+        {
+            Db.ChangeTracker.Clear();
+            _err = "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
+        }
+        finally { _saving = false; }
+    }
+}

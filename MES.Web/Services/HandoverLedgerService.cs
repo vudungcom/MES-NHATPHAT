@@ -407,6 +407,9 @@ namespace MES.Web.Services
         public string? DetectGroup { get; set; }
         public string? DetectNc  { get; set; }
         public string? Cause     { get; set; }
+        /// <summary>[GN-FORM1 2026-11-05] Vụ sinh lúc nhận hàng Gia công giao theo NC (làm hộ): NC nguồn của phiếu đó — chỉ để tính NC làm tiếp
+        ///   khi hàng sửa đạt về Gia công (HandoverForm.CaseNextNc). Không dùng tính số nào.</summary>
+        public string? HelpFromNc { get; set; }
         public DateTime? At      { get; set; }
         public string? Who       { get; set; }
 
@@ -1406,6 +1409,7 @@ namespace MES.Web.Services
                     foreach (var r in t.Receives.Where(x => x.Ng > 0).OrderBy(x => x.At))
                     {
                         var csH = Cs(r.NgCaseId);   // [VULOI] NG đếm lúc nhận hàng theo NC: vụ mới sinh ở bên nhận
+                        if (purpose == HandoverPurpose.HelpSend && !string.IsNullOrEmpty(t.FromNC)) csH.HelpFromNc ??= t.FromNC;   // [GN-FORM1] chỉ ghi lại, không tính
                         csH.SinhRa += r.Ng;
                         CHop(csH, "PS", t.To, t.From, null, r.Ng, txDocName, t.Id, r.At);
                         NgBack(t, purpose, r, purpose == HandoverPurpose.HelpSend ? "glLamHo" : "glTra", false, csH);

@@ -51,6 +51,47 @@ public static class HarnessSua
         return new { det.KhPlanDetailId };
     }
 
+    /// <summary>[GN-FORM1 2026-11-06] drive_form.py D6: Kho nhận hết phiếu đang chờ của PO-SUA (ô Hàng lỗi nhận 0 đạt + n lỗi) — bằng ReceiveAsync thật, người admin.</summary>
+    public static async Task<object> RecvKhoAsync(AppDbContext db)
+    {
+        var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-SUA");
+        var admin = db.Users.List.First(u => u.Username == "admin");
+        var svc = new HandoverService(db);
+        var done = new List<string>();
+        foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == det.KhPlanDetailId && !t.IsVoided && t.ToGroupCode == "KHO" && t.Status == "PENDING").ToList())
+        {
+            var loi = t.ToCell == HandoverCell.Loi;
+            var r = await svc.ReceiveAsync(t.HandoverTxId, loi ? 0 : t.QtyIssued, loi ? t.QtyIssued : 0, null, admin.UserId);
+            db.Fixup();
+            done.Add($"#{t.HandoverTxId} {(r.Ok ? "ok" : r.Error)}");
+        }
+        return new { done };
+    }
+
+    /// <summary>[GN-FORM1 2026-11-05] drive_form.py: phiếu / báo lỗi / Kết quả sửa / vụ của PO-SUA + sổ 5 nhóm + loại lỗi đang dùng.</summary>
+    public static async Task<object> DumpFormAsync(AppDbContext db, HandoverLedgerService led)
+    {
+        var det = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-SUA");
+        if (det == null) return new { };
+        var id = det.KhPlanDetailId;
+        var row = (await led.GetLedgerForDetailAsync(id))!;
+        return new
+        {
+            txs = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided)
+                .Select(t => new { t.HandoverTxId, t.Purpose, t.FromGroupCode, t.ToGroupCode, t.FromNC, t.ToNC, t.FromCell, t.ToCell, t.QtyIssued, t.NgCaseId, t.Notes }).ToList(),
+            reports = db.HandoverNgReports.List.Where(b => b.KhPlanDetailId == id && !b.IsVoided)
+                .Select(b => new { b.HandoverNgReportId, b.GroupCode, b.SourceCell, b.NC, b.Qty, b.Origin, b.CauseGroupCode, b.NgCaseId }).ToList(),
+            reps = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == id && !r.IsVoided)
+                .Select(r => new { r.HandoverRepairResultId, r.GroupCode, r.SourceCell, r.NgCaseId, r.QtyPass, r.QtyFail, r.ToNC, r.Notes }).ToList(),
+            cases = db.NgCases.List.Where(c => c.KhPlanDetailId == id).Select(c => new { c.NgCaseId, c.OriginKind, c.DetectGroupCode, c.DetectNC, c.CauseGroupCode }).ToList(),
+            groups = HandoverLedgerService.GroupCodes.ToDictionary(g => g, g => { var G = row.G(g); return new { G.ChuaLam, G.ConGiao, G.LoiGiu, G.SuaGiu, G.ChoNhan, G.ChoKcs, G.Ton }; }),
+            nc = row.G("GC").Steps.ToDictionary(s => s.Code, s => s.Waiting ?? 0),
+            row.Balanced,
+            neg = HandoverLedgerService.NegativeCells(row).Count,
+            cats = db.NgCategories.List.Where(c => c.IsActive).Select(c => c.Code).ToList()
+        };
+    }
+
     /// <summary>Kết quả sửa + KCS xác nhận + sổ GC của PO-SUA.</summary>
     public static async Task<object> DumpAsync(AppDbContext db, HandoverLedgerService led)
     {
