@@ -316,7 +316,7 @@ namespace MES.Web.Services
 
             // [WTS-SVC] (1) Mở giao dịch TRƯỚC khi khoá: khoá máy + khoá PO đều LockOwner = Transaction (PoGuard), tự nhả khi Commit / Rollback.
             //   Trước: khoá Session + tự mở / đóng kết nối, giao dịch chỉ bọc phần ghi ([B2B3-WTS-TRX]). Thứ tự kiểm giữ nguyên.
-            (int DetailId, List<long> RemoveIds, List<InWts> Add)? _pendingWhy = null;   // [GN-WHY] Lưu bị chặn K5: tìm gốc rễ SAU khi nhả khoá
+            (int DetailId, List<long> RemoveIds, List<InWts> Add, bool Loop)? _pendingWhy = null;   // [K5-VONG-HO-WTS-SUA] + Loop: chặn theo thời gian   // [GN-WHY] Lưu bị chặn K5: tìm gốc rễ SAU khi nhả khoá
             var _notify = new List<int>();   // [B2B3-WTS-TRX] PO cần báo màn Giao nhận — báo sau khi ghi hẳn
             bool _allOk = false;
             await using (var _wtsTrx = await _db.Database.BeginTransactionAsync())
@@ -384,7 +384,7 @@ namespace MES.Web.Services
             {
                 // [GN-WHY] Lưu bị chặn K5: chỉ đọc + tính thử sau khi đã nhả khoá
                 var opDocs = new HashSet<string>(pw.RemoveIds.Select(x => "W:" + x));
-                grp.ErrorMsg += await HandoverWhy.ExplainAsync(_db, pw.DetailId, HandoverWhy.OpWts(pw.RemoveIds, pw.Add), opDocs);
+                grp.ErrorMsg += await HandoverWhy.ExplainAsync(_db, pw.DetailId, HandoverWhy.OpWts(pw.RemoveIds, pw.Add), opDocs, loopOp: pw.Loop);   // [K5-VONG-HO-WTS-SUA]
             }
             if (!_allOk) return Fail();
 
@@ -514,7 +514,7 @@ namespace MES.Web.Services
         //      (vd sửa giảm OK NC1 khi NC2 / nhóm sau đã dùng số đó).
         // [RS-E14] Mọi Workflow: mã không có trong snapshot quy trình của PO (khi PO đã có snapshot cho nhóm) → chặn.
         // Trả null = qua; khác null = lời báo, chưa có gì bị void / lưu.
-        private async Task<string?> CheckGroupQtyAsync(WtsSaveGroup grp, Action<(int, List<long>, List<InWts>)> setPendingWhy)
+        private async Task<string?> CheckGroupQtyAsync(WtsSaveGroup grp, Action<(int, List<long>, List<InWts>, bool)> setPendingWhy)
         {
             var pg = CurrentPg(grp);
             string? CodeOf(WtsSaveRow s) => grp.IsGc ? grp.NC : (s.WtsCode ?? s.NC);
@@ -617,8 +617,54 @@ namespace MES.Web.Services
                 var bad = HandoverLedgerService.NewNegatives(before, after);
                 if (bad.Any())
                 {
-                    setPendingWhy((id, editIds.ToList(), extra));   // [GN-WHY] tìm gốc rễ sau khi nhả khoá (SaveGroupAsync)
+                    setPendingWhy((id, editIds.ToList(), extra, false));   // [GN-WHY] tìm gốc rễ sau khi nhả khoá (SaveGroupAsync)
                     return $"PO {po}: lưu xong sẽ làm sai số ở {string.Join("; ", bad)}. Kiểm lại số lượng (nhóm sau / NC sau có thể đã dùng số này — K5).";
+                }
+
+                // [K5-VONG-HO-WTS-SUA 2026-11-05] Sửa dòng WTS (huỷ dòng cũ + dòng mới) = huỷ chứng từ nguồn → xét thêm K5 theo thời gian
+                //   hàng sửa trả về, như xoá dòng [K5-VONG-HO-WTS]. Rà độc lập 05/11 (Vừa 3): xoá dòng NC1 bị chặn nhưng sửa chính dòng đó
+                //   OK 1 → NG 1 (hoặc đổi PO / NC) vẫn lưu → tạo được vòng tròn. Dòng thay mang giờ lưu GỐC nếu cùng khoá với dòng cũ
+                //   (cùng PO, người, nhóm, NC / mã — đúng cách HandoverLedgerService.EditOrigins ghép sau khi lưu [WTS-SUA-GIO-GOC]),
+                //   khác khoá = dòng mới nhất (như xoá dòng cũ + ghi dòng mới). Lý do cũ không xét (rà độc lập C1: dòng sửa giờ mới → âm giả)
+                //   hết nhờ giờ gốc. Chỉ khi có dòng sửa của PO này; lưu dòng mới không đổi.
+                //   Nguồn: CLAUDE (rà độc lập 05/11 gói A2–A4); Hùng 05/11 10:28 OK K5 theo thời gian là sửa ruột.
+                if (editIds.Any())
+                {
+                    var loopBeforeIn = await _ledger.GetInputForDetailAsync(id);
+                    var loopAfterIn  = loopBeforeIn == null ? null : await _ledger.GetInputForDetailAsync(id);
+                    if (loopBeforeIn != null && loopAfterIn != null && loopBeforeIn.ApplyWorkflow
+                        && HandoverLedgerService.RepairedReturnTimes(loopBeforeIn).Count > 0)
+                    {
+                        static string KeyN(string? x) => (x ?? "").Trim().ToUpperInvariant();
+                        var oldById = loopBeforeIn.Wts.Where(w => editIds.Contains(w.Id)).ToDictionary(w => w.Id);
+                        var timed = new List<InWts>();
+                        for (int i = 0; i < subs.Count; i++)
+                        {
+                            var s = subs[i]; var x = extra[i];
+                            var tx = x;   // khác khoá / dòng mới: Saved null = mới nhất
+                            if (s.IsEditing && s.WtsLogId is long oid && oldById.TryGetValue(oid, out var ow))
+                            {
+                                // giá trị dòng mới sẽ ghi (SaveRowAsync): GC → NC = row.NC; nhóm khác → WtsCode = row.NC
+                                string? nNc = grp.IsGc ? s.NC : null, nCode = grp.IsGc ? null : s.NC;
+                                if (KeyN(ow.ProcessGroup) == KeyN(pg) && KeyN(ow.NC) == KeyN(nNc) && KeyN(ow.WtsCode) == KeyN(nCode))
+                                    // [WTS-SUA-PHAN 2026-11-05] dòng thay = bản mới nhất của chuỗi sửa (At = MaxValue: sau mọi mốc hàng sửa đã về),
+                                    //   các bản cũ giữ giờ của chúng → ảnh sổ đúng như sổ nạp lại sau khi lưu (rà độc lập lần 2 / lần 3).
+                                    tx = x with { Saved = ow.Saved,
+                                                  Vers = (ow.Vers ?? new List<WtsVer> { new(ow.Saved ?? DateTime.MaxValue, ow.Ok, ow.Ng) })
+                                                         .Append(new WtsVer(DateTime.MaxValue, x.Ok, x.Ng)).ToList() };
+                            }
+                            timed.Add(tx);
+                        }
+                        loopAfterIn.Wts = loopAfterIn.Wts.Where(w => !editIds.Contains(w.Id)).ToList();
+                        loopAfterIn.Wts.AddRange(timed);
+                        var loopBad = HandoverLedgerService.NewLoopKeys(loopBeforeIn, before, loopAfterIn);
+                        if (loopBad.Any())
+                        {
+                            setPendingWhy((id, editIds.ToList(), timed, true));   // [GN-WHY] + xét theo thời gian
+                            return $"PO {po}: sửa dòng WTS này sẽ làm sai số ở {string.Join("; ", loopBad.Select(z => $"{z.Text} = {z.Value:0.##}"))}. "
+                                 + "Sửa dòng = huỷ dòng cũ: hàng của dòng cũ đã được dùng trước lúc hàng sửa trả về (K5).";
+                        }
+                    }
                 }
             }
             return null;
@@ -655,6 +701,9 @@ namespace MES.Web.Services
             { row.ErrorMsg = _missSerialRow; return; }
 
             // Nếu đang sửa dòng cũ → void record cũ trước
+            // [WTS-SUA-GIO-GOC 2026-11-05] 1 giờ máy chủ chung: VoidedAt dòng cũ = CreatedAt dòng mới → sổ ghép đúng dòng mới với dòng nó thay
+            //   (HandoverLedgerService.EditOrigins: ảnh sổ theo thời gian [K5-VONG-SUA] dùng giờ lưu GỐC, không che phần OK có từ trước).
+            DateTime? _editAt = null;
             if (row.IsEditing)
             {
                 // [D8-WTS-VOID 2026-10-28] Chỉ huỷ dòng còn hiệu lực; không huỷ được (tab khác đã sửa / xoá dòng này) thì dừng, không ghi dòng mới
@@ -663,9 +712,10 @@ namespace MES.Web.Services
                 {
                     // [WTS-VOID-PO 2026-11-01] chỉ huỷ dòng của CHÍNH người nhập, bắt đầu trong ngày hôm nay (như trang: chỉ hiện dòng của mình,
                     //   chỉ sửa ngày hôm nay) — trước: id trang gửi là huỷ, kể cả dòng người khác / ngày cũ.
+                    _editAt = DateTime.Now;   // [WTS-SUA-GIO-GOC]
                     var _nVoid = await _db.Database.ExecuteSqlRawAsync(
                         "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0} AND StartTime>={3} AND StartTime<{4}",
-                        grp.UserId, DateTime.Now, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
+                        grp.UserId, _editAt.Value, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
                     if (_nVoid != 1)
                     { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
                 }
@@ -792,7 +842,7 @@ namespace MES.Web.Services
                         ActualTimePerPc         = grp.IsGc ? null : row.ActualTimePerPc,
                         IsActualManual          = grp.IsGc || !row.ActualTimePerPc.HasValue ? null
                                                   : row.ActualTimePerPc != row.StdTimePerPc,
-                        CreatedAt               = DateTime.Now,
+                        CreatedAt               = _editAt ?? DateTime.Now,   // [WTS-SUA-GIO-GOC] dòng sửa: đúng giờ huỷ dòng cũ (vẫn là giờ máy chủ của lần lưu này)
                         IsVoided                = false,
                     };
                     _db.WtsProductionLogs.Add(log);
@@ -1225,13 +1275,28 @@ namespace MES.Web.Services
                     var lockErr = await PoGuard.LockAsync(_db, detId, deadlockThrows: true);   // [RS-D10c] −3 → VoidRowAsync tự thử lại
                     if (lockErr != null)
                     { result.ErrorMsg = lockErr; return result; }   // = "PO đang có người khác lưu WTS / giao nhận. Thử lại sau vài giây." (chữ cũ của trang, nay 1 nguồn ở PoGuard)
-                    var before = await _ledger.GetLedgerForDetailAsync(detId);
-                    var after  = before?.ApplyWorkflow == true
-                        ? await _ledger.GetLedgerForDetailAsync(detId, new List<long> { row.WtsLogId.Value })
-                        : null;   // Workflow OFF (N7): không kiểm ô âm
-                    if (before != null && after != null)
+                    // [K5-VONG-HO-WTS 2026-11-05] Xoá dòng WTS = huỷ chứng từ nguồn → xét thêm K5 theo thời gian hàng sửa trả về
+                    //   (như huỷ lần nhận / phiếu / KCS xác nhận [K5-VONG-SUA]). Lỗi: NC1 OK 1 → NC2 NG 1 → sửa → KCS đạt về NC2;
+                    //   xoá WTS NC1 vẫn lưu (số cuối NC2 = 0 − 1 + 1 = 0) dù NC2 đã làm chiếc đó TRƯỚC lúc chiếc sửa về (vòng tròn).
+                    //   Chỉ xoá dòng (không phải sửa dòng: huỷ + dòng mới đi đường lưu, không xét thời gian — rà độc lập C1 05/11).
+                    //   Nguồn: CLAUDE (hở ghi trong code [K5-VONG-SUA] 05/11); Hùng 05/11 10:28 OK coi K5 theo thời gian là sửa ruột.
+                    var beforeIn = await _ledger.GetInputForDetailAsync(detId);
+                    var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
+                    LedgerInput? afterIn = null;
+                    LedgerRow? after = null;
+                    if (before?.ApplyWorkflow == true)   // Workflow OFF (N7): không kiểm ô âm
+                    {
+                        afterIn = await _ledger.GetInputForDetailAsync(detId);
+                        if (afterIn != null)
+                        {
+                            afterIn.Wts = afterIn.Wts.Where(w => w.Id != row.WtsLogId.Value).ToList();
+                            after = HandoverLedgerService.Compute(afterIn);
+                        }
+                    }
+                    if (before != null && after != null && beforeIn != null && afterIn != null)
                     {
                         var bad = HandoverLedgerService.NewNegatives(before, after);
+                        bad.AddRange(HandoverLedgerService.NewLoopKeys(beforeIn, before, afterIn).Select(x => $"{x.Text} = {x.Value:0.##}"));   // [K5-VONG-HO-WTS]
                         if (bad.Any())
                         {
                             blockMsg = $"Không xoá được: xoá xong sẽ làm sai số ở {string.Join("; ", bad)}. "
@@ -1254,7 +1319,7 @@ namespace MES.Web.Services
                 {
                     // [GN-WHY] chỉ đọc + tính thử, khoá PO đã nhả
                     result.ErrorMsg = blockMsg + await HandoverWhy.ExplainAsync(_db, detId,
-                        HandoverWhy.OpWts(new List<long> { row.WtsLogId.Value }), new HashSet<string> { "W:" + row.WtsLogId.Value });
+                        HandoverWhy.OpWts(new List<long> { row.WtsLogId.Value }), new HashSet<string> { "W:" + row.WtsLogId.Value }, loopOp: true);   // [K5-VONG-HO-WTS]
                     return result;
                 }
                 HandoverChangeNotifier.Notify(detId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này (huỷ WTS đổi Đã làm/Chưa làm)

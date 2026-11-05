@@ -64,6 +64,7 @@ for (int po = startPo; po < startPo + poCount; po++)
 {
     var rnd = new Random(seed0 * 100000 + po);
     var db = new AppDbContext();
+    var editPrev = new Dictionary<long, long>();   // [WTS-SUA-PHAN] bộ kiểm tự ghi dòng sửa → dòng nó thay (KHÔNG qua EditOrigins — đáp án độc lập, rà độc lập lần 3 Vừa)
     WtsSvcHelp.Reset();   // [WTS-SVC] khung giờ WTS bắt đầu lại từng PO
     double exclP = Environment.GetEnvironmentVariable("EXCL") is string exv ? double.Parse(exv) : 0.3;
     bool excl;
@@ -347,8 +348,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var ws = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();   // [CHUOI] chỉ PO 1
                     if (!ws.Any()) { Inc("skip.wtsvoid"); continue; }
                     var w = ws[rnd.Next(ws.Count)];
-                    var after = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }))!;
-                    var bad = HandoverLedgerService.NewNegatives(row, after);
+                    var bad = await WtsVoidBad(led, w.WtsLogId);   // [K5-VONG-HO-WTS] + K5 theo thời gian hàng sửa trả về (như máy chủ)
                     desc = $"wtsvoid #{w.WtsLogId} {w.ProcessGroup} {w.NC ?? w.WtsCode}";
                     if (bad.Any())
                     {
@@ -359,7 +359,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (vb.Ok) fails.Add($"[WtsSaveService cho xoá dù K5 âm] PO{po} op{op} {desc} → {string.Join("; ", bad)}");
                         else if (!vb.Err!.StartsWith("Không xoá được")) fails.Add($"[WtsSaveService chặn xoá sai lời] PO{po} op{op} {desc} → {vb.Err}");
                         await WhyCheck(db, svc, led, HandoverWhy.OpWts(new List<long> { wid }), new HashSet<string> { "W:" + wid },
-                            async () => await WtsVoid(db, led, wid), null, rnd, po, op, desc, null);
+                            async () => await WtsVoid(db, led, wid), null, rnd, po, op, desc, null, loop: true);   // [K5-VONG-HO-WTS]
                         continue;
                     }
                     {   // [WTS-SVC] xoá bằng hàm thật
@@ -448,12 +448,14 @@ for (int po = startPo; po < startPo + poCount; po++)
 #endif
                     break;
                 }
-                case "wtsedit":   // [VULOI] sửa dòng WTS (void + dòng mới, tổng OK + NG giữ nguyên): dòng mới giữ vụ cũ; NG giảm mà vụ đã đi tiếp → K5 chặn
+                case "wtsedit":   // [VULOI] sửa dòng WTS (void + dòng mới; 70% tổng OK + NG giữ nguyên, 30% đổi tổng ±1 [WTS-SUA-PHAN]): dòng mới giữ vụ cũ; NG giảm mà vụ đã đi tiếp → K5 chặn
                 {
                     var ws = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided && w.QtyDone > 0).ToList();   // [CHUOI] chỉ PO 1
                     if (!ws.Any()) { Inc("skip.wtsedit"); continue; }
                     var w = ws[rnd.Next(ws.Count)];
-                    var tot = w.QtyDone; var ng2 = (decimal)rnd.Next(0, (int)tot + 1);
+                    var tot = w.QtyDone;
+                    if (rnd.NextDouble() < 0.3) tot = Math.Max(1, tot + rnd.Next(-1, 2));   // [WTS-SUA-PHAN 2026-11-05] 30%: sửa đổi cả tổng (tăng / giảm 1) — rà độc lập lần 2
+                    var ng2 = (decimal)rnd.Next(0, (int)tot + 1);
                     var keep = ng2 > 0 ? w.NgCaseId : null;
                     var extra = new List<InWts> { new InWts(-1, DateTime.Now, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, null, ng2 > 0 ? (keep ?? -1) : null) };
                     var after = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }, extra))!;
@@ -469,6 +471,27 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (seB.Ok) fails.Add($"[WtsSaveService cho sửa vượt trần L3] PO{po} op{op} {desc} cap={capE.Max} locked={capE.Locked}");
                             else if (!seB.Err!.StartsWith("PO ")) fails.Add($"[WtsSaveService chặn sửa sai lời] PO{po} op{op} {desc} → {seB.Err}");
                             Inc("rej.wtsedit.cap"); continue;
+                        }
+                    }
+                    {   // [K5-VONG-HO-WTS-SUA 2026-11-05] (sau trần L3 — cùng thứ tự máy chủ, rà độc lập lần 2 Thấp 3) sửa dòng = huỷ chứng từ nguồn: máy chủ xét thêm K5 theo thời gian hàng sửa trả về
+                        //   (dòng thay cùng NC / mã / người → mang giờ lưu gốc của dòng cũ). Có vòng tròn mới → máy chủ PHẢI chặn, dòng cũ giữ nguyên.
+                        // [WTS-SUA-PHAN] đáp án độc lập: giờ + các bản của mọi dòng sửa dựng lại từ editPrev (bộ kiểm tự ghi), không dùng EditOrigins của sổ
+                        var bi = Retime((await led.GetInputForDetailAsync(1))!, db, editPrev);
+                        var ai = Retime((await led.GetInputForDetailAsync(1))!, db, editPrev);
+                        var oldW = bi.Wts.First(x => x.Id == w.WtsLogId);
+                        ai.Wts = ai.Wts.Where(x => x.Id != w.WtsLogId).ToList();
+                        var oldVers = TrackedVers(db, editPrev, w.WtsLogId);
+                        ai.Wts.AddRange(extra.Select(x => x with { Saved = oldW.Saved,
+                            Vers = oldVers.Append(new WtsVer(DateTime.MaxValue, x.Ok, x.Ng)).ToList() }));   // bản mới = mới nhất
+                        var loopBad = bi.ApplyWorkflow ? HandoverLedgerService.NewLoopKeys(bi, HandoverLedgerService.Compute(bi), ai) : new();
+                        if (loopBad.Any())
+                        {
+                            var catL = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? 1;
+                            var seL = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catL, keep, w.WtsLogId);
+                            if (seL.Ok) fails.Add($"[WtsSaveService cho sửa lọt vòng tròn theo thời gian] PO{po} op{op} {desc}");
+                            else if (!(seL.Err ?? "").Contains("theo thứ tự thời gian")) fails.Add($"[WtsSaveService chặn sửa (vòng) sai lời] PO{po} op{op} {desc} → {seL.Err}");
+                            if (db.WtsProductionLogs.List.First(x => x.WtsLogId == w.WtsLogId).IsVoided) fails.Add($"[Sửa bị chặn mà dòng cũ đã huỷ] PO{po} op{op} {desc}");
+                            Inc("rej.wtsedit.loop"); continue;
                         }
                     }
                     // 30%: đổi loại lỗi của vụ cũ (chỉ được khi vụ chưa đi phiếu nào / chưa có Kết quả sửa)
@@ -495,6 +518,12 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (ng2 > 0 && keep != null && wNew.NgCaseId != keep) fails.Add($"[WtsSaveService sửa không giữ vụ] PO{po} op{op} {desc} → {wNew.NgCaseId}");
                         if (ng2 > 0 && keep == null && wNew.NgCaseId == null) fails.Add($"[WtsSaveService sửa thêm NG không tạo vụ] PO{po} op{op} {desc}");
                         if (ng2 == 0 && wNew.NgCaseId != null) fails.Add($"[WtsSaveService sửa hết NG vẫn gắn vụ] PO{po} op{op} {desc}");
+                        // [WTS-SUA-PHAN] sổ ghép dòng sửa (EditOrigins) phải khớp đúng chuỗi bộ kiểm tự ghi: giờ gốc + từng bản (giờ, OK, NG)
+                        editPrev[se.LogId!.Value] = oldId;
+                        var chk = (await led.GetInputForDetailAsync(1))!.Wts.First(x => x.Id == se.LogId);
+                        var tv = TrackedVers(db, editPrev, se.LogId.Value);
+                        if (chk.Vers == null || chk.Saved != tv[0].At || chk.Vers.Count != tv.Count || !chk.Vers.SequenceEqual(tv))
+                            fails.Add($"[Sổ ghép dòng sửa sai chuỗi] PO{po} op{op} {desc} sổ={string.Join(",", chk.Vers ?? new List<WtsVer>())} kiểm={string.Join(",", tv)}");
                     }
                     ok = true;
                     break;
@@ -748,6 +777,21 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (deny.Ok) fails.Add($"[Quyền] PO{po} op{op} người ngoài nhóm giao huỷ được phần chưa nhận #{t.HandoverTxId}");
                     var res = await svc.CloseRemainderAsync(t.HandoverTxId, "huy phan con", Uid(t.FromGroupCode), new List<string> { t.FromGroupCode });
                     ok = res.Ok; if (!ok) Inc("rej.close");
+                    // [K5-CLOSE-NHIEU 2026-11-05] ĐÃ BIẾT, chờ Hùng chốt (cần SQL): phiếu chỉ có 1 ClosedAt cho mọi lần huỷ phần chưa nhận → huỷ lần 2
+                    //   trên PO có hàng sửa trả về bị chặn oan theo thời gian. Đếm riêng (in ở bảng đếm), không tính SAI; trường hợp khác vẫn kiểm như cũ.
+                    //   Chỉ ghi nhận khi tính lại với ClosedAt GIỮ giờ cũ thì hết chặn (đúng lỗi đã biết); còn chặn → kiểm như cũ (rà độc lập lần 4 Vừa).
+                    if (!ok && (t.QtyClosed ?? 0) > 0 && res.Error.Contains("theo thứ tự thời gian"))
+                    {
+                        var kb = (await led.GetInputForDetailAsync(1))!;
+                        var kbRow = HandoverLedgerService.Compute(kb);
+                        var ka = HandoverWhyTest.CloneInput(kb);
+                        var kt = ka.Txs.First(x => x.Id == t.HandoverTxId);
+                        var krec = kt.Receives.Sum(r => r.Ok + r.Ng);
+                        kt.Closed += kt.Issued - krec; kt.Issued = krec; kt.Status = "COMPLETED";   // ClosedAt giữ nguyên giờ lần huỷ trước
+                        bool goneWithOldTime = !HandoverLedgerService.NewNegatives(kbRow, HandoverLedgerService.Compute(ka)).Any()
+                                               && !HandoverLedgerService.NewLoopKeys(kb, kbRow, ka).Any();
+                        if (goneWithOldTime) { Inc("ghinhan.K5-CLOSE-NHIEU"); continue; }
+                    }
                     if (!ok && res.Error.StartsWith("Không lưu"))
                     {
                         var tid = t.HandoverTxId; var fg = t.FromGroupCode;
@@ -1148,14 +1192,52 @@ async Task<(bool Ok, string Error)> VoidRecvDeep(AppDbContext db, HandoverServic
     return await svc.VoidReceiveAsync(rid, "goi y", 1, All);
 }
 
+// [K5-VONG-HO-WTS 2026-11-05] Ô mới âm khi xoá dòng WTS: K5 số cuối + K5 theo thời gian hàng sửa trả về (xoá dòng = huỷ chứng từ nguồn)
+// [WTS-SUA-PHAN 2026-11-05] chuỗi bản của 1 dòng WTS theo editPrev (bộ kiểm tự ghi lúc sửa): cũ → mới, mỗi bản (CreatedAt, OK, NG)
+List<WtsVer> TrackedVers(AppDbContext db, Dictionary<long, long> prev, long id)
+{
+    var chain = new List<WtsProductionLog>();
+    long cur = id;
+    for (int g = 0; g < 60; g++)
+    {
+        chain.Add(db.WtsProductionLogs.List.First(x => x.WtsLogId == cur));
+        if (!prev.TryGetValue(cur, out var pId)) break;
+        cur = pId;
+    }
+    chain.Reverse();
+    return chain.Select(r => new WtsVer(r.CreatedAt, r.QtyOk ?? (r.QtyDone - (r.QtyNg ?? 0)), r.QtyNg ?? 0)).ToList();
+}
+
+// [WTS-SUA-PHAN] đầu vào sổ với giờ / các bản của dòng sửa dựng lại từ editPrev (thay phần EditOrigins của sổ)
+LedgerInput Retime(LedgerInput i, AppDbContext db, Dictionary<long, long> prev)
+{
+    i.Wts = i.Wts.Select(w =>
+    {
+        if (!prev.ContainsKey(w.Id)) return w with { Saved = db.WtsProductionLogs.List.First(x => x.WtsLogId == w.Id).CreatedAt, Vers = null };
+        var v = TrackedVers(db, prev, w.Id);
+        return w with { Saved = v[0].At, Vers = v };
+    }).ToList();
+    return i;
+}
+
+async Task<List<string>> WtsVoidBad(HandoverLedgerService led, long wid)
+{
+    var bi = (await led.GetInputForDetailAsync(1))!;
+    var b = HandoverLedgerService.Compute(bi);
+    if (!b.ApplyWorkflow) return new List<string>();
+    var ai = (await led.GetInputForDetailAsync(1))!;
+    ai.Wts = ai.Wts.Where(x => x.Id != wid).ToList();
+    var bad = HandoverLedgerService.NewNegatives(b, HandoverLedgerService.Compute(ai));
+    bad.AddRange(HandoverLedgerService.NewLoopKeys(bi, b, ai).Select(x => $"{x.Text} = {x.Value:0.##}"));
+    return bad;
+}
+
 // Mô phỏng xoá dòng WTS đúng như trang WTS (K5)
 async Task<bool> WtsVoid(AppDbContext db, HandoverLedgerService led, long wid)
 {
     var w = db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == wid && !x.IsVoided);
     if (w == null) { lastErr = "WTS không còn"; return false; }
-    var before = (await led.GetLedgerForDetailAsync(1))!;
-    var after = (await led.GetLedgerForDetailAsync(1, new List<long> { wid }))!;
-    var bad = HandoverLedgerService.NewNegatives(before, after);
+    var bad = await WtsVoidBad(led, wid);   // [K5-VONG-HO-WTS]
     if (bad.Any()) { lastErr = string.Join("; ", bad); return false; }
     var vr = await WtsSvcHelp.VoidAsync(db, wid, 1, w.WorkerId);   // [WTS-SVC] xoá bằng hàm thật
     if (!vr.Ok) { lastErr = vr.Err ?? "?"; return false; }

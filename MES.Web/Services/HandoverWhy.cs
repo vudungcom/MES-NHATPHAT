@@ -67,6 +67,10 @@ namespace MES.Web.Services
             if (t == null) return;
             var rec = t.Receives.Sum(r => r.Ok + r.Ng);
             t.Closed += t.Issued - rec; t.Issued = rec; t.Status = "COMPLETED";
+            // [K5-CLOSE-NHIEU 2026-11-05] như máy chủ (HandoverService.CloseRemainderOnceAsync ghi ClosedAt = giờ lần huỷ mới nhất cho CẢ số đã huỷ):
+            //   trước giữ ClosedAt cũ → huỷ phần chưa nhận lần 2 trên phiếu đã huỷ 1 lần, PO có hàng sửa trả về: máy chủ chặn theo thời gian
+            //   mà lời khuyên rỗng (fuzz seed 602 PO5, 05/11). Nguồn: CLAUDE (lỗi có từ [K5-VONG-SUA], không thuộc gói A2–A4).
+            t.ClosedAt = DateTime.Now;
         };
 
         /// <summary>Xoá / sửa dòng WTS: bỏ các dòng removeIds, thêm các dòng mới (Id âm).</summary>
@@ -139,6 +143,7 @@ namespace MES.Web.Services
         //   chặn, sau khi đã nhả khoá PO, chỉ đọc). Lời báo vẫn hiện tối đa 8 bước + "… và N chứng từ nữa".
         // [K5-VONG-SUA 2026-11-05] loopOp = thao tác gốc là huỷ chứng từ nguồn (huỷ lần nhận / phiếu / phần chưa nhận / KCS xác nhận / sửa phôi Kho)
         //   → xét thêm theo thời gian như máy chủ; bước gỡ cũng chỉ xét khi là huỷ lần nhận / phiếu / KCS xác nhận (rà độc lập V3: khớp máy chủ).
+        //   [K5-VONG-HO-WTS 2026-11-05] + xoá dòng WTS (thao tác gốc và bước gỡ).
         public static WhyPlan Plan(LedgerInput current, Action<LedgerInput> op, ISet<string> opDocs, int maxComputes = 400, int maxMs = 5000, bool loopOp = false)
         {
             var plan = new WhyPlan();
@@ -178,7 +183,8 @@ namespace MES.Web.Services
                         _        => OpVoidIssue(d.Id),
                     };
                     var sub = new HashSet<string>(skip) { Key(d) };
-                    if (depth >= 8 || !Clear(removeD, sub, depth + 1, d.Kind is "NHAN" or "PHIEU" or "XNSUA")) return false;
+                    // [K5-VONG-HO-WTS 2026-11-05] bước gỡ "xoá dòng WTS" cũng xét theo thời gian như máy chủ (WtsSaveService.VoidRowOnceAsync)
+                    if (depth >= 8 || !Clear(removeD, sub, depth + 1, d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS")) return false;
                     removeD(S); sRow = null; sTl = null;
                     plan.Steps.Add(d);
                 }

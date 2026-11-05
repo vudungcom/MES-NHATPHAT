@@ -563,7 +563,12 @@ namespace MES.Web.Services
     public record InWts(long Id, DateTime At, string ProcessGroup, string? NC, string? WtsCode,
                         decimal Ok, decimal Ng, string? Worker,
                         long? NgCaseId = null,   // [VULOI] vụ lỗi của phần NG
-                        DateTime? Saved = null); // [K5-VONG-SUA 2026-11-05] giờ MÁY CHỦ lưu dòng (CreatedAt; At = giờ làm người nhập). null = dòng đang thử lưu (tính là mới nhất)
+                        DateTime? Saved = null,  // [K5-VONG-SUA 2026-11-05] giờ MÁY CHỦ lưu dòng (CreatedAt; At = giờ làm người nhập). null = dòng đang thử lưu (tính là mới nhất)
+                        // [WTS-SUA-PHAN 2026-11-05] dòng là bản SỬA của dòng khác: Saved = giờ lưu gốc; Vers = các bản của cả chuỗi sửa (cũ → mới,
+                        //   mỗi bản: giờ lưu, OK, NG; bản đang thử lưu có At = DateTime.MaxValue). null = dòng thường. Xem SnapshotBefore.
+                        IReadOnlyList<WtsVer>? Vers = null);
+    /// <summary>[WTS-SUA-PHAN] 1 bản của dòng WTS trong chuỗi sửa: có hiệu lực từ At (giờ máy chủ lưu bản đó) tới bản sau.</summary>
+    public record WtsVer(DateTime At, decimal Ok, decimal Ng);
     public record InGcStep(int StepOrder, string NC, bool IsBackup, string? ParentNC, string? Machine, bool IsExcluded);
     /// <summary>Pg = TARO | BAVIA | WASHING | KCS | PKG; Code = mã CV khớp với WtsCode ?? NC của WTS.</summary>
     public record InCodeStep(string Pg, int StepOrder, string Code, bool IsBackup, string? ParentCode, string? StepName);
@@ -686,9 +691,22 @@ namespace MES.Web.Services
                     w.QtyDone, w.QtyOk, w.QtyNg,
                     w.NgCaseId,   // [VULOI]
                     w.CreatedAt,  // [K5-VONG-SUA]
+                    w.WorkerId,   // [WTS-SUA-GIO-GOC]
                     Worker = w.Worker != null ? (w.Worker.FullName ?? w.Worker.Username) : null
                 })
                 .AsNoTracking().ToListAsync();
+            // [WTS-SUA-GIO-GOC 2026-11-05] dòng WTS đã huỷ vì "Sửa lại" → dòng mới thay nó giữ giờ máy chủ lưu GỐC (xem EditOrigins)
+            var wtsEdited = await _db.WtsProductionLogs
+                .Where(w => ids.Contains(w.KhPlanDetailId) && w.IsVoided && w.VoidReason == WtsEditVoidReason && w.VoidedAt != null)
+                .Select(w => new { w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, w.VoidedAt,
+                                   w.QtyDone, w.QtyOk, w.QtyNg })   // [WTS-SUA-PHAN] + số của dòng cũ
+                .AsNoTracking().ToListAsync();
+            var editDets = wtsEdited.Select(w => w.KhPlanDetailId).ToHashSet();   // chỉ PO có dòng sửa mới cần ghép (rà độc lập lần 2: hiệu năng)
+            var wtsOrigin = EditOriginsFull(
+                wts.Where(w => editDets.Contains(w.KhPlanDetailId)).Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, null,
+                    w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0)),
+                wtsEdited.Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, w.VoidedAt,
+                    w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0)));
 
             // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận (chưa huỷ)
             var ngReps = await _db.HandoverNgReports
@@ -796,7 +814,9 @@ namespace MES.Web.Services
                     }).ToList(),
                     Wts = wts.Where(w => w.KhPlanDetailId == id).Select(w => new InWts(
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
-                        w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId, w.CreatedAt)).ToList(),   // [VULOI] + vụ lỗi · [K5-VONG-SUA] + giờ máy chủ lưu
+                        w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId,
+                        wtsOrigin.TryGetValue(w.WtsLogId, out var _goc) ? _goc.Origin : w.CreatedAt,   // [VULOI] + vụ lỗi · [K5-VONG-SUA] + giờ máy chủ lưu · [WTS-SUA-GIO-GOC] dòng sửa = giờ lưu gốc
+                        _goc?.Vers)).ToList(),   // [WTS-SUA-PHAN] các bản của chuỗi sửa
                     GcSteps = mach.Where(m => m.KhPlanDetailId == id).Select(m => new InGcStep(
                         m.StepOrder, m.NC ?? "", m.IsBackup, m.ParentNC, m.MachineRegistered,
                         !string.IsNullOrWhiteSpace(m.MachineRegistered) && exclSet.Contains(m.MachineRegistered!.Trim()))).ToList(),
@@ -911,7 +931,9 @@ namespace MES.Web.Services
         //   KHÔNG đưa vào NegativeCells / Compute (rà độc lập 05/11 C1–C2, V3): sửa dòng WTS (huỷ + dòng mới, giờ lưu mới) đẩy phần OK ra sau
         //   → ảnh sổ âm giả; lưu bù dữ liệu cũ đang âm bị chặn oan; Compute chậm ở mọi trang. Lưu mới / sửa WTS không xét phần này.
         //   WTS: phần OK tính từ giờ lưu dòng; phần NG có vụ tính từ lúc vụ sinh. PO không có hàng sửa trả về: không tính thêm.
-        //   Còn hở (ghi sổ): xoá dòng WTS NC trước làm NC sau mất nguồn theo vòng — chưa xét (WtsSaveService), hiếm.
+        //   Hở đã vá 05/11: xoá dòng WTS NC trước làm NC sau mất nguồn theo vòng → [K5-VONG-HO-WTS] (WtsSaveService xét như huỷ chứng từ nguồn);
+        //   sửa dòng WTS che phần OK có từ trước → [WTS-SUA-GIO-GOC] (dòng sửa mang giờ lưu gốc). Lần nhận ghi muộn: không phải hở —
+        //   chứng từ dùng hàng chỉ lưu được sau lần nhận cấp hàng (trần L3 / L4 lúc lưu) nên ảnh sổ vẫn khớp ([K5-VONG-HO-NHAN], sua S25).
         //   Nguồn: CLAUDE (lỗi ngầm kiem 04/11 21:59 seed 31983); Hùng 05/11 10:28 OK coi là sửa ruột, không cần hỏi khách.
         // =====================================================================
         /// <summary>[K5-VONG-SUA] Lần nhận này là hàng sửa trả về (phiếu lấy từ ô Hàng lỗi / Hàng sửa, nhận vào ô Hàng lỗi đã xử lý / Hàng mới)?</summary>
@@ -941,6 +963,66 @@ namespace MES.Web.Services
             return d;
         }
 
+        // =====================================================================
+        // [WTS-SUA-GIO-GOC 2026-11-05] Sửa dòng WTS = huỷ dòng cũ ("Sửa lại") + dòng mới CreatedAt mới. Ảnh sổ theo thời gian
+        //   (SnapshotBefore) đọc giờ lưu → phần OK của dòng đã sửa bị coi như ghi SAU lúc hàng sửa trả về (che OK có từ trước):
+        //   NC đó thấy chưa làm cao hơn thật, NC sau thấy đầu vào thấp hơn thật → ảnh sổ sai cả 2 chiều.
+        //   Nay: dòng mới ghép với dòng cũ nó thay (cùng PO, người, nhóm, NC / mã CV; dòng cũ huỷ "Sửa lại" lúc VoidedAt, dòng mới
+        //   lưu CreatedAt = ĐÚNG giờ đó — WtsSaveService [WTS-SUA-GIO-GOC]) và nhận giờ lưu GỐC (đi ngược cả chuỗi sửa nhiều lần).
+        //   Sửa đổi NC / mã / PO: không ghép (tính như dòng mới — phía chặt). Không đổi Compute / số cuối: chỉ đổi giờ cắt ảnh sổ.
+        //   [WTS-SUA-GIO-GOC-EXACT 2026-11-05] Rà độc lập lần 1 (Cao): ghép "lệch ≤ 3 giây" cho dữ liệu cũ ghép nhầm cả dữ liệu mới
+        //   (sửa dòng A đổi PO + thêm dòng C cùng NC trong 1 lần lưu → C nhận giờ gốc của A → xoá dòng nguồn khác lọt K5 theo thời gian).
+        //   Nay CHỈ ghép đúng giờ; dòng sửa từ trước bản này (lệch vài ms) không ghép = như master trước gói (không lùi), dọn lúc bản trắng.
+        //   Nhóm theo khoá (Dictionary) thay vì so mọi cặp (rà độc lập Vừa 2: 50k dòng ~9 s); trùng giờ (cột datetime làm tròn) → ghép
+        //   dòng cũ Id tăng dần với dòng mới Id tăng dần (rà độc lập Thấp 5).
+        //   Còn mở (Thấp, ghi sổ): sửa TĂNG số OK thì phần tăng cũng mang giờ gốc (dễ dãi phần tăng; WTS chỉ sửa trong ngày).
+        //   Nguồn: CLAUDE (hở A4 ghi ở [K5-VONG-SUA], rà độc lập 05/11); Hùng 05/11 10:28 OK K5 theo thời gian là sửa ruột.
+        // =====================================================================
+        public const string WtsEditVoidReason = "Sửa lại";   // chữ VoidReason WtsSaveService ghi khi sửa dòng
+        public record WtsEditNode(long Id, int Det, int Worker, string Pg, string? Nc, string? Code, DateTime Created, DateTime? VoidedAt,
+                                  decimal Ok = 0, decimal Ng = 0);   // [WTS-SUA-PHAN] số OK / NG của dòng (để tính phần có từ giờ gốc)
+        /// <summary>[WTS-SUA-PHAN] Dòng sửa: giờ lưu gốc + các bản của cả chuỗi sửa (cũ → mới, bản cuối = chính dòng này).</summary>
+        public record WtsEditOrigin(DateTime Origin, IReadOnlyList<WtsVer> Vers);
+
+        /// <summary>[WTS-SUA-GIO-GOC] Id dòng WTS → giờ máy chủ lưu GỐC (chỉ dòng là bản sửa của dòng khác; dòng gốc không có trong kết quả).</summary>
+        public static Dictionary<long, DateTime> EditOrigins(IEnumerable<WtsEditNode> active, IEnumerable<WtsEditNode> editedVoided)
+            => EditOriginsFull(active, editedVoided).ToDictionary(kv => kv.Key, kv => kv.Value.Origin);
+
+        /// <summary>[WTS-SUA-PHAN] Như EditOrigins, kèm các bản của cả chuỗi sửa (giờ lưu, OK, NG).
+        /// Rà độc lập lần 2 (Cao): sửa TĂNG số (vd OK 1 → 2, chiếc thứ 2 nhận sau lúc hàng sửa về) mà cả dòng mang giờ gốc → chặn oan.
+        /// Rà độc lập lần 3 (2 Cao): gán "min qua cả chuỗi" vào 1 mốc gốc → chặn oan (bản tăng lưu TRƯỚC lúc hàng sửa về bị bỏ) và lọt (đổi NG → OK
+        /// làm tổng lúc gốc nhỏ đi). Nay SnapshotBefore lấy bản đang có hiệu lực ở từng mốc (xem đó).</summary>
+        public static Dictionary<long, WtsEditOrigin> EditOriginsFull(IEnumerable<WtsEditNode> active, IEnumerable<WtsEditNode> editedVoided)
+        {
+            static string K(string? s) => (s ?? "").Trim().ToUpperInvariant();
+            static string Key(WtsEditNode n, DateTime at) => $"{n.Det}|{n.Worker}|{K(n.Pg)}|{K(n.Nc)}|{K(n.Code)}|{at.Ticks}";
+            var olds = editedVoided.Where(v => v.VoidedAt != null).ToList();
+            var origin = new Dictionary<long, WtsEditOrigin>();
+            if (olds.Count == 0) return origin;
+            // [WTS-SUA-GIO-GOC-EXACT] dòng cũ theo (khoá, giờ huỷ) — mỗi dòng cũ chỉ được 1 dòng mới nhận
+            var bucket = olds.GroupBy(o => Key(o, o.VoidedAt!.Value))
+                             .ToDictionary(g => g.Key, g => new Queue<WtsEditNode>(g.OrderBy(o => o.Id)));
+            var pred = new Dictionary<long, WtsEditNode>();
+            var activeList = active.ToList();
+            foreach (var n in activeList.Concat(olds).OrderBy(n => n.Created).ThenBy(n => n.Id))
+            {
+                if (!bucket.TryGetValue(Key(n, n.Created), out var q)) continue;
+                while (q.Count > 0 && (q.Peek().Id == n.Id || q.Peek().Created >= n.Created)) q.Dequeue();   // không tự ghép / không ghép ngược giờ
+                if (q.Count == 0) continue;
+                pred[n.Id] = q.Dequeue();
+            }
+            foreach (var n in activeList)
+            {
+                if (!pred.TryGetValue(n.Id, out var p)) continue;
+                var chain = new List<WtsEditNode> { n, p };
+                var cur = p;
+                for (int guard = 0; guard < 50 && pred.TryGetValue(cur.Id, out var pp); guard++) { cur = pp; chain.Add(cur); }
+                chain.Reverse();   // cũ → mới
+                origin[n.Id] = new WtsEditOrigin(cur.Created, chain.Select(c => new WtsVer(c.Created, c.Ok, c.Ng)).ToList());
+            }
+            return origin;
+        }
+
         /// <summary>[K5-VONG-SUA] Ảnh sổ ngay trước lúc <paramref name="cut"/>: chỉ giữ chứng từ ghi TRƯỚC lúc đó (giờ máy chủ).</summary>
         public static LedgerInput SnapshotBefore(LedgerInput i, DateTime cut)
         {
@@ -967,6 +1049,21 @@ namespace MES.Web.Services
             foreach (var w in i.Wts)
             {
                 var saved = w.Saved ?? DateTime.MaxValue;
+                // [WTS-SUA-PHAN] dòng sửa: bản đang có hiệu lực lúc cut (bản cuối lưu trước cut); số tính = phần còn đúng qua mọi bản sửa SAU đó
+                //   (OK = min OK, đã làm = min (OK + NG) từ bản đó tới bản mới nhất) — bản tăng lưu trước mốc được tính (rà độc lập lần 3 Cao 1),
+                //   đổi NG ↔ OK không làm tổng lúc đó nhỏ đi (lần 3 Cao 2), phần tăng sau mốc không tính (lần 2 Cao). Chưa có bản nào → như dòng thường.
+                if (saved < cut && w.Vers is { Count: > 0 } vers)
+                {
+                    int vi = -1;
+                    for (int k = 0; k < vers.Count; k++) if (vers[k].At < cut) vi = k;
+                    if (vi >= 0)
+                    {
+                        decimal okm = decimal.MaxValue, totm = decimal.MaxValue;
+                        for (int k = vi; k < vers.Count; k++) { okm = Math.Min(okm, vers[k].Ok); totm = Math.Min(totm, vers[k].Ok + vers[k].Ng); }
+                        wts.Add(w with { Ok = okm, Ng = Math.Max(0, totm - okm) });
+                        continue;
+                    }
+                }
                 if (saved < cut) { wts.Add(w); continue; }
                 if (w.Ng > 0 && w.NgCaseId is long vid && vid > 0 && CaseAt(vid, saved) < cut) wts.Add(w with { Ok = 0 });   // phần NG có từ lúc vụ sinh
             }

@@ -503,6 +503,376 @@ public static class SuaScen
             Ok(r2.Success, "Lưu lại phôi 20 (không giảm) vẫn được", r2.Error);
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // [K5-VONG-HO-WTS 2026-11-05] Hở A2 của [K5-VONG-SUA]: xoá dòng WTS ở NC trước làm NC sau mất nguồn theo thời gian
+        Console.WriteLine("[S22] [K5-VONG-HO-WTS] NC1 OK 1 → NC2 NG 1 → sửa → KCS đạt về NC2: xoá WTS NC1 bị chặn (NC2 đã làm chiếc đó trước lúc hàng sửa về); gỡ theo gợi ý được; xoá phần thừa không chặn oan");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = w2.LogId == null ? null : d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            var k = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Check(d, "S22 sau KCS");
+            Ok(w1.Ok && w2.Ok && k.Ok && x.Ok, "Đi xuôi: WTS NC1 OK 1, WTS NC2 NG 1, Kết quả sửa đạt 1 về NC2, KCS xác nhận lưu được", $"{w1.Err} | {w2.Err} | {k.Error} | {x.Error}");
+            var v = await WtsSvcHelp.VoidAsync(d, w1.LogId!.Value, 1, Gc);
+            Ok(!v.Ok && (v.Err ?? "").Contains("theo thứ tự thời gian") && (v.Err ?? "").Contains("nên kiểm tra theo các bước sau"),
+               "Xoá WTS NC1 bị chặn (K5 theo thời gian: chiếc sửa về NC2 không thế chỗ chiếc NC2 đã làm), lời báo có gợi ý gỡ", v.Err);
+            Ok(!d.WtsProductionLogs.List.Single(z => z.WtsLogId == w1.LogId).IsVoided, "Bị chặn thì dòng WTS NC1 vẫn còn");
+            var g1 = await s.VoidRepairCheckAsync(LastChk(d), "go vong", Kcs);
+            var g2 = await s.VoidRepairResultAsync(LastRep(d), "go vong", Gc);
+            var g3 = await WtsSvcHelp.VoidAsync(d, w2.LogId!.Value, 1, Gc);
+            var g4 = await WtsSvcHelp.VoidAsync(d, w1.LogId!.Value, 1, Gc);
+            await Check(d, "S22 gỡ xong");
+            Ok(g1.Ok && g2.Ok && g3.Ok && g4.Ok, "Gỡ theo thứ tự (KCS → Kết quả sửa → WTS NC2 → WTS NC1) lưu được hết", $"{g1.Error} | {g2.Error} | {g3.Err} | {g4.Err}");
+
+            // không chặn oan: NC1 làm 2 (2 dòng), NC2 NG 1 → sửa về NC2; xoá 1 dòng NC1 (chiếc chưa ai dùng) vẫn được
+            var e = Seed(); var se = new HandoverService(e); WtsSvcHelp.Reset();
+            await se.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI");
+            await se.ReceiveAsync(LastTx(e), 2, 0, null, Gc);
+            var e1 = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC1", null, 1, 0, Gc);
+            var e2 = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC1", null, 1, 0, Gc);
+            var e3 = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu3 = e.WtsProductionLogs.List.Single(z => z.WtsLogId == e3.LogId).NgCaseId;
+            await se.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu3, 1, 0, "NC2", null, Gc);
+            await se.ConfirmRepairAsync(LastRep(e), 1, 0, null, Kcs);
+            var ve = await WtsSvcHelp.VoidAsync(e, e2.LogId!.Value, 1, Gc);
+            await Check(e, "S22 xoá dòng thừa");
+            Ok(e1.Ok && e2.Ok && e3.Ok && ve.Ok, "Xoá 1 dòng NC1 OK 1 (NC2 chỉ dùng 1 chiếc trước lúc hàng sửa về) lưu được — không chặn oan", ve.Err);
+        }
+
+        // [WTS-SUA-GIO-GOC 2026-11-05] Hở A4: sửa dòng WTS (huỷ + dòng mới giờ mới) che phần OK có từ trước trong ảnh sổ theo thời gian
+        Console.WriteLine("[S23] [WTS-SUA-GIO-GOC] Sửa dòng WTS NC1 SAU lúc hàng sửa về: ảnh sổ theo thời gian không âm giả; xoá dòng đã sửa vẫn bị chặn (trước: lọt)");
+        {
+            var d = Seed(); var s = new HandoverService(d); var l = new HandoverLedgerService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(20);
+            var ed = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc, editLogId: w1.LogId);   // sửa dòng (giữ số, như sửa giờ / ghi chú)
+            await Check(d, "S23 sau sửa dòng");
+            var old = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w1.LogId);
+            var neu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == ed.LogId);
+            Ok(ed.Ok && old.IsVoided && old.VoidReason == "Sửa lại" && old.VoidedAt == neu.CreatedAt,
+               "Sửa dòng: dòng cũ huỷ 'Sửa lại', VoidedAt dòng cũ = CreatedAt dòng mới (1 giờ máy chủ chung)", $"{ed.Err} voidedAt {old.VoidedAt:HH:mm:ss.fffffff} created {neu.CreatedAt:HH:mm:ss.fffffff}");
+            var inp = (await l.GetInputForDetailAsync(1))!;
+            var saved = inp.Wts.Single(z => z.Id == ed.LogId).Saved;
+            Ok(saved == old.CreatedAt, "Sổ: dòng sửa mang giờ lưu GỐC của dòng cũ", $"{saved:HH:mm:ss.fffffff} / gốc {old.CreatedAt:HH:mm:ss.fffffff}");
+            var tl = HandoverLedgerService.LoopTimeline(inp);
+            Ok(tl.Count == 0, "Ảnh sổ theo thời gian không âm giả ở NC2 (trước: NC1 OK bị coi là ghi sau lúc hàng sửa về → NC2 −1)", string.Join(", ", tl.Select(z => z.Key + "=" + z.Value.Value)));
+            var v = await WtsSvcHelp.VoidAsync(d, ed.LogId!.Value, 1, Gc);
+            Ok(!v.Ok && (v.Err ?? "").Contains("theo thứ tự thời gian"), "Xoá dòng NC1 đã sửa bị chặn như dòng chưa sửa (trước: âm giả làm mức nền thấp → lọt)", v.Err);
+        }
+
+        Console.WriteLine("[S24] [WTS-SUA-GIO-GOC] EditOrigins: chỉ ghép đúng giờ, chuỗi sửa nhiều lần, trùng giờ, không ghép khi đổi NC / lệch giờ / dòng mới khác trong cùng lần lưu / dòng thay đã xoá");
+        {
+            var t0 = new DateTime(2026, 11, 5, 8, 0, 0);
+            HandoverLedgerService.WtsEditNode N(long id, DateTime c, DateTime? v = null, string nc = "NC1", int w = 2) => new(id, 1, w, "GC", nc, null, c, v);
+            // chuỗi: #1 (8:00) sửa lúc 9:00 → #2 (9:00) sửa lúc 10:00 → #3 (10:00, còn hiệu lực)
+            var o1 = HandoverLedgerService.EditOrigins(new[] { N(3, t0.AddHours(2)) }, new[] { N(1, t0, t0.AddHours(1)), N(2, t0.AddHours(1), t0.AddHours(2)) });
+            Ok(o1.TryGetValue(3, out var g3) && g3 == t0, "Chuỗi sửa 2 lần: dòng cuối mang giờ gốc 8:00", string.Join(",", o1));
+            // [WTS-SUA-GIO-GOC-EXACT] chỉ ghép ĐÚNG giờ: lệch 0,4 giây / 5 giây đều không ghép (trước: ≤ 3 giây ghép — ghép nhầm dữ liệu mới, rà độc lập Cao)
+            var o2 = HandoverLedgerService.EditOrigins(new[] { N(5, t0.AddHours(1).AddMilliseconds(400)), N(7, t0.AddHours(2).AddSeconds(5)) },
+                                                       new[] { N(4, t0, t0.AddHours(1)), N(6, t0, t0.AddHours(2)) });
+            Ok(o2.Count == 0, "Lệch 0,4 giây / 5 giây: không ghép (chỉ ghép đúng giờ — dữ liệu sửa trước bản này tính như master cũ)", string.Join(",", o2));
+            // trùng giờ (cột datetime làm tròn): 2 dòng cũ + 2 dòng mới cùng khoá, cùng giờ → cũ Id tăng dần ↔ mới Id tăng dần
+            var o5 = HandoverLedgerService.EditOrigins(new[] { N(31, t0.AddHours(3)), N(30, t0.AddHours(3)) },
+                                                       new[] { N(21, t0.AddHours(2), t0.AddHours(3)), N(20, t0, t0.AddHours(3)) });
+            Ok(o5.TryGetValue(30, out var g30) && g30 == t0 && o5.TryGetValue(31, out var g31) && g31 == t0.AddHours(2),
+               "Trùng giờ: dòng mới Id nhỏ nhận dòng cũ Id nhỏ (không ghép chéo)", string.Join(",", o5));
+            // dòng thay A' bị xoá sau đó: dòng C mới cùng khoá (lưu lệch vài ms) KHÔNG nhận giờ gốc của A
+            var o6 = HandoverLedgerService.EditOrigins(new[] { N(42, t0.AddHours(1).AddMilliseconds(3)) }, new[] { N(40, t0, t0.AddHours(1)) });
+            Ok(o6.Count == 0, "Dòng thay đã xoá: dòng mới khác cùng khoá không nhận giờ gốc (rà độc lập Cao, biến thể xoá A')", string.Join(",", o6));
+            // [WTS-SUA-PHAN] chuỗi #50 (8:00 OK 1 NG 1) → #51 (9:00 OK 2 NG 0) → #52 (10:00 OK 3 NG 1): giờ gốc 8:00 + đủ 3 bản cũ → mới
+            HandoverLedgerService.WtsEditNode Q(long id, DateTime c, DateTime? v, decimal ok, decimal ng) => new(id, 1, 2, "GC", "NC1", null, c, v, ok, ng);
+            var o7 = HandoverLedgerService.EditOriginsFull(new[] { Q(52, t0.AddHours(2), null, 3, 1) }, new[] { Q(50, t0, t0.AddHours(1), 1, 1), Q(51, t0.AddHours(1), t0.AddHours(2), 2, 0) });
+            Ok(o7.TryGetValue(52, out var e7) && e7.Origin == t0
+               && e7.Vers.SequenceEqual(new[] { new WtsVer(t0, 1, 1), new WtsVer(t0.AddHours(1), 2, 0), new WtsVer(t0.AddHours(2), 3, 1) }),
+               "EditOriginsFull: giờ gốc 8:00, đủ 3 bản (giờ, OK, NG) cũ → mới", e7 == null ? "không ghép" : string.Join(",", e7.Vers));
+            // SnapshotBefore với các bản: mốc 8:30 → bản 8:00 có hiệu lực, OK = min(1,2,3) = 1, đã làm = min(2,2,4) = 2 → OK 1 NG 1;
+            //   mốc 9:30 → bản 9:00, OK min(2,3) = 2, đã làm min(2,4) = 2 → OK 2 NG 0; mốc 7:00 → chưa có bản nào
+            var wv = new InWts(52, t0, "GC", "NC1", null, 3, 1, null, null, t0, e7?.Vers);
+            var si = new LedgerInput { Wts = new List<InWts> { wv } };
+            var sv1 = HandoverLedgerService.SnapshotBefore(si, t0.AddMinutes(30)).Wts.SingleOrDefault();
+            var sv2 = HandoverLedgerService.SnapshotBefore(si, t0.AddMinutes(90)).Wts.SingleOrDefault();
+            var sv3 = HandoverLedgerService.SnapshotBefore(si, t0.AddHours(-1)).Wts.SingleOrDefault();
+            Ok(sv1 != null && sv1.Ok == 1 && sv1.Ng == 1 && sv2 != null && sv2.Ok == 2 && sv2.Ng == 0 && sv3 == null,
+               "SnapshotBefore: lấy bản đang có hiệu lực ở mốc + min từ bản đó về sau (8:30 → OK 1 NG 1; 9:30 → OK 2 NG 0; 7:00 → chưa có)",
+               $"8:30 {sv1?.Ok}/{sv1?.Ng} · 9:30 {sv2?.Ok}/{sv2?.Ng} · 7:00 {(sv3 == null ? "không" : "có")}");
+            // đổi NC khi sửa → không ghép; người khác → không ghép
+            var o3 = HandoverLedgerService.EditOrigins(new[] { N(9, t0.AddHours(1), nc: "NC2"), N(10, t0.AddHours(1), w: 3) }, new[] { N(8, t0, t0.AddHours(1)) });
+            Ok(o3.Count == 0, "Sửa đổi NC / dòng của người khác: không ghép (tính như dòng mới — phía chặt)", string.Join(",", o3));
+            // cùng lần lưu: dòng sửa (đúng giờ) + dòng mới khác cùng NC 2 ms sau → chỉ dòng sửa ghép
+            var o4 = HandoverLedgerService.EditOrigins(new[] { N(12, t0.AddHours(1)), N(13, t0.AddHours(1).AddMilliseconds(2)) }, new[] { N(11, t0, t0.AddHours(1)) });
+            Ok(o4.ContainsKey(12) && !o4.ContainsKey(13), "Dòng mới khác trong cùng lần lưu không lấy nhầm giờ gốc (ghép đúng giờ trước)", string.Join(",", o4));
+        }
+
+        // [K5-VONG-HO-NHAN 2026-11-05] Hở A3 ghi ở [K5-VONG-SUA] ("lần nhận ghi muộn trong cùng nhóm nhận hàng sửa"): kiểm bằng hàm thật.
+        //   Mọi chứng từ dùng hàng (WTS, phiếu giao) chỉ lưu được SAU lần nhận cấp hàng cho nó (trần L3 / L4 xét lúc lưu) → nhận ghi muộn
+        //   thì chứng từ dùng nó cũng muộn theo, ảnh sổ theo thời gian vẫn khớp nhau: không lọt vòng tròn. Ca dưới: phiếu B giao TRƯỚC lúc
+        //   hàng sửa về nhưng GC bấm Nhận SAU → huỷ lần nhận gốc A vẫn bị chặn (chiếc NG là chiếc của A), và khi gỡ đúng thứ tự thì được.
+        Console.WriteLine("[S25] [K5-VONG-HO-NHAN] Lần nhận ghi muộn (phiếu giao trước, bấm Nhận sau lúc hàng sửa về): huỷ lần nhận gốc vẫn bị chặn đúng, gỡ được; huỷ lần nhận muộn chưa dùng thì được");
+        {
+            var d = Seed(); var s = new HandoverService(d);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var ridA = d.HandoverTransactions.List.Single(t => t.HandoverTxId == LastTx(d)).Receives.Single().ReceiveId;
+            var txB = await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");   // phiếu B giao trước lúc hàng sửa về
+            var txBId = LastTx(d);
+            var w = await VuHelp.Wts(d, "GC", "NC1", null, 0, 1, Gc, 2);
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, w.NgCaseId, 1, 0, "NC1", null, Gc);
+            await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            var rB = await s.ReceiveAsync(txBId, 1, 0, null, Gc);   // GC bấm Nhận phiếu B muộn (sau lúc hàng sửa về)
+            var ridB = d.HandoverTransactions.List.Single(t => t.HandoverTxId == txBId).Receives.Single().ReceiveId;
+            await Check(d, "S25 nhận muộn");
+            var vA = await s.VoidReceiveAsync(ridA, "huy thu", 1, new[] { "KHO", "GC" });
+            Ok(txB.Ok && rB.Ok && !vA.Ok && vA.Error.Contains("theo thứ tự thời gian"),
+               "Huỷ lần nhận gốc A bị chặn (chiếc NG là chiếc của A — lần nhận B ghi muộn không thế chỗ được)", vA.Error);
+            var vB = await s.VoidReceiveAsync(ridB, "nhan nham", 1, new[] { "KHO", "GC" });
+            await Check(d, "S25 huỷ lần nhận muộn");
+            Ok(vB.Ok, "Huỷ lần nhận muộn B (chưa ai dùng) lưu được — không chặn oan", vB.Error);
+        }
+
+        // [WTS-SUA-GIO-GOC-EXACT 2026-11-05] ca dò P1 của rà độc lập lần 1 (Cao) — trước bản vá: C nhận giờ gốc của A, xoá D lọt
+        Console.WriteLine("[S26] [WTS-SUA-GIO-GOC-EXACT] Sửa dòng A đổi PO + thêm dòng C cùng PO / NC cũ trong 1 lần lưu: C giữ giờ lưu thật, xoá D (nguồn NC1 trước lúc hàng sửa về) bị chặn");
+        {
+            var d = Seed(); WtsSvcHelp.Reset();
+            var plan = d.KhPlans.List[0];
+            var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
+            d.KhPlanDetails.List.Add(d2); plan.Details.Add(d2);
+            d.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 2, PlanDetailId = 2, IsActive = true, SoLuongThucNhan = 20, NgayNhanPhoi = DateTime.Now, SoPO = "PO2", PartNo = "P" });
+            d.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 11, KhPlanDetailId = 2, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });
+            d.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 12, KhPlanDetailId = 2, StepOrder = 2, NC = "NC2", MachineRegistered = "M2" });
+            d.Fixup();
+            var s = new HandoverService(d); var l = new HandoverLedgerService(d);
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            await s.IssueByCellAsync(2, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var rr = await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var a = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            await Task.Delay(10);
+            var dd = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var b = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == b.LogId).NgCaseId;
+            var k = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(20);
+            // 1 lần lưu: dòng A (sửa, đổi PO1 → PO2) + dòng C (mới, PO1, cùng NC1)
+            var grp = WtsSvcHelp.Build(2, "GC", "NC1", null, 1, 0, Gc, null, null, a.LogId, "MX");
+            var pr0 = grp.Rows[0]; pr0.StartTime = DateTime.Now.AddMinutes(-30); pr0.EndTime = DateTime.Now.AddMinutes(-20);
+            var g2 = WtsSvcHelp.Build(1, "GC", "NC1", null, 1, 0, Gc, null, null, null, "MX");
+            var r1 = g2.Rows[0]; r1.StartTime = DateTime.Now.AddMinutes(-10); r1.EndTime = DateTime.Now.AddMinutes(-5);
+            grp.Rows.Add(r1);
+            var res = await new WtsSaveService(d, new HandoverLedgerService(d)).SaveGroupAsync(grp); d.Fixup();
+            Ok(a.Ok && dd.Ok && b.Ok && k.Ok && x.Ok && rr.Ok && res.Ok, "S26 dựng xong", $"{a.Err}|{dd.Err}|{b.Err}|{k.Error}|{x.Error}|{rr.Error}|{res.ErrorMsg}");
+            var cId = r1.WtsLogId!.Value;
+            var oldA = d.WtsProductionLogs.List.Single(z => z.WtsLogId == a.LogId);
+            var cRow = d.WtsProductionLogs.List.Single(z => z.WtsLogId == cId);
+            var inp = (await l.GetInputForDetailAsync(1))!;
+            var cSaved = inp.Wts.Single(z => z.Id == cId).Saved;
+            Console.WriteLine($"   C created {cRow.CreatedAt:HH:mm:ss.fff}, C.Saved trong sổ {cSaved:HH:mm:ss.fff}, A gốc {oldA.CreatedAt:HH:mm:ss.fff}, A voided {oldA.VoidedAt:HH:mm:ss.fff}");
+            Ok(cSaved == cRow.CreatedAt, "C (dòng mới) giữ giờ lưu thật — không ghép nhầm với dòng A đổi PO", $"C.Saved={cSaved:HH:mm:ss.fff}");
+            var v = await WtsSvcHelp.VoidAsync(d, dd.LogId!.Value, 1, Gc);
+            Ok(!v.Ok, "Xoá D (nguồn NC1 duy nhất trước lúc hàng sửa về) phải bị chặn theo thời gian", v.Err ?? "(xoá được)");
+        }
+
+        // [K5-VONG-HO-WTS-SUA 2026-11-05] ca dò P2 của rà độc lập lần 1 (Vừa 3) — trước bản vá: xoá bị chặn nhưng sửa OK → NG lọt
+        Console.WriteLine("[S27] [K5-VONG-HO-WTS-SUA] Như S22 nhưng SỬA dòng WTS NC1 (OK 1 → NG 1 / đổi NC): bị chặn như xoá; sửa giữ số / sửa phần thừa không chặn oan");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            var v = await WtsSvcHelp.VoidAsync(d, w1.LogId!.Value, 1, Gc);
+            var ed = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 0, 1, Gc, catId: 2, editLogId: w1.LogId);
+            Ok(!v.Ok && !ed.Ok, "Xoá bị chặn thì sửa OK→NG cũng phải bị chặn", $"xoá ok={v.Ok}; sửa ok={ed.Ok} {ed.Err}");
+            Ok((ed.Err ?? "").Contains("theo thứ tự thời gian") && (ed.Err ?? "").Contains("nên kiểm tra theo các bước sau"), "Lời báo sửa bị chặn có lý do theo thời gian + gợi ý gỡ", ed.Err);
+            Ok(!d.WtsProductionLogs.List.Single(z => z.WtsLogId == w1.LogId).IsVoided, "Bị chặn thì dòng WTS NC1 vẫn còn (không huỷ dở)");
+            var en = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC3", null, 1, 0, Gc, editLogId: w1.LogId);   // đổi NC1 → NC3 (khác khoá = như xoá NC1)
+            Ok(!en.Ok, "Sửa đổi NC1 → NC3 cũng bị chặn (khác khoá = xoá dòng NC1 + dòng mới)", en.Err);
+            var same = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc, editLogId: w1.LogId);   // giữ số (sửa giờ / ghi chú)
+            await Check(d, "S27 sửa giữ số");
+            Ok(same.Ok, "Sửa dòng NC1 giữ nguyên số: lưu được (dòng thay mang giờ gốc — không chặn oan)", same.Err);
+
+            // phần thừa: NC1 làm 2 trong 1 dòng, NC2 NG 1 → sửa về NC2; sửa dòng NC1 2 → 1 (chiếc chưa ai dùng) được
+            var e = Seed(); var se = new HandoverService(e); WtsSvcHelp.Reset();
+            await se.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI");
+            await se.ReceiveAsync(LastTx(e), 2, 0, null, Gc);
+            var e1 = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC1", null, 2, 0, Gc);
+            var e3 = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu3 = e.WtsProductionLogs.List.Single(z => z.WtsLogId == e3.LogId).NgCaseId;
+            await se.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu3, 1, 0, "NC2", null, Gc);
+            await se.ConfirmRepairAsync(LastRep(e), 1, 0, null, Kcs);
+            var ee = await WtsSvcHelp.SaveAsync(e, 1, "GC", "NC1", null, 1, 0, Gc, editLogId: e1.LogId);
+            await Check(e, "S27 sửa phần thừa");
+            Ok(e1.Ok && e3.Ok && ee.Ok, "Sửa dòng NC1 2 → 1 (NC2 chỉ dùng 1 chiếc trước lúc hàng sửa về): lưu được — không chặn oan", ee.Err);
+        }
+
+        // [K5-VONG-HO-WTS 2026-11-05] Rà độc lập lần 1 (Thấp 6): bước gỡ "xoá dòng WTS" trong lời khuyên phải xét theo thời gian như máy chủ.
+        //   Huỷ lần nhận A (S22): bỏ xét thời gian ở bước gỡ thì gợi ý chỉ "xoá WTS NC1" — máy chủ lại chặn bước đó (vòng tròn NC2).
+        Console.WriteLine("[S28] [K5-VONG-HO-WTS] Lời khuyên gỡ khi huỷ lần nhận gốc: bước xoá WTS NC1 đi SAU xoá WTS NC2 + KCS + Kết quả sửa (bước gỡ cũng xét theo thời gian)");
+        {
+            var d = Seed(); var s = new HandoverService(d); var l = new HandoverLedgerService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var ridA = d.HandoverTransactions.List.Single(t => t.HandoverTxId == LastTx(d)).Receives.Single().ReceiveId;
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            var inp = (await l.GetInputForDetailAsync(1))!;
+            var plan = HandoverWhy.Plan(inp, HandoverWhy.OpVoidReceive(ridA), new HashSet<string> { "R:" + ridA }, loopOp: true);
+            int i1 = plan.Steps.FindIndex(z => z.Kind == "WTS" && z.Id == w1.LogId), i2 = plan.Steps.FindIndex(z => z.Kind == "WTS" && z.Id == w2.LogId);
+            Ok(plan.Complete && i1 >= 0 && i2 >= 0 && i2 < i1 && plan.Steps.Count >= 4,
+               "Lời khuyên đủ bước, xoá WTS NC2 trước WTS NC1 (bước gỡ xét thời gian như máy chủ)", string.Join(" → ", plan.Steps.Select(z => z.Kind + "#" + z.Id)));
+        }
+        // [K5-VONG-HO-WTS 2026-11-05] ca dò Q1 của rà độc lập lần 2: phân biệt được cờ "WTS" ở bước gỡ Plan (bỏ cờ → Plan chỉ gợi ý xoá WTS NC2, máy chủ chặn bước đó)
+        Console.WriteLine("[S29] [K5-VONG-HO-WTS] Bước gỡ xoá WTS NC2 tự nó vướng theo thời gian: lời khuyên xếp KCS xác nhận / Kết quả sửa / WTS NC3 trước, làm theo từng bước máy chủ không chặn");
+        {
+            var d = Seed(); var s = new HandoverService(d); var l = new HandoverLedgerService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI");
+            await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 1, 0, Gc);
+            var w3 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC3", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w3.LogId).NgCaseId;
+            var k = await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC3", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(20);
+            d.WtsProductionLogs.List.Single(z => z.WtsLogId == w1.LogId).CreatedAt = DateTime.Now;   // dữ liệu cũ: dòng NC1 có giờ lưu sau lúc hàng sửa về (vd sửa trước bản này)
+            Ok(w1.Ok && w2.Ok && w3.Ok && k.Ok && x.Ok, "S29 dựng xong", $"{w1.Err}|{w2.Err}|{w3.Err}|{k.Error}|{x.Error}");
+            var inp = (await l.GetInputForDetailAsync(1))!;
+            var plan = HandoverWhy.Plan(inp, HandoverWhy.OpWts(new[] { w1.LogId!.Value }), new HashSet<string> { "W:" + w1.LogId }, loopOp: true);
+            var v0 = await WtsSvcHelp.VoidAsync(d, w1.LogId!.Value, 1, Gc);
+            Ok(!v0.Ok, "Xoá W1 bị chặn (K5 số cuối NC2)", v0.Err);
+            bool allOk = true; string why = "";
+            foreach (var st in plan.Steps)
+            {
+                bool ok2; string? er;
+                if (st.Kind == "WTS") { var r = await WtsSvcHelp.VoidAsync(d, st.Id, 1, Gc); ok2 = r.Ok; er = r.Err; }
+                else if (st.Kind == "XNSUA") { var r = await s.VoidRepairCheckAsync(st.Id, "go vong", Kcs); ok2 = r.Ok; er = r.Error; }
+                else if (st.Kind == "KQSUA") { var r = await s.VoidRepairResultAsync(st.Id, "go vong", Gc); ok2 = r.Ok; er = r.Error; }
+                else { ok2 = false; er = "khac " + st.Kind; }
+                if (!ok2) { allOk = false; why = $"{st.Kind}#{st.Id}: {er}"; break; }
+            }
+            Ok(allOk, "Làm theo từng bước gợi ý: máy chủ không chặn bước nào", why);
+            if (allOk) { var v1 = await WtsSvcHelp.VoidAsync(d, w1.LogId!.Value, 1, Gc); Ok(v1.Ok, "Xoá W1 sau khi gỡ: được", v1.Err); }
+        }
+
+        // [WTS-SUA-PHAN 2026-11-05] ca dò Q2 của rà độc lập lần 2 (Cao): sửa tăng số bị chặn oan khi cả dòng mang giờ gốc
+        Console.WriteLine("[S30] [WTS-SUA-PHAN] Sửa TĂNG OK dòng NC1 (1 → 2) bằng hàng nhận SAU lúc hàng sửa về: lưu được như thêm dòng mới; sổ nạp lại: phần có từ giờ gốc = 1");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var w1 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(10);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var r2 = await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var neu = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);   // đối chứng: thêm dòng mới thì được
+            var v = await WtsSvcHelp.VoidAsync(d, neu.LogId!.Value, 1, Gc);
+            var ed = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc, editLogId: w1.LogId);   // cùng việc đó nhưng sửa dòng cũ 1 → 2
+            Ok(x.Ok && r2.Ok && neu.Ok && v.Ok, "S30 dựng xong (thêm dòng mới OK 1 được, xoá lại được)", $"{x.Error}|{r2.Error}|{neu.Err}|{v.Err}");
+            Ok(ed.Ok, "Sửa dòng NC1 OK 1 → 2 (chiếc thứ 2 nhận sau lúc hàng sửa về) phải lưu được", ed.Err);
+            await Check(d, "S30 sửa tăng");
+            var inp2 = (await new HandoverLedgerService(d).GetInputForDetailAsync(1))!;
+            var wn = inp2.Wts.Single(z => z.Id == ed.LogId);
+            Ok(wn.Vers is { Count: 2 } && wn.Vers[0].Ok == 1 && wn.Vers[1].Ok == 2 && wn.Saved == wn.Vers[0].At && wn.Vers[0].At < wn.Vers[1].At,
+               "Sổ nạp lại: dòng sửa mang giờ gốc + 2 bản (OK 1 lúc gốc, OK 2 lúc sửa)", wn.Vers == null ? "không có bản" : string.Join(",", wn.Vers));
+            Ok(HandoverLedgerService.LoopTimeline(inp2).Count == 0, "Ảnh sổ theo thời gian không âm sau khi sửa tăng", string.Join(",", HandoverLedgerService.LoopTimeline(inp2).Select(z => z.Key + "=" + z.Value.Value)));
+            var vg = await WtsSvcHelp.VoidAsync(d, ed.LogId!.Value, 1, Gc);
+            Ok(!vg.Ok && (vg.Err ?? "").Contains("theo thứ tự thời gian"), "Xoá dòng đã sửa tăng vẫn bị chặn theo thời gian (phần OK 1 có từ giờ gốc NC2 đã dùng)", vg.Err);
+        }
+        // [K5-VONG-HO-WTS-SUA 2026-11-05] ca dò Q3 của rà độc lập lần 2
+        Console.WriteLine("[S31] [K5-VONG-HO-WTS-SUA] 2 dòng cùng NC sửa giữ số trong 1 lần lưu + sửa dòng NG giữ vụ (PO có hàng sửa về): không chặn oan");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            var a = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var b = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var w2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 1, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w2.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            var grp = WtsSvcHelp.Build(1, "GC", "NC1", null, 1, 0, Gc, null, null, a.LogId, "MX");
+            grp.Rows[0].StartTime = DateTime.Now.AddMinutes(-30); grp.Rows[0].EndTime = DateTime.Now.AddMinutes(-20);
+            var g2 = WtsSvcHelp.Build(1, "GC", "NC1", null, 1, 0, Gc, null, null, b.LogId, "MX");
+            g2.Rows[0].StartTime = DateTime.Now.AddMinutes(-10); g2.Rows[0].EndTime = DateTime.Now.AddMinutes(-5); grp.Rows.Add(g2.Rows[0]);
+            var res = await new WtsSaveService(d, new HandoverLedgerService(d)).SaveGroupAsync(grp); d.Fixup();
+            Ok(x.Ok && res.Ok, "2 dòng NC1 sửa giữ số cùng 1 lần lưu: được", $"{x.Error}|{res.ErrorMsg}");
+            var e2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 1, 1, Gc, catId: 2, keepCase: vu, editLogId: w2.LogId);
+            Ok(e2.Ok, "Sửa dòng NC2 OK 1 NG 1 giữ vụ (vụ đã sửa xong): được", e2.Err);
+        }
+        // [WTS-SUA-PHAN 2026-11-05] ca dò Q4 của rà độc lập lần 3 (Cao 1): min qua cả chuỗi gán giờ gốc → chặn oan
+        Console.WriteLine("[S32] [WTS-SUA-PHAN] Chuỗi sửa: A OK 1 → OK 2 TRƯỚC lúc hàng sửa về → sửa giữ số SAU lúc đó: lưu được, ảnh sổ không âm");
+        {
+            var d = Seed(); var s = new HandoverService(d); var l = new HandoverLedgerService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            var a = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            await Task.Delay(5);
+            var a2 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc, editLogId: a.LogId);   // sửa tăng trước lúc hàng sửa về
+            var b = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 1, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == b.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(10);
+            var inp0 = (await l.GetInputForDetailAsync(1))!;
+            Ok(a.Ok && a2.Ok && b.Ok && x.Ok && HandoverLedgerService.LoopTimeline(inp0).Count == 0, "S32 dựng xong, ảnh sổ không âm", $"{a2.Err}|{b.Err}|{x.Error}|tl={HandoverLedgerService.LoopTimeline(inp0).Count}");
+            var a3 = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc, editLogId: a2.LogId);   // chỉ sửa giờ / ghi chú, giữ số
+            Ok(a3.Ok, "Sửa giữ số dòng A' (OK 2 có từ trước lúc hàng sửa về) phải lưu được", a3.Err);
+            if (a3.Ok) { var inp = (await l.GetInputForDetailAsync(1))!; var tl = HandoverLedgerService.LoopTimeline(inp);
+                Ok(tl.Count == 0, "Sổ nạp lại: ảnh sổ trước lúc hàng sửa về không âm", string.Join(",", tl.Select(z => z.Key + "=" + z.Value.Value))); }
+        }
+        // [WTS-SUA-PHAN 2026-11-05] ca dò Q5 + Q5b của rà độc lập lần 3 (Cao 2): min từng số khi đổi NG → OK làm tổng lúc gốc nhỏ đi → lọt
+        Console.WriteLine("[S33] [WTS-SUA-PHAN] Sửa A OK 1 NG 1 → OK 2 NG 0 (sau lúc hàng sửa về) rồi huỷ lần nhận B (trước lúc đó): vẫn bị chặn như khi không sửa");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var tB = LastTx(d); await s.ReceiveAsync(tB, 1, 0, null, Gc);
+            var ridB = d.HandoverTransactions.List.Single(t => t.HandoverTxId == tB).Receives.Single().ReceiveId;
+            var a = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 1, Gc, catId: 2);
+            var b = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var c = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == c.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(10);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var rr = await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var ed = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc, editLogId: a.LogId);   // A: 1 NG đổi thành OK (2 chiếc vẫn làm lúc gốc)
+            Ok(a.Ok && b.Ok && c.Ok && x.Ok && rr.Ok && ed.Ok, "S33 dựng xong", $"{a.Err}|{b.Err}|{c.Err}|{x.Error}|{rr.Error}|{ed.Err}");
+            var v = await s.VoidReceiveAsync(ridB, "huy thu", 1, new[] { "KHO", "GC" });
+            Ok(!v.Ok, "Huỷ lần nhận 1 chiếc (trước lúc hàng sửa về NC1 đã làm 3 chiếc từ 3 chiếc nhận) phải bị chặn theo thời gian", v.Error ?? "(huỷ được)");
+        }
+        Console.WriteLine("[S33b] [WTS-SUA-PHAN] Đối chứng S33: không sửa A → huỷ lần nhận B bị chặn");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI"); await s.ReceiveAsync(LastTx(d), 2, 0, null, Gc);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var tB = LastTx(d); await s.ReceiveAsync(tB, 1, 0, null, Gc);
+            var ridB = d.HandoverTransactions.List.Single(t => t.HandoverTxId == tB).Receives.Single().ReceiveId;
+            var a = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 1, Gc, catId: 2);
+            var b = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 1, 0, Gc);
+            var c = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == c.LogId).NgCaseId;
+            await s.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1, 0, "NC2", null, Gc);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 1, 0, null, Kcs);
+            await Task.Delay(10);
+            await s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "MOI", false, "MOI"); var rr = await s.ReceiveAsync(LastTx(d), 1, 0, null, Gc);
+            var ed = (Ok: true, Err: (string?)null, LogId: (long?)null);   // KHÔNG sửa   // A: 1 NG đổi thành OK (2 chiếc vẫn làm lúc gốc)
+            Ok(a.Ok && b.Ok && c.Ok && x.Ok && rr.Ok && ed.Ok, "S33b dựng xong", $"{a.Err}|{b.Err}|{c.Err}|{x.Error}|{rr.Error}|{ed.Err}");
+            var v = await s.VoidReceiveAsync(ridB, "huy thu", 1, new[] { "KHO", "GC" });
+            Ok(!v.Ok, "Huỷ lần nhận 1 chiếc (trước lúc hàng sửa về NC1 đã làm 3 chiếc từ 3 chiếc nhận) phải bị chặn theo thời gian", v.Error ?? "(huỷ được)");
+        }
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }
