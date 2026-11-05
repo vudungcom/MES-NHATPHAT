@@ -16,6 +16,9 @@ public static class Core
 {
     // ── cấu hình chạy ─────────────────────────────────────────────────────────
     public static int Workers = 6, Seconds = 60, PoCount = 4, Phoi = 100;
+    // [DONGTHOI-MES 2026-11-05] Hùng 05/11 10:28: dữ liệu DB MES đang là test → cho chạy thẳng trên MES khi có cờ --mes (trạm: lệnh dongthoi).
+    //   Không cờ thì y như cũ: chỉ MES_TEST. Dữ liệu thử: phiếu KH ghi chú "T1 SqlDongThoi <giờ>", PO "T1-<giờ>-…", Part "T1-PM-<giờ>" (Ngưng SX).
+    public static bool AllowMes;
     static int _admin, _customer, _partId;
     static string _stamp = "";
     static readonly List<string> Report = new();
@@ -203,9 +206,10 @@ public static class Core
         {
             var dbName = await Host.DbNameAsync(w.Db);
             Log($"DB đang kết nối: {dbName} · READ_COMMITTED_SNAPSHOT = {(await Host.RcsiAsync(w.Db) switch { 1 => "BẬT", 0 => "tắt", _ => "?" })}");   // [READ-DL] để so kết quả trước / sau khi bật
-            if (!string.Equals(dbName, "MES_TEST", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(dbName, "MES_TEST", StringComparison.OrdinalIgnoreCase)
+                && !(AllowMes && string.Equals(dbName, "MES", StringComparison.OrdinalIgnoreCase)))   // [DONGTHOI-MES]
             {
-                Log("DỪNG: chỉ chạy trên DB MES_TEST (bản sao). Sửa chuỗi kết nối Database=MES_TEST rồi chạy lại. Không ghi gì.");
+                Log("DỪNG: chỉ chạy trên DB MES_TEST (bản sao), hoặc DB MES khi chạy với cờ --mes (Hùng duyệt 05/11). Không ghi gì.");
                 return 2;
             }
             _admin = await w.Db.Users.AsNoTracking().Where(u => u.IsActive && u.Group != null && u.Group.IsActive && u.Group.GroupCode == "ADMIN")
@@ -281,6 +285,67 @@ public static class Core
         }));
         Ok(r4.Count(x => x.Ok) == 1, "Đúng 1 người lưu được, người kia bị báo máy trùng giờ / đang có người lưu",
            $"lưu được {r4.Count(x => x.Ok)} · {string.Join(" | ", r4.Where(x => !x.Ok).Select(x => Short(x.Err ?? "")))}");
+
+        // ── S6 [GC-SUA-TAI-CHO][K4 05/11] nhiều người KCS CÙNG LÚC xác nhận 1 Kết quả sửa (Kho sửa 4 phôi lỗi) → tổng xác nhận đúng 4 ───
+        Log("\n[S6] 8 người KCS CÙNG LÚC xác nhận đạt 1 chiếc của cùng 1 Kết quả sửa còn chờ 4 chiếc");
+        {
+            int kcsUser = 0, cat = 0;
+            await using (var w = new Who())
+            {
+                foreach (var u in await w.Db.Users.AsNoTracking().Where(u => u.IsActive && u.UserId != _admin).OrderBy(u => u.UserId).Select(u => u.UserId).ToListAsync())
+                    if (await PermCheck.CanEditAsync(w.Db, u, MES.Web.Constants.SystemPermissions.HandoverKcs)) { kcsUser = u; break; }
+                cat = await w.Db.NgCategories.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.NgCategoryId).Select(x => x.NgCategoryId).FirstOrDefaultAsync();
+            }
+            if (kcsUser == 0 || cat == 0) Log($"  BỎ QUA S6: {(kcsUser == 0 ? "không có tài khoản khác ADMIN thử có quyền Sửa Giao nhận KCS" : "DS Lỗi chưa có loại lỗi đang dùng")}");
+            else
+            {
+                var p6 = (await NewPosAsync(1, 20, "S6"))[0];
+                long rep6;
+                await using (var w = new Who())
+                {
+                    var g = await w.Gn.IssueByCellAsync(p6.Id, "KHO", "GC", 20, _admin, "MOI", false, "MOI", null, "NC01", "T1 S6");
+                    var tx = await w.Db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == p6.Id && t.SourceReceiveId == null).OrderByDescending(t => t.HandoverTxId).Select(t => t.HandoverTxId).FirstAsync();
+                    var r = await w.Gn.ReceiveAsync(tx, 16, 4, null, _admin, null, null, null, cat);   // 4 phôi lỗi lúc nhận → phiếu trả tự lập
+                    w.Db.ChangeTracker.Clear();
+                    var back = await w.Db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == p6.Id && t.SourceReceiveId != null).Select(t => new { t.HandoverTxId, t.NgCaseId }).FirstAsync();
+                    var rb = await w.Gn.ReceiveAsync(back.HandoverTxId, 0, 4, null, _admin);   // Kho nhận lại 4 vào ô Hàng lỗi
+                    var k = await w.Gn.CreateRepairResultAsync(p6.Id, "KHO", HandoverCell.Loi, back.NgCaseId, 4, 0, null, "T1 S6 Kho sua", _admin);
+                    if (!g.Ok || !r.Ok || !rb.Ok || !k.Ok) throw new Exception($"S6 chuẩn bị lỗi: {g.Error} | {r.Error} | {rb.Error} | {k.Error}");
+                    w.Db.ChangeTracker.Clear();
+                    rep6 = await w.Db.HandoverRepairResults.AsNoTracking().Where(x => x.KhPlanDetailId == p6.Id).Select(x => x.HandoverRepairResultId).FirstAsync();
+                }
+                var r6 = await AllAtOnce(8, (i, w) => Run("KCS xác nhận cùng lúc", async () => { var x = await w.Gn.ConfirmRepairAsync(rep6, 1, 0, "T1 S6", kcsUser); return (x.Ok, x.Error); }));
+                decimal done6;
+                await using (var w = new Who())
+                    done6 = (await w.Db.HandoverRepairChecks.AsNoTracking().Where(c => c.HandoverRepairResultId == rep6 && !c.IsVoided).Select(c => c.QtyOk + c.QtyNg).ToListAsync()).Sum();
+                Ok(r6.Count(x => x.Ok) == 4 && done6 == 4, "Đúng 4 lần xác nhận lưu được (= số chờ), tổng đã xác nhận 4 — không vượt",
+                   $"lưu được {r6.Count(x => x.Ok)} · DB {done6} · {string.Join(" | ", r6.Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
+                var e6 = await CheckPoAsync(p6.Id, p6.Po);
+                Ok(e6 == null, "Sổ PO S6 cân, không ô âm sau xác nhận", e6);
+            }
+        }
+
+        // ── S7 [PM-NC-DUP-THAP K4 05/11] nhiều người CÙNG LÚC thêm cùng 1 mã chính vào Part Master (khoá MES_PM_STEPS_<Part>) → đúng 1 dòng ───
+        Log("\n[S7] 6 người CÙNG LÚC thêm Đóng gói P9 (và 6 người thêm KCS K9) vào cùng 1 Part");
+        {
+            int pid7;
+            await using (var w = new Who())
+            {
+                var pm = new PartMaster { PartNo = $"T1-PM-{_stamp}", PartName = "T1 SqlDongThoi (thử khoá Part Master)", CustomerId = _customer, IsActive = true, IsObsolete = true, CreatedAt = DateTime.Now };
+                w.Db.PartMasters.Add(pm); await w.Db.SaveChangesAsync(); pid7 = pm.PartId; w.Db.ChangeTracker.Clear();
+            }
+            async Task<(bool Ok, string? Err)> Try(Func<Task> f) { try { await f(); return (true, null); } catch (PartStepCodeException ex) { return (false, ex.Message); } catch (InvalidOperationException ex) when (ex.Message.Contains("Đang có người khác lưu quy trình")) { return (false, ex.Message); } }
+            var a7 = await AllAtOnce(6, (i, w) => Run("Part Master thêm P9 cùng lúc", () => Try(() => new PartPackagingService(w.Db).AddAsync(pid7, new PartPackagingStep { NC = "P9", StepName = "T1 " + i, StandardTime = 1 }, _admin, "T1 thu dong thoi"))));
+            var b7 = await AllAtOnce(6, (i, w) => Run("Part Master thêm K9 cùng lúc", () => Try(() => new PartInspectionService(w.Db).AddAsync(pid7, new PartInspectionStep { NC = "K9", StepName = "T1 " + i, StandardTime = 1 }, _admin, "T1 thu dong thoi"))));
+            int nP9, nK9;
+            await using (var w = new Who())
+            {
+                nP9 = await w.Db.PartPackagingSteps.AsNoTracking().CountAsync(x => x.PartId == pid7 && x.IsActive && !x.IsBackup && x.NC == "P9");
+                nK9 = await w.Db.PartInspectionSteps.AsNoTracking().CountAsync(x => x.PartId == pid7 && x.IsActive && !x.IsBackup && x.NC == "K9");
+            }
+            Ok(a7.Count(x => x.Ok) == 1 && nP9 == 1 && b7.Count(x => x.Ok) == 1 && nK9 == 1, "Đúng 1 người thêm được mỗi mã, DB đúng 1 dòng chính P9 / K9 (người sau bị báo trùng / đang có người lưu)",
+               $"P9: lưu {a7.Count(x => x.Ok)} · DB {nP9} · K9: lưu {b7.Count(x => x.Ok)} · DB {nK9} · {string.Join(" | ", a7.Concat(b7).Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
+        }
 
         // ── S5: hỗn hợp ngẫu nhiên nhiều người × nhiều PO trong N giây ──────────
         Log($"\n[S5] {Workers} người làm ngẫu nhiên {Seconds} giây trên {PoCount} PO (giao, nhận, WTS NC01 / NC02 / Taro, giao GC → HTSP, huỷ nhận, huỷ phiếu, xoá WTS)");

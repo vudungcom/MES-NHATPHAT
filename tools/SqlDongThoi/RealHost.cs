@@ -50,6 +50,7 @@ public static class Host
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--cs" && i + 1 < args.Length) _cs = args[++i];
+            else if (args[i] == "--mes") Core.AllowMes = true;   // [DONGTHOI-MES 2026-11-05] cho chạy trên DB MES (Hùng duyệt)
             else rest.Add(args[i]);
         }
         if (_cs.Length == 0) _cs = Environment.GetEnvironmentVariable("MES_TEST_CS") ?? ReadAppSettings() ?? "";

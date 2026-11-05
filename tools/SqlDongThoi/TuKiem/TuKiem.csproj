@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="../../../MES.Web/Data/Entities/*.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverService.cs" />
+    <Compile Include="../../../MES.Web/Services/HandoverService.KetQuaSua.cs;../../../MES.Web/Services/WorkMinutesService.cs;../../../MES.Web/Services/UserService.cs;../../../MES.Web/Services/LedgerQtyText.cs;../../../MES.Web/Services/PasswordHasher.cs" />   <!-- [DONGTHOI-MES 05/11] file mới từ 01/11 (TuKiem trước đó không biên dịch được) -->
     <Compile Include="../../../MES.Web/Services/HandoverLedgerService.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverChangeNotifier.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverWhy.cs" />
@@ -17,6 +18,7 @@
     <Compile Include="../../../MES.Web/Services/NgCaseService.cs" />
     <Compile Include="../../../MES.Web/Services/KhPlanService.cs" />
     <Compile Include="../../../MES.Web/Services/KhoVatLieuService.cs" />
+    <Compile Include="../../../MES.Web/Services/PartPackagingService.cs;../../../MES.Web/Services/PartInspectionService.cs;../../../MES.Web/Services/PartStepGuard.cs;../../../MES.Web/Services/PartMasterPermissionHelper.cs" />   <!-- [DONGTHOI-MES] S7 -->
     <Compile Include="../../../MES.Web/Constants/*.cs" />
     <Compile Include="../../GiaoNhanFuzz/EfStub.cs;../../GiaoNhanFuzz/EfCompile2.cs;../../GiaoNhanFuzz/AppDbContextStub.cs;../../GiaoNhanFuzz/XlStub.cs;../../GiaoNhanFuzz/UserSvcStub.cs;../../GiaoNhanFuzz/FuzzPerm.cs" />
     <Compile Include="../Core.cs" />
