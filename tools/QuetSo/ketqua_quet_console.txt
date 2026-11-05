@@ -1,7 +1,14 @@
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\AuthGuard.cs(33,34): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\AuthGuard.cs(35,50): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\DoGa\Index.razor(582,127): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\SoDoToChuc\Index.razor(328,75): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\Thietbi\Index.razor(244,119): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\StandardWtsTaskService.cs(154,45): warning CS8604: Possible null reference argument for parameter 'code' in 'Task<string?> StandardWtsTaskService.UsedWhereAsync(string code)'. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\WtsReportService.cs(41,35): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 05/11/2026 14:08:01
-PO: 61 · dòng WTS còn hiệu lực: 311 (dòng cũ chưa có QtyOk: 0)
+QUÉT SỔ (chỉ đọc) · DB MES · 06/11/2026 04:02:59
+PO: 69 · dòng WTS còn hiệu lực: 494 (dòng cũ chưa có QtyOk: 0)
 PO có vấn đề: 23 · tổng phát hiện: 82
   CANH_BAO_SO          8 dòng · 4 PO
   MA_TRUNG            50 dòng · 20 PO
@@ -116,4 +123,4 @@ PO có vấn đề: 23 · tổng phát hiện: 82
 
 ── Part Master: 0 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1105140801.txt
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1106040259.txt
