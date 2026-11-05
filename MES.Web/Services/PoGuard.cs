@@ -24,9 +24,10 @@ namespace MES.Web.Services
             public int     BaoLoiAll    { get; set; }   // [E3-NGREP 2026-10-28] phiếu báo hàng lỗi sau nhận (HandoverNgReports)
             public int     BaoLoiActive { get; set; }
             public int     GioSuaAll    { get; set; }   // [ML16-DOCS 2026-10-30] dòng "Việc không ra sản phẩm" ghi PO này (kể cả đã huỷ) — có khoá ngoại, không xoá PO được
+            public int     KqSuaAll     { get; set; }   // [GC-SUA-TAI-CHO 2026-11-04] Kết quả sửa ghi PO này (kể cả đã huỷ) — có khoá ngoại, không xoá / tách PO được
 
             /// <summary>Có bất kỳ chứng từ nào (kể cả đã huỷ) — dùng cho Xoá / Tách PO.</summary>
-            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0 || GioSuaAll > 0;   // [E3-NGREP] + báo lỗi · [ML16-DOCS] + giờ việc không ra SP
+            public bool HasAny => PhoiNhan > 0 || WtsAll > 0 || PhieuAll > 0 || BaoLoiAll > 0 || GioSuaAll > 0 || KqSuaAll > 0;   // [E3-NGREP] + báo lỗi · [ML16-DOCS] + giờ việc không ra SP · [GC-SUA-TAI-CHO] + Kết quả sửa
             // [PG-DEAD 2026-11-03] Đã bỏ HasActiveFlow (WtsActive / PhieuActive / BaoLoiActive > 0): không còn chỗ nào gọi (tìm cả MES.Web + tools 03/11;
             //   Cập nhật quy trình nay theo K6-NOTRUN ở KhPlanService). Các số đếm Active vẫn dùng cho Text(). Nguồn: CLAUDE (PHAT-HIEN-0211 mục 3)
 
@@ -38,6 +39,7 @@ namespace MES.Web.Services
                 if (PhieuAll > 0) parts.Add($"{PhieuAll} phiếu giao nhận" + (PhieuAll != PhieuActive ? $" ({PhieuAll - PhieuActive} phiếu đã huỷ)" : ""));
                 if (BaoLoiAll > 0) parts.Add($"{BaoLoiAll} phiếu báo hàng lỗi" + (BaoLoiAll != BaoLoiActive ? $" ({BaoLoiAll - BaoLoiActive} phiếu đã huỷ)" : ""));   // [E3-NGREP]
                 if (GioSuaAll > 0) parts.Add($"{GioSuaAll} dòng việc không ra sản phẩm (giờ sửa) ghi PO này");   // [ML16-DOCS]
+                if (KqSuaAll > 0) parts.Add($"{KqSuaAll} Kết quả sửa");   // [GC-SUA-TAI-CHO]
                 return string.Join(", ", parts);
             }
         }
@@ -59,6 +61,7 @@ namespace MES.Web.Services
                 BaoLoiAll    = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId),                 // [E3-NGREP]
                 BaoLoiActive = await db.HandoverNgReports.CountAsync(b => b.KhPlanDetailId == khPlanDetailId && !b.IsVoided),
                 GioSuaAll    = await db.WorkerActivityLogs.CountAsync(a => a.RefKhPlanDetailId == khPlanDetailId),   // [ML16-DOCS]
+                KqSuaAll     = await db.HandoverRepairResults.CountAsync(r => r.KhPlanDetailId == khPlanDetailId),   // [GC-SUA-TAI-CHO]
             };
         }
 

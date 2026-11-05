@@ -180,6 +180,8 @@
             "TRA"   => $"{g} nhận lại {h.Qty:0.##} (NG lúc {o} nhận)",
             "HUY"   => $"{g} huỷ {h.Qty:0.##}",
             "KHACH" => $"{g} trả khách {h.Qty:0.##}",
+            "SUA"   => $"{g} sửa tại nhóm {h.Qty:0.##}" + cell + " (đạt chờ KCS xác nhận)",   // [GC-SUA-TAI-CHO]
+            "XN"    => $"KCS xác nhận hàng {g} sửa {h.Qty:0.##}",                              // [GC-SUA-TAI-CHO]
             _ => h.Kind
         };
     }

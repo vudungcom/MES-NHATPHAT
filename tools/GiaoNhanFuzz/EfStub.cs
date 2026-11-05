@@ -130,7 +130,7 @@ namespace Microsoft.EntityFrameworkCore
             //   Dòng thêm mang số PO (KhPlanDetailId / PlanDetailId) thì PO đó phải nằm trong tập PO giao dịch đã khoá.
             if (DatabaseFacade.TrackPoLock)
                 foreach (var s0 in _sets.Values)
-                    if (s0.Pending.Count > 0 && s0.ElementType.Name is "HandoverTransaction" or "HandoverReceive" or "HandoverNgReport" or "NgCase" or "WtsProductionLog" or "KhoVatLieu")
+                    if (s0.Pending.Count > 0 && s0.ElementType.Name is "HandoverTransaction" or "HandoverReceive" or "HandoverNgReport" or "NgCase" or "WtsProductionLog" or "KhoVatLieu" or "HandoverRepairResult")
                         foreach (var e0 in s0.Pending)
                         {
                             var pp = s0.ElementType.GetProperty("KhPlanDetailId") ?? s0.ElementType.GetProperty("PlanDetailId");

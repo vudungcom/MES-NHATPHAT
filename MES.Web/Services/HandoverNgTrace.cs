@@ -150,6 +150,8 @@ namespace MES.Web.Services
             "DONG"         => "Huỷ phần chưa nhận",
             "HUY"          => "Huỷ hàng lỗi",
             "TRA_KHACH"    => "Trả khách hàng lỗi",
+            "KQ_SUA"       => "Kết quả sửa (đạt chờ KCS)",   // [GC-SUA-TAI-CHO]
+            "KCS_XN"       => "KCS xác nhận hàng sửa",       // [GC-SUA-TAI-CHO]
             _ => t
         };
 
@@ -181,6 +183,8 @@ namespace MES.Web.Services
             "TRA"   => "NG lúc nhận, trả bên giao",
             "HUY"   => "Huỷ",
             "KHACH" => "Trả khách",
+            "SUA"   => "Kết quả sửa",     // [GC-SUA-TAI-CHO] nhóm sửa tại chỗ ghi đạt (chờ KCS) / không đạt
+            "XN"    => "KCS xác nhận",    // [GC-SUA-TAI-CHO]
             _ => h.Kind
         };
 
@@ -242,6 +246,10 @@ namespace MES.Web.Services
             foreach (var w in inp.Wts) wtsById[w.Id] = w;
             var repById = new Dictionary<long, InNgRep>();
             foreach (var b in inp.NgReps) repById[b.Id] = b;
+            // [GC-SUA-TAI-CHO] Kết quả sửa + lần KCS xác nhận
+            var kqById = new Dictionary<long, InRepair>();
+            var xnById = new Dictionary<long, (InRepair r, InRepairCheck c)>();
+            foreach (var r in inp.Repairs) { kqById[r.Id] = r; foreach (var c in r.Checks) xnById[c.Id] = (r, c); }
             // Phiếu trả hàng lỗi phần mềm tự lập khi bên nhận đếm NG (giống Compute)
             var autoBySrc = new Dictionary<long, InTx>();
             foreach (var a in inp.Txs.Where(x => x.SourceReceiveId != null && !HandoverPurpose.IsOut(x.Purpose)))
@@ -329,6 +337,26 @@ namespace MES.Web.Services
                             e.Reason = t.NgReason; e.Who = who;
                             transit += q0;
                         }
+                        break;
+                    }
+                    case "KQSUA":   // [GC-SUA-TAI-CHO] hàng lỗi vẫn ở nhóm: phần đạt chờ KCS = đang chuyển; không đạt sang ô Hàng lỗi (vẫn đang giữ)
+                    {
+                        if (!kqById.TryGetValue(st.RefId, out var r)) { tr.Problems.Add($"B{st.Index}: không thấy Kết quả sửa #{st.RefId}"); break; }
+                        var e = New("KQ_SUA", r.Group, null, r.Pass + r.Fail, $"Kết quả sửa #{r.Id}", r.Id,
+                            $"{GL(r.Group)} sửa {r.Pass + r.Fail:0.##} (ô {HandoverCell.Label(r.Cell)}): đạt {r.Pass:0.##} chờ KCS xác nhận"
+                            + (r.Fail != 0 ? $", không đạt {r.Fail:0.##} → ô Hàng lỗi" : ""));
+                        e.Who = r.Who; e.Code = r.ToNC;
+                        transit += r.Pass;
+                        break;
+                    }
+                    case "XNSUA":   // [GC-SUA-TAI-CHO] KCS xác nhận: đạt = đã xử lý (về hàng tốt), loại = về ô Hàng lỗi nhóm sửa
+                    {
+                        if (!xnById.TryGetValue(st.RefId, out var rc)) { tr.Problems.Add($"B{st.Index}: không thấy KCS xác nhận #{st.RefId}"); break; }
+                        var (r, c) = rc;
+                        var e = New("KCS_XN", r.Group, "KCS", c.Ok + c.Ng, $"Kết quả sửa #{r.Id}", c.Id,
+                            $"KCS xác nhận hàng {GL(r.Group)} sửa: đạt {c.Ok:0.##} (làm tiếp)" + (c.Ng != 0 ? $", loại {c.Ng:0.##} → ô Hàng lỗi {GL(r.Group)}" : ""));
+                        e.Who = c.Who; e.VeSx = c.Ok; e.Code = r.ToNC;
+                        transit -= c.Ok + c.Ng;
                         break;
                     }
                     case "DONG":
@@ -456,6 +484,7 @@ namespace MES.Web.Services
                 if (t.SourceReceiveId != null && !recvIds.Contains(t.SourceReceiveId.Value)) continue;
                 transitDoc += Math.Max(0, t.Issued - t.Receives.Sum(x => x.Ok + x.Ng));
             }
+            transitDoc += inp.Repairs.Sum(r => r.Waiting);   // [GC-SUA-TAI-CHO] hàng sửa đạt chờ KCS = đang chuyển
             if (transitDoc != transit) tr.Problems.Add($"Đang chuyển theo từng bước {transit:0.##} ≠ theo phiếu chưa nhận {transitDoc:0.##}");
             if (tr.PhatSinh - tr.VeSx - tr.DaHuy - tr.TraKhach != tr.DangGiu + tr.DangChuyen)
                 tr.Problems.Add($"Cân hàng lỗi: phát sinh {tr.PhatSinh:0.##} − xử lý xong {tr.VeSx:0.##} − huỷ {tr.DaHuy:0.##} − trả khách {tr.TraKhach:0.##} ≠ đang giữ {tr.DangGiu:0.##} + đang chuyển {tr.DangChuyen:0.##}");

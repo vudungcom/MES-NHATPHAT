@@ -17,6 +17,8 @@ namespace MES.Web.Data
         public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
         public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
         public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER]
+        public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO]
+        public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO]
         public DbSet<NgCategory> NgCategories => Set<NgCategory>();                   // [VULOI]
         public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
         public DbSet<NgCase> NgCases => Set<NgCase>();
@@ -74,6 +76,7 @@ namespace MES.Web.Data
             // tạo sẵn mọi set để snapshot giao dịch luôn thấy đủ bảng
             _ = Customers; _ = Users; _ = KhPlans; _ = KhPlanDetails; _ = KhoVatLieus; _ = KhoVatLieuChangeLogs; _ = KhPlanDetailChangeLogs; _ = WtsProductionLogs;
             _ = NgCategories; _ = NgCategoryChangeLogs; _ = NgCases;   // [VULOI]
+            _ = HandoverRepairResults; _ = HandoverRepairChecks;   // [GC-SUA-TAI-CHO]
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;
             _ = KhPlanRouteSnapshotPackaging; _ = KhPlanRouteSnapshotMachineExclude;
@@ -93,6 +96,20 @@ namespace MES.Web.Data
             {
                 if (txById.TryGetValue(r.HandoverTxId, out var t)) { r.Transaction = t; t.Receives.Add(r); }
                 if (users.TryGetValue(r.ReceivedBy, out var u)) r.ReceivedByUser = u;
+            }
+            // [GC-SUA-TAI-CHO] Kết quả sửa ↔ lần KCS xác nhận, người ghi / xác nhận / huỷ (EF tự nối)
+            var repById = HandoverRepairResults.List.ToDictionary(r => r.HandoverRepairResultId);
+            foreach (var r in HandoverRepairResults.List)
+            {
+                r.Checks = new List<HandoverRepairCheck>();
+                if (users.TryGetValue(r.CreatedBy, out var u)) r.CreatedByUser = u;
+                r.VoidedByUser = r.VoidedBy != null && users.TryGetValue(r.VoidedBy.Value, out var vu) ? vu : null;
+            }
+            foreach (var c in HandoverRepairChecks.List)
+            {
+                if (repById.TryGetValue(c.HandoverRepairResultId, out var r)) { c.RepairResult = r; r.Checks.Add(c); }
+                if (users.TryGetValue(c.CheckedBy, out var u)) c.CheckedByUser = u;
+                c.VoidedByUser = c.VoidedBy != null && users.TryGetValue(c.VoidedBy.Value, out var vu) ? vu : null;
             }
             var dets = KhPlanDetails.List.ToDictionary(d => d.KhPlanDetailId);   // [WTS-SVC] WtsSaveService.CheckMachineOverlapAsync Include(l => l.KhPlanDetail) đọc số PO
             foreach (var w in WtsProductionLogs.List)

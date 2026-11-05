@@ -1027,6 +1027,8 @@ public class KhPlanService
             return "PO đã có WTS (đã bắt đầu làm)";
         if (await _db.HandoverNgReports.AnyAsync(b => b.KhPlanDetailId == khPlanDetailId && !b.IsVoided))
             return "PO đã có phiếu báo hàng lỗi";
+        if (await _db.HandoverRepairResults.AnyAsync(r => r.KhPlanDetailId == khPlanDetailId && !r.IsVoided))   // [GC-SUA-TAI-CHO]
+            return "PO đã có Kết quả sửa";
         var txs = await _db.HandoverTransactions.AsNoTracking()
             .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided)
             .Select(t => new { t.HandoverTxId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.FromCell, t.ToCell, t.ToNC, t.FromNC })

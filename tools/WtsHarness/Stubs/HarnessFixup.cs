@@ -39,6 +39,21 @@ public static class HarnessFixup
         }
         foreach (var w in db.WorkerActivityLogs.List)
             if (users.TryGetValue(w.WorkerId, out var u)) w.Worker = u;
+        // [GC-SUA-TAI-CHO] Kết quả sửa ↔ lần KCS xác nhận, người ghi / xác nhận / huỷ
+        var repById = db.HandoverRepairResults.List.ToDictionary(r => r.HandoverRepairResultId);
+        foreach (var r in db.HandoverRepairResults.List)
+        {
+            r.Checks = new List<HandoverRepairCheck>();
+            if (users.TryGetValue(r.CreatedBy, out var u)) r.CreatedByUser = u;
+            r.VoidedByUser = r.VoidedBy != null && users.TryGetValue(r.VoidedBy.Value, out var vu) ? vu : null;
+            if (dets.TryGetValue(r.KhPlanDetailId, out var d)) r.KhPlanDetail = d;
+        }
+        foreach (var c in db.HandoverRepairChecks.List)
+        {
+            if (repById.TryGetValue(c.HandoverRepairResultId, out var r)) { c.RepairResult = r; r.Checks.Add(c); }
+            if (users.TryGetValue(c.CheckedBy, out var u)) c.CheckedByUser = u;
+            c.VoidedByUser = c.VoidedBy != null && users.TryGetValue(c.VoidedBy.Value, out var vu) ? vu : null;
+        }
         var snapTim = db.KhPlanRouteSnapshotMachiningTimings.List.GroupBy(t => t.MachiningSnapshotId).ToDictionary(g => g.Key, g => g.ToList());
         foreach (var m in db.KhPlanRouteSnapshotMachining.List)
             if (snapTim.TryGetValue(m.SnapshotId, out var ts))

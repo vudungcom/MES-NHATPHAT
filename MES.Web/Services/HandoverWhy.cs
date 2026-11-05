@@ -90,6 +90,20 @@ namespace MES.Web.Services
         {
             s.NgReps = s.NgReps.Where(b => b.Id != id).ToList();
         };
+        /// <summary>[GC-SUA-TAI-CHO] Huỷ 1 Kết quả sửa (cùng mọi lần KCS xác nhận của nó — service chỉ cho huỷ khi đã huỷ hết xác nhận).</summary>
+        public static Action<LedgerInput> OpVoidRepair(long id) => s =>
+        {
+            s.Repairs = s.Repairs.Where(r => r.Id != id).ToList();
+        };
+        /// <summary>[GC-SUA-TAI-CHO] Huỷ 1 lần KCS xác nhận hàng sửa.</summary>
+        public static Action<LedgerInput> OpVoidRepairCheck(long checkId) => s =>
+        {
+            s.Repairs = s.Repairs.Select(r =>
+            {
+                if (!r.Checks.Any(c => c.Id == checkId)) return r;
+                var c2 = r.CloneRep(); c2.Checks.RemoveAll(c => c.Id == checkId); return c2;
+            }).ToList();
+        };
         /// <summary>[GN-NG-AFTER] Thêm 1 phiếu báo lỗi (Id âm) — dùng khi lưu báo lỗi bị chặn.</summary>
         public static Action<LedgerInput> OpAddNgRep(InNgRep b) => s =>
         {
@@ -105,6 +119,7 @@ namespace MES.Web.Services
             Txs = i.Txs.Select(t => t.CloneTx()).ToList(),
             Wts = new List<InWts>(i.Wts),
             NgReps = new List<InNgRep>(i.NgReps),   // [GN-NG-AFTER]
+            Repairs = i.Repairs.Select(r => r.CloneRep()).ToList(),   // [GC-SUA-TAI-CHO]
             CaseInfo = i.CaseInfo,                  // [VULOI] nhãn vụ lỗi (không góp số)
         };
 
@@ -152,6 +167,8 @@ namespace MES.Web.Services
                         "WTS"    => OpWts(new[] { d.Id }),
                         "NHAN"   => OpVoidReceive(d.Id),
                         "BAOLOI" => OpVoidNgRep(d.Id),   // [GN-NG-AFTER]
+                        "KQSUA"  => OpVoidRepair(d.Id),        // [GC-SUA-TAI-CHO]
+                        "XNSUA"  => OpVoidRepairCheck(d.Id),   // [GC-SUA-TAI-CHO]
                         _        => OpVoidIssue(d.Id),
                     };
                     var sub = new HashSet<string>(skip) { Key(d) };
@@ -177,7 +194,8 @@ namespace MES.Web.Services
             _         => w.ProcessGroup + " " + (w.WtsCode ?? w.NC)
         };
 
-        static string Key(WhyStep d) => (d.Kind == "WTS" ? "W:" : d.Kind == "NHAN" ? "R:" : d.Kind == "BAOLOI" ? "B:" : "T:") + d.Id;   // [GN-NG-AFTER] + B:
+        static string Key(WhyStep d) => (d.Kind == "WTS" ? "W:" : d.Kind == "NHAN" ? "R:" : d.Kind == "BAOLOI" ? "B:"
+                                         : d.Kind == "KQSUA" ? "K:" : d.Kind == "XNSUA" ? "X:" : "T:") + d.Id;   // [GN-NG-AFTER] + B:; [GC-SUA-TAI-CHO] + K: / X:
 
         /// <summary>Chứng từ mới nhất đang trừ vào một trong các ô sắp âm (đã quy về việc làm được ngay: phiếu có lần nhận → lần nhận mới nhất trước).</summary>
         static WhyStep? NextCandidate(LedgerInput s, LedgerRow row, List<string> badKeys, HashSet<string> skip)
@@ -198,6 +216,22 @@ namespace MES.Web.Services
                     c.Add(new WhyStep { Kind = "BAOLOI", Id = b.Id, At = b.At,
                         Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
                              + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" });
+            }
+            // [GC-SUA-TAI-CHO] Kết quả sửa đang lấy hàng từ ô Hàng sửa / Hàng lỗi: có lần KCS xác nhận → huỷ lần mới nhất trước
+            void AddRepair(Func<InRepair, bool> f)
+            {
+                foreach (var r in s.Repairs.Where(r => r.Id > 0 && f(r)))
+                {
+                    var c0 = r.Checks.Where(x => x.Id > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
+                    if (c0 != null)
+                        c.Add(new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
+                            Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
+                                 + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" });
+                    else
+                        c.Add(new WhyStep { Kind = "KQSUA", Id = r.Id, TxId = r.Id, At = r.At,
+                            Text = $"Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · ô {HandoverCell.Label(r.Cell)} · đạt {r.Pass:0.##}"
+                                 + (r.Fail > 0 ? $" không đạt {r.Fail:0.##}" : "") + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · {r.At:dd/MM HH:mm}" });
+                }
             }
             void AddTx(Func<InTx, bool> f)
             {
@@ -221,6 +255,7 @@ namespace MES.Web.Services
                         AddTx(t => t.From == vg && t.NgCaseId == want && t.SourceReceiveId == null
                                    && (HandoverPurpose.IsOut(t.Purpose)
                                        || (t.Purpose != HandoverPurpose.NgReturn && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == vcell)));
+                        AddRepair(r => r.Group == vg && r.NgCaseId == want && r.Cell == vcell);   // [GC-SUA-TAI-CHO]
                     }
                     continue;
                 }
@@ -240,9 +275,11 @@ namespace MES.Web.Services
                         case "LoiGiu":
                             AddTx(t => t.From == g && t.Purpose != HandoverPurpose.NgReturn && t.SourceReceiveId == null
                                        && (HandoverPurpose.IsOut(t.Purpose) || HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == HandoverCell.Loi));
+                            AddRepair(r => r.Group == g && r.Cell == HandoverCell.Loi);   // [GC-SUA-TAI-CHO]
                             break;
                         case "SuaGiu":
                             AddTx(t => t.From == g && t.FromCell == HandoverCell.Sua);
+                            AddRepair(r => r.Group == g && r.Cell == HandoverCell.Sua);   // [GC-SUA-TAI-CHO]
                             break;
                         case "LamHoGiu":
                             AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
@@ -342,6 +379,8 @@ namespace MES.Web.Services
                         "WTS"  => "nếu nhập sai thì xoá / sửa dòng này ở trang WTS",
                         "NHAN" => "nếu nhận sai thì huỷ lần nhận này ở Lịch sử phiếu",
                         "BAOLOI" => "nếu báo sai thì huỷ phiếu báo lỗi này ở Lịch sử phiếu",   // [GN-NG-AFTER]
+                        "KQSUA"  => "nếu ghi sai thì huỷ Kết quả sửa này ở Lịch sử phiếu",              // [GC-SUA-TAI-CHO]
+                        "XNSUA"  => "nếu xác nhận sai thì huỷ lần KCS xác nhận này ở Lịch sử phiếu",     // [GC-SUA-TAI-CHO]
                         _      => "nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu",
                     };
                     lines.Add($"Kiểm tra {st.Text}{who} — {hint}");

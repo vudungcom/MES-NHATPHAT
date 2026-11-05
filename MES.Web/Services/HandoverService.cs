@@ -214,7 +214,7 @@ namespace MES.Web.Services
 
     // ── Service ───────────────────────────────────────────────────────────
 
-    public class HandoverService
+    public partial class HandoverService   // [GC-SUA-TAI-CHO] partial: phần Kết quả sửa ở HandoverService.KetQuaSua.cs
 
     {
 
@@ -469,6 +469,14 @@ namespace MES.Web.Services
 
                 .ToListAsync();
 
+            // [GC-SUA-TAI-CHO 2026-11-04] Nhóm sửa tại chỗ: hàng KCS xác nhận đạt vào Chưa làm của nhóm mà không có lần nhận OK nào (rà độc lập T4)
+            var rep = await _db.HandoverRepairChecks
+                .Where(c => !c.IsVoided && c.QtyOk > 0 && !c.RepairResult.IsVoided
+                         && c.RepairResult.GroupCode == groupCode && ids.Contains(c.RepairResult.KhPlanDetailId))
+                .Select(c => c.RepairResult.KhPlanDetailId)
+                .Distinct()
+                .ToListAsync();
+            result.AddRange(rep);
             return result.ToHashSet();
 
         }

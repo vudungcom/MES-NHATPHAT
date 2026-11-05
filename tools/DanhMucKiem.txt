@@ -88,6 +88,7 @@ ISO-FIX | iso:I1; iso:I2 | không Serializable, ghi sau khoá MES_PO_
 VOID-PERM | loi:L7 | quyền huỷ đọc ma trận DB
 N3-TONC | chuoi:C14 | phiếu tới GC: NC nhận phải là NC thường trong snapshot
 N3-FIRST | chuoi:C14; chuoi:C16; quet:Q3; nang; harness:drive_n3f.py | NC đầu GC là máy loại trừ → dòng ảo @VAO "Nhận vào (chưa qua NC)": giao theo NC từ đây, NC sau chỉ nhận hàng trả về; chặn WTS / nhận vào @VAO (04/11)
+GC-SUA-TAI-CHO | sua:S1; sua:S2; sua:S3; sua:S4; sua:S5; sua:S6; sua:S7; sua:S8; sua:S9; sua:S10; sua:S11; sua:S12; sua:S13; sua:S14; sua:S15; sua:S16; nang; harness:drive_sua.py | Kết quả sửa (chứng từ nội bộ nhóm sửa, ô Hàng sửa / Hàng lỗi, 1 vụ) + KCS xác nhận (khác người ghi); đạt → Chờ KCS → Hàng lỗi đã xử lý, không đạt / KCS loại → ô Hàng lỗi cùng vụ; khách chốt 04/11 14:53, Hùng chốt 16:11
 D10-DBLCLICK | giaodien | chặn bấm đúp Giao / Nhận / Báo lỗi / Huỷ
 D11-KHO-SL | kh:A15; harness:drive_kho.py:K4 | cột "SL đã giao" trang Kho chỉ đếm phiếu Hàng mới (Kho gửi sửa phôi lỗi không tính)
 

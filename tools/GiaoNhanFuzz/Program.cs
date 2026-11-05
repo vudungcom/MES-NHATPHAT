@@ -16,6 +16,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Console.WriteLine($"CPU
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
+if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
@@ -142,12 +143,15 @@ for (int po = startPo; po < startPo + poCount; po++)
     var led = new HandoverLedgerService(db);
     var kho = new KhoVatLieuService(db, new UserService(null));
 
+    var kq = int.TryParse(Environment.GetEnvironmentVariable("KQSUA"), out var kqw) ? kqw : 1;   // [GC-SUA-TAI-CHO] hệ số trọng số 4 thao tác Kết quả sửa
     for (int op = 0; op < opsPerPo; op++)
     {
         var row = (await led.GetLedgerForDetailAsync(1))!;
         var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : smart ? 0 : 6),
             ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4), ("wtsedit", int.TryParse(Environment.GetEnvironmentVariable("WTSEDIT"), out var we) ? we : 5),
-            ("pmedit", chuoi ? 5 : 0));   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
+            ("pmedit", chuoi ? 5 : 0),
+            // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận + huỷ. KQSUA=0 tắt (chạy lại seed cũ trước gói này ra đúng dãy thao tác cũ).
+            ("kqsua", kq * 8), ("xnsua", kq * 7), ("vkqsua", kq * 3), ("vxnsua", kq * 3));   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
         string desc = kind;
         bool ok = false;
         try
@@ -467,10 +471,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                             Inc("rej.wtsedit.cap"); continue;
                         }
                     }
-                    // 30%: đổi loại lỗi của vụ cũ (chỉ được khi vụ chưa đi phiếu nào)
+                    // 30%: đổi loại lỗi của vụ cũ (chỉ được khi vụ chưa đi phiếu nào / chưa có Kết quả sửa)
                     if (keep != null && rnd.NextDouble() < 0.3)
                     {
                         var moved = db.HandoverTransactions.List.Any(t => !t.IsVoided && t.NgCaseId == keep);
+                        moved |= db.HandoverRepairResults.List.Any(r => !r.IsVoided && r.NgCaseId == keep);   // [GC-SUA-TAI-CHO] vụ có Kết quả sửa cũng không đổi loại lỗi
                         var cs0 = db.NgCases.List.First(x => x.NgCaseId == keep);
                         var newCat = cs0.NgCategoryId % 5 + 1;
                         var err = await NgCaseService.ChangeCaseCategoryAsync(db, keep.Value, newCat);
@@ -534,6 +539,105 @@ for (int po = startPo; po < startPo + poCount; po++)
                     }
                     if (over && ok) fails.Add($"[Báo lỗi vượt trần] PO{po} op{op} {desc}");
                     if (!over && !ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    break;
+                }
+                case "kqsua":   // [GC-SUA-TAI-CHO] ghi Kết quả sửa (hàm thật CreateRepairResultAsync)
+                {
+                    var cands = new List<(string g, string cell, long id)>();
+                    foreach (var g0 in groups) foreach (var c0 in new[] { HandoverCell.Sua, HandoverCell.Loi })
+                        foreach (var cs0 in row.CasesHeldAt(g0, c0)) cands.Add((g0, c0, cs0.Id));
+                    if (!cands.Any()) { Inc("skip.kqsua"); continue; }
+                    var (g, cell, cid) = cands[rnd.Next(cands.Count)];
+                    long? caseId = cid == 0 ? null : cid;
+                    var cap = HandoverLedgerService.RepairCap(row, g, cell, caseId).Max;
+                    if (cap <= 0) { Inc("skip.kqsua"); continue; }
+                    var over = rnd.NextDouble() < 0.1;
+                    var tot = over ? cap + 1 : rnd.Next(1, (int)Math.Max(1, cap) + 1);
+                    if (!over && tot > cap) tot = cap;
+                    var fail = cell == HandoverCell.Sua ? rnd.Next(0, (int)tot + 1) : 0;
+                    var pass = tot - fail;
+                    string? toNc = null;
+                    if (g == "GC" && pass > 0)
+                    {
+                        var ncOk = row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => x.Code).ToList();
+                        if (ncOk.Any() && rnd.NextDouble() < 0.7) toNc = ncOk[rnd.Next(ncOk.Count)];
+                    }
+                    desc = $"kqsua {g} {cell} vu={cid} dat={pass} khong={fail} cap={cap} nc={toNc}";
+                    var deny = await svc.CreateRepairResultAsync(1, g, cell, caseId, Math.Min(pass, cap), 0, toNc, null, 99);
+                    if (deny.Ok) fails.Add($"[Quyền Kết quả sửa] PO{po} op{op} người ngoài nhóm ghi được cho {g}");
+                    // Chỉ Gia công lưu NC làm tiếp (nhóm khác máy chủ bỏ ToNC → lệnh thử sẽ GHI THẬT, ăn mất trần của lệnh chính — kiem máy Hùng 04/11 22:08 seed 31975 / 31976)
+                    if (g == "GC" && rnd.NextDouble() < 0.05)
+                    {
+                        var badNc = await svc.CreateRepairResultAsync(1, g, cell, caseId, Math.Max(1, Math.Min(pass, cap)), 0, rnd.NextDouble() < 0.5 ? HandoverLedgerService.VaoCode : "NCX", null, Uid(g));
+                        if (badNc.Ok) fails.Add($"[Kết quả sửa NC lạ] PO{po} op{op} {desc}");
+                    }
+                    if (cell == HandoverCell.Loi && rnd.NextDouble() < 0.05)
+                    {
+                        var fl = await svc.CreateRepairResultAsync(1, g, cell, caseId, 0, 1, null, null, Uid(g));
+                        if (fl.Ok) fails.Add($"[Kết quả sửa không đạt từ ô Hàng lỗi] PO{po} op{op} {desc}");
+                    }
+                    var res = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, toNc, null, Uid(g));
+                    ok = res.Ok; if (!ok) Inc("rej.kqsua");
+                    if (over && ok) fails.Add($"[Kết quả sửa vượt trần] PO{po} op{op} {desc}");
+                    // [GC-SUA-TAI-CHO] rà độc lập V3: vượt trần (theo vụ) phải bị TRẦN chặn ("tối đa"), không được để K5 chặn thay (Workflow OFF thì K5 không chặn)
+                    if (over && !ok && !res.Error.Contains("tối đa")) fails.Add($"[Kết quả sửa vượt trần không bị trần chặn] PO{po} op{op} {desc}: {res.Error}");
+                    if (!over && !ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[Kết quả sửa trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    break;
+                }
+                case "xnsua":   // [GC-SUA-TAI-CHO] KCS xác nhận (hàm thật ConfirmRepairAsync)
+                {
+                    var reps = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == 1 && !r.IsVoided).ToList();
+                    var wait = reps.Select(r => (r, w: r.QtyPass - db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == r.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk + c.QtyNg)))
+                                   .Where(x => x.w > 0).ToList();
+                    if (!wait.Any()) { Inc("skip.xnsua"); continue; }
+                    var (rp, w) = wait[rnd.Next(wait.Count)];
+                    var over = rnd.NextDouble() < 0.1;
+                    var tot = over ? w + 1 : rnd.Next(1, (int)w + 1);
+                    var ngq = rnd.NextDouble() < 0.35 ? rnd.Next(0, (int)tot + 1) : 0;
+                    var okq = tot - ngq;
+                    var checker = Uid("KCS") == rp.CreatedBy ? 6 : Uid("KCS");
+                    desc = $"xnsua #{rp.HandoverRepairResultId} {rp.GroupCode} dat={okq} loai={ngq} cho={w}";
+                    var self = await svc.ConfirmRepairAsync(rp.HandoverRepairResultId, Math.Min(okq, w), 0, null, rp.CreatedBy);
+                    if (self.Ok) fails.Add($"[KCS tự xác nhận hàng mình ghi] PO{po} op{op} {desc}");
+                    var res = await svc.ConfirmRepairAsync(rp.HandoverRepairResultId, okq, ngq, null, checker);
+                    ok = res.Ok; if (!ok) Inc("rej.xnsua");
+                    if (over && ok) fails.Add($"[KCS xác nhận vượt số chờ] PO{po} op{op} {desc}");
+                    if (over && !ok && !res.Error.Contains("Còn chờ")) fails.Add($"[KCS xác nhận vượt số chờ không bị trần chặn] PO{po} op{op} {desc}: {res.Error}");
+                    if (!over && !ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[KCS xác nhận trong số chờ bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    break;
+                }
+                case "vkqsua":   // [GC-SUA-TAI-CHO] huỷ Kết quả sửa
+                {
+                    var reps = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == 1 && !r.IsVoided).ToList();
+                    if (!reps.Any()) { Inc("skip.vkqsua"); continue; }
+                    var rp = reps[rnd.Next(reps.Count)];
+                    var rid = rp.HandoverRepairResultId; var by = rp.CreatedBy;
+                    var hasChk = db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && !c.IsVoided);
+                    desc = $"vkqsua #{rid} {rp.GroupCode} {rp.SourceCell} dat={rp.QtyPass} khong={rp.QtyFail} coXN={hasChk}";
+                    var deny = await svc.VoidRepairResultAsync(rid, "huy thu", 99);
+                    if (deny.Ok) fails.Add($"[Quyền huỷ Kết quả sửa] PO{po} op{op} {desc}");
+                    var res = await svc.VoidRepairResultAsync(rid, "huy thu", by);
+                    ok = res.Ok; if (!ok) Inc("rej.vkqsua");
+                    if (hasChk && ok) fails.Add($"[Huỷ Kết quả sửa còn lần KCS xác nhận] PO{po} op{op} {desc}");
+                    if (!ok && res.Error.StartsWith("Không lưu"))
+                        await WhyCheck(db, svc, led, HandoverWhy.OpVoidRepair(rid), new HashSet<string> { "K:" + rid },
+                            async () => (await svc.VoidRepairResultAsync(rid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error);
+                    break;
+                }
+                case "vxnsua":   // [GC-SUA-TAI-CHO] huỷ lần KCS xác nhận
+                {
+                    var chks = db.HandoverRepairChecks.List.Where(c => !c.IsVoided && c.RepairResult != null && c.RepairResult.KhPlanDetailId == 1).ToList();
+                    if (!chks.Any()) { Inc("skip.vxnsua"); continue; }
+                    var ck = chks[rnd.Next(chks.Count)];
+                    var cid = ck.HandoverRepairCheckId; var by = ck.CheckedBy;
+                    desc = $"vxnsua #{cid} (KQ #{ck.HandoverRepairResultId} {ck.RepairResult.GroupCode}) dat={ck.QtyOk} loai={ck.QtyNg}";
+                    var deny = await svc.VoidRepairCheckAsync(cid, "huy thu", 99);
+                    if (deny.Ok) fails.Add($"[Quyền huỷ KCS xác nhận] PO{po} op{op} {desc}");
+                    var res = await svc.VoidRepairCheckAsync(cid, "huy thu", by);
+                    ok = res.Ok; if (!ok) Inc("rej.vxnsua");
+                    if (!ok && res.Error.StartsWith("Không lưu"))
+                        await WhyCheck(db, svc, led, HandoverWhy.OpVoidRepairCheck(cid), new HashSet<string> { "X:" + cid },
+                            async () => (await svc.VoidRepairCheckAsync(cid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error);
                     break;
                 }
                 case "vngrep":   // [GN-NG-AFTER] huỷ báo lỗi
@@ -731,6 +835,19 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     foreach (var G in row.Groups.Values)
         foreach (var w in G.Warnings.Where(w => w.Contains("WTS nhập vượt")))
         { checks++; F("WTS vượt hàng thật", w); }
+    // [GC-SUA-TAI-CHO] Cảnh báo tự kiểm của sổ (Tồn ≠ tổng các phần — gồm Chờ KCS; vụ ≠ ô) không bao giờ được hiện
+    foreach (var G in row.Groups.Values)
+        foreach (var w in G.Warnings.Where(w => w.Contains("báo lại để kiểm")))
+        { checks++; F("Sổ tự kiểm lệch", w); }
+    // [GC-SUA-TAI-CHO] Chờ KCS của mỗi nhóm = Σ (đạt − đã xác nhận) các Kết quả sửa còn hiệu lực (đếm thẳng từ bảng, độc lập với sổ)
+    foreach (var G in row.Groups.Values)
+    {
+        checks++;
+        var ck = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == 1 && !r.IsVoided && r.GroupCode == G.Code)
+            .Sum(r => r.QtyPass - db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == r.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk + c.QtyNg));
+        if (ck != G.ChoKcs) F("Chờ KCS ≠ bảng", $"{G.Code}: sổ {G.ChoKcs} · bảng {ck}");
+        if (G.ChoKcs < 0) F("Chờ KCS âm", $"{G.Code}: {G.ChoKcs}");
+    }
     // [WTS-PANEL-QTY 2026-10-31] Số hiện trên bảng quy trình trang WTS + tab KH (LedgerQtyText) = cộng OK / NG đúng từng dòng WTS
     //   (gồm dòng NC / mã dự phòng gộp vào mã chính), cùng công thức OK dòng cũ (QtyDone − NG) mà 2 trang dùng cho cột OK / NG.
     {
@@ -782,7 +899,9 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         {
             checks++;
             var L = last.G(G.Code);
-            if (L.Ton != G.Ton || L.ChuaLam != G.ChuaLam || L.ConGiao != G.ConGiao || L.LoiGiu != G.LoiGiu || L.SuaGiu != G.SuaGiu)
+            if (L.Ton != G.Ton || L.ChuaLam != G.ChuaLam || L.ConGiao != G.ConGiao || L.LoiGiu != G.LoiGiu || L.SuaGiu != G.SuaGiu
+                || L.ChoKcs != G.ChoKcs   // [GC-SUA-TAI-CHO] rà độc lập T7: + Chờ KCS + chờ từng NC / mã CV
+                || string.Join(",", L.Steps.Select(x => x.Pg + x.Code + "=" + x.Waiting)) != string.Join(",", G.Steps.Select(x => x.Pg + x.Code + "=" + x.Waiting)))
                 F("Dòng B cuối ≠ sổ", $"{G.Code}: Tồn {L.Ton}/{G.Ton} Chưa {L.ChuaLam}/{G.ChuaLam} ĐãChưaGiao {L.ConGiao}/{G.ConGiao} Lỗi {L.LoiGiu}/{G.LoiGiu} Sửa {L.SuaGiu}/{G.SuaGiu}");
         }
         checks++;
@@ -978,7 +1097,8 @@ async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService 
             var b = HandoverLedgerService.Compute(input); var a2 = (await led.GetInputForDetailAsync(1))!; opFn(a2);
             Console.WriteLine("BAD KEYS: " + string.Join(", ", HandoverLedgerService.NewNegativeKeys(b, HandoverLedgerService.Compute(a2))));
             foreach (var t in db.HandoverTransactions.List) Console.WriteLine($"   tx#{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} {t.FromCell}->{t.ToCell} q={t.QtyIssued} st={t.Status} void={t.IsVoided} fnc={t.FromNC} tnc={t.ToNC} src={t.SourceReceiveId} rec={string.Join(",", t.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}");
-            foreach (var w in db.WtsProductionLogs.List) Console.WriteLine($"   wts#{w.WtsLogId} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.QtyOk}/{w.QtyNg} void={w.IsVoided}");
+            foreach (var w in db.WtsProductionLogs.List) Console.WriteLine($"   wts#{w.WtsLogId} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.QtyOk}/{w.QtyNg} void={w.IsVoided} vu={w.NgCaseId}");
+            foreach (var r in db.HandoverRepairResults.List) Console.WriteLine($"   kqsua#{r.HandoverRepairResultId} {r.GroupCode} {r.SourceCell} vu={r.NgCaseId} dat={r.QtyPass} khong={r.QtyFail} nc={r.ToNC} void={r.IsVoided} xn={string.Join(",", db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == r.HandoverRepairResultId).Select(c => $"#{c.HandoverRepairCheckId}:{c.QtyOk}/{c.QtyNg}{(c.IsVoided ? "x" : "")}"))}");   // [GC-SUA-TAI-CHO]
         }
         return;
     }
@@ -991,6 +1111,8 @@ async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService 
         if (st.Kind == "WTS") okStep = await WtsVoid(db, led, st.Id);
         else if (st.Kind == "NHAN") { var r = await svc.VoidReceiveAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }
         else if (st.Kind == "BAOLOI") { var r = await svc.VoidNgReportAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }   // [GN-NG-AFTER]
+        else if (st.Kind == "KQSUA") { var r = await svc.VoidRepairResultAsync(st.Id, "goi y", 1); okStep = r.Ok; lastErr = r.Error; }   // [GC-SUA-TAI-CHO]
+        else if (st.Kind == "XNSUA") { var r = await svc.VoidRepairCheckAsync(st.Id, "goi y", 1); okStep = r.Ok; lastErr = r.Error; }   // [GC-SUA-TAI-CHO]
         else { var r = await svc.VoidIssueAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }
         if (!okStep) { fails.Add($"[GN-WHY bước gợi ý bị chặn] PO{po} op{opIdx} {desc} → {st.Kind} #{st.Id}: {lastErr}"); return; }
         Inc("why.step");

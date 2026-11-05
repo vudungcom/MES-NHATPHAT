@@ -227,7 +227,9 @@ namespace MES.Web.Services
             var cs = await db.NgCases.AsNoTracking().FirstOrDefaultAsync(x => x.NgCaseId == caseId);
             if (cs == null || cs.NgCategoryId == newCategoryId) return null;
             var moved = await db.HandoverTransactions.AsNoTracking().AnyAsync(t => t.NgCaseId == caseId && !t.IsVoided);
-            return moved ? $"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách — không đổi loại lỗi được (huỷ các phiếu đó trước, hoặc giữ loại lỗi cũ)." : null;
+            // [GC-SUA-TAI-CHO 2026-11-04] Vụ đã có Kết quả sửa (KCS xác nhận theo loại lỗi đó) cũng không đổi loại lỗi được (rà độc lập V1)
+            if (!moved) moved = await db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == caseId && !r.IsVoided);
+            return moved ? $"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — không đổi loại lỗi được (huỷ các chứng từ đó trước, hoặc giữ loại lỗi cũ)." : null;
         }
 
         /// <summary>[VULOI] Loại lỗi dùng khi lưu: phải đang dùng; riêng vụ cũ giữ nguyên loại lỗi thì loại đã ngưng vẫn giữ được.</summary>

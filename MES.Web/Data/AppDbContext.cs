@@ -90,6 +90,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<HandoverTransaction> HandoverTransactions => Set<HandoverTransaction>();
     public DbSet<HandoverReceive> HandoverReceives => Set<HandoverReceive>();
     public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận
+    public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO] Kết quả sửa (chứng từ nội bộ nhóm)
+    public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO] KCS xác nhận hàng sửa
     // [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi (nhãn, không lưu số)
     public DbSet<NgCategory> NgCategories => Set<NgCategory>();
     public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
@@ -647,6 +649,49 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasForeignKey(x => x.CreatedBy)
             .OnDelete(DeleteBehavior.NoAction);
         mb.Entity<HandoverNgReport>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [GC-SUA-TAI-CHO 2026-11-04] Kết quả sửa + KCS xác nhận (SQL 08_KQSUA_HandoverRepair.sql) ====
+        mb.Entity<HandoverRepairResult>().ToTable("HandoverRepairResults");
+        mb.Entity<HandoverRepairResult>().HasKey(x => x.HandoverRepairResultId);
+        mb.Entity<HandoverRepairResult>().Property(x => x.GroupCode).HasMaxLength(20).IsRequired();
+        mb.Entity<HandoverRepairResult>().Property(x => x.SourceCell).HasMaxLength(10).IsRequired();
+        mb.Entity<HandoverRepairResult>().Property(x => x.QtyPass).HasPrecision(10, 2);
+        mb.Entity<HandoverRepairResult>().Property(x => x.QtyFail).HasPrecision(10, 2);
+        mb.Entity<HandoverRepairResult>().Property(x => x.ToNC).HasMaxLength(20);
+        mb.Entity<HandoverRepairResult>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverRepairResult>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverRepairResult>().HasIndex(x => new { x.KhPlanDetailId, x.IsVoided });
+        mb.Entity<HandoverRepairResult>()
+            .HasOne(x => x.KhPlanDetail).WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverRepairResult>()
+            .HasOne(x => x.CreatedByUser).WithMany()
+            .HasForeignKey(x => x.CreatedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverRepairResult>()
+            .HasOne(x => x.VoidedByUser).WithMany()
+            .HasForeignKey(x => x.VoidedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverRepairCheck>().ToTable("HandoverRepairChecks");
+        mb.Entity<HandoverRepairCheck>().HasKey(x => x.HandoverRepairCheckId);
+        mb.Entity<HandoverRepairCheck>().Property(x => x.QtyOk).HasPrecision(10, 2);
+        mb.Entity<HandoverRepairCheck>().Property(x => x.QtyNg).HasPrecision(10, 2);
+        mb.Entity<HandoverRepairCheck>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverRepairCheck>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverRepairCheck>().HasIndex(x => new { x.HandoverRepairResultId, x.IsVoided });
+        mb.Entity<HandoverRepairCheck>()
+            .HasOne(x => x.RepairResult).WithMany(r => r.Checks)
+            .HasForeignKey(x => x.HandoverRepairResultId)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverRepairCheck>()
+            .HasOne(x => x.CheckedByUser).WithMany()
+            .HasForeignKey(x => x.CheckedBy)
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverRepairCheck>()
             .HasOne(x => x.VoidedByUser).WithMany()
             .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);

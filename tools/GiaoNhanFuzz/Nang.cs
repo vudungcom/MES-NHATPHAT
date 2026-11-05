@@ -42,7 +42,7 @@ public static class Nang
         //   KHUC = số PO mỗi khúc (mặc định tự tính để có ≈ 4 khúc / nhân).
         int khuc = int.TryParse(Environment.GetEnvironmentVariable("KHUC"), out var kq) && kq > 0 ? kq
                  : Math.Max(1, (int)Math.Ceiling(po * Configs.Length / (double)(par * 4)));
-        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std" };   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
+        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std", "sua" };   // [GC-SUA-TAI-CHO] sua   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
         Console.WriteLine($"KIỂM NẶNG: {scens.Length} kịch bản + {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · {Environment.ProcessorCount} nhân · chạy cùng lúc {par} tiến trình · mỗi khúc {khuc} PO");
         Console.WriteLine($"Kết quả từng khúc: {dir}");
         var sw = Stopwatch.StartNew();

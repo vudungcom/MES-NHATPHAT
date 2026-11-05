@@ -305,7 +305,10 @@ namespace MES.Web.Services
         /// <summary>[GN-RECV-NG] Master list mục 37: hàng trên phiếu đã giao TỚI nhóm này nhưng nhóm chưa bấm Nhận.
         /// Tính vào Tồn của bên nhận (khách yêu cầu), KHÔNG tính vào Chưa làm (chưa đếm thì chưa được nhập WTS — L2, L3).</summary>
         public decimal ChoNhan  { get; set; }
-        /// <summary>Tồn = ΣNhận − ΣGiao + Chờ nhận. [GN-RECV-NG] trước: ΣNhận − ΣGiao (hàng chờ nhận nằm ngoài, ở dòng Đang giao).</summary>
+        /// <summary>[GC-SUA-TAI-CHO 2026-11-04] Hàng nhóm đã sửa xong (Kết quả sửa — đạt), chờ KCS xác nhận. Tính vào Tồn, KHÔNG vào Chưa làm
+        /// (chưa xác nhận đạt thì chưa nhập WTS được). KCS xác nhận đạt → ô Hàng lỗi đã xử lý; KCS loại → ô Hàng lỗi của nhóm.</summary>
+        public decimal ChoKcs   { get; set; }
+        /// <summary>Tồn = ΣNhận − ΣGiao + Chờ nhận + Chờ KCS. [GN-RECV-NG] trước: ΣNhận − ΣGiao (hàng chờ nhận nằm ngoài, ở dòng Đang giao). [GC-SUA-TAI-CHO] + Chờ KCS.</summary>
         public decimal Ton      { get; set; }
 
         /// <summary>Phần trong Chưa làm do trả lỗi (NG đầu) — dùng cho diễn giải.</summary>
@@ -481,6 +484,8 @@ namespace MES.Web.Services
         public List<InCodeStep> CodeSteps { get; set; } = new();
         /// <summary>[GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận (chưa huỷ).</summary>
         public List<InNgRep> NgReps { get; set; } = new();
+        /// <summary>[GC-SUA-TAI-CHO] Kết quả sửa (chưa huỷ) + các lần KCS xác nhận (chưa huỷ).</summary>
+        public List<InRepair> Repairs { get; set; } = new();
         /// <summary>[VULOI] Nhãn vụ lỗi của PO (loại lỗi, nơi phát hiện…) — chỉ để hiện, không góp vào số.</summary>
         public Dictionary<long, InCase> CaseInfo { get; set; } = new();
     }
@@ -495,6 +500,33 @@ namespace MES.Web.Services
                           long? NgCaseId = null);   // [VULOI] vụ lỗi sinh ra từ phiếu báo lỗi
 
     public record InPhoi(long Id, DateTime? At, decimal Qty, string? Note);
+
+    /// <summary>[GC-SUA-TAI-CHO 2026-11-04] 1 lần KCS xác nhận hàng sửa: Ok = đạt → ô Hàng lỗi đã xử lý nhóm sửa; Ng = KCS loại → ô Hàng lỗi nhóm sửa (cùng vụ).</summary>
+    public record InRepairCheck(long Id, DateTime At, decimal Ok, decimal Ng, string? Who);
+
+    /// <summary>
+    /// [GC-SUA-TAI-CHO 2026-11-04] "Kết quả sửa" — chứng từ nội bộ của nhóm sửa (Group = nhóm đang giữ hàng).
+    /// Cell = SUA | LOI (ô lấy hàng); Pass = đạt (chờ KCS); Fail = không đạt (chỉ SUA → ô Hàng lỗi cùng vụ); ToNC = Gia công: NC làm tiếp hàng đạt.
+    /// </summary>
+    public class InRepair
+    {
+        public long    Id       { get; set; }
+        public DateTime At      { get; set; }
+        public string  Group    { get; set; } = "";
+        public string  Cell     { get; set; } = "";
+        public long?   NgCaseId { get; set; }
+        public decimal Pass     { get; set; }
+        public decimal Fail     { get; set; }
+        public string? ToNC     { get; set; }
+        public string? Who      { get; set; }
+        public string? Notes    { get; set; }
+        public List<InRepairCheck> Checks { get; set; } = new();
+        public decimal Checked  => Checks.Sum(c => c.Ok + c.Ng);
+        /// <summary>Số đạt còn chờ KCS xác nhận.</summary>
+        public decimal Waiting  => Pass - Checked;
+        /// <summary>[GN-WHY] Bản sao để tính thử (danh sách lần xác nhận riêng).</summary>
+        public InRepair CloneRep() { var c = (InRepair)MemberwiseClone(); c.Checks = new List<InRepairCheck>(Checks); return c; }
+    }
     public record InRecv(long Id, DateTime At, decimal Ok, decimal Ng, string? NgReason,
                          string? Cell = null, string? CellReason = null,   // [GN-CELL2] ô bên nhận thực nhận + lý do đổi
                          long? NgCaseId = null);   // [VULOI] vụ lỗi sinh ra ở lần nhận (phiếu chưa mang vụ)
@@ -667,6 +699,26 @@ namespace MES.Web.Services
                 })
                 .AsNoTracking().ToListAsync();
 
+            // [GC-SUA-TAI-CHO 2026-11-04] Kết quả sửa (chưa huỷ) + lần KCS xác nhận (chưa huỷ)
+            var reps = await _db.HandoverRepairResults
+                .Where(x => ids.Contains(x.KhPlanDetailId) && !x.IsVoided)
+                .Select(x => new
+                {
+                    x.HandoverRepairResultId, x.KhPlanDetailId, x.CreatedAt, x.GroupCode, x.SourceCell, x.NgCaseId, x.QtyPass, x.QtyFail, x.ToNC, x.Notes,
+                    Who = x.CreatedByUser != null ? (x.CreatedByUser.FullName ?? x.CreatedByUser.Username) : null
+                })
+                .AsNoTracking().ToListAsync();
+            var repChecks = reps.Any()
+                ? await _db.HandoverRepairChecks
+                    .Where(c => ids.Contains(c.RepairResult.KhPlanDetailId) && !c.RepairResult.IsVoided && !c.IsVoided)   // lọc theo PO (rà độc lập T6: danh sách id dài khi tải cả năm)
+                    .Select(c => new
+                    {
+                        c.HandoverRepairCheckId, c.HandoverRepairResultId, c.CheckedAt, c.QtyOk, c.QtyNg,
+                        Who = c.CheckedByUser != null ? (c.CheckedByUser.FullName ?? c.CheckedByUser.Username) : null
+                    })
+                    .AsNoTracking().ToListAsync()
+                : new();
+
             // [VULOI 2026-10-28] Nhãn vụ lỗi (loại lỗi, nơi phát hiện) — chỉ để hiện, số của vụ tính từ chứng từ ở Compute
             var ngCases = await _db.NgCases.Where(x => ids.Contains(x.KhPlanDetailId))
                 .Select(x => new { x.NgCaseId, x.KhPlanDetailId, x.NgCategoryId, x.OriginKind, x.DetectGroupCode, x.DetectNC, x.CauseGroupCode, x.CreatedAt, x.CreatedBy })
@@ -749,6 +801,13 @@ namespace MES.Web.Services
                     NgReps = ngReps.Where(b => b.KhPlanDetailId == id).Select(b => new InNgRep(   // [GN-NG-AFTER]
                         b.HandoverNgReportId, b.CreatedAt, b.GroupCode, b.SourceCell, b.NC, b.Qty, b.Origin, b.CauseGroupCode,
                         NgCaseService.LiveReason(b.NgCaseId, b.NgReason, caseLbl), b.Who, b.NgCaseId)).ToList(),   // [VULOI] + vụ lỗi; [DS-LOI-LIVE] tên lỗi hiện tại
+                    Repairs = reps.Where(x => x.KhPlanDetailId == id).Select(x => new InRepair   // [GC-SUA-TAI-CHO]
+                    {
+                        Id = x.HandoverRepairResultId, At = x.CreatedAt, Group = x.GroupCode, Cell = x.SourceCell, NgCaseId = x.NgCaseId,
+                        Pass = x.QtyPass, Fail = x.QtyFail, ToNC = x.ToNC, Who = x.Who, Notes = x.Notes,
+                        Checks = repChecks.Where(c => c.HandoverRepairResultId == x.HandoverRepairResultId)
+                                          .Select(c => new InRepairCheck(c.HandoverRepairCheckId, c.CheckedAt, c.QtyOk, c.QtyNg, c.Who)).ToList()
+                    }).ToList(),
                     CaseInfo = ngCases.Where(x => x.KhPlanDetailId == id).ToDictionary(x => x.NgCaseId, x =>   // [VULOI]
                     {
                         var cat = ngCats.FirstOrDefault(k => k.NgCategoryId == x.NgCategoryId);
@@ -1210,6 +1269,61 @@ namespace MES.Web.Services
                 if (nr.Origin == HandoverNgSource.DauVao) Add(nr.Group, "blDau", "Báo lỗi đầu vào", nr.Qty, BDoc());
             }
 
+            // ── [GC-SUA-TAI-CHO 2026-11-04] Kết quả sửa (chứng từ nội bộ nhóm sửa) + KCS xác nhận ──
+            //   Dùng đúng cột Excel đang có của nhóm sửa X (không ô nào tự cộng riêng):
+            //   Lập, lấy từ ô Hàng sửa  : Giao·Hàng sửa + (đạt + không đạt); Nhận·Hàng lỗi + không đạt; Chờ KCS + đạt
+            //   Lập, lấy từ ô Hàng lỗi  : Giao·Hàng lỗi (tự sửa) + đạt; Chờ KCS + đạt (không đạt = 0: hàng vẫn ở ô Hàng lỗi)
+            //   KCS xác nhận            : Nhận·Hàng lỗi đã xử lý + đạt (GC: vào NC đã chọn); Nhận·Hàng lỗi + KCS loại; Chờ KCS − (đạt + loại)
+            //   Tồn X = Tổng Nhận − Tổng Giao + Chờ nhận + Chờ KCS → mỗi chứng từ cộng trừ = 0, Cân PO không đổi (L6).
+            //   Vụ lỗi: không sinh vụ mới; đạt chờ KCS = đang chuyển; KCS đạt = đã xử lý ở X; không đạt / KCS loại = giữ ô Hàng lỗi X.
+            foreach (var rp in inp.Repairs.OrderBy(x => x.At).ThenBy(x => x.Id))
+            {
+                if (!row.Groups.ContainsKey(rp.Group)) continue;
+                var g = rp.Group;
+                var csR = Cs(rp.NgCaseId);
+                var rDoc = new LedgerDoc { Kind = "KQSUA", RefId = rp.Id, At = rp.At, Text = RepairText(rp) };
+                LedgerDoc RD() => new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text };
+                if (rp.Cell == HandoverCell.Sua)
+                {
+                    var take = rp.Pass + rp.Fail;
+                    Add(g, "gs", "Giao Hàng sửa (sửa hộ xong, trả nơi phát hiện)", take, RD());
+                    suaRunning[g] -= take;
+                    CHold(csR, g, HandoverCell.Sua, -take, rp.At);
+                    if (rp.Fail != 0)
+                    {
+                        Add(g, "nl", "Nhận Hàng lỗi", rp.Fail, RD());
+                        CHold(csR, g, HandoverCell.Loi, rp.Fail, rp.At); CAdd(csR.NhanLoi, g, rp.Fail);
+                    }
+                }
+                else
+                {
+                    Add(g, "glTu", "Giao Hàng lỗi (tự sửa xong, trả nơi phát hiện)", rp.Pass, RD());
+                    CHold(csR, g, HandoverCell.Loi, -rp.Pass, rp.At);
+                }
+                csR.Transit += rp.Pass;
+                CHop(csR, "SUA", g, null, rp.Cell, rp.Pass + rp.Fail, $"Kết quả sửa #{rp.Id}", rp.Id, rp.At);
+                foreach (var c in rp.Checks.OrderBy(x => x.At).ThenBy(x => x.Id))
+                {
+                    var cText = RepairCheckText(rp, c);
+                    if (c.Ok != 0)
+                    {
+                        Add(g, "nx", "Nhận Hàng lỗi đã xử lý", c.Ok, new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText });
+                        if (g == "GC" && !string.IsNullOrEmpty(rp.ToNC))
+                            Add("GC", "in:" + rp.ToNC, "Nhận vào NC " + rp.ToNC, c.Ok, new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText });
+                        CAdd(csR.DaXuLy, g, c.Ok);
+                        if (rp.Cell == HandoverCell.Loi) csR.TuXuLy.Add(g);   // nhóm tự xử lý hàng lỗi của mình — chỉ khi KCS đã xác nhận đạt (rà độc lập T2)
+                    }
+                    if (c.Ng != 0)
+                    {
+                        Add(g, "nl", "Nhận Hàng lỗi", c.Ng, new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText });
+                        CHold(csR, g, HandoverCell.Loi, c.Ng, c.At); CAdd(csR.NhanLoi, g, c.Ng);
+                    }
+                    csR.Transit -= c.Ok + c.Ng;
+                    CHop(csR, "XN", g, "KCS", HandoverCell.Xl, c.Ok + c.Ng, $"KCS xác nhận #{c.Id}", c.Id, c.At);
+                }
+                Add(g, "ckcs", "Chờ KCS xác nhận hàng sửa", rp.Waiting, RD());
+            }
+
             // Đã làm (OK) theo luật từng nhóm
             ComputeGcOk(inp, gcChain, row, T);
             foreach (var g in new[] { "HTSP", "KCS", "PKG" })
@@ -1238,7 +1352,8 @@ namespace MES.Web.Services
                 G.GiaoLoiXl = 0; // [GN-LEDGER] Excel có cột này nhưng cả 3 tình huống không dùng (hàng đã xử lý chỉ NHẬN, không GIAO từ ô này)
                 G.GiaoLamHo = V("ghSend") + V("ghRet");
                 G.ChoNhan   = V("cn");                              // [GN-RECV-NG] mục 37
-                G.Ton       = G.NhanTong - G.GiaoTong + G.ChoNhan;  // [GN-RECV-NG] trước: NhanTong − GiaoTong
+                G.ChoKcs    = V("ckcs");                            // [GC-SUA-TAI-CHO] hàng sửa đạt chờ KCS xác nhận
+                G.Ton       = G.NhanTong - G.GiaoTong + G.ChoNhan + G.ChoKcs;  // [GN-RECV-NG] trước: NhanTong − GiaoTong; [GC-SUA-TAI-CHO] + Chờ KCS
                 G.NgCuoi    = V("ngc");
                 G.NgDau     = V("glTra") + V("blDau");   // [GN-NG-AFTER] + báo lỗi đầu vào phát hiện sau khi nhận
 
@@ -1297,7 +1412,7 @@ namespace MES.Web.Services
                     var e = new LedgerExplain
                     {
                         // [GN-RECV-NG] mục 37: + Chờ nhận
-                        Title = $"{G.Label} · Tồn", Formula = "Tổng Nhận − Tổng Giao + Chờ nhận", Rule = "L6",
+                        Title = $"{G.Label} · Tồn", Formula = "Tổng Nhận − Tổng Giao + Chờ nhận + Chờ KCS", Rule = "L6",   // [GC-SUA-TAI-CHO] + Chờ KCS
                         Note = "Tồn là số hàng thuộc nhóm. Bên giao đã bấm Giao thì hàng tính sang Tồn bên nhận (phần Chờ nhận), dù bên nhận chưa bấm Nhận. "
                              + "Phần Chờ nhận chưa được nhập WTS: phải đếm và bấm Nhận trước (không nằm trong Chưa làm).",
                         Result = G.Ton
@@ -1306,6 +1421,8 @@ namespace MES.Web.Services
                     e.Terms.Add(new LedgerTerm { Label = "Tổng Giao", Value = G.GiaoTong, Sign = -1, Docs = AllDocs(acc, code, "gm", "glTra", "glGui", "glTu", "glChuyen", "glSuaNg", "glLamHo", "glHuy", "glKhach", "gs", "ghSend", "ghRet") });
                     if (G.ChoNhan != 0)
                         e.Terms.Add(new LedgerTerm { Label = "Chờ nhận (đã giao tới, chưa bấm Nhận)", Value = G.ChoNhan, Sign = 1, Docs = AllDocs(acc, code, "cn") });
+                    if (G.ChoKcs != 0)   // [GC-SUA-TAI-CHO]
+                        e.Terms.Add(new LedgerTerm { Label = "Chờ KCS xác nhận hàng sửa", Value = G.ChoKcs, Sign = 1, Docs = AllDocs(acc, code, "ckcs") });
                     G.Explains["Ton"] = e;
 
                     // [GN-RECV-NG] Diễn giải riêng ô Chờ nhận
@@ -1317,6 +1434,16 @@ namespace MES.Web.Services
                     };
                     ce.Terms.Add(Tm("cn", "Phiếu chờ nhận", 1));
                     G.Explains["ChoNhan"] = ce;
+
+                    // [GC-SUA-TAI-CHO] Diễn giải ô Chờ KCS
+                    var ke = new LedgerExplain
+                    {
+                        Title = $"{G.Label} · Chờ KCS xác nhận hàng sửa", Formula = "Σ (số sửa đạt − số KCS đã xác nhận) các Kết quả sửa của nhóm", Rule = "L6",
+                        Note = "Hàng nhóm đã sửa xong, ghi đạt. Đã tính vào Tồn của nhóm. Chưa vào Chưa làm: KCS xác nhận đạt mới nhập WTS được; KCS loại thì về ô Hàng lỗi của nhóm.",
+                        Result = G.ChoKcs
+                    };
+                    ke.Terms.Add(Tm("ckcs", "Kết quả sửa chờ KCS", 1));
+                    G.Explains["ChoKcs"] = ke;
                 }
 
                 if (code == "KHO")
@@ -1445,6 +1572,7 @@ namespace MES.Web.Services
                 // Kiểm tách: Tồn = các phần đang giữ (phát hiện lỗi chương trình nếu lệch) — [GN-CELL] + ô Hàng sửa
                 var parts = code == "KHO" ? G.ConGiao + G.LoiGiu + G.SuaGiu + G.LamHoGiu /* [GN-ROUTE-FREE] */ : G.ChuaLam + G.ConGiao + G.LoiGiu + G.SuaGiu + G.LamHoGiu;
                 parts += G.ChoNhan;   // [GN-RECV-NG] mục 37: Tồn gồm cả phần chờ nhận
+                parts += G.ChoKcs;    // [GC-SUA-TAI-CHO] + hàng sửa chờ KCS xác nhận
                 if (parts != G.Ton) G.Warnings.Add($"{G.Label}: Tồn {G.Ton:0.##} khác tổng các phần {parts:0.##} — báo lại để kiểm");
             }
 
@@ -1589,6 +1717,18 @@ namespace MES.Web.Services
                 GcSteps = inp.GcSteps, CodeSteps = inp.CodeSteps,
                 CaseInfo = inp.CaseInfo,   // [VULOI] nhãn vụ lỗi
             };
+            // [GC-SUA-TAI-CHO] Kết quả sửa: bước "lập" thêm chứng từ (chưa có lần xác nhận), mỗi lần KCS xác nhận là 1 bước
+            var repCopies = new Dictionary<long, InRepair>();
+            InRepair RCopy(InRepair r)
+            {
+                if (!repCopies.TryGetValue(r.Id, out var c))
+                {
+                    c = r.CloneRep(); c.Checks = new List<InRepairCheck>();
+                    repCopies[r.Id] = c;
+                    partial.Repairs.Add(c);
+                }
+                return c;
+            }
             var copies = new Dictionary<long, InTx>();
             InTx Copy(InTx t)
             {
@@ -1703,6 +1843,31 @@ namespace MES.Web.Services
                     Kind = "BAOLOI", Group = b.Group, Cell = HandoverCell.Loi, Qty = b.Qty, RefId = b.Id,
                     Text = NgRepText(b)
                 }));
+            }
+            // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
+            foreach (var r in inp.Repairs)
+            {
+                var rr0 = r;
+                events.Add((r.At, 5, r.Id, () => RCopy(rr0), new LedgerStepRow
+                {
+                    Kind = "KQSUA", Group = r.Group, Cell = r.Cell, Qty = r.Pass + r.Fail, Ng = r.Fail, RefId = r.Id,
+                    Text = $"{GroupLabel(r.Group)} ghi Kết quả sửa {r.Pass + r.Fail:0.##} · ô {HandoverCell.Label(r.Cell)}"
+                           + (r.NgCaseId is long v0 && v0 > 0 ? $" · {NgCaseNo.Format(v0)}" : "")
+                           + $" · đạt {r.Pass:0.##} chờ KCS" + (r.Fail != 0 ? $" · không đạt {r.Fail:0.##} → ô Hàng lỗi" : "")
+                           + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · Kết quả sửa #{r.Id}"
+                }));
+                foreach (var c in r.Checks)
+                {
+                    var cc = c;
+                    events.Add((c.At, 6, c.Id, () => RCopy(rr0).Checks.Add(cc), new LedgerStepRow
+                    {
+                        Kind = "XNSUA", Group = r.Group, Other = "KCS", Cell = HandoverCell.Xl, Qty = c.Ok + c.Ng, Ng = c.Ng, RefId = c.Id,
+                        Text = $"KCS xác nhận hàng {GroupLabel(r.Group)} sửa: đạt {c.Ok:0.##} → ô Hàng lỗi đã xử lý (SP đã OK, nhập WTS được)"
+                               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && c.Ok != 0 ? $" vào {NcText(r.ToNC)}" : "")
+                               + (c.Ng != 0 ? $" · loại {c.Ng:0.##} → ô Hàng lỗi" : "")
+                               + (string.IsNullOrEmpty(c.Who) ? "" : $" · {c.Who}") + $" · Kết quả sửa #{r.Id}"
+                    }));
+                }
             }
             foreach (var w in inp.Wts)
             {
@@ -2071,6 +2236,30 @@ namespace MES.Web.Services
                + (string.IsNullOrEmpty(b.Reason) ? "" : $" · lỗi: {b.Reason}")
                + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}");
 
+        /// <summary>[GC-SUA-TAI-CHO] Chữ 1 Kết quả sửa (diễn giải, dòng B, khung lỗi).</summary>
+        public static string RepairText(InRepair r)
+            => $"Kết quả sửa #{r.Id} · {GroupLabel(r.Group)} sửa {r.Pass + r.Fail:0.##} lấy từ ô {HandoverCell.Label(r.Cell)}"
+               + (r.NgCaseId is long v && v > 0 ? $" · {NgCaseNo.Format(v)}" : "")
+               + $" · đạt {r.Pass:0.##} (chờ KCS)" + (r.Fail != 0 ? $" · không đạt {r.Fail:0.##} → ô Hàng lỗi" : "")
+               + (string.IsNullOrEmpty(r.ToNC) ? "" : $" · làm tiếp {NcText(r.ToNC)}")
+               + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}");
+
+        /// <summary>[GC-SUA-TAI-CHO] Chữ 1 lần KCS xác nhận.</summary>
+        public static string RepairCheckText(InRepair r, InRepairCheck c)
+            => $"KCS xác nhận #{c.Id} (Kết quả sửa #{r.Id} · {GroupLabel(r.Group)}) · đạt {c.Ok:0.##}"
+               + (c.Ng != 0 ? $" · loại {c.Ng:0.##} → ô Hàng lỗi {GroupLabel(r.Group)}" : "")
+               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && c.Ok != 0 ? $" · vào {NcText(r.ToNC)}" : "")
+               + (string.IsNullOrEmpty(c.Who) ? "" : $" · {c.Who}");
+
+        /// <summary>
+        /// [GC-SUA-TAI-CHO] Trần ghi Kết quả sửa: đạt + không đạt ≤ số vụ đó đang giữ ở ô lấy của nhóm (và ≤ ô đó của nhóm).
+        /// Dùng chung trần của phiếu "Hàng sửa / Hàng lỗi → trả nơi phát hiện" (IssueCapCase · RepairReturn) — cùng ô, cùng vụ.
+        /// </summary>
+        public static (decimal Max, LedgerExplain Explain) RepairCap(LedgerRow row, string group, string cell, long? ngCaseId)
+            => cell is HandoverCell.Sua or HandoverCell.Loi
+                ? IssueCapCase(row, group, HandoverPurpose.RepairReturn, null, cell, ngCaseId)
+                : (0, new LedgerExplain { Title = "Ô lấy hàng không hợp lệ (chỉ Hàng sửa / Hàng lỗi)" });
+
         /// <summary>
         /// [GN-NG-AFTER] Trần báo lỗi: số đang có ở ô lấy hàng. Kho: Phôi còn giao. Nhóm SX: Chưa làm (GC: hàng chờ của NC đã chọn,
         /// không vượt Chưa GC) hoặc Đã làm chưa giao.
@@ -2158,6 +2347,7 @@ namespace MES.Web.Services
             {
                 var G = r.G(code);
                 Put(code, "CHO_NHAN", "chờ nhận", G.ChoNhan, "đã giao tới, nhóm chưa bấm Nhận");
+                Put(code, "CHO_KCS", "hàng sửa chờ KCS xác nhận", G.ChoKcs, "nhóm đã sửa xong (đạt), chờ KCS xác nhận rồi mới làm tiếp");   // [GC-SUA-TAI-CHO]
                 if (code == "KHO")
                 {
                     Put(code, "PHOI", "phôi còn", G.ConGiao, "phôi tốt chưa giao");
@@ -2212,6 +2402,7 @@ namespace MES.Web.Services
                     Put("KHO|LoiGiu",  G.LoiGiu,  "Kho: tồn hàng lỗi");
                     Put("KHO|SuaGiu",  G.SuaGiu,  "Kho: tồn hàng sửa");   // [GN-CELL]
                     Put("KHO|LamHoGiu", G.LamHoGiu, "Kho: Tồn hàng giao theo NC");   // [GN-ROUTE-FREE]
+                    Put("KHO|ChoKcs", G.ChoKcs, "Kho: hàng sửa chờ KCS");   // [GC-SUA-TAI-CHO]
                     continue;
                 }
                 Put(G.Code + "|ChuaLam",  G.ChuaLam,  $"{G.Label}: Chưa làm");
@@ -2219,6 +2410,7 @@ namespace MES.Web.Services
                 Put(G.Code + "|LoiGiu",   G.LoiGiu,   $"{G.Label}: tồn hàng lỗi");
                 Put(G.Code + "|SuaGiu",   G.SuaGiu,   $"{G.Label}: tồn hàng sửa");   // [GN-CELL]
                 Put(G.Code + "|LamHoGiu", G.LamHoGiu, $"{G.Label}: Tồn hàng giao theo NC");
+                Put(G.Code + "|ChoKcs", G.ChoKcs, $"{G.Label}: hàng sửa chờ KCS");   // [GC-SUA-TAI-CHO]
                 // Ô theo NC (GC) là ô bảo toàn thật (N1).
                 foreach (var s in G.Steps.Where(s => s.Pg == "GC" && s.Waiting.HasValue && !s.IsExcluded && !s.IsPrep))
                     Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, IsVao(s.Code)

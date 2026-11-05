@@ -85,12 +85,12 @@
 
     static string KindLabel(string k) => k switch
     {
-        "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", _ => k
+        "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", _ => k   // [GC-SUA-TAI-CHO]
     };
 
     static string KindBadge(string k) => k switch
     {
-        "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", _ => "bg-secondary"
+        "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", "KQSUA" => "bg-success", "XNSUA" => "bg-success", _ => "bg-secondary"
     };
 
     private RenderFragment PlaceBox(HandoverLedgerService.WhereSummary w, string place) => __builder =>
