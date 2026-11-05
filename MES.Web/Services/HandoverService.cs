@@ -730,12 +730,15 @@ namespace MES.Web.Services
         }
 
         /// <summary>[GN-K8][K5] So sổ trước / sau (sau = đọc lại trong cùng giao dịch). Trả lời báo nếu có ô mới âm (chỉ Workflow ON — N7).</summary>
-        private async Task<string?> CheckNoNewNegativeAsync(int khPlanDetailId, LedgerRow before)
+        private async Task<string?> CheckNoNewNegativeAsync(int khPlanDetailId, LedgerRow before, LedgerInput? beforeIn = null)
         {
             if (!before.ApplyWorkflow) return null;
-            var after = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
-            if (after == null) return null;
+            // [K5-VONG-SUA 2026-11-05] beforeIn != null (huỷ lần nhận / phiếu / phần chưa nhận / KCS xác nhận): xét thêm theo thời gian hàng sửa trả về
+            var afterIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(khPlanDetailId);
+            if (afterIn == null) return null;
+            var after = HandoverLedgerService.Compute(afterIn);
             var bad = HandoverLedgerService.NewNegatives(before, after);
+            if (beforeIn != null) bad.AddRange(HandoverLedgerService.NewLoopKeys(beforeIn, before, afterIn).Select(x => $"{x.Text} = {x.Value:0.##}"));
             return bad.Any()
                 ? $"Không lưu: làm xong sẽ sai số ở {string.Join("; ", bad)}. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8)."
                 : null;
@@ -998,7 +1001,8 @@ namespace MES.Web.Services
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(head.KhPlanDetailId);
             if (lockErr != null) return (false, lockErr);
-            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            var beforeIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(head.KhPlanDetailId);   // [K5-VONG-SUA] huỷ chứng từ nguồn: xét thêm theo thời gian hàng sửa trả về
+            var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
 
             var receive = await _db.HandoverReceives
 
@@ -1068,7 +1072,7 @@ namespace MES.Web.Services
 
             if (before != null)
             {
-                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before, beforeIn);   // [GN-K8][K5]
                 if (k5 != null)
                 {
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
@@ -1078,7 +1082,7 @@ namespace MES.Web.Services
                     var opDocsR = new HashSet<string> { "R:" + receiveId };   // [H10] + phiếu trả tự lập và các lần nhận huỷ kèm
                     if (autoBack != null) opDocsR.Add("T:" + autoBack.HandoverTxId);
                     foreach (var cid in cascadeIds) opDocsR.Add("R:" + cid);
-                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId), opDocsR);
+                    var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId), opDocsR, loopOp: true);
                     return (false, k5 + whyTxt);
                 }
             }
@@ -1140,7 +1144,8 @@ namespace MES.Web.Services
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(head.KhPlanDetailId);
             if (lockErr != null) return (false, lockErr);
-            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            var beforeIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(head.KhPlanDetailId);   // [K5-VONG-SUA] huỷ chứng từ nguồn: xét thêm theo thời gian hàng sửa trả về
+            var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
 
             var tx = await _db.HandoverTransactions
 
@@ -1178,7 +1183,7 @@ namespace MES.Web.Services
                     }
                     tail.Add($"Huỷ lần nhận #{r.ReceiveId} của phiếu này (nhận {r.Qty:0.##} lúc {r.ReceivedAt:dd/MM HH:mm})" + (kem.Any() ? " — " + string.Join("; ", kem) : ""));
                 }
-                var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId), opDocs, tail);
+                var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId), opDocs, tail, loopOp: true);
                 return (false, "Phiếu đã có bên nhận xác nhận. Huỷ từng lần nhận trước, hoặc dùng Huỷ phần chưa nhận." + whyTxt);   // [GN-VOID-RULE] chỉ đổi chữ
             }
 
@@ -1198,7 +1203,7 @@ namespace MES.Web.Services
 
             if (before != null)
             {
-                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before, beforeIn);   // [GN-K8][K5]
                 if (k5 != null)
                 {
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
@@ -1206,7 +1211,7 @@ namespace MES.Web.Services
                     await trx.RollbackAsync();
                     await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidIssue(handoverTxId),
-                        new HashSet<string> { "T:" + handoverTxId });
+                        new HashSet<string> { "T:" + handoverTxId }, loopOp: true);
                     return (false, k5 + whyTxt);
                 }
             }
@@ -1433,7 +1438,8 @@ namespace MES.Web.Services
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(head.KhPlanDetailId);   // [GN-K8] khoá chung với WTS / giao nhận
             if (lockErr != null) return (false, lockErr);
-            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            var beforeIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(head.KhPlanDetailId);   // [K5-VONG-SUA] huỷ chứng từ nguồn: xét thêm theo thời gian hàng sửa trả về
+            var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
 
             var tx = await _db.HandoverTransactions
                 .Include(t => t.Receives)
@@ -1463,7 +1469,7 @@ namespace MES.Web.Services
 
             if (before != null)
             {
-                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [GN-K8][K5]
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before, beforeIn);   // [GN-K8][K5]
                 if (k5 != null)
                 {
                     // [GN-WHY] nhả khoá PO (rollback) rồi mới tìm gốc rễ — chỉ đọc, không ghi
@@ -1471,7 +1477,7 @@ namespace MES.Web.Services
                     await trx.RollbackAsync();
                     await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpCloseRemainder(handoverTxId),
-                        new HashSet<string> { "T:" + handoverTxId });
+                        new HashSet<string> { "T:" + handoverTxId }, loopOp: true);
                     return (false, k5 + whyTxt);
                 }
             }

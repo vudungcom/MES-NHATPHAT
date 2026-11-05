@@ -46,6 +46,7 @@ public class PartTaroService
     {
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
+        PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
 
         var maxOrder = await _db.PartTaroSteps
             .Where(s => s.PartId == partId)
@@ -83,6 +84,10 @@ public class PartTaroService
         var existing = await _db.PartTaroSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
+        // [PM-NC-AT 2026-11-05] chỉ kiểm mã đổi (đọc DB, không dùng bản EF trang đang giữ) — dòng cũ có sẵn "@" vẫn sửa được ô khác
+        var dbCode = await _db.PartTaroSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.WtsTaskCode }).FirstAsync();
+        if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
+        if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
 
         var pid = existing.PartId;
         var changedCount = 0;

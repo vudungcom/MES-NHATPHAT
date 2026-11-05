@@ -1,7 +1,14 @@
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\AuthGuard.cs(33,34): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\AuthGuard.cs(35,50): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\DoGa\Index.razor(582,127): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\Thietbi\Index.razor(244,119): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Components\Pages\SoDoToChuc\Index.razor(328,75): warning CS4014: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\WtsReportService.cs(41,35): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
+D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\StandardWtsTaskService.cs(154,45): warning CS8604: Possible null reference argument for parameter 'code' in 'Task<string?> StandardWtsTaskService.UsedWhereAsync(string code)'. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 03/11/2026 11:05:46
-PO: 45 · dòng WTS còn hiệu lực: 84 (dòng cũ chưa có QtyOk: 0)
+QUÉT SỔ (chỉ đọc) · DB MES · 05/11/2026 10:31:34
+PO: 45 · dòng WTS còn hiệu lực: 85 (dòng cũ chưa có QtyOk: 0)
 PO có vấn đề: 23 · tổng phát hiện: 82
   CANH_BAO_SO          8 dòng · 4 PO
   MA_TRUNG            50 dòng · 20 PO
@@ -114,4 +121,8 @@ PO có vấn đề: 23 · tổng phát hiện: 82
    [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 3T3 · chưa có WTS mã này (#5 NC 3 mã 3T3 "Kiểm tra ren" chuẩn 1 nguồn 10078 chụp 27/10 13:26; #11 NC 5 mã 3T3 "Kiểm tra ren" chuẩn 0.5 nguồn 10084 chụp 27/10 13:26)
    [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 3T · chưa có WTS mã này (#6 NC 3 mã 3T "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 2.5 nguồn 10079 chụp 27/10 13:26; #12 NC 5 mã 3T "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 1.5 nguồn 10085 chụp 27/10 13:26)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1103110546.txt
+── Part Master: 2 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)
+   [PM_TRUNG] Part part mới · AMATA · PartId 1021 · 2 PO: aaa (tạo 07/09), tttttt (tạo 06/09) — Bavia: 2 dòng chính cùng mã "2V" (StepId 10016 thứ tự 1, 10017 thứ tự 2)
+   [PM_TRUNG] Part part mới · AMATA · PartId 1021 · 2 PO: aaa (tạo 07/09), tttttt (tạo 06/09) — Rửa: 2 dòng chính cùng mã "1R" (StepId 14 thứ tự 1, 15 thứ tự 2)
+
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1105103134.txt

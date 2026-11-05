@@ -133,6 +133,24 @@ async def main():
             await pg.screenshot(path=f"pmdup_{OUT}.png", full_page=False)
         except Exception as e:
             ok(False, "O! pha [O] dừng giữa chừng — lỗi bấm trang (nút / dòng cần bấm không có)", repr(e)[:300])
+
+        print("[A] [PM-NC-AT 05/11] Gõ mã bắt đầu \"@\" (Gia công @VAO, Đóng gói @P) → trang chặn trước khi lưu, DB không đổi; \"P@1\" (@ giữa mã) lưu được")
+        try:
+            pg = await login(b); await open_part(pg)
+            d0 = dump()
+            await add_gc_row(pg, "@VAO"); await add_cde_row(pg, 5, "@P")
+            t = await save(pg)
+            d = dump()
+            ok('mã "@VAO" bắt đầu bằng "@"' in t and 'mã "@P" bắt đầu bằng "@"' in t
+               and sorted(s["nc"] for s in gc_main(d)) == sorted(s["nc"] for s in gc_main(d0)) and sorted(x["nc"] for x in cde(d, "pkg")) == sorted(x["nc"] for x in cde(d0, "pkg")),
+               "A1 trang báo 'mã \"@VAO\" / \"@P\" bắt đầu bằng \"@\" … dành cho mã hệ thống', Gia công + Đóng gói trong DB giữ nguyên", lines(t, "@", "✗", "⚠"))
+            pg = await login(b); await open_part(pg)
+            await add_cde_row(pg, 5, "P@1")
+            t = await save(pg)
+            d = dump()
+            ok("✗" not in t and [x["nc"] for x in cde(d, "pkg")].count("P@1") == 1, "A2 mã \"P@1\" (@ ở giữa) lưu được", lines(t, "@", "✗", "⚠"))
+        except Exception as e:
+            ok(False, "A! pha [A] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
         await b.close()
     print(f"\nKẾT QUẢ {OUT}: " + ("ĐẠT hết" if fails == 0 else f"{fails} SAI"))
 asyncio.run(main())

@@ -30,6 +30,8 @@ public static class QuetCore
     public const string CanhBao    = "CANH_BAO_SO";      // cảnh báo khác của sổ (vd PO chưa có snapshot mã CV)
     public const string MaTrung    = "MA_TRUNG";         // [PM-NC-DUP-SVC 2026-11-01] quy trình (snapshot) PO có 2 dòng CHÍNH cùng mã trong 1 nhóm → sổ tính lệch
     public const string LoaiTruDau = "LOAI_TRU_DAU";     // [N3-FIRST 2026-11-03] quy trình GC (snapshot PO) BẮT ĐẦU bằng NC máy loại trừ (N3 đầu chuỗi)
+    public const string PmTrung    = "PM_TRUNG";         // [PM-T4 2026-11-05] Part Master có 2 dòng CHÍNH đang dùng cùng mã trong 1 bảng → chặn tạo ràng buộc DB (T4)
+    public const string PmMaA      = "PM_MA_A";          // [PM-NC-AT 2026-11-05] Part Master có mã NC / mã CV bắt đầu "@" (dành cho mã hệ thống như @VAO)
 
     public sealed class Result
     {
@@ -38,6 +40,7 @@ public static class QuetCore
         public int WtsCount { get; set; }
         public int WtsOld { get; set; }   // dòng WTS cũ chưa có QtyOk (sổ lấy QtyDone − NG)
         public List<string> PartFindings { get; } = new();   // [N3-FIRST] Part Master (chưa thành PO) có NC đầu GC là máy loại trừ
+        public List<string> PmFindings { get; } = new();     // [PM-T4][PM-NC-AT] Part Master: mã chính trùng / mã bắt đầu "@" (kèm PO đã dùng Part)
     }
 
     public static async Task<Result> ScanAsync(AppDbContext db, HandoverLedgerService led)
@@ -137,6 +140,37 @@ public static class QuetCore
             }
         }
 
+        // [PM-T4 2026-11-05] Part Master: dòng CHÍNH đang dùng (IsActive, không dự phòng) cùng mã trong 1 bảng (Gia công / Bavia / Rửa / KCS / Đóng gói).
+        //   Hùng 05/11 10:28 duyệt làm T4 (ràng buộc DB duy nhất PartId + NC lọc IsActive = 1, IsBackup = 0) vì dữ liệu đang là test — trước khi dọn
+        //   + chạy SQL phải báo Hùng Part / PO nào đang trùng để khách xác nhận. Taro KHÔNG xét (khách chốt 02/11 giữ mã CV chung nhiều NC — gói TARO-NC-MA).
+        //   So mã như SQL Server so (bỏ khoảng trắng cuối, không phân biệt hoa thường) + bỏ khoảng trắng đầu như service ([PM-NC-DUP-SVC]).
+        // [PM-NC-AT 2026-11-05] Mã bắt đầu "@" (mọi dòng kể cả dự phòng, cả Taro mã CV / NC) — "@VAO" là mã hệ thống của dòng ảo [N3-FIRST].
+        {
+            var pms = db.PartMasters.ToList().ToDictionary(p => p.PartId);
+            var custs2 = db.Customers.ToList().ToDictionary(x => x.CustomerId, x => x.CustomerName);
+            var dets = db.KhPlanDetails.ToList();
+            string PartTxt(int pid)
+            {
+                if (!pms.TryGetValue(pid, out var p)) return $"PartId {pid} (không còn Part)";
+                var cn = p.CustomerId.HasValue && custs2.TryGetValue(p.CustomerId.Value, out var n) ? n : "—";
+                var pos = dets.Where(d => string.Equals((d.PartNo ?? "").Trim(), (p.PartNo ?? "").Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                var poTxt = pos.Count == 0 ? "chưa có PO nào"
+                    : $"{pos.Count} PO: {string.Join(", ", pos.OrderByDescending(d => d.CreatedAt).Take(8).Select(d => $"{d.PurchaseOrder} (tạo {d.CreatedAt:dd/MM})"))}{(pos.Count > 8 ? " …" : "")}";
+                return $"Part {p.PartNo} · {cn} · PartId {pid}{(p.IsActive ? "" : " · Part đã TẮT")}{(p.IsObsolete ? " · Part NGƯNG SX" : "")} · {poTxt}";
+            }
+            var pmRows = new List<(int Pid, string Tbl, long Id, string? Nc, string? Code, bool Backup, int Ord)>();
+            pmRows.AddRange(db.PartMachiningSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "Gia công", (long)s.StepId, (string?)s.NC, (string?)null, s.IsBackup, s.StepOrder)));
+            pmRows.AddRange(db.PartTaroSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "Taro", (long)s.StepId, (string?)s.NC, s.WtsTaskCode, s.IsBackup, s.StepOrder)));
+            pmRows.AddRange(db.PartBaviaSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "Bavia", (long)s.StepId, (string?)s.NC, (string?)null, s.IsBackup, s.StepOrder)));
+            pmRows.AddRange(db.PartWashingSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "Rửa", (long)s.StepId, (string?)s.NC, (string?)null, s.IsBackup, s.StepOrder)));
+            pmRows.AddRange(db.PartInspectionSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "KCS", (long)s.StepId, (string?)s.NC, (string?)null, s.IsBackup, s.StepOrder)));
+            pmRows.AddRange(db.PartPackagingSteps.Where(s => s.IsActive).ToList().Select(s => (s.PartId, "Đóng gói", (long)s.StepId, (string?)s.NC, (string?)null, s.IsBackup, s.StepOrder)));
+            foreach (var g in pmRows.Where(x => x.Tbl != "Taro" && !x.Backup).GroupBy(x => (x.Pid, x.Tbl, Code: K(x.Nc))).Where(g => g.Count() > 1).OrderBy(g => g.Key.Pid))
+                res.PmFindings.Add($"[{PmTrung}] {PartTxt(g.Key.Pid)} — {g.Key.Tbl}: {g.Count()} dòng chính cùng mã \"{g.Key.Code}\" (StepId {string.Join(", ", g.Select(x => $"{x.Id} thứ tự {x.Ord}"))})");
+            foreach (var x in pmRows.Where(x => (x.Nc ?? "").Trim().StartsWith("@") || (x.Code ?? "").Trim().StartsWith("@")).OrderBy(x => x.Pid))
+                res.PmFindings.Add($"[{PmMaA}] {PartTxt(x.Pid)} — {x.Tbl} StepId {x.Id}{(x.Backup ? " (dự phòng)" : "")}: NC \"{x.Nc}\"{(x.Code != null ? $" mã CV \"{x.Code}\"" : "")}");
+        }
+
         var wts = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
         res.WtsCount = wts.Count;
         foreach (var x in wts)
@@ -172,6 +206,10 @@ public static class QuetCore
             o.WriteLine($"── Part Master: {res.PartFindings.Count} chi tiết có NC đầu Gia công là máy loại trừ ({LoaiTruDau}, PO tạo sau sẽ chụp quy trình này)");
             foreach (var f in res.PartFindings) o.WriteLine("   " + f);
         }
+        // [PM-T4][PM-NC-AT 2026-11-05] Part Master (không phải lỗi số PO): mã chính trùng (chặn ràng buộc T4) / mã bắt đầu "@"
+        o.WriteLine();
+        o.WriteLine($"── Part Master: {res.PmFindings.Count(f => f.StartsWith("[" + PmTrung))} nhóm mã chính trùng ({PmTrung}, Taro không xét) · {res.PmFindings.Count(f => f.StartsWith("[" + PmMaA))} dòng mã bắt đầu \"@\" ({PmMaA})");
+        foreach (var f in res.PmFindings) o.WriteLine("   " + f);
         if (res.Findings.Count == 0) o.WriteLine("KHÔNG PHÁT HIỆN GÌ — mọi PO cân, không ô âm, không WTS vượt trần.");
     }
 }

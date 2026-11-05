@@ -362,6 +362,38 @@ public static class AuthScen
                "Người có quyền Sửa DS_LOI / ADMIN: thêm / sửa / ngưng dùng / xoá được như cũ", $"{a3.Error} | {e3.Error} | {t3.Error} | {d3.Error}");
         }
 
+        // [SET-MATRIX-1TX 2026-11-05] (PHAT-HIEN-0311 mục 4, 5) Lưu ma trận MỌI nhóm 1 giao dịch; ô SETTING_ADMIN bị bỏ khỏi ma trận nhóm thường
+        Console.WriteLine("[U11] SET-MATRIX-1TX — lưu ma trận mọi nhóm 1 giao dịch (lỗi 1 nhóm thì không nhóm nào đổi); bỏ ô SETTING_ADMIN; nhóm ADMIN không đổi; chỉ ADMIN");
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", IsActive = true, Permissions = "[]" };
+            var gK = new UserGroup { GroupId = 3, GroupCode = "KHO", IsActive = true, Permissions = "[{\"SectionCode\":\"SETTING_ADMIN\",\"CanView\":true,\"CanEdit\":true}]" };
+            var gG = new UserGroup { GroupId = 5, GroupCode = "GC", IsActive = true, Permissions = "[]" };
+            db.UserGroups.List.AddRange(new[] { gAd, gK, gG });
+            db.Users.List.Add(new User { UserId = 1, Username = "admin", FullName = "Admin", IsActive = true, Group = gAd, GroupId = 1 });
+            db.Users.List.Add(new User { UserId = 6, Username = "kho01", FullName = "Kho", IsActive = true, Group = gK, GroupId = 3 });
+            db.Fixup();
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            string Snap() => string.Join("|", db.UserGroups.List.OrderBy(x => x.GroupId).Select(x => x.GroupId + "=" + x.Permissions));
+            List<MES.Web.Constants.GroupPermissionSetting> P(params string[] codes) => codes.Select(cd => new MES.Web.Constants.GroupPermissionSetting { SectionCode = cd, CanView = true, CanEdit = true }).ToList();
+            var s0 = Snap();
+            var r1 = await us.UpdateAllGroupPermissionsAsync(new() { [3] = P("KHO"), [5] = P("HANDOVER_GC") }, 6);
+            Ok(!r1.Success && r1.Error == UserService.NotAdminMsg && Snap() == s0, "Người nhóm KHO (có ô SETTING_ADMIN cũ) lưu ma trận: chặn, DB không đổi", r1.Error);
+            // nhóm thứ 2 không còn (vừa bị xoá) → không nhóm nào đổi, kể cả nhóm 3 đứng trước (trước: lưu từng nhóm → nhóm 3 đã đổi)
+            var r2 = await us.UpdateAllGroupPermissionsAsync(new() { [3] = P("KHO"), [99] = P("GC") }, 1);
+            Ok(!r2.Success && r2.Error!.Contains("chưa nhóm nào được đổi") && Snap() == s0 && db.Database.CurrentTransaction == null, "Có nhóm không tìm thấy: báo lỗi, KHÔNG nhóm nào đổi (1 giao dịch), giao dịch đã đóng", $"{r2.Error} | {Snap()}");
+            var r3 = await us.UpdateAllGroupPermissionsAsync(new() { [1] = P("KHO"), [3] = P("KHO", "SETTING_ADMIN"), [5] = P("HANDOVER_GC") }, 1);
+            Ok(r3.Success && gAd.Permissions == "[]" && gK.Permissions!.Contains("\"KHO\"") && !gK.Permissions.Contains("SETTING_ADMIN") && gG.Permissions!.Contains("HANDOVER_GC"),
+               "Admin lưu: nhóm KHO + GC đổi, ô SETTING_ADMIN bị bỏ (kể cả ô cũ trong DB), nhóm ADMIN không đổi", $"{r3.Error} | {Snap()}");
+            // lỗi khi ghi DB giữa chừng → rollback cả lô
+            var s3 = Snap();
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = () => new InvalidOperationException("gia loi DB");
+            string? ex4 = null; try { await us.UpdateAllGroupPermissionsAsync(new() { [3] = P("DAO"), [5] = P("DO_GA") }, 1); } catch (Exception ex) { ex4 = ex.Message; }
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = null;
+            Ok(ex4 == "gia loi DB" && Snap() == s3 && db.Database.CurrentTransaction == null, "Lỗi DB khi lưu: không nhóm nào đổi, giao dịch đã đóng", $"{ex4} | {Snap()}");
+        }
+
         // [C7-LICENSE 2026-11-02] Máy chủ bản quyền trả chữ KHÔNG phải JSON (trang lỗi HTML, "Service invoked too many times"…) = API chưa trả lời được:
         //   ParseApiResponse phải NÉM lỗi để PerformOnlineCheck giữ nguyên bản quyền đang có (như mất mạng) — trước: nuốt lỗi → Inactive → ghi đè cache → khoá xưởng.
         //   Chỉ gọi hàm đọc phản hồi (riêng tư) bằng phản chiếu — KHÔNG gọi API thật, không ghi cache / file bản quyền.

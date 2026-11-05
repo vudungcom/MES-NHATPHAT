@@ -47,6 +47,24 @@ async def main():
             await pa.wait_for_timeout(1500)
             t = await pa.inner_text("body")
             ok("Đã lưu ma trận phân quyền thành công" in t, "G4 admin bấm Lưu ma trận phân quyền → báo thành công", [l for l in t.split("\n") if "Lỗi" in l or "ma trận" in l][:4])
+            # [SET-MATRIX-1TX 05/11] (PHAT-HIEN-0311 mục 5) ma trận không còn cột "Cài đặt & Phân quyền" cho nhóm thường; cột khác vẫn có
+            heads = await pa.locator("thead th").all_inner_texts()
+            ok(not any("Cài đặt & Phân quyền" in h for h in heads) and any("Giao nhận: Gia công" in h for h in heads) and any("Cài đặt ca làm việc" in h for h in heads),
+               "G5 ma trận không còn cột \"Cài đặt & Phân quyền\" (trang Cài đặt chỉ ADMIN); cột Giao nhận / Ca làm việc vẫn có", heads[:6])
+            # [SET-POPUP-ERR 05/11] (mục 4) lỗi lưu hiện ngay trong popup, không bị popup che
+            await open_settings(pa, users=True)
+            await pa.locator("button:has-text('Thêm User')").click(); await pa.wait_for_timeout(500)
+            await pa.locator("button:has-text('Lưu thông tin')").click(); await pa.wait_for_timeout(800)
+            pop = await pa.locator(".mes-modal").inner_text() if await pa.locator(".mes-modal").count() else ""
+            ok("Vui lòng nhập đủ" in pop, "G6 Thêm User bỏ trống bấm Lưu → lời báo hiện TRONG popup (trước: ở đầu trang, bị popup che)", pop[:200])
+            await pa.locator("input[placeholder='Nhập username viết liền không dấu...']").fill("gc01")
+            await pa.locator("input[placeholder='VD: Nguyễn Văn A...']").fill("Trung ten")
+            await pa.locator("input[placeholder='Mật khẩu...']").fill("123456")
+            await pa.locator(".mes-modal select").select_option(index=1); await pa.wait_for_timeout(300)
+            await pa.locator("button:has-text('Lưu thông tin')").click(); await pa.wait_for_timeout(1200)
+            pop = await pa.locator(".mes-modal").inner_text() if await pa.locator(".mes-modal").count() else ""
+            ok(pop != "" and "Lưu thông tin" in pop and ("tồn tại" in pop or "trùng" in pop or "đã có" in pop),
+               "G7 Thêm User trùng tên gc01 → popup vẫn mở, lời báo máy chủ hiện trong popup", pop[:250])
             await pa.screenshot(path=f"settings_{OUT}.png", full_page=False)
         except Exception as e:
             ok(False, "G! dừng giữa chừng — lỗi bấm trang", repr(e)[:300])

@@ -123,12 +123,15 @@ namespace MES.Web.Services
         }
 
         /// <summary>[GN-K8][K5] So sổ trước / sau (sau = đọc lại trong cùng giao dịch). Chỉ Workflow ON (N7, H7 — giữ như trang Giao nhận).</summary>
-        public static async Task<string?> CheckNoNewNegativeAsync(AppDbContext db, int khPlanDetailId, LedgerRow before)
+        public static async Task<string?> CheckNoNewNegativeAsync(AppDbContext db, int khPlanDetailId, LedgerRow before, LedgerInput? beforeIn = null)
         {
             if (!before.ApplyWorkflow) return null;
-            var after = await new HandoverLedgerService(db).GetLedgerForDetailAsync(khPlanDetailId);
-            if (after == null) return null;
+            var afterIn = await new HandoverLedgerService(db).GetInputForDetailAsync(khPlanDetailId);
+            if (afterIn == null) return null;
+            var after = HandoverLedgerService.Compute(afterIn);
             var bad = HandoverLedgerService.NewNegatives(before, after);
+            // [K5-VONG-SUA 2026-11-05] beforeIn != null (Kho sửa / huỷ phôi): xét thêm theo thời gian hàng sửa trả về (như HandoverService)
+            if (beforeIn != null) bad.AddRange(HandoverLedgerService.NewLoopKeys(beforeIn, before, afterIn).Select(x => $"{x.Text} = {x.Value:0.##}"));
             return bad.Any()
                 ? $"Không lưu: làm xong sẽ sai số ở {string.Join("; ", bad)}. Hàng này đã được dùng ở bước sau — phải huỷ / sửa từ cuối dòng ngược lên (K5, K8)."
                 : null;

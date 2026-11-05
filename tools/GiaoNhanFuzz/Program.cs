@@ -391,7 +391,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         var rid = r0.ReceiveId; var grp = r0.Transaction.ToGroupCode;
                         await WhyCheck(db, svc, led, HandoverWhy.OpVoidReceive(rid), RecvOpDocs((await led.GetInputForDetailAsync(1))!, rid),   // [H10] tập bỏ qua như máy chủ
-                            async () => (await svc.VoidReceiveAsync(rid, "thu lai", Uid(grp), All)).Ok, null, rnd, po, op, desc, res.Error);
+                            async () => (await svc.VoidReceiveAsync(rid, "thu lai", Uid(grp), All)).Ok, null, rnd, po, op, desc, res.Error, loop: true);
                     }
 #endif
                     break;
@@ -443,7 +443,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                             };
                         }
                         await WhyCheck(db, svc, led, opFn, opDocs,
-                            async () => (await svc.VoidIssueAsync(tid, "thu lai", issuer, new List<string>())).Ok, pre, rnd, po, op, desc, res.Error);
+                            async () => (await svc.VoidIssueAsync(tid, "thu lai", issuer, new List<string>())).Ok, pre, rnd, po, op, desc, res.Error, loop: true);
                     }
 #endif
                     break;
@@ -637,7 +637,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     ok = res.Ok; if (!ok) Inc("rej.vxnsua");
                     if (!ok && res.Error.StartsWith("Không lưu"))
                         await WhyCheck(db, svc, led, HandoverWhy.OpVoidRepairCheck(cid), new HashSet<string> { "X:" + cid },
-                            async () => (await svc.VoidRepairCheckAsync(cid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error);
+                            async () => (await svc.VoidRepairCheckAsync(cid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error, loop: true);
                     break;
                 }
                 case "vngrep":   // [GN-NG-AFTER] huỷ báo lỗi
@@ -672,7 +672,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!ok && !res.Error!.Contains("Không lưu")) fails.Add($"[Phôi lời báo lạ] PO{po} op{op} {res.Error}");
                     if (!ok && res.Error!.Contains("Không lưu"))
                         await WhyCheck(db, svc, led, HandoverWhy.OpSetPhoi(kid, nq), new HashSet<string>(),
-                            async () => (await kho.SaveKhoInputAsync(1, DateTime.Now, nq, null, null, null, null, null, "thu lai", 1)).Success, null, rnd, po, op, desc, res.Error);
+                            async () => (await kho.SaveKhoInputAsync(1, DateTime.Now, nq, null, null, null, null, null, "thu lai", 1)).Success, null, rnd, po, op, desc, res.Error, loop: true);
                     break;
                 }
                 case "pmedit":   // [CHUOI] sửa Part Master giữa chừng bằng hàm thật: snapshot + sổ PO đang chạy KHÔNG được đổi
@@ -752,7 +752,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         var tid = t.HandoverTxId; var fg = t.FromGroupCode;
                         await WhyCheck(db, svc, led, HandoverWhy.OpCloseRemainder(tid), new HashSet<string> { "T:" + tid },
-                            async () => (await svc.CloseRemainderAsync(tid, "thu lai", Uid(fg), All)).Ok, null, rnd, po, op, desc, res.Error);
+                            async () => (await svc.CloseRemainderAsync(tid, "thu lai", Uid(fg), All)).Ok, null, rnd, po, op, desc, res.Error, loop: true);
                     }
                     if (ok && t.SourceReceiveId != null) fails.Add($"[Đóng phiếu tự lập] PO{po} op{op} #{t.HandoverTxId}");
 #else
@@ -1033,10 +1033,10 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
             var a = HandoverWhyTest.CloneInput(input); HandoverWhy.OpVoidReceive(r.Id)(a);
             if (!HandoverLedgerService.NewNegativeKeys(before, HandoverLedgerService.Compute(a)).Any()) continue;
             checks++;
-            var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs);
+            var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs, loopOp: true);
             if (!plan.Complete)
             {   // hết trần tìm (mặc định Plan: 400 lần tính / 5 s — [WHY-TRAN]; trước 80 / 1,5 s) chưa phải vòng khoá: tìm lại không giới hạn để phân biệt
-                var big = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs, 5000, 60000);
+                var big = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(r.Id), opDocs, 5000, 60000, loopOp: true);
                 if (big.Complete) { Inc("h10.hettran"); h10MaxSteps = Math.Max(h10MaxSteps, big.Steps.Count); continue; }
                 plan = big;
             }
@@ -1051,11 +1051,13 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
                         "WTS" => sim.Wts.Any(w => w.Id == st.Id),
                         "NHAN" => sim.Txs.Any(x => x.Receives.Any(y => y.Id == st.Id)),
                         "BAOLOI" => sim.NgReps.Any(b2 => b2.Id == st.Id),
+                        "KQSUA" => sim.Repairs.Any(x => x.Id == st.Id),   // [K5-VONG-SUA 05/11] trước rơi vào nhánh phiếu
+                        "XNSUA" => sim.Repairs.Any(x => x.Checks.Any(c => c.Id == st.Id)),
                         _ => sim.Txs.Any(x => x.Id == st.Id),
                     };
                     if (!exists) { bad = $"bước {st.Kind}#{st.Id} trỏ chứng từ đã mất"; break; }
                     var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
-                    (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
+                    (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), "KQSUA" => HandoverWhy.OpVoidRepair(st.Id), "XNSUA" => HandoverWhy.OpVoidRepairCheck(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
                     if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s2)).Any()) { bad = $"bước {st.Kind}#{st.Id} tự nó bị K5 chặn"; break; }
                     sim = s2;
                 }
@@ -1082,11 +1084,11 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
 
 // [GN-WHY] Kiểm gợi ý gỡ: (1) gợi ý có trong lời báo; (2) làm đúng theo gợi ý (qua hàm thật / mô phỏng trang WTS) thì thao tác gốc lưu được
 async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService led, Action<LedgerInput> opFn, HashSet<string> opDocs,
-                    Func<Task<bool>> retry, Func<Task<bool>>? pre, Random rnd, int po, int opIdx, string desc, string? svcMsg)
+                    Func<Task<bool>> retry, Func<Task<bool>>? pre, Random rnd, int po, int opIdx, string desc, string? svcMsg, bool loop = false)   // [K5-VONG-SUA] loop: thao tác huỷ chứng từ nguồn (như máy chủ)
 {
     var input = (await led.GetInputForDetailAsync(1))!;
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    var plan = HandoverWhy.Plan(input, opFn, opDocs);
+    var plan = HandoverWhy.Plan(input, opFn, opDocs, loopOp: loop);
     sw.Stop(); whyMs.Add(sw.Elapsed.TotalMilliseconds); whyComputes.Add(plan.Computes);
     Inc(plan.Complete ? "why.complete" : "why.incomplete");
     if (!plan.Complete)
@@ -1131,7 +1133,7 @@ async Task<(bool Ok, string Error)> VoidRecvDeep(AppDbContext db, HandoverServic
     var r0 = await svc.VoidReceiveAsync(rid, "goi y", 1, All);
     if (r0.Ok || depth >= 4 || !r0.Error.StartsWith("Không lưu")) return r0;
     var input = (await led.GetInputForDetailAsync(1))!;
-    var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), RecvOpDocs(input, rid));   // [H10] tập bỏ qua như máy chủ
+    var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), RecvOpDocs(input, rid), loopOp: true);   // [H10] tập bỏ qua như máy chủ
     if (!plan.Complete || plan.Steps.Count == 0) return r0;
     foreach (var st in plan.Steps)
     {

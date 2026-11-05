@@ -34,6 +34,19 @@ public static class PartStepGuard
 
     public static bool SameCode(string? a, string? b) => string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
 
+    // [PM-NC-AT 2026-11-05] Mã NC / mã CV bắt đầu "@" dành cho mã hệ thống (dòng ảo "@VAO" = "Nhận vào (chưa qua NC)" [N3-FIRST]).
+    //   Nguồn: CLAUDE (lỗi ngầm tự phát hiện khi làm N3-FIRST 04/11; Hùng 05/11 10:11 cho làm). Trước: sổ chỉ dựa máy chủ chặn WTS / phiếu
+    //   vào "@VAO", Part Master vẫn cho đặt NC "@VAO" → NC thật trùng dòng ảo, sổ nhầm. Áp cho MỌI dòng (cả dự phòng), cả mã CV Taro.
+    //   Sửa dòng: chỉ kiểm khi mã đổi — dòng cũ đã có "@" (QuetSo PM_MA_A báo) vẫn sửa được ô khác.
+    public static bool IsReserved(string? code) => Norm(code).StartsWith("@", StringComparison.Ordinal);
+
+    public static void CheckReservedCode(string label, params string?[] codes)
+    {
+        foreach (var c in codes)
+            if (IsReserved(c))
+                throw new PartStepCodeException($"{label}: mã \"{Norm(c)}\" bắt đầu bằng \"@\" — ký tự @ đầu mã dành cho mã hệ thống (vd \"{HandoverLedgerService.VaoCode}\" = \"{HandoverLedgerService.VaoLabel}\"), đặt mã khác.");
+    }
+
     /// <summary>
     /// Chạy <paramref name="body"/> dưới khoá quy trình của Part. Có giao dịch ngoài thì dùng (khoá nhả khi giao dịch đó kết thúc),
     /// không thì tự mở + Commit / Rollback (như KhPlanService.CreateAsync [RS-E16]).

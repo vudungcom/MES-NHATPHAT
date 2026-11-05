@@ -137,7 +137,9 @@ namespace MES.Web.Services
         //   Trước: huỷ lần nhận rất sớm của PO nhiều chứng từ cần 27–36 bước gỡ (~3 lần tính sổ / bước, PO lớn ~17 ms / lần tính)
         //   → hết trần giữa chừng, lời báo chỉ có phần đầu + "Phần mềm dừng tìm ở đây". Ca thường vẫn vài chục ms (chỉ tính khi bị
         //   chặn, sau khi đã nhả khoá PO, chỉ đọc). Lời báo vẫn hiện tối đa 8 bước + "… và N chứng từ nữa".
-        public static WhyPlan Plan(LedgerInput current, Action<LedgerInput> op, ISet<string> opDocs, int maxComputes = 400, int maxMs = 5000)
+        // [K5-VONG-SUA 2026-11-05] loopOp = thao tác gốc là huỷ chứng từ nguồn (huỷ lần nhận / phiếu / phần chưa nhận / KCS xác nhận / sửa phôi Kho)
+        //   → xét thêm theo thời gian như máy chủ; bước gỡ cũng chỉ xét khi là huỷ lần nhận / phiếu / KCS xác nhận (rà độc lập V3: khớp máy chủ).
+        public static WhyPlan Plan(LedgerInput current, Action<LedgerInput> op, ISet<string> opDocs, int maxComputes = 400, int maxMs = 5000, bool loopOp = false)
         {
             var plan = new WhyPlan();
             if (!current.ApplyWorkflow) { plan.Complete = true; return plan; }   // N7: Workflow OFF không chặn
@@ -147,18 +149,22 @@ namespace MES.Web.Services
             bool Over() => plan.Computes >= maxComputes || sw.ElapsedMilliseconds > maxMs;
             LedgerRow Calc(LedgerInput x) { plan.Computes++; return HandoverLedgerService.Compute(x); }
             LedgerRow SRow() => sRow ??= Calc(S);
-            List<string> Bad(Action<LedgerInput> o)
+            Dictionary<string, (decimal Value, string Text)>? sTl = null;   // [K5-VONG-SUA] LoopTimeline(S) — tính lại khi S đổi (rà độc lập V4)
+            List<string> Bad(Action<LedgerInput> o, bool loop)
             {
                 var a = Clone(S); o(a);
-                return HandoverLedgerService.NewNegativeKeys(SRow(), Calc(a));
+                var bad = HandoverLedgerService.NewNegativeKeys(SRow(), Calc(a));
+                if (loop && HandoverLedgerService.RepairedReturnTimes(a).Count > 0)
+                    bad.AddRange(HandoverLedgerService.NewLoopKeys(S, SRow(), a, sTl ??= HandoverLedgerService.LoopTimeline(S)).Select(x => x.Key));
+                return bad;
             }
 
-            bool Clear(Action<LedgerInput> o, HashSet<string> skip, int depth)
+            bool Clear(Action<LedgerInput> o, HashSet<string> skip, int depth, bool loop)
             {
                 for (int guard = 0; guard < 150; guard++)   // [WHY-TRAN] trước 40
                 {
                     if (Over()) return false;
-                    var bad = Bad(o);
+                    var bad = Bad(o, loop);
                     if (bad.Count == 0) return true;
                     var d = NextCandidate(S, SRow(), bad, skip);
                     if (d == null) return false;
@@ -172,14 +178,14 @@ namespace MES.Web.Services
                         _        => OpVoidIssue(d.Id),
                     };
                     var sub = new HashSet<string>(skip) { Key(d) };
-                    if (depth >= 8 || !Clear(removeD, sub, depth + 1)) return false;
-                    removeD(S); sRow = null;
+                    if (depth >= 8 || !Clear(removeD, sub, depth + 1, d.Kind is "NHAN" or "PHIEU" or "XNSUA")) return false;
+                    removeD(S); sRow = null; sTl = null;
                     plan.Steps.Add(d);
                 }
                 return false;
             }
 
-            plan.Complete = Clear(op, new HashSet<string>(opDocs), 0);
+            plan.Complete = Clear(op, new HashSet<string>(opDocs), 0, loopOp);
             return plan;
         }
 
@@ -241,10 +247,31 @@ namespace MES.Web.Services
                     if (a != null) c.Add(a);
                 }
             }
-            foreach (var k in badKeys)
+            foreach (var k0 in badKeys)
             {
+                // [K5-VONG-SUA 2026-11-05] Ô "TL|<ô>" = ô chưa làm âm trong ảnh sổ ngay trước lúc hàng sửa trả về: chứng từ trừ vào ô đó (như ô thường)
+                //   + chính lần hàng sửa trả về của nhóm đó (lần nhận hàng sửa / lần KCS xác nhận đạt) — gỡ cái mới nhất trước.
+                var k = k0.StartsWith("TL|", StringComparison.Ordinal) ? k0[3..] : k0;
                 var p = k.Split('|');
                 var g = p[0];
+                if (!ReferenceEquals(k, k0))
+                {
+                    AddTx(t => t.To == g && t.Receives.Any(r => HandoverLedgerService.IsRepairedReturn(t, r)));
+                    foreach (var r in s.Repairs.Where(r => r.Id > 0 && r.Group == g))   // (rà độc lập T2) chỉ lần KCS xác nhận có đạt — lần chỉ loại không phải hàng sửa về
+                    {
+                        var c0 = r.Checks.Where(x => x.Id > 0 && x.Ok > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
+                        if (c0 != null)
+                            c.Add(new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
+                                Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
+                                     + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" });
+                    }
+                    if (g == "KHO" && p.Length == 2 && p[1] == "ConGiao")   // Kho: phiếu giao từ ô Hàng mới / báo lỗi lấy phôi trừ vào phôi còn giao
+                    {
+                        AddTx(t => t.From == "KHO" && !HandoverPurpose.IsOut(t.Purpose) && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == HandoverCell.Moi);
+                        AddRep(b => b.Group == "KHO");
+                        continue;
+                    }
+                }
                 // [VULOI 2026-10-28] Ô vụ lỗi âm ("VU|<id>|<nhóm>|<ô>"): phiếu đang lấy hàng của vụ đó từ nhóm đó (mới nhất gỡ trước)
                 if (g == "VU")
                 {
@@ -335,7 +362,7 @@ namespace MES.Web.Services
         /// tail: các bước cuối cố định của chính thao tác (vd "Huỷ lần nhận #5 của phiếu này").
         /// </summary>
         public static async Task<string> ExplainAsync(AppDbContext db, int khPlanDetailId, Action<LedgerInput> op,
-                                                      ISet<string> opDocs, IEnumerable<string>? tail = null)
+                                                      ISet<string> opDocs, IEnumerable<string>? tail = null, bool loopOp = false)   // [K5-VONG-SUA] loopOp: xem Plan
         {
             try
             {
@@ -360,7 +387,7 @@ namespace MES.Web.Services
                 }
                 catch (Exception) { rNames.Clear(); tNames.Clear(); }
 
-                var plan = await Task.Run(() => Plan(input, op, opDocs));   // [WHY-TRAN] tính trên bản sao trong bộ nhớ (không dùng DbContext) → chạy luồng nền, không giữ luồng trang
+                var plan = await Task.Run(() => Plan(input, op, opDocs, loopOp: loopOp));   // [WHY-TRAN] tính trên bản sao trong bộ nhớ (không dùng DbContext) → chạy luồng nền, không giữ luồng trang
                 var steps = plan.Steps;
                 var tailList = tail?.ToList() ?? new List<string>();
                 if (!steps.Any() && !tailList.Any())

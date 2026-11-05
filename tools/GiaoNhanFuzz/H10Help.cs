@@ -11,6 +11,7 @@ public static class HandoverWhyTest
         Txs = i.Txs.Select(t => t.CloneTx()).ToList(),
         Wts = new List<InWts>(i.Wts),
         NgReps = new List<InNgRep>(i.NgReps),
+        Repairs = i.Repairs.Select(r => r.CloneRep()).ToList(),   // [K5-VONG-SUA 05/11] trước thiếu (sót từ gói GC-SUA-TAI-CHO) → phép kiểm WHYALL / làm theo gợi ý tính như PO không có Kết quả sửa
         CaseInfo = i.CaseInfo,
     };
 }

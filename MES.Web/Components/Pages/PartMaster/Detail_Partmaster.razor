@@ -4113,6 +4113,13 @@ else
             var nc = Code(e);
             if (nc.Length == 0 || nc == "-")
             { errs.Add($"{label}: có dòng chưa nhập NC / mã CV — nhập mã hoặc xoá dòng."); continue; }
+            // [PM-NC-AT 2026-11-05] mã đầu "@" dành cho hệ thống (vd @VAO) — dòng mới / đang sửa, cả NC lẫn mã CV Taro (máy chủ cũng chặn).
+            //   QuetSo 05/11: DB MES chưa có mã nào bắt đầu "@" → kiểm mọi dòng mới / sửa không chặn oan dữ liệu cũ.
+            {
+                var at = PartStepGuard.IsReserved(nc) ? nc : PartStepGuard.IsReserved(e.NC) ? (e.NC ?? "").Trim() : null;
+                if (at != null)
+                { errs.Add($"{label}: mã \"{at}\" bắt đầu bằng \"@\" — ký tự @ đầu mã dành cho mã hệ thống (vd \"{HandoverLedgerService.VaoCode}\" = \"{HandoverLedgerService.VaoLabel}\"), đặt mã khác."); continue; }
+            }
             if (e.IsBackup) continue;
             var same = live.Count(x => !x.IsBackup && string.Equals(Code(x), nc, StringComparison.OrdinalIgnoreCase));
             if (same > 1)

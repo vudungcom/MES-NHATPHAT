@@ -136,7 +136,8 @@
         <!-- MỤC CÀI ĐẶT & PHÂN QUYỀN (HIỂN THỊ DÀNH CHO ADMIN) -->
         <AuthorizeView>
             <Authorized>
-                @if (isAdmin || CanView("SETTING_ADMIN"))
+                @* [SET-MATRIX-1TX 2026-11-05] chỉ ADMIN (trang Cài đặt chỉ cho ADMIN — trước: nhóm có ô SETTING_ADMIN thấy menu mà trang từ chối) *@
+                @if (isAdmin)
                 {
                     <li class="nav-item mt-3 border-top pt-2">
                         <NavLink class="nav-link text-warning fw-bold" href="/settings">
@@ -146,7 +147,7 @@
                 }
                 @if (isAdmin || CanView("CA_LAM_VIEC"))
                 {
-                    <li class="nav-item @(CanView("SETTING_ADMIN") ? "" : "mt-3 border-top pt-2")">
+                    <li class="nav-item @(isAdmin ? "" : "mt-3 border-top pt-2")">
                         <NavLink class="nav-link text-warning" href="/cai-dat/ca-lam-viec">
                             <i class="bi bi-clock-history"></i> Cài đặt ca làm việc
                         </NavLink>

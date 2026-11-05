@@ -180,7 +180,8 @@ public class KhoVatLieuService
         using var trx = await _db.Database.BeginTransactionAsync();
         var lockErr = await PoGuard.LockAsync(_db, khPlanDetailId);
         if (lockErr != null) return (false, lockErr);
-        var ledgerBefore = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
+        var inBefore = await new HandoverLedgerService(_db).GetInputForDetailAsync(khPlanDetailId);   // [K5-VONG-SUA 2026-11-05] sửa / huỷ phôi = huỷ chứng từ nguồn: xét thêm theo thời gian hàng sửa trả về (rà độc lập V1)
+        var ledgerBefore = inBefore == null ? null : HandoverLedgerService.Compute(inBefore);
 
         var existing = await _db.KhoVatLieus.FirstOrDefaultAsync(k => k.PlanDetailId == khPlanDetailId && k.IsActive);   // [KHO-ACTIVE] sổ chỉ đọc dòng đang dùng
         var now = DateTime.Now;
@@ -229,7 +230,7 @@ public class KhoVatLieuService
                 Reason = reason
             });
             await _db.SaveChangesAsync();
-            var (guardNew, warnNew) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, 0, slNhan);   // [KH-GUARD]
+            var (guardNew, warnNew) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, 0, slNhan, inBefore);   // [KH-GUARD]
             if (guardNew != null) return (false, guardNew);
             HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
             return (true, warnNew);   // [KHO-4] đã lưu; Error ≠ null lúc Success = cảnh báo (Workflow OFF)
@@ -269,7 +270,7 @@ public class KhoVatLieuService
         existing.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
-        var (guardErr, warnErr) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, existing.KhoVatLieuId, slNhan);   // [KH-GUARD]
+        var (guardErr, warnErr) = await FinishPhoiGuardAsync(trx, ledgerBefore, khPlanDetailId, existing.KhoVatLieuId, slNhan, inBefore);   // [KH-GUARD]
         if (guardErr != null) return (false, guardErr);
         HandoverChangeNotifier.Notify(khPlanDetailId);   // [GN-LIVE] báo màn Giao nhận đang mở tính lại dòng PO này
         return (true, warnErr);   // [KHO-4] đã lưu; Error ≠ null lúc Success = cảnh báo (Workflow OFF)
@@ -281,19 +282,19 @@ public class KhoVatLieuService
     /// </summary>
     private async Task<(string? Err, string? Warn)> FinishPhoiGuardAsync(
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction trx,
-        LedgerRow? before, int khPlanDetailId, long khoVatLieuId, int? slNhan)
+        LedgerRow? before, int khPlanDetailId, long khoVatLieuId, int? slNhan, LedgerInput? beforeIn = null)
     {
         string? warn = null;
         if (before != null)
         {
-            var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, before);
+            var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, before, beforeIn);
             if (k5 != null)
             {
                 _db.ChangeTracker.Clear();
                 await trx.RollbackAsync();
                 await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                 var why = await HandoverWhy.ExplainAsync(_db, khPlanDetailId,
-                    HandoverWhy.OpSetPhoi(khoVatLieuId, slNhan ?? 0), new HashSet<string>());
+                    HandoverWhy.OpSetPhoi(khoVatLieuId, slNhan ?? 0), new HashSet<string>(), loopOp: true);
                 return ("Sửa SL phôi nhận: " + k5 + why, null);
             }
             // [KHO-4 2026-10-31] Workflow OFF (N7): vẫn lưu nhưng CẢNH BÁO nếu số phôi mới làm ô nào mới âm (vd đã giao GC 40 mà sửa phôi

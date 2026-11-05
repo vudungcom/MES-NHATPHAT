@@ -276,7 +276,8 @@ namespace MES.Web.Services
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(head.KhPlanDetailId);
             if (lockErr != null) return (false, lockErr);
-            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            var beforeIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(head.KhPlanDetailId);   // [K5-VONG-SUA] huỷ chứng từ nguồn: xét thêm theo thời gian hàng sửa trả về
+            var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
             var chk = await _db.HandoverRepairChecks.FirstOrDefaultAsync(c => c.HandoverRepairCheckId == checkId && !c.IsVoided);
             if (chk == null) return (false, "Lần KCS xác nhận không tồn tại hoặc đã huỷ.");
             chk.IsVoided   = true;
@@ -286,14 +287,14 @@ namespace MES.Web.Services
             await _db.SaveChangesAsync();
             if (before != null)
             {
-                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [K5] hàng đạt đã nhập WTS / đã giao đi thì không huỷ được
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before, beforeIn);   // [K5] hàng đạt đã nhập WTS / đã giao đi thì không huỷ được
                 if (k5 != null)
                 {
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
                     await trx.DisposeAsync();   // [WHY-TRAN-DB]
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidRepairCheck(checkId),
-                        new HashSet<string> { "X:" + checkId }, new[] { $"Huỷ lần KCS xác nhận #{checkId}" });
+                        new HashSet<string> { "X:" + checkId }, new[] { $"Huỷ lần KCS xác nhận #{checkId}" }, loopOp: true);
                     return (false, k5 + whyTxt);
                 }
             }

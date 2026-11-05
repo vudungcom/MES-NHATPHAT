@@ -74,6 +74,7 @@ public class PartMachiningService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
+        PartStepGuard.CheckReservedCode(Label, newStep.NC);   // [PM-NC-AT 2026-11-05] mã đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
         // [PM-NC-DUP-SVC 2026-11-02] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId>; NC chính: không trống / '-', không trùng NC chính khác (đọc DB dưới khoá)
         return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
         {
@@ -136,6 +137,7 @@ public class PartMachiningService
             throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
         // [PM-NC-DUP-SVC] mã / dự phòng đọc lại từ DB dưới khoá (existing có thể là bản EF trang đang giữ từ lần lưu trước — rà độc lập 02/11 T1)
         var dbNow = await _db.PartMachiningSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup }).FirstAsync();
+        if (!PartStepGuard.SameCode(dbNow.NC, updated.NC)) PartStepGuard.CheckReservedCode(Label, updated.NC);   // [PM-NC-AT 2026-11-05] chỉ kiểm khi đổi mã
         if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
             PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartMachiningSteps
                 .Where(s => s.PartId == existing.PartId && s.IsActive && !s.IsBackup && s.StepId != stepId).Select(s => s.NC).ToListAsync());

@@ -189,7 +189,7 @@
                                 <th class="text-start bg-dark" style="position: sticky; left: 0; z-index: 3; min-width: 200px;">
                                     Nhóm người dùng \ Vùng dữ liệu
                                 </th>
-                                @foreach (var sec in SystemPermissions.Sections)
+                                @foreach (var sec in MatrixSections)
                                 {
                                     <th style="min-width: 140px;" title="@sec.Description">
                                         <div class="fw-bold text-warning" style="font-size: 0.85rem;">@sec.Name</div>
@@ -208,7 +208,7 @@
                                     </td>
 
                                     <!-- Các ô Checkbox -->
-                                    @foreach (var sec in SystemPermissions.Sections)
+                                    @foreach (var sec in MatrixSections)
                                     {
                                         var p = permissionMatrix[grp.GroupId][sec.Code];
                                         <td class="@(p.CanEdit ? "bg-warning bg-opacity-10" : (p.CanView ? "bg-light" : ""))">
@@ -291,6 +291,11 @@
                     </div>
                 }
             </div>
+            @if (!string.IsNullOrEmpty(popupLoi))
+            {
+                @* [SET-POPUP-ERR 2026-11-05] lỗi lưu hiện ngay trong popup (trước: báo ở đầu trang, bị popup che) *@
+                <div class="alert alert-danger py-2 small mx-3 mb-0"><i class="bi bi-exclamation-triangle"></i> @popupLoi</div>
+            }
             <div class="mes-modal-footer">
                 <button type="button" class="btn btn-secondary" @onclick="DongPopupUser">Hủy</button>
                 <button type="button" class="btn btn-primary" @onclick="LuuUserAsync">Lưu thông tin</button>
@@ -324,6 +329,11 @@
                     <input type="text" class="form-control" @bind="groupMoi.GroupName" placeholder="VD: Tổ trưởng Gia công..." autofocus />
                 </div>
             </div>
+            @if (!string.IsNullOrEmpty(popupLoi))
+            {
+                @* [SET-POPUP-ERR 2026-11-05] lỗi lưu hiện ngay trong popup (trước: báo ở đầu trang, bị popup che) *@
+                <div class="alert alert-danger py-2 small mx-3 mb-0"><i class="bi bi-exclamation-triangle"></i> @popupLoi</div>
+            }
             <div class="mes-modal-footer">
                 <button type="button" class="btn btn-secondary" @onclick="DongPopupGroup">Hủy</button>
                 <button type="button" class="btn btn-primary" @onclick="LuuGroupAsync">@(groupMoi.GroupId == 0 ? "Tạo nhóm" : "Lưu thay đổi")</button>
@@ -369,6 +379,11 @@
     private int _currentAdminUserId;
 
     private string thongBaoLoi = "";
+    private string popupLoi = "";   // [SET-POPUP-ERR 2026-11-05] lỗi khi lưu trong popup Người dùng / Nhóm
+
+    // [SET-MATRIX-1TX 2026-11-05] (PHAT-HIEN-0311 mục 5) Ma trận không hiện ô "Cài đặt & Phân quyền": trang Cài đặt chỉ cho ADMIN (máy chủ kiểm
+    //   PermCheck.IsAdminAsync), ô này cấp cho nhóm thường chỉ làm menu hiện mà trang từ chối. Nguồn: CLAUDE (rà độc lập 03/11).
+    private static readonly List<PermissionSection> MatrixSections = SystemPermissions.Sections.Where(s => s.Code != SystemPermissions.SettingAdmin).ToList();
     private string thongBaoThanhCong = "";
 
     private List<UserGroup> danhSachGroup = new();
@@ -436,13 +451,11 @@
 
         try
         {
-            foreach (var grp in danhSachGroup.Where(g => g.GroupCode != "ADMIN"))
-            {
-                var dict = permissionMatrix[grp.GroupId];
-                var permsToSave = dict.Values.ToList();
-                var r = await UserSvc.UpdateGroupPermissionsAsync(grp.GroupId, permsToSave, _currentAdminUserId);   // [USER-PERM-SVC]
-                if (!r.Success) { thongBaoLoi = r.Error ?? "Lỗi"; isProcessing = false; return; }
-            }
+            // [SET-MATRIX-1TX 2026-11-05] mọi nhóm 1 giao dịch (trước: từng nhóm 1 lần lưu, lỗi giữa chừng lưu 1 phần — PHAT-HIEN-0311 mục 4)
+            var all = danhSachGroup.Where(g => g.GroupCode != "ADMIN")
+                .ToDictionary(g => g.GroupId, g => permissionMatrix[g.GroupId].Values.Where(x => x.SectionCode != SystemPermissions.SettingAdmin).ToList());
+            var r = await UserSvc.UpdateAllGroupPermissionsAsync(all, _currentAdminUserId);
+            if (!r.Success) { thongBaoLoi = (r.Error ?? "Lỗi") + " (chưa nhóm nào được đổi)"; isProcessing = false; return; }
             thongBaoThanhCong = "Đã lưu ma trận phân quyền thành công. Các thay đổi sẽ áp dụng vào lần đăng nhập tiếp theo của User.";
         }
         catch (Exception ex)
@@ -454,27 +467,28 @@
     }
 
     // ==== Logic User ====
-    private void MoPopupUser() { userDangSua = new User(); matKhauMoi = ""; isHienThiPopupUser = true; thongBaoLoi = ""; thongBaoThanhCong = ""; }
-    private void MoPopupSuaUser(User u) { userDangSua = new User { UserId = u.UserId, Username = u.Username, FullName = u.FullName, GroupId = u.GroupId, IsActive = u.IsActive }; isHienThiPopupUser = true; }
+    private void MoPopupUser() { userDangSua = new User(); matKhauMoi = ""; isHienThiPopupUser = true; thongBaoLoi = ""; thongBaoThanhCong = ""; popupLoi = ""; }
+    private void MoPopupSuaUser(User u) { userDangSua = new User { UserId = u.UserId, Username = u.Username, FullName = u.FullName, GroupId = u.GroupId, IsActive = u.IsActive }; isHienThiPopupUser = true; popupLoi = ""; }
     private void DongPopupUser() { isHienThiPopupUser = false; }
 
     private async Task LuuUserAsync()
     {
+        popupLoi = "";   // [SET-POPUP-ERR]
         if (string.IsNullOrWhiteSpace(userDangSua.Username) || string.IsNullOrWhiteSpace(userDangSua.FullName) || userDangSua.GroupId == null)
         {
-            thongBaoLoi = "Vui lòng nhập đủ Tên đăng nhập, Họ tên và Chọn nhóm."; return;
+            popupLoi = "Vui lòng nhập đủ Tên đăng nhập, Họ tên và Chọn nhóm."; return;
         }
 
         if (userDangSua.UserId == 0) // Thêm mới
         {
-            if (string.IsNullOrWhiteSpace(matKhauMoi)) { thongBaoLoi = "Vui lòng nhập mật khẩu khởi tạo."; return; }
+            if (string.IsNullOrWhiteSpace(matKhauMoi)) { popupLoi = "Vui lòng nhập mật khẩu khởi tạo."; return; }
             var res = await UserSvc.CreateUserAsync(userDangSua, matKhauMoi, _currentAdminUserId);   // [USER-PERM-SVC]
-            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            if (!res.Success) { popupLoi = res.Error ?? "Lỗi"; return; }
         }
         else // Sửa
         {
             var res = await UserSvc.UpdateUserAsync(userDangSua, _currentAdminUserId);   // [USER-PERM-SVC]
-            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            if (!res.Success) { popupLoi = res.Error ?? "Lỗi"; return; }
         }
 
         DongPopupUser();
@@ -508,7 +522,7 @@
     }
 
     // ==== Logic Group ====
-    private void MoPopupGroup() { groupMoi = new UserGroup(); isHienThiPopupGroup = true; thongBaoLoi = ""; thongBaoThanhCong = ""; }
+    private void MoPopupGroup() { groupMoi = new UserGroup(); isHienThiPopupGroup = true; thongBaoLoi = ""; thongBaoThanhCong = ""; popupLoi = ""; }
 
     private void MoPopupSuaGroup(UserGroup g)
     {
@@ -516,27 +530,29 @@
         isHienThiPopupGroup = true;
         thongBaoLoi = "";
         thongBaoThanhCong = "";
+        popupLoi = "";
     }
 
     private void DongPopupGroup() { isHienThiPopupGroup = false; }
 
     private async Task LuuGroupAsync()
     {
+        popupLoi = "";   // [SET-POPUP-ERR]
         if (string.IsNullOrWhiteSpace(groupMoi.GroupCode) || string.IsNullOrWhiteSpace(groupMoi.GroupName))
         {
-            thongBaoLoi = "Vui lòng nhập đủ Mã nhóm và Tên nhóm."; return;
+            popupLoi = "Vui lòng nhập đủ Mã nhóm và Tên nhóm."; return;
         }
 
         if (groupMoi.GroupId == 0) // Thêm mới
         {
             var res = await UserSvc.CreateGroupAsync(groupMoi, _currentAdminUserId);   // [USER-PERM-SVC]
-            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            if (!res.Success) { popupLoi = res.Error ?? "Lỗi"; return; }
             thongBaoThanhCong = "Tạo nhóm mới thành công.";
         }
         else // Sửa tên hiển thị
         {
             var res = await UserSvc.UpdateGroupAsync(groupMoi, _currentAdminUserId);   // [USER-PERM-SVC]
-            if (!res.Success) { thongBaoLoi = res.Error ?? "Lỗi"; return; }
+            if (!res.Success) { popupLoi = res.Error ?? "Lỗi"; return; }
             thongBaoThanhCong = "Cập nhật tên nhóm thành công.";
         }
 

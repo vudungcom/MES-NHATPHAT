@@ -83,6 +83,34 @@ public class UserService
         return (true, null);
     }
 
+    /// <summary>
+    /// [SET-MATRIX-1TX 2026-11-05] Lưu ma trận quyền MỌI nhóm trong 1 giao dịch: lỗi ở nhóm nào thì không nhóm nào đổi.
+    ///   Trước: trang Cài đặt gọi UpdateGroupPermissionsAsync từng nhóm, mỗi lần 1 lần lưu → lỗi giữa chừng thì nửa trên đã lưu, nửa dưới chưa
+    ///   (PHAT-HIEN-0311 mục 4). Nhóm ADMIN không lưu ở đây (ADMIN luôn toàn quyền). Ô "Cài đặt &amp; Phân quyền" (SETTING_ADMIN) bị bỏ khỏi
+    ///   ma trận nhóm thường (mục 5: trang Cài đặt chỉ cho ADMIN, ô này làm menu hiện mà trang từ chối) — ghi đè thì bỏ luôn ô cũ còn trong DB.
+    ///   Nguồn: CLAUDE (rà độc lập gói USER-PERM-SVC 03/11; Hùng 05/11 10:11 cho làm).
+    /// </summary>
+    public async Task<(bool Success, string? Error)> UpdateAllGroupPermissionsAsync(Dictionary<int, List<GroupPermissionSetting>> permsByGroup, int actorUserId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);
+        using var trx = await db.Database.BeginTransactionAsync();
+        var ids = permsByGroup.Keys.ToList();
+        var groups = await db.UserGroups.Where(g => ids.Contains(g.GroupId)).ToListAsync();
+        foreach (var id in ids)
+        {
+            var g = groups.FirstOrDefault(x => x.GroupId == id);
+            if (g == null) return (false, $"Không tìm thấy nhóm (GroupId {id}) — có thể vừa bị xoá. Tải lại trang rồi lưu lại; chưa nhóm nào được đổi.");
+            if (g.GroupCode == "ADMIN") continue;
+            var perms = permsByGroup[id].Where(x => x.SectionCode != SystemPermissions.SettingAdmin).ToList();
+            g.Permissions = JsonSerializer.Serialize(perms);
+        }
+        await db.SaveChangesAsync();
+        await trx.CommitAsync();
+        return (true, null);
+    }
+
     public List<GroupPermissionSetting> GetGroupPermissions(string? jsonPermissions)
     {
         if (string.IsNullOrWhiteSpace(jsonPermissions)) return new List<GroupPermissionSetting>();

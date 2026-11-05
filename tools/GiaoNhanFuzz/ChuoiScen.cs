@@ -687,6 +687,48 @@ public static class ChuoiScen
                "T5: người khác đổi PA → PB (cả dự phòng) đúng lúc mình chờ khoá xoá → xoá theo dữ liệu SAU khoá: dòng chính + dự phòng PB đều xoá, không mồ côi", d3);
         }
 
+        Console.WriteLine("[C18] [PM-NC-AT 05/11] Part Master chặn mã NC / mã CV bắt đầu \"@\" (dành cho mã hệ thống @VAO) ở cả 6 service, cả dòng dự phòng; dòng cũ có sẵn \"@\" vẫn sửa được ô khác");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-018", Full());
+            var pkg = new PartPackagingService(db); var kcs = new PartInspectionService(db); var gc = new PartMachiningService(db);
+            var bav = new PartBaviaService(db); var rua = new PartWashingService(db); var taro = new PartTaroService(db);
+            async Task<string?> Err(Func<Task> a) { try { await a(); return null; } catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; } }
+            int n0 = db.PartMachiningSteps.List.Count + db.PartTaroSteps.List.Count + db.PartBaviaSteps.List.Count + db.PartWashingSteps.List.Count + db.PartInspectionSteps.List.Count + db.PartPackagingSteps.List.Count;
+            var a = new[]
+            {
+                await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = "@VAO", MachineRegistered = "M9", SetupTime = 1 }, 1, "thu @")),
+                await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = " @vao", IsBackup = true, ParentNC = "NC01", MachineRegistered = "M8", SetupTime = 1 }, 1, "thu @ du phong")),
+                await Err(() => taro.AddAsync(pid, new PartTaroStep { NC = "3", WtsTaskCode = "@T", StepName = "x", StandardTime = 1 }, 1, "thu @ ma CV")),
+                await Err(() => taro.AddAsync(pid, new PartTaroStep { NC = "@3", WtsTaskCode = "9T", StepName = "x", StandardTime = 1 }, 1, "thu @ NC")),
+                await Err(() => bav.AddAsync(pid, new PartBaviaStep { NC = "@B", StepName = "x", StandardTime = 1 }, 1, "thu @")),
+                await Err(() => rua.AddAsync(pid, new PartWashingStep { NC = "@R", StepName = "x", StandardTime = 1 }, 1, "thu @")),
+                await Err(() => kcs.AddAsync(pid, new PartInspectionStep { NC = "@K", StepName = "x", StandardTime = 1 }, 1, "thu @")),
+                await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "@P", StepName = "x", StandardTime = 1 }, 1, "thu @")),
+            };
+            int n1 = db.PartMachiningSteps.List.Count + db.PartTaroSteps.List.Count + db.PartBaviaSteps.List.Count + db.PartWashingSteps.List.Count + db.PartInspectionSteps.List.Count + db.PartPackagingSteps.List.Count;
+            Ok(a.All(e => e != null && e.StartsWith("PartStepCodeException") && e.Contains("bắt đầu bằng \"@\"")) && n1 == n0 && db.Database.CurrentTransaction == null,
+               "Thêm mã \"@...\" ở Gia công (chính + dự phòng, hoa thường / khoảng trắng), Taro (mã CV + NC), Bavia, Rửa, KCS, Đóng gói → chặn hết, không thêm dòng", string.Join(" | ", a));
+            var a2 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "P@1", StepName = "x", StandardTime = 1 }, 1, "@ giua ma"));
+            Ok(a2 == null, "Mã có \"@\" ở giữa (P@1) → lưu được (chỉ chặn \"@\" đầu mã)", a2);
+            // sửa: đổi sang "@" chặn; dòng cũ có sẵn "@" (dữ liệu trước 05/11) sửa ô khác vẫn được, đổi sang mã thường được
+            var k = db.PartInspectionSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup);
+            var u1 = await Err(() => kcs.UpdateAsync(k.StepId, new PartInspectionStep { NC = "@K1", StepName = k.StepName, StandardTime = k.StandardTime }, 1, "doi @"));
+            var t = db.PartTaroSteps.List.First(x => x.PartId == pid && x.IsActive);
+            var u2 = await Err(() => taro.UpdateAsync(t.StepId, new PartTaroStep { NC = t.NC, WtsTaskCode = "@X", StepName = t.StepName, StandardTime = t.StandardTime, IsBackup = t.IsBackup, ParentNC = t.ParentNC }, 1, "doi @ ma CV"));
+            Ok(u1 != null && u1.StartsWith("PartStepCodeException") && !k.NC.StartsWith("@") && u2 != null && u2.StartsWith("PartStepCodeException") && t.WtsTaskCode != "@X",
+               "Sửa: KCS đổi sang \"@K1\" chặn; Taro đổi mã CV sang \"@X\" chặn, dòng giữ nguyên", $"{u1} | {u2}");
+            var old = new PartWashingStep { StepId = 9181, PartId = pid, StepOrder = 98, NC = "@OLD", StepName = "cu", StandardTime = 1, IsActive = true, CreatedBy = 1, CreatedAt = DateTime.Now };
+            db.PartWashingSteps.List.Add(old);
+            var oldT = new PartTaroStep { StepId = 9182, PartId = pid, StepOrder = 98, NC = "7", WtsTaskCode = "@OT", StepName = "cu", StandardTime = 1, IsActive = true, CreatedBy = 1, CreatedAt = DateTime.Now };
+            db.PartTaroSteps.List.Add(oldT); db.Fixup();
+            var u3 = await Err(() => rua.UpdateAsync(9181, new PartWashingStep { NC = "@OLD", StepName = "cu", StandardTime = 5 }, 1, "sua gio"));
+            var u4 = await Err(() => taro.UpdateAsync(9182, new PartTaroStep { NC = "7", WtsTaskCode = "@OT", StepName = "cu", StandardTime = 6 }, 1, "sua gio"));
+            var u5 = await Err(() => rua.UpdateAsync(9181, new PartWashingStep { NC = "9R", StepName = "cu", StandardTime = 5 }, 1, "doi ma thuong"));
+            Ok(u3 == null && old.StandardTime == 5 && u4 == null && oldT.StandardTime == 6 && u5 == null && old.NC == "9R",
+               "Dòng cũ có sẵn \"@OLD\" / mã CV \"@OT\": sửa giờ vẫn lưu (không đổi mã); đổi \"@OLD\" → 9R lưu được", $"{u3} | {u4} | {u5}");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

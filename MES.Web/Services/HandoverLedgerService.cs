@@ -562,7 +562,8 @@ namespace MES.Web.Services
     }
     public record InWts(long Id, DateTime At, string ProcessGroup, string? NC, string? WtsCode,
                         decimal Ok, decimal Ng, string? Worker,
-                        long? NgCaseId = null);   // [VULOI] vụ lỗi của phần NG
+                        long? NgCaseId = null,   // [VULOI] vụ lỗi của phần NG
+                        DateTime? Saved = null); // [K5-VONG-SUA 2026-11-05] giờ MÁY CHỦ lưu dòng (CreatedAt; At = giờ làm người nhập). null = dòng đang thử lưu (tính là mới nhất)
     public record InGcStep(int StepOrder, string NC, bool IsBackup, string? ParentNC, string? Machine, bool IsExcluded);
     /// <summary>Pg = TARO | BAVIA | WASHING | KCS | PKG; Code = mã CV khớp với WtsCode ?? NC của WTS.</summary>
     public record InCodeStep(string Pg, int StepOrder, string Code, bool IsBackup, string? ParentCode, string? StepName);
@@ -684,6 +685,7 @@ namespace MES.Web.Services
                     w.WtsLogId, w.KhPlanDetailId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
                     w.QtyDone, w.QtyOk, w.QtyNg,
                     w.NgCaseId,   // [VULOI]
+                    w.CreatedAt,  // [K5-VONG-SUA]
                     Worker = w.Worker != null ? (w.Worker.FullName ?? w.Worker.Username) : null
                 })
                 .AsNoTracking().ToListAsync();
@@ -794,7 +796,7 @@ namespace MES.Web.Services
                     }).ToList(),
                     Wts = wts.Where(w => w.KhPlanDetailId == id).Select(w => new InWts(
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
-                        w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId)).ToList(),   // [VULOI] + vụ lỗi
+                        w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId, w.CreatedAt)).ToList(),   // [VULOI] + vụ lỗi · [K5-VONG-SUA] + giờ máy chủ lưu
                     GcSteps = mach.Where(m => m.KhPlanDetailId == id).Select(m => new InGcStep(
                         m.StepOrder, m.NC ?? "", m.IsBackup, m.ParentNC, m.MachineRegistered,
                         !string.IsNullOrWhiteSpace(m.MachineRegistered) && exclSet.Contains(m.MachineRegistered!.Trim()))).ToList(),
@@ -894,6 +896,136 @@ namespace MES.Web.Services
         // ================================================================
         // TÍNH — hàm thuần, không đụng DB
         // ================================================================
+
+
+        // =====================================================================
+        // [K5-VONG-SUA 2026-11-05] K5 xét THỨ TỰ THỜI GIAN với hàng sửa trả về (vòng tròn K5 xét số cuối — sổ "Lỗi cần sửa", seed 31983 PO4).
+        //   Lỗi: K5 chỉ xét số cuối → nhận 1 → WTS NG 1 → sửa → KCS đạt (hàng về ô Hàng lỗi đã xử lý) rồi HUỶ LẦN NHẬN GỐC vẫn lưu được:
+        //   chiếc sửa đạt "thế chỗ" chính chiếc đã bị NG (thực tế không thể — chiếc NG chỉ có sau khi sửa xong chính nó). Số cuối vẫn cân
+        //   nhưng sau đó huỷ KCS xác nhận bị chặn mà không gỡ được (WTS NG giữ vụ bị Kết quả sửa dùng, Kết quả sửa có KCS xác nhận).
+        //   Cùng loại: gửi nhóm khác sửa rồi trả về (phiếu Hàng lỗi / Hàng sửa → nhận ô Hàng lỗi đã xử lý / Hàng mới).
+        //   Cách tính: PO có hàng sửa trả về thì dựng thêm ẢNH SỔ NGAY TRƯỚC mỗi lúc hàng sửa về (bỏ mọi chứng từ ghi từ lúc đó trở đi,
+        //   theo giờ MÁY CHỦ lưu; phôi Kho giữ nguyên) rồi xét các ô chưa làm (Kho: phôi còn giao). Ô nào thấp hơn số cuối và âm → khoá "TL|<ô>".
+        //   CHỈ XÉT KHI HUỶ chứng từ nguồn (huỷ lần nhận / huỷ phiếu / huỷ phần chưa nhận / huỷ KCS xác nhận — HandoverService) và trong [GN-WHY]:
+        //   so với mức nền = min(TL trước, số ô trước) → chỉ chặn khi lần huỷ làm ô âm thêm theo thời gian (NewLoopKeys).
+        //   KHÔNG đưa vào NegativeCells / Compute (rà độc lập 05/11 C1–C2, V3): sửa dòng WTS (huỷ + dòng mới, giờ lưu mới) đẩy phần OK ra sau
+        //   → ảnh sổ âm giả; lưu bù dữ liệu cũ đang âm bị chặn oan; Compute chậm ở mọi trang. Lưu mới / sửa WTS không xét phần này.
+        //   WTS: phần OK tính từ giờ lưu dòng; phần NG có vụ tính từ lúc vụ sinh. PO không có hàng sửa trả về: không tính thêm.
+        //   Còn hở (ghi sổ): xoá dòng WTS NC trước làm NC sau mất nguồn theo vòng — chưa xét (WtsSaveService), hiếm.
+        //   Nguồn: CLAUDE (lỗi ngầm kiem 04/11 21:59 seed 31983); Hùng 05/11 10:28 OK coi là sửa ruột, không cần hỏi khách.
+        // =====================================================================
+        /// <summary>[K5-VONG-SUA] Lần nhận này là hàng sửa trả về (phiếu lấy từ ô Hàng lỗi / Hàng sửa, nhận vào ô Hàng lỗi đã xử lý / Hàng mới)?</summary>
+        public static bool IsRepairedReturn(InTx t, InRecv r)
+        {
+            var pu = Classify(t, null);
+            if (pu is HandoverPurpose.NgReturn or HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn || HandoverPurpose.IsOut(pu) || t.SourceReceiveId != null) return false;
+            var from = HandoverCell.IssueCellOf(pu, t.FromCell);
+            if (from is not (HandoverCell.Loi or HandoverCell.Sua)) return false;
+            var cell = HandoverCell.IsReceiveCell(r.Cell) ? r.Cell : DesigCellOf(t, pu);
+            return cell is (HandoverCell.Xl or HandoverCell.Moi) && r.Ok > 0;
+        }
+
+        /// <summary>[K5-VONG-SUA] Các ô "chưa làm" xét theo thời gian (khoá như NegativeCells), kể cả ô không âm.</summary>
+        static Dictionary<string, (decimal Value, string Text)> WaitCells(LedgerRow r)
+        {
+            var d = new Dictionary<string, (decimal Value, string Text)>();
+            foreach (var G in r.Groups.Values)
+            {
+                if (G.IsKho) { d["KHO|ConGiao"] = (G.ConGiao, "Kho: phôi còn giao"); continue; }
+                d[G.Code + "|ChuaLam"] = (G.ChuaLam, $"{G.Label}: Chưa làm");
+                foreach (var st in G.Steps.Where(st => st.Waiting.HasValue && !st.IsExcluded && !st.IsPrep))
+                    d[$"{G.Code}|{st.Pg}|{st.Code}"] = (st.Waiting!.Value, st.Pg == "GC"
+                        ? (IsVao(st.Code) ? $"{G.Label} {VaoLabel}" : $"{G.Label} {NcName(st.Code)}: chưa làm")
+                        : $"{G.Label}{(st.SubGroup == G.Label || string.IsNullOrEmpty(st.SubGroup) ? "" : " " + st.SubGroup)} mã {st.Code}: chưa làm");
+            }
+            return d;
+        }
+
+        /// <summary>[K5-VONG-SUA] Ảnh sổ ngay trước lúc <paramref name="cut"/>: chỉ giữ chứng từ ghi TRƯỚC lúc đó (giờ máy chủ).</summary>
+        public static LedgerInput SnapshotBefore(LedgerInput i, DateTime cut)
+        {
+            DateTime CaseAt(long? id, DateTime fallback) => id is long v && v > 0 && i.CaseInfo.TryGetValue(v, out var ci) ? ci.At : fallback;
+            var txs = new List<InTx>();
+            var dropRecv = new HashSet<long>();
+            foreach (var t in i.Txs.Where(t => t.At < cut))
+            {
+                var c = t.CloneTx();
+                var nDrop = c.Receives.Count(r => r.At >= cut);
+                foreach (var r in c.Receives.Where(r => r.At >= cut)) dropRecv.Add(r.Id);
+                c.Receives.RemoveAll(r => r.At >= cut);
+                bool reopened = c.Closed > 0 && (c.ClosedAt ?? c.At) >= cut;
+                if (reopened) { c.Issued += c.Closed; c.Closed = 0; }   // huỷ phần chưa nhận sau lúc đó: lúc đó phiếu còn mở
+                if ((nDrop > 0 || reopened) && !HandoverPurpose.IsOut(c.Purpose))   // (rà độc lập T3) phiếu không đổi gì thì giữ trạng thái gốc (dữ liệu cũ)
+                {
+                    var rec = c.Receives.Sum(r => r.Ok + r.Ng);
+                    c.Status = rec <= 0 ? "PENDING" : rec >= c.Issued ? "COMPLETED" : "PARTIAL";
+                }
+                txs.Add(c);
+            }
+            txs.RemoveAll(t => t.SourceReceiveId is long src && dropRecv.Contains(src));   // phiếu trả tự lập của lần nhận bị bỏ
+            var wts = new List<InWts>();
+            foreach (var w in i.Wts)
+            {
+                var saved = w.Saved ?? DateTime.MaxValue;
+                if (saved < cut) { wts.Add(w); continue; }
+                if (w.Ng > 0 && w.NgCaseId is long vid && vid > 0 && CaseAt(vid, saved) < cut) wts.Add(w with { Ok = 0 });   // phần NG có từ lúc vụ sinh
+            }
+            var reps = new List<InRepair>();
+            foreach (var rp in i.Repairs.Where(rp => rp.At < cut))
+            {
+                var c = rp.CloneRep(); c.Checks.RemoveAll(x => x.At >= cut); reps.Add(c);
+            }
+            return new LedgerInput
+            {
+                KhPlanDetailId = i.KhPlanDetailId, PlanNo = i.PlanNo, PurchaseOrder = i.PurchaseOrder, PartNo = i.PartNo,
+                CustomerName = i.CustomerName, PlanQty = i.PlanQty, ApplyWorkflow = i.ApplyWorkflow,
+                Phoi = i.Phoi, GcSteps = i.GcSteps, CodeSteps = i.CodeSteps, CaseInfo = i.CaseInfo,
+                Txs = txs, Wts = wts, NgReps = i.NgReps.Where(b => b.At < cut).ToList(), Repairs = reps,
+            };
+        }
+
+        /// <summary>[K5-VONG-SUA] Các lúc hàng sửa trả về + nhóm nhận hàng sửa (lần nhận hàng sửa trả về: nhóm nhận; lần KCS xác nhận đạt: nhóm sửa), tăng dần.</summary>
+        public static List<(DateTime At, string Group)> RepairedReturnTimes(LedgerInput i)
+            => i.Txs.SelectMany(t => t.Receives.Where(r => IsRepairedReturn(t, r)).Select(r => (r.At, t.To)))
+                .Concat(i.Repairs.SelectMany(rp => rp.Checks.Where(c => c.Ok > 0).Select(c => (c.At, rp.Group))))
+                .Distinct().OrderBy(x => x.Item1).ToList();
+
+        /// <summary>[K5-VONG-SUA] Ô chưa làm (khoá như NegativeCells) thấp nhất trong các ảnh sổ ngay trước lúc hàng sửa trả về — chỉ ô âm.</summary>
+        public static Dictionary<string, (decimal Value, string Text)> LoopTimeline(LedgerInput inp)
+        {
+            var res = new Dictionary<string, (decimal Value, string Text)>();
+            if (!inp.ApplyWorkflow) return res;   // N7: Workflow OFF không chặn
+            // (rà độc lập 05/11 V2) mỗi mốc chỉ xét ô của NHÓM NHẬN hàng sửa về lúc đó — nhóm khác không bị xét thứ tự thời gian
+            foreach (var g in RepairedReturnTimes(inp).GroupBy(x => x.At))
+            {
+                var groups = g.Select(x => x.Group).ToHashSet();
+                foreach (var kv in WaitCells(Compute(SnapshotBefore(inp, g.Key))))
+                    if (kv.Value.Value < 0 && groups.Contains(kv.Key.Split('|')[0]) && (!res.TryGetValue(kv.Key, out var cur) || kv.Value.Value < cur.Value))
+                        res[kv.Key] = kv.Value;
+            }
+            return res;
+        }
+
+        /// <summary>[K5-VONG-SUA] Khoá "TL|&lt;ô&gt;" mới âm / âm thêm theo thời gian do thao tác (trước → sau). Mức nền = min(TL trước, số ô trước):
+        /// dữ liệu cũ đã âm không chặn oan (rà độc lập 05/11 C2), vòng tròn (số trước 0, TL sau −1) vẫn chặn.</summary>
+        public static List<(string Key, decimal Value, string Text)> NewLoopKeys(LedgerInput beforeIn, LedgerRow beforeRow, LedgerInput afterIn,
+            Dictionary<string, (decimal Value, string Text)>? beforeTl = null)   // beforeTl: LoopTimeline(beforeIn) đã tính sẵn ([GN-WHY] dùng lại — rà độc lập V4)
+        {
+            var res = new List<(string, decimal, string)>();
+            if (!afterIn.ApplyWorkflow) return res;
+            var a = LoopTimeline(afterIn);
+            if (a.Count == 0) return res;
+            var b = beforeTl ?? LoopTimeline(beforeIn);
+            var bw = WaitCells(beforeRow);
+            foreach (var kv in a)
+            {
+                var basev = bw.TryGetValue(kv.Key, out var bv) ? bv.Value : 0m;
+                if (b.TryGetValue(kv.Key, out var bt) && bt.Value < basev) basev = bt.Value;
+                if (kv.Value.Value < Math.Min(basev, 0m))
+                    res.Add(("TL|" + kv.Key, kv.Value.Value, kv.Value.Text + " (theo thứ tự thời gian: hàng đã được làm / giao trước lúc hàng sửa trả về — chiếc sửa không thế chỗ được chiếc đã dùng trước đó)"));
+            }
+            return res;
+        }
 
         public static LedgerRow Compute(LedgerInput inp)
         {

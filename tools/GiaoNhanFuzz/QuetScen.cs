@@ -141,6 +141,40 @@ public static class QuetScen
             Ok(sw.ToString().Contains("── Part Master: 1 chi tiết có NC đầu Gia công là máy loại trừ") && sw.ToString().Contains("[LOAI_TRU_DAU]"),
                "File kết quả có mục PO [LOAI_TRU_DAU] và mục Part Master", sw.ToString().Split('\n').FirstOrDefault(l => l.Contains("Part Master")));
         }
+        Console.WriteLine("[Q4] [PM-T4][PM-NC-AT 05/11] Part Master: mã chính trùng đang dùng (PM_TRUNG, Taro không xét, dự phòng / đã xoá không tính) + mã bắt đầu \"@\" (PM_MA_A)");
+        {
+            var db = Seed(true); var led = new HandoverLedgerService(db);
+            var r0 = await QuetCore.ScanAsync(db, led);
+            Ok(r0.PmFindings.Count == 0, "Part Master sạch: không báo PM_TRUNG / PM_MA_A", string.Join(" | ", r0.PmFindings));
+            var cust = db.Customers.List.First();
+            db.PartMasters.List.Add(new PartMaster { PartId = 61, PartNo = "P-TRUNG", IsActive = true, CustomerId = cust.CustomerId });
+            db.PartMasters.List.Add(new PartMaster { PartId = 62, PartNo = "P-SACH", IsActive = true, CustomerId = cust.CustomerId });
+            // P-TRUNG: Bavia 2V ×2 (chính, 1 dòng có khoảng trắng / chữ thường) → báo; Rửa 1R chính + 1R dự phòng → không; KCS K1 chính + K1 đã xoá → không; Taro 1T ×2 → không (TARO-NC-MA)
+            db.PartBaviaSteps.List.Add(new PartBaviaStep { StepId = 611, PartId = 61, StepOrder = 1, NC = "2V", IsActive = true });
+            db.PartBaviaSteps.List.Add(new PartBaviaStep { StepId = 612, PartId = 61, StepOrder = 2, NC = " 2v ", IsActive = true });
+            db.PartWashingSteps.List.Add(new PartWashingStep { StepId = 613, PartId = 61, StepOrder = 1, NC = "1R", IsActive = true });
+            db.PartWashingSteps.List.Add(new PartWashingStep { StepId = 614, PartId = 61, StepOrder = 2, NC = "1R", IsBackup = true, ParentNC = "1R", IsActive = true });
+            db.PartInspectionSteps.List.Add(new PartInspectionStep { StepId = 615, PartId = 61, StepOrder = 1, NC = "K1", IsActive = true });
+            db.PartInspectionSteps.List.Add(new PartInspectionStep { StepId = 616, PartId = 61, StepOrder = 2, NC = "K1", IsActive = false });
+            db.PartTaroSteps.List.Add(new PartTaroStep { StepId = 617, PartId = 61, StepOrder = 1, NC = "3", WtsTaskCode = "1T", IsActive = true });
+            db.PartTaroSteps.List.Add(new PartTaroStep { StepId = 618, PartId = 61, StepOrder = 2, NC = "5", WtsTaskCode = "1T", IsActive = true });
+            // P-SACH: mã bắt đầu "@" ở Gia công (dự phòng) + Taro mã CV → báo PM_MA_A, không báo PM_TRUNG
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 621, PartId = 62, StepOrder = 1, NC = "NC1", IsActive = true });
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 622, PartId = 62, StepOrder = 2, NC = " @VAO", IsBackup = true, ParentNC = "NC1", IsActive = true });
+            db.PartTaroSteps.List.Add(new PartTaroStep { StepId = 623, PartId = 62, StepOrder = 1, NC = "1", WtsTaskCode = "@T", IsActive = true });
+            db.PartPackagingSteps.List.Add(new PartPackagingStep { StepId = 624, PartId = 62, StepOrder = 1, NC = "@X", IsActive = false });   // đã xoá: không báo
+            db.Fixup();
+            var r = await QuetCore.ScanAsync(db, led);
+            var tr = r.PmFindings.Where(f => f.StartsWith("[" + QuetCore.PmTrung)).ToList();
+            var at = r.PmFindings.Where(f => f.StartsWith("[" + QuetCore.PmMaA)).ToList();
+            Ok(tr.Count == 1 && tr[0].Contains("Part P-TRUNG") && tr[0].Contains("Bavia: 2 dòng chính cùng mã \"2V\"") && tr[0].Contains("611") && tr[0].Contains("612"),
+               "PM_TRUNG: chỉ Bavia 2V ×2 của P-TRUNG (Rửa dự phòng, KCS đã xoá, Taro mã CV chung không báo)", string.Join(" | ", tr));
+            Ok(at.Count == 2 && at.All(f => f.Contains("Part P-SACH")) && at.Any(f => f.Contains("622") && f.Contains("dự phòng")) && at.Any(f => f.Contains("623") && f.Contains("@T")),
+               "PM_MA_A: dự phòng \" @VAO\" Gia công + Taro mã CV \"@T\" (dòng đã xoá không báo)", string.Join(" | ", at));
+            var sw = new StringWriter(); QuetCore.Write(r, sw, "GIA");
+            Ok(sw.ToString().Contains("── Part Master: 1 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 2 dòng mã bắt đầu \"@\" (PM_MA_A)"),
+               "File kết quả có mục Part Master PM_TRUNG / PM_MA_A", sw.ToString().Split('\n').FirstOrDefault(l => l.Contains("PM_TRUNG")));
+        }
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }
