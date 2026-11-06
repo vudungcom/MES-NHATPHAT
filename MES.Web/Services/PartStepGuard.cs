@@ -86,6 +86,21 @@ public static class PartStepGuard
             throw new PartStepCodeException($"{label}: NC / mã CV {n} đã có ở dòng chính khác của Part này (có thể vừa được người khác lưu) — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng). Tải lại trang rồi kiểm tra.");
     }
 
+    // [TARO-NC-MA 2026-11-06] Taro: mã CV dùng CHUNG nhiều NC là hợp lệ (khách chốt B 02/11 09:14 — vd 1T / 2T / 3T1 ở cả NC 3 lẫn NC 5);
+    //   trùng là CÙNG mã CV ở CÙNG NC (2 dòng chính) → sổ đếm theo cặp (mã, NC) không phân biệt được 2 dòng. Mã CV = WtsTaskCode, trống thì NC
+    //   (như sổ). Đọc DB dưới khoá MES_PM_STEPS_. Sửa dòng: chỉ kiểm khi mã CV / NC / dự phòng đổi. Nguồn: KHÁCH 02/11 09:14; HÙNG 05/11 15:37.
+    public static string TaroCode(string? wtsTaskCode, string? nc) => Norm(string.IsNullOrWhiteSpace(wtsTaskCode) ? nc : wtsTaskCode);
+
+    public static void CheckTaroMain(string label, string? wtsTaskCode, string? nc, IEnumerable<(string? WtsTaskCode, string? Nc)> otherMains)
+    {
+        var code = TaroCode(wtsTaskCode, nc);
+        if (IsBlank(code))
+            throw new PartStepCodeException($"{label}: dòng chính chưa nhập NC / mã CV — nhập mã hoặc xoá dòng.");
+        if (otherMains.Any(o => SameCode(TaroCode(o.WtsTaskCode, o.Nc), code) && SameCode(o.Nc, nc)))
+            throw new PartStepCodeException($"{label}: mã CV {code} ở NC {Norm(nc)} đã có ở dòng chính khác của Part này (có thể vừa được người khác lưu) — "
+                + "mỗi NC chỉ 1 dòng mỗi mã CV (cùng mã ở NC khác thì được). Tải lại trang rồi kiểm tra.");
+    }
+
     // [B6-DP-MA 2026-11-06] Luật mã dòng dự phòng (T3 PM-NC-DUP-THAP). Nguồn: CLAUDE (rà độc lập 02/11 T3), Hùng 05/11 15:37 chốt làm theo đề xuất.
     //   Trước: dự phòng không bị kiểm mã — trống vẫn lưu (trang chặn, service không), hoặc mang đúng mã 1 dòng chính khác / dự phòng của dòng cha khác
     //   (vd dự phòng "P2" của P1 khi đã có dòng chính P2) → sổ (CodeMain "nhóm|mã" → mã chính) gộp WTS mã đó về 1 cha, cha kia mất số.

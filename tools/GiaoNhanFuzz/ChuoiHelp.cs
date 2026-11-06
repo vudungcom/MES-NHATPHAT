@@ -35,6 +35,8 @@ public static class ChuoiHelp
         public bool TaroTaskCode = true;   // Taro dùng WtsTaskCode (3T) thay vì NC
         public bool Prep = true;           // có mã chuẩn bị 1T/1V/1R
         public bool HtspDuPhong = false;   // dòng dự phòng ở Taro
+        public bool TaroNc2 = false;       // [TARO-NC-MA 2026-11-06] Taro làm 2 lần: mọi mã CV Taro lặp lại ở NC "T9" (mã dùng chung nhiều NC — khách chốt B 02/11)
+        public bool TaroGop = false;       // [TARO-3T-GOP 2026-11-06] thêm bộ gộp 8G ← 8G1 + 8G2 (khai WTS tiêu chuẩn) ở NC T1 (+ T9 nếu TaroNc2)
 
         public static Shape Random(Random rnd, bool allowExcl)
         {
@@ -45,6 +47,9 @@ public static class ChuoiHelp
             s.Taro = Pick(rnd, (0, 15), (1, 55), (2, 30)); s.Bavia = Pick(rnd, (0, 15), (1, 60), (2, 25)); s.Rua = Pick(rnd, (0, 30), (1, 70));
             s.Kcs = Pick(rnd, (0, 10), (1, 60), (2, 30)); s.Pkg = Pick(rnd, (0, 15), (1, 85));
             s.TaroTaskCode = rnd.NextDouble() < 0.6; s.Prep = rnd.NextDouble() < 0.4; s.HtspDuPhong = rnd.NextDouble() < 0.2;
+            if (Environment.GetEnvironmentVariable("TARO") == "1") { s.TaroTaskCode = true; if (s.Taro == 0) s.Taro = 1; s.Kcs = Math.Max(s.Kcs, 1); s.ExclAt = -1; }   // [TARO-NC-MA] lượt nang chuoi_taro: luôn có Taro mã CV
+            var pTaro = Environment.GetEnvironmentVariable("TARO") == "1" ? 0.75 : 0.35;
+            s.TaroNc2 = s.TaroTaskCode && s.Taro > 0 && rnd.NextDouble() < pTaro; s.TaroGop = s.TaroTaskCode && s.Taro > 0 && rnd.NextDouble() < pTaro;   // [TARO-NC-MA][TARO-3T-GOP]
             return s;
         }
         static T Pick<T>(Random r, params (T v, int w)[] xs)
@@ -76,6 +81,22 @@ public static class ChuoiHelp
         if (s.HtspDuPhong && s.Taro > 0)
             await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T1-DP", WtsTaskCode = s.TaroTaskCode ? "3T-DP" : null, IsBackup = true, ParentNC = "T1", StepName = "Taro DP", StandardTime = 2 }, Admin, Reason);
         if (s.Prep && s.Taro > 0) await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "1T", WtsTaskCode = "1T", StepName = "Chuẩn bị taro", StandardTime = 5 }, Admin, Reason);
+        // [TARO-3T-GOP 2026-11-06] bộ gộp 8G ← 8G1, 8G2 ở NC T1 (khai báo gộp là danh mục chung — thêm 1 lần cho DB)
+        if (s.TaroGop)
+        {
+            if (!db.StandardWtsTaskGops.List.Any(g => g.IsActive && g.GopTaskCode == "8G"))
+            {
+                db.StandardWtsTaskGops.List.Add(new StandardWtsTaskGop { Id = db.StandardWtsTaskGops.List.Count + 1, GopTaskCode = "8G", PartTaskCode = "8G1", IsActive = true, CreatedAt = DateTime.Now });
+                db.StandardWtsTaskGops.List.Add(new StandardWtsTaskGop { Id = db.StandardWtsTaskGops.List.Count + 1, GopTaskCode = "8G", PartTaskCode = "8G2", IsActive = true, CreatedAt = DateTime.Now });
+                db.Fixup();
+            }
+            foreach (var c in new[] { "8G", "8G1", "8G2" })
+                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T1", WtsTaskCode = c, StepName = "Taro " + c, StandardTime = c == "8G" ? 2 : 1 }, Admin, Reason);
+        }
+        // [TARO-NC-MA 2026-11-06] Taro làm 2 lần: mọi mã CV Taro dòng chính (trừ chuẩn bị) lặp lại ở NC "T9", T.Chuẩn khác
+        if (s.TaroNc2)
+            foreach (var t in db.PartTaroSteps.List.Where(x => x.PartId == pm.PartId && x.IsActive && !x.IsBackup && !string.IsNullOrWhiteSpace(x.WtsTaskCode) && x.WtsTaskCode != "1T").ToList())
+                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T9", WtsTaskCode = t.WtsTaskCode, StepName = t.StepName + " (lần 2)", StandardTime = (t.StandardTime ?? 1) / 2 }, Admin, Reason);
         var bavia = new PartBaviaService(db);
         for (int i = 0; i < s.Bavia; i++) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = $"B{i + 1}", StepName = "Bavia " + (i + 1), StandardTime = 1 }, Admin, Reason);
         if (s.Prep && s.Bavia > 0) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = "1V", StepName = "Chuẩn bị bavia", StandardTime = 4 }, Admin, Reason);
@@ -309,7 +330,11 @@ public static class ChuoiHelp
         var gc = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == detailId).OrderBy(s => s.StepOrder).ToList();
         var ncs = gc.Where(s => !s.IsBackup).Select(s => s.NC).ToArray();
         string TaroCode(KhPlanRouteSnapshotTaro t) => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode!.Trim();
-        var htsp = db.KhPlanRouteSnapshotTaro.List.Where(s => s.KhPlanDetailId == detailId).Select(s => "TARO|" + TaroCode(s))
+        // [TARO-NC-MA 2026-11-06] mã Taro dòng chính dùng ở nhiều NC → "TARO|mã|NC" (thao tác WTS phải chọn NC)
+        var taroSnap = db.KhPlanRouteSnapshotTaro.List.Where(s => s.KhPlanDetailId == detailId).ToList();
+        var sharedT = taroSnap.Where(s => !s.IsBackup).GroupBy(TaroCode, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(x => (x.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var htsp = taroSnap.Select(s => "TARO|" + TaroCode(s) + (!s.IsBackup && sharedT.Contains(TaroCode(s)) ? "|" + (s.NC ?? "").Trim() : ""))
             .Concat(db.KhPlanRouteSnapshotBavia.List.Where(s => s.KhPlanDetailId == detailId).Select(s => "BAVIA|" + s.NC))
             .Concat(db.KhPlanRouteSnapshotWashing.List.Where(s => s.KhPlanDetailId == detailId).Select(s => "WASHING|" + s.NC))
             .Where(c => !HandoverLedgerService.IsPrepCode(c.Split('|')[1])).ToArray();

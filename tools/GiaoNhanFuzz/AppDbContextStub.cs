@@ -48,6 +48,8 @@ namespace MES.Web.Data
         public DbSet<PartStepStdTimeConfirm> PartStepStdTimeConfirms => Set<PartStepStdTimeConfirm>();
         public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTimings => Set<KhPlanRouteSnapshotMachiningTiming>();
         public DbSet<KhPlanRouteSnapshotStdConfirm> KhPlanRouteSnapshotStdConfirms => Set<KhPlanRouteSnapshotStdConfirm>();
+        public DbSet<StandardWtsTaskGop> StandardWtsTaskGops => Set<StandardWtsTaskGop>();                       // [TARO-3T-GOP 2026-11-06]
+        public DbSet<KhPlanRouteSnapshotWtsGop> KhPlanRouteSnapshotWtsGops => Set<KhPlanRouteSnapshotWtsGop>();   // [TARO-3T-GOP 2026-11-06]
         public DbSet<WtsProductionLogStd> WtsProductionLogStds => Set<WtsProductionLogStd>();
         public DbSet<StdUpdateBatch> StdUpdateBatches => Set<StdUpdateBatch>();
         public DbSet<StdUpdateBatchDetail> StdUpdateBatchDetails => Set<StdUpdateBatchDetail>();
@@ -80,6 +82,7 @@ namespace MES.Web.Data
             _ = Customers; _ = Users; _ = KhPlans; _ = KhPlanDetails; _ = KhoVatLieus; _ = KhoVatLieuChangeLogs; _ = KhPlanDetailChangeLogs; _ = WtsProductionLogs;
             _ = NgCategories; _ = NgCategoryChangeLogs; _ = NgCases;   // [VULOI]
             _ = HandoverRepairResults; _ = HandoverRepairChecks;   // [GC-SUA-TAI-CHO]
+            _ = StandardWtsTaskGops; _ = KhPlanRouteSnapshotWtsGops;   // [TARO-3T-GOP] 06/11 — giao dịch quay lại phải thấy 2 bảng
             _ = HandoverTxCloses; _ = KhPlanDeletedDetails; _ = CaLamViecChangeLogs;   // [K5-CLOSE-NHIEU][KHE-5][CA-LOG] 06/11 — giao dịch quay lại phải thấy cả 3 bảng
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;

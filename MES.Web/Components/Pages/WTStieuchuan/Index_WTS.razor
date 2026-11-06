@@ -183,7 +183,7 @@
                                         }
                                     </td>
                                     <td class="text-center small text-muted">@item.DisplayOrder</td>
-                                    <td class="small text-muted">@item.GhiChu</td>
+                                    <td class="small text-muted">@item.GhiChu@if (GopBadge(item.TaskCode) != null) { <span class="badge bg-light text-primary border ms-1">@GopBadge(item.TaskCode)</span> }</td>
                                     <td class="text-center">
                                         @if (_canEditMaster)
                                         {
@@ -489,6 +489,26 @@
                         </div>
                         <div class="form-text">Công việc "Vô ích" không tính vào hiệu suất công nhân.</div>
                     </div>
+
+                    @* ── [TARO-3T-GOP 2026-11-06] Mã gộp: mã này làm THAY các mã thành phần (vd 3T thay 3T1 + 3T2 + 3T3) — chỉ nhóm Taro, chỉ khi sửa ── *@
+                    @if (_HienGop)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Mã gộp — làm thay các mã</label>
+                            <div class="d-flex flex-wrap gap-2 border rounded p-2" style="max-height: 140px; overflow-y: auto;">
+                                @foreach (var gc in _GopCandidates)
+                                {
+                                    var gcode = gc.TaskCode;
+                                    <label class="form-check-label small d-flex align-items-center gap-1" style="min-width: 110px;">
+                                        <input type="checkbox" class="form-check-input mt-0" checked="@IsGopChon(gcode)"
+                                               @onchange="e => OnGopToggle(gcode, e)" />
+                                        <span class="font-monospace fw-bold">@gcode</span>
+                                    </label>
+                                }
+                            </div>
+                            <div class="form-text">@_GopHint</div>
+                        </div>
+                    }
 
                     @* ── Ghi chú ── *@
                     <div class="mb-3">
@@ -910,6 +930,7 @@
     {
         isLoading = true;
         DanhSachGoc = await WtsSvc.GetAllActiveAsync();
+        _gops = await WtsSvc.GetActiveGopsAsync();   // [TARO-3T-GOP]
         DanhSachNhom = await WtsSvc.GetDistinctCategoriesAsync();
         isLoading = false;
     }
@@ -1002,7 +1023,33 @@
         pinXacNhan = "";
         lyDoSua = "";
         loiPopup = "";
+        _gopChon = _gops.Where(g => string.Equals(g.GopTaskCode, item.TaskCode, StringComparison.OrdinalIgnoreCase))
+                        .Select(g => g.PartTaskCode).ToHashSet(StringComparer.OrdinalIgnoreCase);   // [TARO-3T-GOP]
         isHienThiPopupSua = true;
+    }
+
+    // ── [TARO-3T-GOP 2026-11-06] Khai báo mã gộp (StandardWtsTaskGops). Máy chủ kiểm luật (cùng nhóm, không lồng, 1 thành phần 1 mã gộp). ──
+    private List<StandardWtsTaskGop> _gops = new();
+    private HashSet<string> _gopChon = new(StringComparer.OrdinalIgnoreCase);
+    private bool _HienGop => !isThemMoi && itemDangSua != null && string.Equals((itemDangSua.CategoryCode ?? "").Trim(), "TARO", StringComparison.OrdinalIgnoreCase)
+                             && !MES.Web.Services.HandoverLedgerService.IsPrepCode(itemDangSua.TaskCode);
+    private List<StandardWtsTask> _GopCandidates => itemDangSua == null ? new()
+        : DanhSachGoc.Where(t => t.TaskId != itemDangSua.TaskId && string.Equals(t.CategoryCode, itemDangSua.CategoryCode, StringComparison.OrdinalIgnoreCase)
+                                 && !MES.Web.Services.HandoverLedgerService.IsPrepCode(t.TaskCode)).ToList();
+    private bool IsGopChon(string code) => _gopChon.Contains(code);
+    private void OnGopToggle(string code, ChangeEventArgs e)
+    {
+        if (e.Value is bool b && b) _gopChon.Add(code); else _gopChon.Remove(code);
+    }
+    private string _GopHint => _gopChon.Count == 0
+        ? "Không tích = mã thường. Tích các mã mà mã này làm THAY (vd 3T thay 3T1 + 3T2 + 3T3): mỗi chiếc làm mã gộp HOẶC làm đủ các mã đã tích."
+        : $"Mỗi chiếc làm {itemDangSua?.TaskCode} HOẶC làm đủ {string.Join(" + ", _gopChon.OrderBy(x => x))}. PO đã tạo giữ khai báo cũ; PO chưa chạy lấy khai báo mới khi làm mới quy trình.";
+    private string? GopBadge(string code)
+    {
+        var parts = _gops.Where(g => string.Equals(g.GopTaskCode, code, StringComparison.OrdinalIgnoreCase)).Select(g => g.PartTaskCode).OrderBy(x => x).ToList();
+        if (parts.Count > 0) return "Gộp: " + string.Join(" + ", parts);
+        var owner = _gops.FirstOrDefault(g => string.Equals(g.PartTaskCode, code, StringComparison.OrdinalIgnoreCase));
+        return owner == null ? null : "Thuộc gộp " + owner.GopTaskCode;
     }
 
     private void DongPopupSua()
@@ -1032,7 +1079,7 @@
         }
         else
         {
-            var result = await WtsSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan);
+            var result = await WtsSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan, _HienGop ? _gopChon.ToList() : null);   // [TARO-3T-GOP]
             if (result.Success)
             {
                 DongPopupSua();

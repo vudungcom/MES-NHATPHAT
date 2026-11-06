@@ -129,6 +129,7 @@ namespace MES.Web.Services
             NgReps = new List<InNgRep>(i.NgReps),   // [GN-NG-AFTER]
             Repairs = i.Repairs.Select(r => r.CloneRep()).ToList(),   // [GC-SUA-TAI-CHO]
             CaseInfo = i.CaseInfo,                  // [VULOI] nhãn vụ lỗi (không góp số)
+            TaroGops = i.TaroGops,                  // [TARO-3T-GOP 2026-11-06] rà độc lập 06/11 mục 2: thiếu → tìm đường gỡ tính trên sổ KHÔNG có bộ gộp (ô âm sẵn, gợi ý rỗng)
         };
 
         static string GroupOfPg(string pg) => pg switch
@@ -202,7 +203,7 @@ namespace MES.Web.Services
         static string WtsWhere(InWts w) => w.ProcessGroup switch
         {
             "GC"      => "Gia công " + HandoverLedgerService.NcName(w.NC),
-            "TARO"    => "HTSP Taro " + w.WtsCode,
+            "TARO"    => "HTSP Taro " + w.WtsCode + (string.IsNullOrWhiteSpace(w.StepNC) ? "" : " · NC " + w.StepNC.Trim()),   // [TARO-NC-MA] NC Taro của dòng
             "BAVIA"   => "HTSP Bavia " + w.WtsCode,
             "WASHING" => "HTSP Rửa " + w.WtsCode,
             "KCS"     => "KCS " + w.WtsCode,
@@ -219,6 +220,13 @@ namespace MES.Web.Services
             var c = new List<WhyStep>();
             string Main(string pg, string? code)
                 => code == null ? "" : row.CodeMain.TryGetValue(pg + "|" + code.Trim(), out var m) ? m : code.Trim();
+            string? WtsKeyOf(InWts w)   // [TARO-NC-MA] như TaroKeyed: mã = WtsCode ?? NC (dòng rất cũ ghi mã ở cột NC — rà độc lập vòng 2 mục 1); NC sai / thiếu → NC đầu
+            {
+                var wc = w.WtsCode ?? w.NC;
+                return w.ProcessGroup == "TARO" && HandoverLedgerService.TaroNcsOf(row, "TARO", wc) is { } ncs
+                    ? HandoverLedgerService.WtsKey(row, "TARO", wc, w.StepNC) ?? HandoverLedgerService.TaroKey(wc!, ncs[0])
+                    : wc;
+            }
             void AddWts(Func<InWts, bool> f)
             {
                 foreach (var w in s.Wts.Where(w => w.Id > 0 && f(w)))
@@ -338,7 +346,9 @@ namespace MES.Web.Services
                     }
                     else
                     {
-                        AddWts(w => w.ProcessGroup == pg && string.Equals(Main(pg, w.WtsCode), code, StringComparison.OrdinalIgnoreCase));
+                        // [TARO-NC-MA 2026-11-06] mã Taro dùng ở nhiều NC: ô âm mang khoá "mã (NC x)" → so theo khoá của dòng WTS (mã + StepNC; dòng cũ không NC = NC đầu như sổ).
+                        //   Trước (rà độc lập 06/11 mục 1): so mã thô "2T" với "2T (NC 3)" → không tìm ra dòng WTS nào, gợi ý "chưa lần ra". Nguồn: CLAUDE (rà độc lập gói 4 06/11).
+                        AddWts(w => w.ProcessGroup == pg && string.Equals(Main(pg, WtsKeyOf(w)), code, StringComparison.OrdinalIgnoreCase));
                         AddTx(t => t.From == g && t.Purpose == HandoverPurpose.NgReturn);
                         AddRep(b => b.Group == g && b.Source == HandoverNgSource.Chua);   // [GN-NG-AFTER]
                     }

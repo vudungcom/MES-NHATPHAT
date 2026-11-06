@@ -13,5 +13,6 @@ public static class HandoverWhyTest
         NgReps = new List<InNgRep>(i.NgReps),
         Repairs = i.Repairs.Select(r => r.CloneRep()).ToList(),   // [K5-VONG-SUA 05/11] trước thiếu (sót từ gói GC-SUA-TAI-CHO) → phép kiểm WHYALL / làm theo gợi ý tính như PO không có Kết quả sửa
         CaseInfo = i.CaseInfo,
+        TaroGops = i.TaroGops,   // [TARO-3T-GOP 06/11] như HandoverWhy.Clone (rà độc lập gói 4 mục 2)
     };
 }

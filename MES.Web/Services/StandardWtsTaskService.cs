@@ -127,7 +127,74 @@ public class StandardWtsTaskService
         return (true, null);
     }
 
-    public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin)
+    // ─────────────────────────────────────────────────────────────────────
+    // [TARO-3T-GOP 2026-11-06] Mã GỘP: 1 mã làm THAY cho các mã thành phần (vd 3T thay 3T1 + 3T2 + 3T3) — bảng StandardWtsTaskGops (SQL 07).
+    //   Luật (để sổ không lẫn): mã thành phần cùng nhóm với mã gộp, đang dùng, không phải mã chuẩn bị (1T…); không lồng (mã gộp không là
+    //   thành phần của mã khác, mã thành phần không là mã gộp); 1 mã thành phần chỉ thuộc 1 mã gộp. Bỏ khai = IsActive 0 (giữ ai / lúc nào),
+    //   có dòng lịch sử. PO đã tạo giữ khai báo lúc chụp quy trình; PO chưa chạy lấy bản mới khi làm mới quy trình.
+    //   Nguồn: KHÁCH 02/11 09:14 (3T là cách làm gộp THAY 3T1–3T3); HÙNG 02/11 10:34 (khai rõ trong WTS tiêu chuẩn, không suy theo tên mã).
+    // ─────────────────────────────────────────────────────────────────────
+    public async Task<List<StandardWtsTaskGop>> GetActiveGopsAsync()
+        => await _db.StandardWtsTaskGops.AsNoTracking().Where(g => g.IsActive).OrderBy(g => g.GopTaskCode).ThenBy(g => g.PartTaskCode).ToListAsync();
+
+    static string GopText(IEnumerable<string> parts) => string.Join(" + ", parts.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>[TARO-3T-GOP] Kiểm + ghi khai báo gộp của 1 mã (gọi trong UpdateAsync, chưa SaveChanges). Trả lời báo lỗi (null = qua).</summary>
+    private async Task<string?> ApplyGopAsync(StandardWtsTask task, string newCode, string newCategory, List<string> wantParts, int userId, DateTime now,
+                                               List<StandardWtsTaskChangeLog> logs, string? reason)
+    {
+        var names = await _db.StandardWtsTasks.AsNoTracking().Where(t => t.IsActive).Select(t => t.TaskCode).ToListAsync();
+        var want = wantParts.Select(x => (x ?? "").Trim()).Where(x => x.Length > 0)
+            .Select(x => (names.FirstOrDefault(n => string.Equals(n?.Trim(), x, StringComparison.OrdinalIgnoreCase)) ?? x).Trim())   // chữ đúng như danh mục
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var allGops = await _db.StandardWtsTaskGops.Where(g => g.IsActive).ToListAsync();
+        var mine = allGops.Where(g => string.Equals(g.GopTaskCode, task.TaskCode, StringComparison.OrdinalIgnoreCase)).ToList();
+        var curParts = mine.Select(g => g.PartTaskCode.Trim()).ToList();
+        bool same = curParts.Count == want.Count && curParts.All(c => want.Contains(c, StringComparer.OrdinalIgnoreCase));
+        if (same) return null;
+        if (want.Count > 0)
+        {
+            if (HandoverLedgerService.IsPrepCode(newCode)) return $"Mã {newCode} là mã chuẩn bị (chỉ tính giờ) — không khai mã gộp được.";
+            if (allGops.Any(g => string.Equals(g.PartTaskCode, task.TaskCode, StringComparison.OrdinalIgnoreCase)))
+                return $"Mã {newCode} đang là mã thành phần của mã gộp {string.Join(", ", allGops.Where(g => string.Equals(g.PartTaskCode, task.TaskCode, StringComparison.OrdinalIgnoreCase)).Select(g => g.GopTaskCode).Distinct())} — không khai lồng nhau được.";
+            var tasks = await _db.StandardWtsTasks.AsNoTracking().Where(t => t.IsActive).Select(t => new { t.TaskCode, t.CategoryCode }).ToListAsync();
+            foreach (var pc in want)
+            {
+                var t = tasks.FirstOrDefault(x => string.Equals(x.TaskCode, pc, StringComparison.OrdinalIgnoreCase));
+                if (t == null) return $"Mã thành phần {pc} không có trong danh mục WTS tiêu chuẩn (hoặc đã xoá).";
+                if (string.Equals(t.TaskCode, newCode, StringComparison.OrdinalIgnoreCase) || string.Equals(t.TaskCode, task.TaskCode, StringComparison.OrdinalIgnoreCase))
+                    return "Mã gộp không làm thay chính nó.";
+                if (!string.Equals(t.CategoryCode, newCategory, StringComparison.OrdinalIgnoreCase)) return $"Mã thành phần {pc} khác nhóm với mã {newCode} — chỉ gộp các mã cùng nhóm.";
+                if (HandoverLedgerService.IsPrepCode(pc)) return $"Mã {pc} là mã chuẩn bị (chỉ tính giờ) — không làm mã thành phần được.";
+                if (allGops.Any(g => string.Equals(g.GopTaskCode, pc, StringComparison.OrdinalIgnoreCase)))
+                    return $"Mã {pc} đang là mã gộp — không khai lồng nhau được.";
+                var other = allGops.FirstOrDefault(g => string.Equals(g.PartTaskCode, pc, StringComparison.OrdinalIgnoreCase)
+                                                     && !string.Equals(g.GopTaskCode, task.TaskCode, StringComparison.OrdinalIgnoreCase));
+                if (other != null) return $"Mã {pc} đã là mã thành phần của mã gộp {other.GopTaskCode} — mỗi mã thành phần chỉ thuộc 1 mã gộp.";
+            }
+        }
+        foreach (var g in mine.Where(g => !want.Contains(g.PartTaskCode.Trim(), StringComparer.OrdinalIgnoreCase)))
+        { g.IsActive = false; g.RemovedBy = userId; g.RemovedAt = now; }
+        foreach (var pc in want.Where(pc => !curParts.Contains(pc, StringComparer.OrdinalIgnoreCase)))
+            _db.StandardWtsTaskGops.Add(new StandardWtsTaskGop
+            {
+                // [TARO-3T-GOP] rà độc lập 06/11 mục 3: ghi theo MÃ MỚI — đổi mã + khai gộp cùng 1 lần Lưu trước ghi mã cũ (task.TaskCode đổi SAU hàm này)
+                //   → khai báo mồ côi, PO không chụp được. (Đổi mã khi ĐANG có khai báo gộp đã bị chặn ở đầu UpdateAsync nên "mine" theo mã cũ vẫn đúng.)
+                GopTaskCode = newCode.Trim(),
+                PartTaskCode = pc,
+                IsActive = true, CreatedBy = userId, CreatedAt = now,
+            });
+        logs.Add(new StandardWtsTaskChangeLog
+        {
+            TaskId = task.TaskId, FieldName = "Mã gộp (làm thay)",
+            OldValue = curParts.Count == 0 ? "" : GopText(curParts), NewValue = want.Count == 0 ? "" : GopText(want),
+            Reason = reason, ChangedAt = now, ChangedBy = userId
+        });
+        return null;
+    }
+
+    /// <param name="gopParts">[TARO-3T-GOP] Mã thành phần mà mã này làm thay (null = không đổi khai báo gộp; rỗng = bỏ khai gộp).</param>
+    public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin, List<string>? gopParts = null)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
@@ -135,6 +202,13 @@ public class StandardWtsTaskService
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
+        // [TARO-3T-GOP 2026-11-06] khoá chung MES_WTS_GOP từ TRƯỚC khi đọc mã / khai báo gộp (rà độc lập 06/11 vòng 1 mục 5 + vòng 2 mục 2):
+        //   luật "1 mã thành phần thuộc 1 mã gộp" / "không lồng" / "mã đang khai gộp không đổi mã, đổi nhóm, xoá lặng" đọc rồi ghi —
+        //   2 người cùng lưu (khai 3T1 cho 3T và 4T; đổi mã 3T1 đúng lúc người khác khai 3T ← 3T1) thì người sau chờ, đọc lại trong khoá.
+        //   Nguồn: CLAUDE (rà độc lập gói 4 06/11).
+        await using var gopTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        if (!await PoGuard.TryLockInTransactionAsync(_db, GopLock))
+            return (false, "Đang có người khác lưu danh mục WTS tiêu chuẩn / khai báo mã gộp — chờ vài giây rồi bấm lưu lại.");
         var task = await _db.StandardWtsTasks.FirstOrDefaultAsync(x => x.TaskId == updatedModel.TaskId && x.IsActive);
         if (task == null) return (false, "Không tìm thấy công việc.");
 
@@ -153,7 +227,15 @@ public class StandardWtsTaskService
             if (dupDeleted) return (false, $"Mã công việc '{newCode}' thuộc một mục đã xóa — muốn dùng lại mã này thì bấm \"Thêm công việc mới\" với mã '{newCode}' (phần mềm khôi phục mục cũ).");
             var used = await UsedWhereAsync(task.TaskCode);
             if (used != null) return (false, $"Mã công việc '{task.TaskCode}' đã dùng ở {used} — không đổi mã được (đổi tên / nhóm / ghi chú thì được). Cần mã khác thì thêm công việc mới.");
+            // [TARO-3T-GOP 2026-11-06] mã đang có khai báo gộp (là mã gộp hoặc thành phần) → bỏ khai gộp trước rồi mới đổi mã (khai báo nối theo chữ mã)
+            if (await _db.StandardWtsTaskGops.AnyAsync(g => g.IsActive && (g.GopTaskCode == task.TaskCode || g.PartTaskCode == task.TaskCode)))
+                return (false, $"Mã công việc '{task.TaskCode}' đang có khai báo mã gộp — bỏ khai gộp trước rồi mới đổi mã.");
         }
+        // [TARO-3T-GOP] đổi nhóm khi mã đang có khai báo gộp → khai báo sai nhóm
+        if (!string.Equals((updatedModel.CategoryCode ?? "").Trim(), (task.CategoryCode ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+            && (gopParts == null || gopParts.Count > 0)
+            && await _db.StandardWtsTaskGops.AnyAsync(g => g.IsActive && (g.GopTaskCode == task.TaskCode || g.PartTaskCode == task.TaskCode)))
+            return (false, $"Mã công việc '{task.TaskCode}' đang có khai báo mã gộp — bỏ khai gộp trước rồi mới đổi nhóm.");
 
         var now = DateTime.Now;
         var logs = new List<StandardWtsTaskChangeLog>();
@@ -190,6 +272,13 @@ public class StandardWtsTaskService
         CheckAndLog("Phân loại có ích",
             task.IsProductiveTask ? "Có ích" : "Vô ích",
             updatedModel.IsProductiveTask ? "Có ích" : "Vô ích");
+        // [TARO-3T-GOP 2026-11-06] khai báo mã gộp (chỉ khi trang gửi danh sách)
+        //   (chạy dưới khoá MES_WTS_GOP lấy ở đầu hàm)
+        if (gopParts != null)
+        {
+            var gErr = await ApplyGopAsync(task, newCode, updatedModel.CategoryCode.Trim().ToUpper(), gopParts, currentUserId, now, logs, reason);
+            if (gErr != null) { _db.ChangeTracker.Clear(); return (false, gErr); }
+        }
 
         if (logs.Any())
         {
@@ -208,9 +297,13 @@ public class StandardWtsTaskService
             _db.StandardWtsTaskChangeLogs.AddRange(logs);
             await _db.SaveChangesAsync();
         }
+        if (gopTx != null) await gopTx.CommitAsync();   // [TARO-3T-GOP] nhả khoá MES_WTS_GOP (không đổi gì: Commit rỗng)
 
         return (true, null);
     }
+
+    /// <summary>[TARO-3T-GOP] Khoá chung khai báo mã gộp (sp_getapplock, theo giao dịch).</summary>
+    public const string GopLock = "MES_WTS_GOP";
 
     /// <summary>
     /// Lưu tổng nhiều thay đổi IsProductiveTask cùng 1 lần (bulk save từ UI).
@@ -276,6 +369,13 @@ public class StandardWtsTaskService
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
+        // [TARO-3T-GOP 2026-11-06] khoá chung MES_WTS_GOP từ TRƯỚC khi đọc mã / khai báo gộp (rà độc lập 06/11 vòng 1 mục 5 + vòng 2 mục 2):
+        //   luật "1 mã thành phần thuộc 1 mã gộp" / "không lồng" / "mã đang khai gộp không đổi mã, đổi nhóm, xoá lặng" đọc rồi ghi —
+        //   2 người cùng lưu (khai 3T1 cho 3T và 4T; đổi mã 3T1 đúng lúc người khác khai 3T ← 3T1) thì người sau chờ, đọc lại trong khoá.
+        //   Nguồn: CLAUDE (rà độc lập gói 4 06/11).
+        await using var gopTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        if (!await PoGuard.TryLockInTransactionAsync(_db, GopLock))
+            return (false, "Đang có người khác lưu danh mục WTS tiêu chuẩn / khai báo mã gộp — chờ vài giây rồi bấm lưu lại.");
         var task = await _db.StandardWtsTasks.FirstOrDefaultAsync(x => x.TaskId == taskId && x.IsActive);
         if (task == null) return (false, "Không tìm thấy công việc cần xóa.");
 
@@ -293,6 +393,16 @@ public class StandardWtsTaskService
         task.IsActive = false;
         task.UpdatedAt = now;
         task.UpdatedBy = currentUserId;
+        // [TARO-3T-GOP 2026-11-06] mã xoá khỏi danh mục → bỏ khai báo gộp có mã này (là mã gộp hoặc thành phần), giữ dòng (IsActive 0) để truy
+        var gopsOff = await _db.StandardWtsTaskGops.Where(g => g.IsActive && (g.GopTaskCode == task.TaskCode || g.PartTaskCode == task.TaskCode)).ToListAsync();
+        foreach (var g in gopsOff) { g.IsActive = false; g.RemovedBy = currentUserId; g.RemovedAt = now; }
+        if (gopsOff.Count > 0)
+            _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog
+            {
+                TaskId = task.TaskId, FieldName = "Mã gộp (làm thay)",
+                OldValue = string.Join("; ", gopsOff.Select(g => $"{g.GopTaskCode} thay {g.PartTaskCode}")), NewValue = "",
+                Reason = "Xóa công việc tiêu chuẩn — bỏ khai báo gộp", ChangedAt = now, ChangedBy = currentUserId
+            });
 
         _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog
         {
@@ -306,6 +416,7 @@ public class StandardWtsTaskService
         });
 
         await _db.SaveChangesAsync();
+        if (gopTx != null) await gopTx.CommitAsync();   // [TARO-3T-GOP] nhả khoá MES_WTS_GOP
         return (true, null);
     }
 

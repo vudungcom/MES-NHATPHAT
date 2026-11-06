@@ -255,6 +255,10 @@ namespace MES.Web.Services
         /// <summary>GC: đã gửi làm hộ từ NC này.</summary>
         public decimal HelpOut   { get; set; }
         public string? Note      { get; set; }
+        /// <summary>[TARO-3T-GOP 2026-11-06] Dòng thuộc 1 bộ gộp Taro (mã gộp + các mã thành phần cùng NC): khoá bộ = mã gộp (khoá sổ). null = mã thường.</summary>
+        public string? GopUnit   { get; set; }
+        /// <summary>[TARO-3T-GOP] true = dòng là mã gộp (vd 3T); false = mã thành phần (vd 3T1). Chỉ có nghĩa khi GopUnit khác null.</summary>
+        public bool    IsGop     { get; set; }
     }
 
     /// <summary>[GN-LEDGER] Số của 1 nhóm trên 1 PO — đúng cột Excel xưởng.</summary>
@@ -354,6 +358,13 @@ namespace MES.Web.Services
         /// <summary>L6: Phôi = Σ Tồn các nhóm (gồm chờ nhận) + thành phẩm chờ Kho nhận + thành phẩm đã nhập kho + đã huỷ + đã trả khách [GN-NG-OUT][GN-RECV-NG].</summary>
         public bool    Balanced => Phoi == TonTong + DangGiao + TpNhap + DaHuy + TraKhach;
         public LedgerExplain BalanceExplain { get; set; } = new();
+
+        /// <summary>[TARO-NC-MA 2026-11-06] Mã CV Taro dùng ở NHIỀU NC của PO → danh sách NC (thứ tự quy trình). Sổ đếm theo cặp (mã, NC):
+        /// khoá sổ = TaroKey(mã, NC). WTS mã này phải ghi kèm NC (WtsProductionLogs.StepNC). Mã chỉ ở 1 NC: không có ở đây, khoá = mã.</summary>
+        public Dictionary<string, List<string>> TaroNcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>[TARO-NC-MA] Mã CHUẨN BỊ Taro (1T…) dùng ở nhiều NC → danh sách NC: WTS cũng phải chọn NC, CHỈ để lấy đúng T.Chuẩn dòng (mã, NC)
+        /// (mã chuẩn bị không tính số nên sổ không đổi khoá). Rà độc lập 06/11 mục 4.</summary>
+        public Dictionary<string, List<string>> TaroPrepNcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>[GN-WTS-CAP] Mã trên WTS → mã chính (N2: máy đồng dạng / mã dự phòng gộp vào mã chính). Key = "PG|mã".</summary>
         public Dictionary<string, string> CodeMain { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -491,7 +502,17 @@ namespace MES.Web.Services
         public List<InRepair> Repairs { get; set; } = new();
         /// <summary>[VULOI] Nhãn vụ lỗi của PO (loại lỗi, nơi phát hiện…) — chỉ để hiện, không góp vào số.</summary>
         public Dictionary<long, InCase> CaseInfo { get; set; } = new();
+        /// <summary>[TARO-3T-GOP 2026-11-06] Khai báo mã gộp Taro chụp vào PO (KhPlanRouteSnapshotWtsGops): mã gộp → mã thành phần.</summary>
+        public List<InGop> TaroGops { get; set; } = new();
+        /// <summary>[TARO-NC-MA] Bản đã đổi mã Taro dùng ở nhiều NC sang khoá (mã, NC) — Compute không đổi lần 2. Lời cảnh báo dòng WTS thiếu / sai NC.</summary>
+        public bool TaroKeyedDone { get; set; }
+        public List<string> TaroWarnings { get; set; } = new();
+        /// <summary>[TARO-NC-MA] Bản sao nông để đổi danh sách mã CV / WTS mà không đụng bản gốc.</summary>
+        public LedgerInput ShallowCopy() => (LedgerInput)MemberwiseClone();
     }
+
+    /// <summary>[TARO-3T-GOP 2026-11-06] 1 cặp khai báo gộp: mã gộp (vd 3T) làm thay mã thành phần (vd 3T1).</summary>
+    public record InGop(string Gop, string Part);
 
     /// <summary>[VULOI] Nhãn 1 vụ lỗi (bảng NgCases + NgCategories).</summary>
     public record InCase(long Id, string? CatCode, string? CatName, string Origin, string DetectGroup, string? DetectNc,
@@ -575,12 +596,16 @@ namespace MES.Web.Services
                         DateTime? Saved = null,  // [K5-VONG-SUA 2026-11-05] giờ MÁY CHỦ lưu dòng (CreatedAt; At = giờ làm người nhập). null = dòng đang thử lưu (tính là mới nhất)
                         // [WTS-SUA-PHAN 2026-11-05] dòng là bản SỬA của dòng khác: Saved = giờ lưu gốc; Vers = các bản của cả chuỗi sửa (cũ → mới,
                         //   mỗi bản: giờ lưu, OK, NG; bản đang thử lưu có At = DateTime.MaxValue). null = dòng thường. Xem SnapshotBefore.
-                        IReadOnlyList<WtsVer>? Vers = null);
+                        IReadOnlyList<WtsVer>? Vers = null,
+                        string? StepNC = null);   // [TARO-NC-MA 2026-11-06] NC Taro của dòng (WtsProductionLogs.StepNC) — chỉ khi mã CV dùng ở nhiều NC
     /// <summary>[WTS-SUA-PHAN] 1 bản của dòng WTS trong chuỗi sửa: có hiệu lực từ At (giờ máy chủ lưu bản đó) tới bản sau.</summary>
     public record WtsVer(DateTime At, decimal Ok, decimal Ng);
     public record InGcStep(int StepOrder, string NC, bool IsBackup, string? ParentNC, string? Machine, bool IsExcluded);
-    /// <summary>Pg = TARO | BAVIA | WASHING | KCS | PKG; Code = mã CV khớp với WtsCode ?? NC của WTS.</summary>
-    public record InCodeStep(string Pg, int StepOrder, string Code, bool IsBackup, string? ParentCode, string? StepName);
+    /// <summary>Pg = TARO | BAVIA | WASHING | KCS | PKG; Code = mã CV khớp với WtsCode ?? NC của WTS.
+    /// [TARO-NC-MA 2026-11-06] StepNc = NC Taro của dòng (dòng dự phòng: NC dòng cha = ParentNC); RawCode = mã CV gốc khi Code đã đổi sang
+    /// khoá (mã, NC) vì mã dùng ở nhiều NC (TaroKeyed). Nhóm khác: null.</summary>
+    public record InCodeStep(string Pg, int StepOrder, string Code, bool IsBackup, string? ParentCode, string? StepName,
+                             string? StepNc = null, string? RawCode = null);
 
     // ── Service ───────────────────────────────────────────────────────
 
@@ -704,6 +729,7 @@ namespace MES.Web.Services
                 .Select(w => new
                 {
                     w.WtsLogId, w.KhPlanDetailId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
+                    w.StepNC,     // [TARO-NC-MA 2026-11-06]
                     w.QtyDone, w.QtyOk, w.QtyNg,
                     w.NgCaseId,   // [VULOI]
                     w.CreatedAt,  // [K5-VONG-SUA]
@@ -714,15 +740,15 @@ namespace MES.Web.Services
             // [WTS-SUA-GIO-GOC 2026-11-05] dòng WTS đã huỷ vì "Sửa lại" → dòng mới thay nó giữ giờ máy chủ lưu GỐC (xem EditOrigins)
             var wtsEdited = await _db.WtsProductionLogs
                 .Where(w => ids.Contains(w.KhPlanDetailId) && w.IsVoided && w.VoidReason == WtsEditVoidReason && w.VoidedAt != null)
-                .Select(w => new { w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, w.VoidedAt,
-                                   w.QtyDone, w.QtyOk, w.QtyNg })   // [WTS-SUA-PHAN] + số của dòng cũ
+                .Select(w => new { w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.StepNC, w.CreatedAt, w.VoidedAt,
+                                   w.QtyDone, w.QtyOk, w.QtyNg })   // [WTS-SUA-PHAN] + số của dòng cũ · [TARO-NC-MA] + NC Taro
                 .AsNoTracking().ToListAsync();
             var editDets = wtsEdited.Select(w => w.KhPlanDetailId).ToHashSet();   // chỉ PO có dòng sửa mới cần ghép (rà độc lập lần 2: hiệu năng)
             var wtsOrigin = EditOriginsFull(
-                wts.Where(w => editDets.Contains(w.KhPlanDetailId)).Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, null,
+                wts.Where(w => editDets.Contains(w.KhPlanDetailId)).Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, WtsEditCode(w.WtsCode, w.StepNC), w.CreatedAt, null,
                     w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0)),
-                wtsEdited.Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.CreatedAt, w.VoidedAt,
-                    w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0)));
+                wtsEdited.Select(w => new WtsEditNode(w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, WtsEditCode(w.WtsCode, w.StepNC), w.CreatedAt, w.VoidedAt,
+                    w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0)));   // [TARO-NC-MA] sửa đổi NC Taro = khác khoá (không ghép, như đổi mã)
 
             // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận (chưa huỷ)
             var ngReps = await _db.HandoverNgReports
@@ -784,6 +810,9 @@ namespace MES.Web.Services
             var taro = await _db.KhPlanRouteSnapshotTaro.Where(s => ids.Contains(s.KhPlanDetailId))
                 .Select(s => new { s.KhPlanDetailId, s.StepOrder, s.NC, s.WtsTaskCode, s.IsBackup, s.ParentNC, s.StepName })
                 .AsNoTracking().ToListAsync();
+            var gops = await _db.KhPlanRouteSnapshotWtsGops.Where(s => ids.Contains(s.KhPlanDetailId))   // [TARO-3T-GOP 2026-11-06] khai báo gộp chụp vào PO
+                .Select(s => new { s.KhPlanDetailId, s.GopCode, s.PartCode })
+                .AsNoTracking().ToListAsync();
             var bavia = await _db.KhPlanRouteSnapshotBavia.Where(s => ids.Contains(s.KhPlanDetailId))
                 .Select(s => new { s.KhPlanDetailId, s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName })
                 .AsNoTracking().ToListAsync();
@@ -834,7 +863,7 @@ namespace MES.Web.Services
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
                         w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId,
                         wtsOrigin.TryGetValue(w.WtsLogId, out var _goc) ? _goc.Origin : w.CreatedAt,   // [VULOI] + vụ lỗi · [K5-VONG-SUA] + giờ máy chủ lưu · [WTS-SUA-GIO-GOC] dòng sửa = giờ lưu gốc
-                        _goc?.Vers)).ToList(),   // [WTS-SUA-PHAN] các bản của chuỗi sửa
+                        _goc?.Vers, w.StepNC)).ToList(),   // [WTS-SUA-PHAN] các bản của chuỗi sửa · [TARO-NC-MA] + NC Taro
                     GcSteps = mach.Where(m => m.KhPlanDetailId == id).Select(m => new InGcStep(
                         m.StepOrder, m.NC ?? "", m.IsBackup, m.ParentNC, m.MachineRegistered,
                         !string.IsNullOrWhiteSpace(m.MachineRegistered) && exclSet.Contains(m.MachineRegistered!.Trim()))).ToList(),
@@ -866,7 +895,10 @@ namespace MES.Web.Services
                     var p = taroOf.FirstOrDefault(x => !x.IsBackup && string.Equals(x.NC, parentNc, StringComparison.OrdinalIgnoreCase));
                     return p == null ? parentNc : TaroCode(p.WtsTaskCode, p.NC);
                 }
-                inp.CodeSteps.AddRange(taroOf.Select(s => new InCodeStep("TARO", s.StepOrder, TaroCode(s.WtsTaskCode, s.NC), s.IsBackup, TaroParentCode(s.ParentNC), s.StepName)));
+                // [TARO-NC-MA 2026-11-06] + NC của dòng (dự phòng: NC dòng cha) — Compute đổi mã dùng ở nhiều NC sang khoá (mã, NC) (TaroKeyed)
+                inp.CodeSteps.AddRange(taroOf.Select(s => new InCodeStep("TARO", s.StepOrder, TaroCode(s.WtsTaskCode, s.NC), s.IsBackup, TaroParentCode(s.ParentNC), s.StepName,
+                    (s.IsBackup ? s.ParentNC : s.NC)?.Trim())));
+                inp.TaroGops = gops.Where(g => g.KhPlanDetailId == id).Select(g => new InGop(g.GopCode.Trim(), g.PartCode.Trim())).ToList();   // [TARO-3T-GOP]
                 inp.CodeSteps.AddRange(bavia.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("BAVIA", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
                 inp.CodeSteps.AddRange(washing.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("WASHING", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
                 inp.CodeSteps.AddRange(kcs.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("KCS", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
@@ -997,6 +1029,9 @@ namespace MES.Web.Services
         //   Nguồn: CLAUDE (hở A4 ghi ở [K5-VONG-SUA], rà độc lập 05/11); Hùng 05/11 10:28 OK K5 theo thời gian là sửa ruột.
         // =====================================================================
         public const string WtsEditVoidReason = "Sửa lại";   // chữ VoidReason WtsSaveService ghi khi sửa dòng
+        /// <summary>[TARO-NC-MA 2026-11-06] Khoá mã của dòng WTS khi ghép dòng sửa: mã CV + NC Taro (nếu có) — đổi NC Taro lúc sửa = đổi khoá.</summary>
+        public static string? WtsEditCode(string? wtsCode, string? stepNc)
+            => string.IsNullOrWhiteSpace(stepNc) ? wtsCode : (wtsCode ?? "") + "@" + stepNc.Trim();
         public record WtsEditNode(long Id, int Det, int Worker, string Pg, string? Nc, string? Code, DateTime Created, DateTime? VoidedAt,
                                   decimal Ok = 0, decimal Ng = 0);   // [WTS-SUA-PHAN] số OK / NG của dòng (để tính phần có từ giờ gốc)
         /// <summary>[WTS-SUA-PHAN] Dòng sửa: giờ lưu gốc + các bản của cả chuỗi sửa (cũ → mới, bản cuối = chính dòng này).</summary>
@@ -1138,7 +1173,7 @@ namespace MES.Web.Services
             {
                 KhPlanDetailId = i.KhPlanDetailId, PlanNo = i.PlanNo, PurchaseOrder = i.PurchaseOrder, PartNo = i.PartNo,
                 CustomerName = i.CustomerName, PlanQty = i.PlanQty, ApplyWorkflow = i.ApplyWorkflow,
-                Phoi = i.Phoi, GcSteps = i.GcSteps, CodeSteps = i.CodeSteps, CaseInfo = i.CaseInfo,
+                Phoi = i.Phoi, GcSteps = i.GcSteps, CodeSteps = i.CodeSteps, CaseInfo = i.CaseInfo, TaroGops = i.TaroGops,   // [TARO-3T-GOP]
                 Txs = txs, Wts = wts, NgReps = i.NgReps.Where(b => b.At < cut).ToList(), Repairs = reps,
             };
         }
@@ -1186,6 +1221,85 @@ namespace MES.Web.Services
             return res;
         }
 
+        // =====================================================================
+        // [TARO-NC-MA 2026-11-06] Taro: 1 mã CV dùng ở NHIỀU NC của PO (vd 1T / 2T / 3T1 / 3T2 / 3T3 / 3T ở cả NC 3 lẫn NC 5).
+        //   Trước: sổ đếm theo mã → 2 dòng quy trình cùng mã đều nhận MỌI dòng WTS mã đó (NG trừ 2 lần, không biết còn bao nhiêu chiếc chưa
+        //   làm NC 5), T.Chuẩn luôn lấy dòng đầu. Nay: mã dùng ở nhiều NC đếm theo cặp (mã, NC) — khoá sổ TaroKey(mã, NC) = "3T1 (NC 3)";
+        //   WTS mã đó ghi kèm NC (WtsProductionLogs.StepNC, form WTS bắt chọn). Mã chỉ ở 1 NC, mã chuẩn bị (1T…): giữ khoá = mã như cũ.
+        //   Dòng WTS mã dùng ở nhiều NC mà thiếu / sai NC (dữ liệu cũ — QuetSo 06/11: 0 dòng): tính vào NC đầu tiên chứa mã + cảnh báo đỏ.
+        //   Nguồn: KHÁCH 02/11 09:14 (anh Ngọc chọn B: giữ mã chung, form WTS Taro thêm ô NC); HÙNG 05/11 15:37 OK; HÙNG 06/11 21:45 OK
+        //   (dòng cũ không NC: không chép bù, lọt thì tính NC đầu + cảnh báo).
+        // =====================================================================
+        public static string TaroKey(string code, string nc) => $"{code.Trim()} (NC {nc.Trim()})";
+
+        static bool SameNc(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>[TARO-NC-MA] Mã CV Taro dùng ở nhiều NC của PO → danh sách NC (thứ tự quy trình). Không gồm mã chuẩn bị.</summary>
+        public static Dictionary<string, List<string>> TaroSharedNcs(IEnumerable<InCodeStep> codeSteps, bool prep = false)   // [TARO-NC-MA] prep = true: chỉ mã chuẩn bị
+            => codeSteps.Where(x => x.Pg == "TARO" && !x.IsBackup && IsPrepCode(x.RawCode ?? x.Code) == prep && !string.IsNullOrWhiteSpace(x.RawCode ?? x.Code))
+                .GroupBy(x => (x.RawCode ?? x.Code).Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => (g.Key, Ncs: g.OrderBy(x => x.StepOrder).Select(x => (x.StepNc ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+                .Where(g => g.Ncs.Count > 1)
+                .ToDictionary(g => g.Key, g => g.Ncs, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>[TARO-NC-MA] Bản đầu vào đã đổi mã Taro dùng ở nhiều NC sang khoá (mã, NC). Ghi danh sách mã → NC vào row.TaroNcs.</summary>
+        public static LedgerInput TaroKeyed(LedgerInput inp, LedgerRow? row = null)
+        {
+            var shared = TaroSharedNcs(inp.CodeSteps);
+            if (row != null) { row.TaroNcs = shared; row.TaroPrepNcs = TaroSharedNcs(inp.CodeSteps, prep: true); }   // [TARO-NC-MA] mã chuẩn bị: chỉ để chọn NC lấy T.Chuẩn
+            if (inp.TaroKeyedDone || shared.Count == 0) return inp;
+            var o = inp.ShallowCopy();
+            o.TaroKeyedDone = true;
+            o.TaroWarnings = new List<string>();
+            o.CodeSteps = inp.CodeSteps.Select(x =>
+            {
+                if (x.Pg != "TARO") return x;
+                var raw = (x.RawCode ?? x.Code).Trim();
+                var nc  = (x.StepNc ?? "").Trim();
+                var y = x;
+                if (shared.ContainsKey(raw)) y = y with { Code = TaroKey(raw, nc), RawCode = raw };
+                if (x.IsBackup && !string.IsNullOrWhiteSpace(x.ParentCode) && shared.ContainsKey(x.ParentCode!.Trim()))
+                    y = y with { ParentCode = TaroKey(x.ParentCode!.Trim(), nc) };   // dự phòng gộp về đúng dòng cha cùng NC (N2)
+                return y;
+            }).ToList();
+            o.Wts = inp.Wts.Select(w =>
+            {
+                if (w.ProcessGroup != "TARO") return w;
+                var raw = (w.WtsCode ?? w.NC ?? "").Trim();
+                if (!shared.TryGetValue(raw, out var ncs)) return w;
+                var nc = ncs.FirstOrDefault(n => SameNc(n, w.StepNC));
+                if (nc == null)
+                {
+                    nc = ncs[0];
+                    o.TaroWarnings.Add($"HTSP: dòng WTS #{w.Id} Taro mã {raw} {(string.IsNullOrWhiteSpace(w.StepNC) ? "không ghi NC" : $"ghi NC {w.StepNC} không có mã này")} "
+                                     + $"(mã dùng ở NC {string.Join(", ", ncs)}) — đang tính vào NC {nc}; sửa dòng WTS chọn đúng NC (TARO-NC-MA)");
+                }
+                return w with { WtsCode = TaroKey(raw, nc) };
+            }).ToList();
+            return o;
+        }
+
+        /// <summary>[TARO-NC-MA] Khoá sổ của 1 dòng WTS (nhóm, mã, NC Taro) — dùng gọi WtsCap / LedgerQtyText.Step. Mã Taro dùng ở nhiều NC:
+        /// NC phải là 1 NC có mã đó (sai / thiếu → null). Nhóm khác / mã 1 NC: trả mã như cũ.</summary>
+        public static string? WtsKey(LedgerRow row, string pg, string? code, string? stepNc)
+        {
+            if (pg != "TARO" || string.IsNullOrWhiteSpace(code)) return code;
+            var raw = code.Trim();
+            if (!row.TaroNcs.TryGetValue(raw, out var ncs)) return code;
+            var nc = ncs.FirstOrDefault(n => SameNc(n, stepNc));
+            return nc == null ? null : TaroKey(raw, nc);
+        }
+
+        /// <summary>[TARO-NC-MA] NC của mã Taro dùng ở nhiều NC (null = mã chỉ ở 1 NC / không phải Taro).</summary>
+        public static List<string>? TaroNcsOf(LedgerRow? row, string pg, string? code)
+            => row != null && pg == "TARO" && !string.IsNullOrWhiteSpace(code) && row.TaroNcs.TryGetValue(code.Trim(), out var ncs) ? ncs : null;
+
+        /// <summary>[TARO-NC-MA] NC phải chọn trên WTS: mã đếm số dùng ở nhiều NC (TaroNcsOf) hoặc mã chuẩn bị dùng ở nhiều NC (chỉ để lấy T.Chuẩn).
+        /// Rà độc lập 06/11 mục 4: trước, 1T ở NC 3 + NC 5 làm ở NC 5 vẫn ghi T.Chuẩn dòng NC 3.</summary>
+        public static List<string>? TaroNcChoices(LedgerRow? row, string pg, string? code)
+            => TaroNcsOf(row, pg, code)
+               ?? (row != null && pg == "TARO" && !string.IsNullOrWhiteSpace(code) && row.TaroPrepNcs.TryGetValue(code.Trim(), out var pn) ? pn : null);
+
         public static LedgerRow Compute(LedgerInput inp)
         {
             var row = new LedgerRow
@@ -1196,6 +1310,11 @@ namespace MES.Web.Services
             };
             foreach (var c in GroupCodes)
                 row.Groups[c] = new LedgerGroup { Code = c, Label = GroupLabel(c) };
+
+            // [TARO-NC-MA 2026-11-06] Mã CV Taro dùng ở nhiều NC → đếm theo cặp (mã, NC): đổi mã dòng quy trình + dòng WTS sang khoá TaroKey
+            //   (bản sao, không đụng đầu vào gốc). Mã chỉ ở 1 NC: y như cũ.
+            inp = TaroKeyed(inp, row);
+            foreach (var w in inp.TaroWarnings) row.G("HTSP").Warnings.Add(w);
 
             // ── Chuỗi NC gia công (N1, N2, N3) ─────────────────────────
             var gcChain = inp.GcSteps.Where(s => !s.IsBackup && !s.IsExcluded).OrderBy(s => s.StepOrder).ToList();
@@ -2009,6 +2128,7 @@ namespace MES.Web.Services
                 CustomerName = inp.CustomerName, PlanQty = inp.PlanQty, ApplyWorkflow = inp.ApplyWorkflow,
                 GcSteps = inp.GcSteps, CodeSteps = inp.CodeSteps,
                 CaseInfo = inp.CaseInfo,   // [VULOI] nhãn vụ lỗi
+                TaroGops = inp.TaroGops,   // [TARO-3T-GOP 2026-11-06]
             };
             // [GC-SUA-TAI-CHO] Kết quả sửa: bước "lập" thêm chứng từ (chưa có lần xác nhận), mỗi lần KCS xác nhận là 1 bước
             var repCopies = new Dictionary<long, InRepair>();
@@ -2264,7 +2384,11 @@ namespace MES.Web.Services
                 return;
             }
 
-            (InCodeStep step, decimal ok, decimal ng, List<InWts> rows)? min = null;
+            // [TARO-3T-GOP 2026-11-06] Bộ gộp Taro: mã gộp (vd 3T) + các mã thành phần (3T1, 3T2, 3T3) cùng NC, theo khai báo chụp vào PO.
+            //   Mỗi chiếc đi 1 trong 2 cách → OK của bộ = OK mã gộp + min OK các mã thành phần (thay cho OK từng mã khi lấy OK nhỏ nhất).
+            //   Nguồn: KHÁCH 02/11 09:14 (3T thay bộ 3T1–3T3); HÙNG 05/11 15:37 OK "3T = min(3T1..3T3)" (cách tính gửi 03/11).
+            var units = group == "HTSP" ? TaroGopUnits(inp, mains, G) : new List<(InCodeStep Gop, List<InCodeStep> Parts)>();
+            var info = new Dictionary<InCodeStep, (decimal ok, List<InWts> rows, LedgerStepLine line)>(ReferenceEqualityComparer.Instance);
             foreach (var m in steps.OrderBy(s => Array.IndexOf(pgs, s.Pg)).ThenBy(s => s.StepOrder))
             {
                 if (m.IsBackup) continue;
@@ -2276,20 +2400,76 @@ namespace MES.Web.Services
                 var ok = rows.Sum(w => w.Ok);
                 var ng = rows.Sum(w => w.Ng);
                 var prep = IsPrepCode(m.Code);
-                G.Steps.Add(new LedgerStepLine
+                var unit = units.FirstOrDefault(u => ReferenceEquals(u.Gop, m) || u.Parts.Any(p => ReferenceEquals(p, m)));
+                var line = new LedgerStepLine
                 {
                     Pg = m.Pg, // [GN-WTS-CAP]
                     SubGroup = SubLabel(m.Pg), Code = m.Code, StepOrder = m.StepOrder, Ok = ok, Ng = ng, IsPrep = prep,
-                    Note = prep ? "mã chuẩn bị — không tính số lượng" : m.StepName
-                });
-                if (!prep && (min == null || ok < min.Value.ok)) min = (m, ok, ng, rows);
+                    Note = prep ? "mã chuẩn bị — không tính số lượng" : m.StepName,
+                    GopUnit = unit.Gop?.Code, IsGop = unit.Gop != null && ReferenceEquals(unit.Gop, m),   // [TARO-3T-GOP]
+                };
+                if (unit.Gop != null)
+                    line.Note = (line.Note == null ? "" : line.Note + " · ") + (line.IsGop
+                        ? $"mã gộp — làm thay {string.Join(" + ", unit.Parts.Select(p => p.Code))}"
+                        : $"thuộc bộ gộp {unit.Gop.Code} (làm {unit.Gop.Code} thì không làm mã này)");
+                G.Steps.Add(line);
+                info[m] = (ok, rows, line);
             }
-            var t = T(group, "ok", $"OK nhỏ nhất: {SubLabel(min!.Value.step.Pg)} {min.Value.step.Code}");
+            // OK nhỏ nhất: mã thường = OK mã; bộ gộp = OK mã gộp + min OK mã thành phần (xét ở vị trí mã đầu tiên của bộ, cùng thứ tự như cũ)
+            (decimal ok, List<InWts> rows, List<LedgerStepLine> marks, string label)? min = null;
+            var unitDone = new HashSet<InCodeStep>(ReferenceEqualityComparer.Instance);
+            foreach (var m in steps.OrderBy(s => Array.IndexOf(pgs, s.Pg)).ThenBy(s => s.StepOrder))
+            {
+                if (m.IsBackup || IsPrepCode(m.Code)) continue;
+                var unit = units.FirstOrDefault(u => ReferenceEquals(u.Gop, m) || u.Parts.Any(p => ReferenceEquals(p, m)));
+                if (unit.Gop == null)
+                {
+                    var x = info[m];
+                    if (min == null || x.ok < min.Value.ok) min = (x.ok, x.rows, new List<LedgerStepLine> { x.line }, $"{SubLabel(m.Pg)} {m.Code}");
+                    continue;
+                }
+                if (!unitDone.Add(unit.Gop)) continue;
+                var g = info[unit.Gop];
+                var pMin = unit.Parts.Select(p => info[p]).OrderBy(p => p.ok).ThenBy(p => p.line.StepOrder).First();
+                var uOk = g.ok + pMin.ok;
+                if (min == null || uOk < min.Value.ok)
+                    min = (uOk, g.rows.Concat(pMin.rows).ToList(), new List<LedgerStepLine> { g.line, pMin.line },
+                           $"{SubLabel(m.Pg)} {unit.Gop.Code} + {pMin.line.Code} (gộp)");
+            }
+            var t = T(group, "ok", $"OK nhỏ nhất: {min!.Value.label}");
             t.Value = min.Value.ok;
             foreach (var w in min.Value.rows.Where(w => w.Ok != 0))
                 t.Docs.Add(new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w), Qty = w.Ok });
-            foreach (var s in G.Steps.Where(s => !s.IsPrep && s.Code == min.Value.step.Code && s.SubGroup == SubLabel(min.Value.step.Pg)))
-                s.IsLast = true; // đánh dấu mã đang quyết định Đã làm
+            foreach (var mk in min.Value.marks)
+                foreach (var s in G.Steps.Where(s => !s.IsPrep && s.Code == mk.Code && s.SubGroup == mk.SubGroup))
+                    s.IsLast = true; // đánh dấu mã đang quyết định Đã làm
+        }
+
+        /// <summary>[TARO-3T-GOP 2026-11-06] Các bộ gộp Taro của PO: mã gộp + mã thành phần CÙNG NC (đều là dòng chính, không mã chuẩn bị) theo
+        /// khai báo chụp vào PO. 1 mã chỉ thuộc 1 bộ (khai báo lồng / chồng → bộ đầu, cảnh báo). Bộ không có mã thành phần nào trên PO = mã thường.</summary>
+        static List<(InCodeStep Gop, List<InCodeStep> Parts)> TaroGopUnits(LedgerInput inp, List<InCodeStep> mains, LedgerGroup G)
+        {
+            var res = new List<(InCodeStep Gop, List<InCodeStep> Parts)>();
+            if (inp.TaroGops.Count == 0) return res;
+            var taro = mains.Where(x => x.Pg == "TARO").OrderBy(x => x.StepOrder).ToList();
+            var used = new HashSet<InCodeStep>(ReferenceEqualityComparer.Instance);
+            foreach (var g in taro)
+            {
+                var raw = (g.RawCode ?? g.Code).Trim();
+                var partCodes = inp.TaroGops.Where(x => string.Equals(x.Gop, raw, StringComparison.OrdinalIgnoreCase)).Select(x => x.Part).ToList();
+                if (partCodes.Count == 0) continue;
+                var parts = taro.Where(p => !ReferenceEquals(p, g) && SameNc(p.StepNc, g.StepNc)
+                                            && partCodes.Contains((p.RawCode ?? p.Code).Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
+                if (parts.Count == 0) continue;
+                if (used.Contains(g) || parts.Any(used.Contains))
+                {
+                    G.Warnings.Add($"HTSP: khai báo gộp Taro mã {g.Code} chồng với bộ gộp khác — bỏ qua, tính như mã thường (sửa WTS tiêu chuẩn rồi làm mới quy trình)");
+                    continue;
+                }
+                used.Add(g); foreach (var p in parts) used.Add(p);
+                res.Add((g, parts));
+            }
+            return res;
         }
 
         // ── GC: dòng chảy theo NC (N1, N3) — chỉ để xem ───────────────
@@ -2438,6 +2618,25 @@ namespace MES.Web.Services
             {
                 var gone = (ngAll - s.Ng) + rr;
                 var perm = gnet - s.Ok - s.Ng - Math.Max(0, gone - s.Ok);
+                // [TARO-3T-GOP 2026-11-06] Bộ gộp (mã gộp + mã thành phần cùng NC): mỗi chiếc đi 1 trong 2 cách.
+                //   Chiếc đã vào bộ: theo mã gộp = OK+NG mã gộp; theo bộ thành phần ≥ max(OK+NG mã thành phần).
+                //   Mã gộp còn làm được = vào − (OK+NG mã gộp) − max(OK+NG mã thành phần) − phần đã rời vượt (OK mã gộp + max OK mã thành phần);
+                //   mã thành phần còn làm được = vào − (OK+NG mã gộp) − (OK+NG mã đó) − phần đã rời vượt (OK mã gộp + OK mã đó).
+                //   NG ở mọi mã của bộ là NG của chính bộ (không tính "đã rời" cho bộ). Bộ 1 mã = công thức cũ.
+                if (s.GopUnit != null)
+                {
+                    var uLines = mains.Where(x => x.Pg == s.Pg && x.GopUnit == s.GopUnit).ToList();
+                    var gL = uLines.FirstOrDefault(x => x.IsGop);
+                    var pLs = uLines.Where(x => !x.IsGop).ToList();
+                    if (gL != null && pLs.Count > 0)
+                    {
+                        var goneU = (ngAll - uLines.Sum(x => x.Ng)) + rr;
+                        var doneG = gL.Ok + gL.Ng;
+                        perm = s.IsGop
+                            ? gnet - doneG - pLs.Max(p => p.Ok + p.Ng) - Math.Max(0, goneU - (gL.Ok + pLs.Max(p => p.Ok)))
+                            : gnet - doneG - (s.Ok + s.Ng) - Math.Max(0, goneU - (gL.Ok + s.Ok));
+                    }
+                }
                 var w    = Math.Min(perm, G.ChuaLam);
                 s.Waiting = w;
                 s.In      = w + s.Ok + s.Ng;

@@ -167,6 +167,43 @@ async def main():
         except Exception as e:
             ok(False, "R2! pha [R2] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
 
+        print("[R3] [B6-DP-THAP] đổi chéo mã dòng chính S1 ↔ dòng dự phòng S1-DP-01 trong 1 lần Lưu → lưu đủ cả 2 (ghi đúng thứ tự, không ghi dở)")
+        try:
+            await open_part(pg)
+            for frm, to in (("S1", "S1~"), ("S1-DP-01", "S1"), ("S1~", "S1-DP-01")):
+                r = (await cde_rows(frm))[0]
+                if frm != "S1~":
+                    await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
+                    r = (await cde_rows(frm))[0]
+                inp = r.locator("input").first
+                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(250)
+            t = await save(pg)
+            rows1 = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
+            q1 = sorted((x["nc"], x["isBackup"], x["parentNC"]) for x in rows1 if x["nc"] in ("S1", "S1-DP-01"))
+            ok("✗" not in t and q1 == [("S1", True, "S1-DP-01"), ("S1-DP-01", False, None)],
+               "R3 lưu được cả 2 đúng ý: dòng chính mang mã S1-DP-01, dự phòng mang mã S1 trỏ cha S1-DP-01 (thứ tự ghi T7 / N1 gói 2 — rà độc lập gói 2 ghi \"hỏng cả 2\" không tái hiện)",
+               f"{lines(t, '✗', 'Không thể')} · {q1}")
+        except Exception as e:
+            ok(False, "R3! pha [R3] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
+        print("[R4] [B6-DP-THAP] dòng chính Q2 (có dự phòng mã Q1) đổi tên Q2 → Q2X rồi bấm Xoá trong cùng lượt → xoá cả 2, lời báo đúng mã cũ")
+        try:
+            await open_part(pg)
+            r = (await cde_rows("Q2"))[0]
+            await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
+            r = (await cde_rows("Q2"))[0]; inp = r.locator("input").first
+            await inp.fill("Q2X"); await inp.press("Tab"); await pg.wait_for_timeout(250)
+            r = (await cde_rows("Q2X"))[0]
+            await r.locator("button[title='Xóa']").click(); await pg.wait_for_timeout(400)
+            t = await save(pg)
+            rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
+            left = [(x["nc"], x["isBackup"], x["parentNC"]) for x in rows if x["nc"] in ("Q1", "Q2", "Q2X") or x["parentNC"] in ("Q2", "Q2X")]
+            ok("✗" not in t and left == [] and "Xóa NC=Q2" in t and "Q2X" not in t and "theo NC chính Q2" in t,
+               "R4 lưu được: xoá dòng chính Q2 + dự phòng Q1 của nó; lời báo \"Xóa NC=Q2\" (mã trong DB) và dự phòng \"theo NC chính Q2\", không nhắc mã tạm Q2X",
+               f"{lines(t, 'Xóa', '✗', 'Không thể')} · còn {left}")
+        except Exception as e:
+            ok(False, "R4! pha [R4] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
         print("[P] [B6-DP-THAP] T5c thêm dòng Đóng gói P77 + Tạo dự phòng (P77-DP-01) rồi sửa NC dòng mới thành P78 → trang báo trước, không lưu dở")
         try:
             await open_part(pg)

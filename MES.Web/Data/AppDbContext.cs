@@ -93,6 +93,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận
     public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO] Kết quả sửa (chứng từ nội bộ nhóm)
     public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO] KCS xác nhận hàng sửa
+    public DbSet<StandardWtsTaskGop> StandardWtsTaskGops => Set<StandardWtsTaskGop>();                       // [TARO-3T-GOP 2026-11-06] mã gộp WTS tiêu chuẩn (SQL 07)
+    public DbSet<KhPlanRouteSnapshotWtsGop> KhPlanRouteSnapshotWtsGops => Set<KhPlanRouteSnapshotWtsGop>();   // [TARO-3T-GOP 2026-11-06] mã gộp chụp vào PO (SQL 07)
     public DbSet<HandoverTxClose> HandoverTxCloses => Set<HandoverTxClose>();                 // [K5-CLOSE-NHIEU 2026-11-06] mỗi lần huỷ phần chưa nhận 1 dòng (SQL 10)
     // [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi (nhãn, không lưu số)
     public DbSet<NgCategory> NgCategories => Set<NgCategory>();
@@ -724,6 +726,27 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasOne<HandoverTransaction>().WithMany()
             .HasForeignKey(x => x.HandoverTxId)
             .HasConstraintName("FK_HandoverTxCloses_HandoverTransactions")
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [TARO-NC-MA][TARO-3T-GOP 2026-11-06] SQL 07_TARO_NC_3TGOP.sql (Hùng chạy 06/11 21:45) ====
+        mb.Entity<WtsProductionLog>().Property(x => x.StepNC).HasMaxLength(20);
+        mb.Entity<StandardWtsTaskGop>().ToTable("StandardWtsTaskGops");
+        mb.Entity<StandardWtsTaskGop>().HasKey(x => x.Id);
+        mb.Entity<StandardWtsTaskGop>().Property(x => x.GopTaskCode).HasMaxLength(50).IsRequired();
+        mb.Entity<StandardWtsTaskGop>().Property(x => x.PartTaskCode).HasMaxLength(50).IsRequired();
+        mb.Entity<StandardWtsTaskGop>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<StandardWtsTaskGop>().HasIndex(x => new { x.GopTaskCode, x.PartTaskCode }).IsUnique()
+            .HasFilter("[IsActive] = 1").HasDatabaseName("UX_StandardWtsTaskGops_Active");
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().ToTable("KhPlanRouteSnapshotWtsGops");
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().HasKey(x => x.SnapshotId);
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().Property(x => x.GopCode).HasMaxLength(50).IsRequired();
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().Property(x => x.PartCode).HasMaxLength(50).IsRequired();
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().Property(x => x.SnapshotAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<KhPlanRouteSnapshotWtsGop>().HasIndex(x => x.KhPlanDetailId).HasDatabaseName("IX_KhPlanRouteSnapshotWtsGops_Detail");
+        mb.Entity<KhPlanRouteSnapshotWtsGop>()
+            .HasOne<KhPlanDetail>().WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .HasConstraintName("FK_KhPlanRouteSnapshotWtsGops_KhPlanDetails")
             .OnDelete(DeleteBehavior.NoAction);
 
         // ==== [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi ====

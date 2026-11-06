@@ -10,7 +10,7 @@ public static class WtsSvcHelp
     public static void Reset() => _slot = 0;
 
     public static WtsSaveService.WtsSaveGroup Build(int detailId, string pg, string? nc, string? code, decimal ok, decimal ng, int worker,
-                                                   int? catId, long? keepCase, long? editLogId, string? machine = null)
+                                                   int? catId, long? keepCase, long? editLogId, string? machine = null, string? stepNc = null)   // [TARO-NC-MA] + NC Taro
     {
         bool gc = pg == "GC";
         bool htsp = pg is "TARO" or "BAVIA" or "WASHING";
@@ -31,15 +31,16 @@ public static class WtsSvcHelp
             SetupTime_Actual = gc ? 1 : null, MachiningTime_Actual = gc ? 1 : null, InspectionTime_Actual = gc ? 1 : null,
             ActualTimePerPc = gc ? null : 1, ProductionMode = "serial",
             IsEditing = editLogId != null, WtsLogId = editLogId,
+            StepNC = stepNc,   // [TARO-NC-MA 2026-11-06]
         });
         return grp;
     }
 
     /// <summary>Lưu 1 dòng WTS bằng service thật. Trả (Ok, lời báo, WtsLogId dòng mới).</summary>
     public static async Task<(bool Ok, string? Err, long? LogId)> SaveAsync(AppDbContext db, int detailId, string pg, string? nc, string? code,
-        decimal ok, decimal ng, int worker, int? catId = null, long? keepCase = null, long? editLogId = null)
+        decimal ok, decimal ng, int worker, int? catId = null, long? keepCase = null, long? editLogId = null, string? stepNc = null)
     {
-        var grp = Build(detailId, pg, nc, code, ok, ng, worker, catId, keepCase, editLogId);
+        var grp = Build(detailId, pg, nc, code, ok, ng, worker, catId, keepCase, editLogId, stepNc: stepNc);   // [TARO-NC-MA] + NC Taro
         var svc = new WtsSaveService(db, new HandoverLedgerService(db));
         var res = await svc.SaveGroupAsync(grp);
         db.Fixup();

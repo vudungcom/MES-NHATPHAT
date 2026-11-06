@@ -183,4 +183,65 @@ public static class HarnessSua
             users = db.Users.List.Select(u => new { u.UserId, u.Username }).ToList()
         };
     }
+
+    // ── [TARO-NC-MA][TARO-3T-GOP 2026-11-06] dữ liệu drive_taro.py (POST /harness/taro-seed — không trong seed khởi động, drive.py không đổi):
+    //    KH-TARO / PO-TARO 10 chiếc: GC NC01 → HTSP đã nhận 10; Taro 2 NC dùng chung mã: NC 3 (1T chuẩn bị 2 · 2T 1 · 3T1 1 · 3T 2.5) / NC 5 (1T 3 · 2T 0.5 · 3T1 0.5 · 3T 1.5);
+    //    khai gộp 3T ← 3T1 (WTS tiêu chuẩn + chụp vào PO); danh mục WTS tiêu chuẩn Taro 3T / 3T1 / 3T2; PIN admin 1111 (trang WTS tiêu chuẩn).
+    public static async Task<object> SeedTaroAsync(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-TARO"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            admin.PIN ??= "1111";
+            var cust = db.Customers.List.First();
+            var t0 = DateTime.Now.AddHours(-2);
+            var plan = new KhPlan { PlanNo = "KH-TARO", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = t0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-TARO", PurchaseOrder = "PO-TARO", Quantity = 10, Unit = "EA", STD = t0.AddDays(10), CreatedAt = t0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+            db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "NC01", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            int o = 0;
+            foreach (var (nc, code, std) in new[] { ("3", "1T", 2m), ("3", "2T", 1m), ("3", "3T1", 1m), ("3", "3T", 2.5m), ("5", "1T", 3m), ("5", "2T", 0.5m), ("5", "3T1", 0.5m), ("5", "3T", 1.5m) })
+                db.KhPlanRouteSnapshotTaro.Add(new KhPlanRouteSnapshotTaro { KhPlanDetailId = d.KhPlanDetailId, StepOrder = ++o, NC = nc, WtsTaskCode = code, StepName = "Taro " + code, StandardTime = std, SnapshotAt = t0, SnapshotBy = admin.UserId });
+            db.KhPlanRouteSnapshotWtsGops.Add(new KhPlanRouteSnapshotWtsGop { KhPlanDetailId = d.KhPlanDetailId, GopCode = "3T", PartCode = "3T1", SnapshotAt = t0, SnapshotBy = admin.UserId });
+            foreach (var c in new[] { "3T", "3T1", "3T2" })
+                if (!db.StandardWtsTasks.List.Any(t => t.TaskCode == c))
+                    db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "TARO", CategoryName = "Công việc nhóm Taro", TaskCode = c, TaskName = "Taro " + c, DisplayOrder = 50, IsActive = true, CreatedAt = t0, CreatedBy = admin.UserId });
+            db.StandardWtsTaskGops.Add(new StandardWtsTaskGop { GopTaskCode = "3T", PartTaskCode = "3T1", IsActive = true, CreatedAt = t0, CreatedBy = admin.UserId });
+            db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = d.KhPlanDetailId, IsActive = true, SoLuongThucNhan = 10, SoLuongKeHoach = 10, NgayNhanPhoi = t0, OrderVatLieu = "OVL-TARO", ViTriDePhoi = "TARO", SoPO = "PO-TARO", PartNo = "PART-TARO", CreatedAt = t0, CreatedBy = admin.UserId });
+            await db.SaveChangesAsync(); db.Fixup();
+            var svc = new HandoverService(db);
+            async Task Must(Task<(bool Ok, string Error)> t, string what) { var r = await t; if (!r.Ok) throw new Exception("taro-seed " + what + ": " + r.Error); db.Fixup(); }
+            long Last() => db.HandoverTransactions.List.Max(x => x.HandoverTxId);
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 10, admin.UserId, "MOI", false, "MOI", toNC: "NC01"), "giao 10");
+            await Must(svc.ReceiveAsync(Last(), 10, 0, null, admin.UserId), "nhận 10");
+            db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "GC", NC = "NC01", QtyDone = 10, QtyOk = 10, QtyNg = 0,
+                StartTime = t0.AddMinutes(10), EndTime = t0.AddMinutes(20), WorkerId = admin.UserId, CreatedAt = t0.AddMinutes(20) });
+            await db.SaveChangesAsync(); db.Fixup();
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "GC", "HTSP", 10, admin.UserId, "MOI", false, "MOI"), "GC giao HTSP");
+            await Must(svc.ReceiveAsync(Last(), 10, 0, null, admin.UserId), "HTSP nhận");
+        }
+        var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-TARO");
+        return new { det.KhPlanDetailId };
+    }
+
+    public static async Task<object> DumpTaroAsync(AppDbContext db, HandoverLedgerService led)
+    {
+        var det = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-TARO");
+        if (det == null) return new { };
+        var id = det.KhPlanDetailId;
+        var row = (await led.GetLedgerForDetailAsync(id))!;
+        var logs = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == id && w.ProcessGroup == "TARO").ToList();
+        var ids = logs.Select(l => l.WtsLogId).ToHashSet();
+        var snap = db.KhPlanRouteSnapshotTaro.List.Where(s => s.KhPlanDetailId == id).ToDictionary(s => s.SnapshotId, s => s.NC + "|" + s.WtsTaskCode);
+        return new
+        {
+            logs = logs.Select(l => new { l.WtsLogId, l.WtsCode, l.StepNC, l.QtyOk, l.QtyNg, l.IsVoided, l.VoidReason }).ToList(),
+            stds = db.WtsProductionLogStds.List.Where(x => ids.Contains(x.WtsLogId)).Select(x => new { x.WtsLogId, x.FieldName, x.StdValue, row = x.SnapshotRowId.HasValue && snap.TryGetValue(x.SnapshotRowId.Value, out var k) ? k : null }).ToList(),
+            lines = row.G("HTSP").Steps.GroupBy(s => s.Code).ToDictionary(g => g.Key, g => g.Select(s => new { s.Ok, s.Ng, s.Waiting, s.GopUnit, s.IsGop }).First()),   // mã chuẩn bị 1T ở 2 NC = 2 dòng cùng mã
+            chuaLam = row.G("HTSP").ChuaLam,
+            gops = db.StandardWtsTaskGops.List.Select(g => new { g.GopTaskCode, g.PartTaskCode, g.IsActive }).ToList(),
+            balanced = row.Balanced, neg = HandoverLedgerService.NegativeCells(row).Count,
+        };
+    }
 }

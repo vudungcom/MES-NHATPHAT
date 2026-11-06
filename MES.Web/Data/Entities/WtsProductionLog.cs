@@ -29,6 +29,14 @@ public class WtsProductionLog
     [MaxLength(20)]
     public string? WtsCode { get; set; }
 
+    /// <summary>
+    /// [TARO-NC-MA 2026-11-06] NC của dòng quy trình Taro mà dòng WTS này làm (SQL 07). Chỉ ghi khi mã CV Taro dùng ở nhiều NC của PO
+    /// (vd 3T1 ở NC 3 và NC 5) — form WTS bắt chọn NC. NULL = dòng cũ / mã chỉ ở 1 NC. KHÔNG dùng lại cột NC (cột NC của dòng HTSP
+    /// đang chở mã CV ở báo cáo, Update TG chuẩn). Nguồn: KHÁCH 02/11 09:14 chọn B (giữ mã chung, form WTS Taro thêm ô NC).
+    /// </summary>
+    [MaxLength(20)]
+    public string? StepNC { get; set; }
+
     /// <summary>Nhóm nhỏ HTSP: "Taro" | "Bavia" | "Rua". NULL với các nhóm khác.</summary>
     [MaxLength(20)]
     public string? HtspSubGroup { get; set; }

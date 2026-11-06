@@ -98,11 +98,14 @@ public static class QuetScen
             db.KhPlanRouteSnapshotPackaging.List.Add(new KhPlanRouteSnapshotPackaging { SnapshotId = 803, KhPlanDetailId = 1, StepOrder = 10, NC = "PX", IsBackup = true, ParentNC = "PX" });
             db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 811, KhPlanDetailId = 1, StepOrder = 8, NC = "TA", WtsTaskCode = "9T" });
             db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 812, KhPlanDetailId = 1, StepOrder = 9, NC = "TB", WtsTaskCode = "9t" });
+            // [TARO-NC-MA 2026-11-06] đáp án đổi theo luật mới: Taro trùng theo CẶP (mã, NC) — 9T ở NC TA + NC TB là hợp lệ (khách chốt B 02/11);
+            //   thêm 9T thứ 2 ở NC TA → mới là trùng
+            db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 813, KhPlanDetailId = 1, StepOrder = 10, NC = " ta", WtsTaskCode = "9T " });
             db.Fixup();
             var r2 = await QuetCore.ScanAsync(db, led);
             var mt = r2.Findings.Where(f => f.Kind == QuetCore.MaTrung).Select(f => f.Detail).ToList();
-            Ok(mt.Count == 2 && mt.Any(d => d.Contains("Đóng gói có 2 dòng chính cùng mã PX")) && mt.Any(d => d.Contains("Taro có 2 dòng chính cùng mã 9T")),
-               "Bắt MA_TRUNG: Đóng gói PX ×2 (dòng dự phòng không tính), Taro theo mã CV 9T ×2", string.Join(" | ", mt));
+            Ok(mt.Count == 2 && mt.Any(d => d.Contains("Đóng gói có 2 dòng chính cùng mã PX")) && mt.Any(d => d.Contains("Taro có 2 dòng chính cùng mã 9T (NC TA)")),
+               "Bắt MA_TRUNG: Đóng gói PX ×2 (dòng dự phòng không tính), Taro theo cặp (mã CV, NC): 9T ở NC TA ×2 (9T ở NC TB không tính — TARO-NC-MA)", string.Join(" | ", mt));
         }
         Console.WriteLine("[Q3] [N3-FIRST] NC đầu chuỗi Gia công là máy loại trừ → LOAI_TRU_DAU (PO) + danh sách Part Master; NC loại trừ giữa / cuối không báo");
         {

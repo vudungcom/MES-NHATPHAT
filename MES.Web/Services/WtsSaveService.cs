@@ -63,6 +63,8 @@ namespace MES.Web.Services
             public string?  WtsCode        { get; set; }
             public string?  WtsName        { get; set; }
             public string?  HtspSubGroup   { get; set; }
+            /// <summary>[TARO-NC-MA 2026-11-06] NC Taro trang chọn (mã CV dùng ở nhiều NC của PO bắt buộc). Máy chủ kiểm + chuẩn hoá (mã 1 NC → null).</summary>
+            public string?  StepNC         { get; set; }
             public string?  MachineUsed    { get; set; }
             public decimal  QtyDone        { get; set; }
             public decimal  QtyOk          { get; set; }
@@ -522,6 +524,9 @@ namespace MES.Web.Services
         {
             var pg = CurrentPg(grp);
             string? CodeOf(WtsSaveRow s) => grp.IsGc ? grp.NC : (s.WtsCode ?? s.NC);
+            // [TARO-NC-MA 2026-11-06] khoá sổ của dòng: Taro mã dùng ở nhiều NC = (mã, NC) — NC đã kiểm / chuẩn hoá ở bước dưới
+            LedgerRow? keyRow = null;
+            string? KeyOf(WtsSaveRow s) => keyRow == null ? CodeOf(s) : HandoverLedgerService.WtsKey(keyRow, pg, CodeOf(s), s.StepNC) ?? CodeOf(s);
 
             // Dòng đang sửa: lấy PO gốc của log cũ từ DB (người dùng có thể đã đổi PO trên dòng)
             var editIdsAll = grp.Rows.Where(s => s.IsEditing && s.WtsLogId.HasValue).Select(s => s.WtsLogId!.Value).ToList();
@@ -553,6 +558,28 @@ namespace MES.Web.Services
                 var editIds = editLogs.Where(l => l.KhPlanDetailId == id).Select(l => l.WtsLogId).ToList();
                 var before  = await _ledger.GetLedgerForDetailAsync(id);
                 var basis   = editIds.Any() ? await _ledger.GetLedgerForDetailAsync(id, editIds) : before;
+                keyRow = basis;
+
+                // [TARO-NC-MA 2026-11-06] Taro: mã CV dùng ở NHIỀU NC của PO (snapshot) → dòng phải chọn đúng 1 NC có mã đó (đọc sổ dưới khoá PO,
+                //   không tin trang); lưu NC đúng chữ của quy trình. Mã chỉ ở 1 NC → bỏ NC trang gửi (sổ không cần, StepNC = NULL như dòng cũ).
+                //   Áp dụng cả Workflow OFF (không phải luật số lượng — không có NC thì sổ không biết chiếc làm ở NC nào).
+                //   Nguồn: KHÁCH 02/11 09:14 (chọn B: form WTS Taro thêm ô chọn NC); HÙNG 05/11 15:37 (mã trùng NC bắt buộc chọn NC).
+                if (pg == "TARO")
+                    foreach (var s in grp.Rows.Where(s => s.KhPlanDetailId == id))
+                    {
+                        // + mã chuẩn bị dùng ở nhiều NC cũng phải chọn NC (chỉ để lấy T.Chuẩn đúng dòng — sổ không đếm mã chuẩn bị; rà độc lập 06/11 mục 4)
+                        var ncs = HandoverLedgerService.TaroNcChoices(basis, pg, CodeOf(s));
+                        if (ncs == null) { s.StepNC = null; continue; }
+                        var hit = ncs.FirstOrDefault(n => string.Equals(n, (s.StepNC ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+                        if (hit == null)
+                        {
+                            var msg = $"PO {po} · mã {CodeOf(s)?.Trim()}: mã này dùng ở {ncs.Count} NC Taro ({string.Join(", ", ncs.Select(n => "NC " + n))}) — "
+                                    + (string.IsNullOrWhiteSpace(s.StepNC) ? "chọn NC đang làm ở ô NC Taro." : $"NC {s.StepNC!.Trim()} không có mã này, chọn lại NC.");
+                            s.ErrorMsg = msg;
+                            return msg;
+                        }
+                        s.StepNC = hit;
+                    }
 
                 // [RS-E14 2026-10-29] Mã WTS phải có trong snapshot quy trình của PO (NC với GC — kể cả máy đồng dạng đã gộp về NC chính;
                 //   mã CV với HTSP/KCS/PKG). PO đã có snapshot cho nhóm mà mã không có → sổ giao nhận bỏ qua dòng này (OK không tính,
@@ -564,7 +591,7 @@ namespace MES.Web.Services
                     if (G.Steps.Any())
                         foreach (var s in grp.Rows.Where(s => s.KhPlanDetailId == id && !IsPrepNoQty(grp, s) && !string.IsNullOrEmpty(CodeOf(s))))
                         {   // (mã trống → SaveRowAsync báo "Chọn NC (nếu có PO) hoặc Mã WTS khác" như cũ)
-                            var cp = HandoverLedgerService.WtsCap(basis, pg, CodeOf(s));
+                            var cp = HandoverLedgerService.WtsCap(basis, pg, KeyOf(s));   // [TARO-NC-MA] khoá (mã, NC)
                             if (cp.Max == null) continue;   // mã chuẩn bị
                             // [N3-FIRST 2026-11-04] dòng ảo "Nhận vào (chưa qua NC)" (@VAO) của sổ không phải NC — coi như không có trong quy trình
                             //   (Workflow OFF bỏ qua trần nên phải chặn ở đây; trang WTS chỉ cho chọn NC của snapshot nên bình thường không gặp).
@@ -595,9 +622,9 @@ namespace MES.Web.Services
                 if (before == null || basis == null) continue;
 
                 // 2) Trần từng NC / mã CV
-                foreach (var g in subs.GroupBy(s => HandoverLedgerService.WtsCap(basis, pg, CodeOf(s)).Code, StringComparer.OrdinalIgnoreCase))
+                foreach (var g in subs.GroupBy(s => HandoverLedgerService.WtsCap(basis, pg, KeyOf(s)).Code, StringComparer.OrdinalIgnoreCase))   // [TARO-NC-MA] khoá (mã, NC)
                 {
-                    var cap = HandoverLedgerService.WtsCap(basis, pg, CodeOf(g.First()));
+                    var cap = HandoverLedgerService.WtsCap(basis, pg, KeyOf(g.First()));
                     if (cap.Max == null) continue;   // mã chuẩn bị
                     var tot = g.Sum(s => s.QtyDone);
                     var what = grp.IsGc ? $"NC {cap.Code}" : $"mã {cap.Code}";
@@ -615,7 +642,8 @@ namespace MES.Web.Services
                 // 3) Thử lưu xong — ô nào mới âm thì chặn (K5, K8)
                 // [VULOI] dòng sửa giữ vụ cũ (NG giảm mà vụ đã đi phiếu → ô vụ âm → chặn); dòng mới = vụ mới (Id âm)
                 var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, grp.IsGc ? grp.NC : null, grp.IsGc ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
-                                                       s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null)).ToList();
+                                                       s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null,
+                                                       StepNC: pg == "TARO" ? s.StepNC : null)).ToList();   // [TARO-NC-MA] + NC Taro
                 var after = await _ledger.GetLedgerForDetailAsync(id, editIds, extra);
                 if (after == null) continue;
                 var bad = HandoverLedgerService.NewNegatives(before, after);
@@ -650,7 +678,8 @@ namespace MES.Web.Services
                             {
                                 // giá trị dòng mới sẽ ghi (SaveRowAsync): GC → NC = row.NC; nhóm khác → WtsCode = row.NC
                                 string? nNc = grp.IsGc ? s.NC : null, nCode = grp.IsGc ? null : s.NC;
-                                if (KeyN(ow.ProcessGroup) == KeyN(pg) && KeyN(ow.NC) == KeyN(nNc) && KeyN(ow.WtsCode) == KeyN(nCode))
+                                if (KeyN(ow.ProcessGroup) == KeyN(pg) && KeyN(ow.NC) == KeyN(nNc) && KeyN(ow.WtsCode) == KeyN(nCode)
+                                    && KeyN(ow.StepNC) == KeyN(pg == "TARO" ? s.StepNC : null))   // [TARO-NC-MA] đổi NC Taro = khác khoá (như EditOrigins)
                                     // [WTS-SUA-PHAN 2026-11-05] dòng thay = bản mới nhất của chuỗi sửa (At = MaxValue: sau mọi mốc hàng sửa đã về),
                                     //   các bản cũ giữ giờ của chúng → ảnh sổ đúng như sổ nạp lại sau khi lưu (rà độc lập lần 2 / lần 3).
                                     tx = x with { Saved = ow.Saved,
@@ -825,6 +854,7 @@ namespace MES.Web.Services
                         NC                      = ncValue,
                         WtsCode                 = wtsCodeValue,
                         HtspSubGroup            = grp.IsHtsp ? row.HtspSubGroup : null,
+                        StepNC                  = processGroup == "TARO" && !string.IsNullOrWhiteSpace(row.StepNC) ? row.StepNC.Trim() : null,   // [TARO-NC-MA 2026-11-06] đã kiểm ở CheckGroupQtyAsync
                         WorkerId                = grp.UserId,
                         // [FIX-NONGC-MACHINE] Non-GC (HTSP/KCS/PKG) chưa có khái niệm máy → để NULL, cột Máy hiện "—".
                         MachineUsed             = grp.IsGc ? row.MachineUsed : null,
@@ -958,6 +988,19 @@ namespace MES.Web.Services
                         }
                         else row.GcStd = null;   // [RS-E6-Q] V1
                     }
+                }
+                // [TARO-NC-MA 2026-11-06] Taro mã dùng ở nhiều NC: máy chủ tự lấy dòng chuẩn ĐÚNG (mã, NC) của PO (trước: trang lấy dòng đầu
+                //   cùng mã → làm NC 5 vẫn ghi chuẩn NC 3). Không thấy dòng → không ghi số chuẩn (như RS-E6-Q của Gia công).
+                else if (!grp.IsGc && grp.IsHtsp && row.HtspSubGroup == "Taro" && !string.IsNullOrWhiteSpace(row.StepNC))
+                {
+                    var code = (row.NC ?? "").Trim(); var nc = row.StepNC.Trim();
+                    var x = (await _db.KhPlanRouteSnapshotTaro.AsNoTracking().Where(r => r.KhPlanDetailId == dId && !r.IsBackup).ToListAsync())
+                        .Where(r => string.Equals((string.IsNullOrWhiteSpace(r.WtsTaskCode) ? r.NC : r.WtsTaskCode)?.Trim(), code, StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals((r.NC ?? "").Trim(), nc, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(r => r.StepOrder).FirstOrDefault();
+                    row.StdTimePerPc = x?.StandardTime;
+                    row.StdSrcTable  = x == null ? null : StdTrack.Table.Taro;
+                    row.StdSrcRowId  = x?.SnapshotId;
                 }
                 else if (!grp.IsGc && !string.IsNullOrEmpty(row.StdSrcTable) && row.StdSrcRowId.HasValue)
                 {

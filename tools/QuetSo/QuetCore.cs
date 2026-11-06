@@ -84,7 +84,8 @@ public static class QuetCore
             => $"#{ord} NC {nc}{(code != null ? " mã " + code : "")}{(string.IsNullOrWhiteSpace(name) ? "" : " \"" + name!.Trim() + "\"")}{(std.HasValue ? $" chuẩn {std:0.##}" : "")} nguồn {src?.ToString() ?? "—"} chụp {at:dd/MM HH:mm}";
         snaps.AddRange(db.KhPlanRouteSnapshotMachining.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Gia công", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.MachineRegistered))));
         snaps.AddRange(db.KhPlanRouteSnapshotTaro.Where(x => !x.IsBackup).ToList()
-            .Select(x => (x.KhPlanDetailId, "Taro", K(string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode), I(x.StepOrder, x.NC, x.WtsTaskCode, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+            // [TARO-NC-MA 2026-11-06] Taro trùng theo CẶP (mã CV, NC): khách chốt 02/11 giữ mã CV chung nhiều NC (sổ đếm theo cặp) → chỉ cùng mã CÙNG NC mới là trùng
+            .Select(x => (x.KhPlanDetailId, "Taro", K(string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode) + "|NC " + K(x.NC), I(x.StepOrder, x.NC, x.WtsTaskCode, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
         snaps.AddRange(db.KhPlanRouteSnapshotBavia.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Bavia", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
         snaps.AddRange(db.KhPlanRouteSnapshotWashing.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Rửa", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
         snaps.AddRange(db.KhPlanRouteSnapshotInspection.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "KCS", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
@@ -94,9 +95,11 @@ public static class QuetCore
             {
                 // [PM-NC-DUP-SVC 02/11] WTS đã ghi mã này ở PO (WTS chỉ ghi mã CV / NC, không biết dòng nào trong các dòng trùng)
                 var pgs = g.Key.Grp switch { "Gia công" => new[] { "GC" }, "Taro" => new[] { "TARO" }, "Bavia" => new[] { "BAVIA" }, "Rửa" => new[] { "WASHING" }, "KCS" => new[] { "KCS" }, _ => new[] { "PKG" } };
-                var used = wtsAll.Where(w => w.KhPlanDetailId == g.Key.Det && pgs.Contains(w.ProcessGroup) && K(w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC)) == g.Key.Code).ToList();
+                var codeK = g.Key.Grp == "Taro" ? g.Key.Code.Split('|')[0] : g.Key.Code;   // [TARO-NC-MA] khoá Taro = "mã|NC x"
+                var used = wtsAll.Where(w => w.KhPlanDetailId == g.Key.Det && pgs.Contains(w.ProcessGroup) && K(w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC)) == codeK).ToList();
                 var wtsTxt = used.Count == 0 ? "chưa có WTS mã này" : $"WTS mã này {used.Count} dòng (OK {used.Sum(w => w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0))):0.##}, NG {used.Sum(w => w.QtyNg ?? 0):0.##})";
-                Add(r, MaTrung, $"quy trình PO: {g.Key.Grp} có {g.Count()} dòng chính cùng mã {g.Key.Code} · {wtsTxt} ({string.Join("; ", g.Select(x => x.Info))})");
+                var codeDisp = g.Key.Grp == "Taro" ? $"{codeK} ({g.Key.Code.Split('|')[1]})" : g.Key.Code;   // [TARO-NC-MA] "9T (NC TA)"
+                Add(r, MaTrung, $"quy trình PO: {g.Key.Grp} có {g.Count()} dòng chính cùng mã {codeDisp} · {wtsTxt} ({string.Join("; ", g.Select(x => x.Info))})");
             }
 
         // [N3-FIRST 2026-11-03] NC đầu chuỗi Gia công là máy loại trừ (sổ luật N3; Hùng duyệt phương án A 02/11 13:16 — quét TRƯỚC khi sửa sổ).

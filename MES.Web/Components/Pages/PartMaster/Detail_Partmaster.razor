@@ -3685,7 +3685,9 @@ else
         //   Chỉ kiểm dòng mới / đang sửa — dữ liệu cũ không đụng tới thì không chặn oan.
         if (_canEditB) CheckNcList(_machiningEdits, "Gia công", validationErrors);
         // [B6-NC-DUP 29/10] Taro: sổ giao nhận / WTS tính theo mã CV (WtsTaskCode, trống thì NC) → kiểm trùng / trống theo đúng mã đó
-        if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }
+        // [TARO-NC-MA 2026-11-06] Taro trùng theo CẶP (mã CV, NC): cùng mã CV ở NC khác là hợp lệ (khách chốt B 02/11 09:14 — giữ mã chung nhiều NC,
+        //   sổ + form WTS đếm theo cặp); trước: chặn mọi dòng trùng mã CV → khách không khai được Taro 2 lần (NC 3 / NC 5). Máy chủ cũng kiểm cặp.
+        if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode, t => t.NC); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }
         if (_canEditD) CheckNcList(_inspectionEdits, "KCS", validationErrors);
         if (_canEditE) CheckNcList(_packagingEdits, "Đóng gói", validationErrors);
         if (validationErrors.Count > 0)
@@ -4128,7 +4130,7 @@ else
     }
 
     /// <summary>[B6-NC-DUP] Dòng mới / đang sửa: NC (mã CV) không trống, không trùng dòng chính khác trong cùng mục.</summary>
-    private static void CheckNcList<T>(List<T> list, string label, List<string> errs, Func<T, string?>? codeOf = null) where T : StepEditBase
+    private static void CheckNcList<T>(List<T> list, string label, List<string> errs, Func<T, string?>? codeOf = null, Func<T, string?>? scopeOf = null) where T : StepEditBase
     {
         // codeOf = mã mà sổ giao nhận / WTS dùng để đếm (mặc định NC; Taro: WtsTaskCode, trống thì NC)
         string Code(T x) => ((codeOf ?? (y => y.NC))(x) ?? "").Trim();
@@ -4155,9 +4157,12 @@ else
                     errs.Add($"{label}: dòng dự phòng {nc} trỏ về dòng cha {(e.ParentNC ?? "").Trim()} nhưng trên trang không có dòng chính mã đó (dòng cha vừa đổi NC?) — sửa NC dòng cha cho khớp, hoặc xoá dòng dự phòng rồi bấm \"Tạo dự phòng\" lại ở dòng cha.");
                 continue;
             }
-            var same = live.Count(x => !x.IsBackup && string.Equals(Code(x), nc, StringComparison.OrdinalIgnoreCase));
+            var same = live.Count(x => !x.IsBackup && string.Equals(Code(x), nc, StringComparison.OrdinalIgnoreCase)
+                                       && (scopeOf == null || PartStepGuard.SameCode(scopeOf(x), scopeOf(e))));   // [TARO-NC-MA] Taro: cùng mã CÙNG NC mới là trùng
             if (same > 1)
-                errs.Add($"{label}: NC / mã CV {nc} bị trùng ở {same} dòng — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng).");
+                errs.Add(scopeOf == null
+                    ? $"{label}: NC / mã CV {nc} bị trùng ở {same} dòng — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng)."
+                    : $"{label}: mã CV {nc} ở NC {(scopeOf(e) ?? "").Trim()} bị trùng ở {same} dòng — mỗi NC chỉ 1 dòng mỗi mã CV (cùng mã ở NC khác thì được).");
         }
         // [PM-NC-DUP-SVC 02/11] Đổi chéo mã giữa các dòng chính trong 1 lần lưu (P1 ↔ P2, P1→P2→P3→P1): máy chủ ghi từng dòng nên dòng nào ghi trước
         //   cũng trùng mã dòng kia đang giữ → chặn ngay ở đây, báo cách làm (rà độc lập 02/11 V1). Taro (codeOf) chưa áp — gói TARO-NC-MA.
@@ -4255,9 +4260,11 @@ else
                     // [PM-DEL-BACKUP] dự phòng mà NC chính của nó cũng xoá trong lượt này → service đã xoá kèm, không gọi lại (sẽ báo "không tìm thấy")
                     if (e.IsBackup && edits.Any(m => !m.IsBackup && m.State == EditState.Deleted && m.StepId > 0
                                                      && string.Equals(m.OriginalNC ?? m.NC, e.ParentNC, StringComparison.OrdinalIgnoreCase)))
-                    { log.Add($"✓ [{label}] Xóa NC={e.NC} (theo NC chính {e.ParentNC})"); continue; }
+                    { log.Add($"✓ [{label}] Xóa NC={e.OriginalNC ?? e.NC} (theo NC chính {e.ParentNC})"); continue; }
                     await deleteFn(e.StepId);
-                    log.Add($"✓ [{label}] Xóa NC={e.NC}");
+                    // [B6-DP-THAP 2026-11-06] lời báo theo mã đang lưu trong DB (OriginalNC) — trước: đổi tên rồi bấm Xoá cùng lượt thì báo mã tạm trên form
+                    //   (vd "Xóa NC=Q2X" trong khi DB xoá dòng Q2; harness drive_dpma R4 tái hiện trên master). Nguồn: CLAUDE (rà độc lập gói 2 06/11).
+                    log.Add($"✓ [{label}] Xóa NC={e.OriginalNC ?? e.NC}");
                 }
                 else if (e.State == EditState.Restored && e.StepId > 0)
                 {

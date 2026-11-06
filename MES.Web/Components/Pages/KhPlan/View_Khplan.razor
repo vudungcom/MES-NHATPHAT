@@ -477,10 +477,12 @@ else
                                                 {
                                                     @* Taro: log lưu WtsCode = WtsTaskCode (snapshot mới) hoặc NC (snapshot cũ trước migration) *@
                                                     var taroKey = string.IsNullOrWhiteSpace(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;   @* [WTS-PANEL-QTY] cùng TaroCode của sổ *@
-                                                    var taroLogs = GetLogsForWts("TARO", taroKey);
-                                                    var taroBadge = QtyColor("TARO", taroKey);   @* [GN-WHERE][V5] *@
-                                                    var taroQText  = QtyText("TARO", taroKey);
-                                                    var taroQTitle = QtyTitle("TARO", taroKey);
+                                                    var taroNcK = TaroRowNc(s);   @* [TARO-NC-MA] mã dùng ở nhiều NC: số + dòng WTS theo cặp (mã, NC) *@
+                                                    var taroLKey = taroNcK == null || HandoverLedgerService.IsPrepCode(taroKey) ? taroKey : HandoverLedgerService.TaroKey(taroKey, taroNcK);   @* mã chuẩn bị: sổ không đổi khoá *@
+                                                    var taroLogs = GetTaroLogs(taroKey, taroNcK);
+                                                    var taroBadge = QtyColor("TARO", taroLKey);   @* [GN-WHERE][V5] *@
+                                                    var taroQText  = QtyText("TARO", taroLKey);
+                                                    var taroQTitle = QtyTitle("TARO", taroLKey);
                                                     <tr>
                                                         <td><code>@s.NC</code></td>
                                                         <td class="small"><code class="text-success">@(s.WtsTaskCode ?? "—")</code></td>
@@ -837,6 +839,23 @@ else
                              && !x.IsVoided).ToList();
 
     // Lấy logs cho 1 WtsCode (công đoạn C/D/E)
+    // [TARO-NC-MA 2026-11-06] Taro mã CV dùng ở nhiều NC của PO: dòng quy trình đọc số theo cặp (mã, NC) — cùng sổ (TaroKey); dòng WTS lọc theo NC
+    //   (dòng cũ không NC / NC sai tính vào NC đầu, như sổ). Mã 1 NC / dòng dự phòng: như cũ.
+    private string? TaroRowNc(KhPlanRouteSnapshotTaro s)
+    {
+        if (s.IsBackup || _ledgerRow == null) return null;
+        var code = string.IsNullOrWhiteSpace(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;
+        return HandoverLedgerService.TaroNcChoices(_ledgerRow, "TARO", code) != null ? (s.NC ?? "").Trim() : null;   // + mã chuẩn bị nhiều NC: dòng WTS lọc theo NC (rà độc lập 06/11 mục 4)
+    }
+    private List<WtsProductionLog> GetTaroLogs(string? code, string? nc)
+    {
+        var logs = GetLogsForWts("TARO", code);
+        var ncs = nc == null ? null : HandoverLedgerService.TaroNcChoices(_ledgerRow, "TARO", code);
+        if (ncs == null) return logs;
+        return logs.Where(l => string.Equals((l.StepNC ?? "").Trim(), nc, StringComparison.OrdinalIgnoreCase)
+                            || (!ncs.Contains((l.StepNC ?? "").Trim(), StringComparer.OrdinalIgnoreCase) && string.Equals(ncs[0], nc, StringComparison.OrdinalIgnoreCase))).ToList();
+    }
+
     private List<WtsProductionLog> GetLogsForWts(string processGroup, string? wtsCode)
         => _wtsLogs.Where(x => x.ProcessGroup == processGroup
                              && string.Equals(x.WtsCode ?? x.NC, wtsCode, StringComparison.OrdinalIgnoreCase)   // [WTS-PANEL-QTY] cùng luật khớp với sổ + bảng quy trình trang WTS (bản ghi cũ lưu mã ở NC)

@@ -639,7 +639,7 @@ else
 
                                     }
 
-                                    <td><small>@(row.NC ?? row.WtsCode ?? "—")</small>@if (!string.IsNullOrEmpty(row.WtsName)) { <span class="d-block" style="font-size:10px;color:#6c757d">@row.WtsName</span> }</td>
+                                    <td><small>@(row.NC ?? row.WtsCode ?? "—")</small>@if (!string.IsNullOrEmpty(row.StepNC)) { <small class="text-primary"> · NC @row.StepNC</small> }@if (!string.IsNullOrEmpty(row.WtsName)) { <span class="d-block" style="font-size:10px;color:#6c757d">@row.WtsName</span> }</td>
 
                                 }
 
@@ -1284,6 +1284,7 @@ else
                                                     <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.WtsName</div>
 
                                                 }
+                                                @TaroNcPicker(grp, sub)
 
                                             }
 
@@ -1328,6 +1329,7 @@ else
                                                     <div style="font-size:10px;color:#6c757d;margin-top:1px">@sub.WtsName</div>
 
                                                 }
+                                                @TaroNcPicker(grp, sub)
 
                                             }
 
@@ -2985,9 +2987,11 @@ else
 
                                             var taroKey = string.IsNullOrWhiteSpace(s.WtsTaskCode) ? s.NC : s.WtsTaskCode;   @* [WTS-PANEL-QTY] cùng TaroCode của sổ *@
 
-                                            var logs = GetWtsLogsFor(activePO, "TARO", taroKey);
+                                            var taroNcP = TaroPanelNc(activePO, s);   @* [TARO-NC-MA] mã dùng ở nhiều NC: số + dòng WTS theo cặp (mã, NC) *@
 
-                                            var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "TARO", taroKey);   @* [WTS-PANEL-QTY] sổ chung *@
+                                            var logs = GetTaroLogsFor(activePO, taroKey, taroNcP);
+
+                                            var qStep   = LedgerQtyText.Step(PanelLedger(activePO), "TARO", taroNcP == null || HandoverLedgerService.IsPrepCode(taroKey) ? taroKey : HandoverLedgerService.TaroKey(taroKey, taroNcP));   @* [WTS-PANEL-QTY] sổ chung *@
                                             var qParent = s.IsBackup ? s.ParentNC : null;
 
                                             var badge   = LedgerQtyText.Color(qStep);
@@ -4769,6 +4773,7 @@ else
                 // [FIX-NONGC-NC] Non-GC không có NC → cột NC hiển thị Mã CV (log.WtsCode).
                 // Đồng thời giữ đúng mã khi bấm Sửa dòng (SaveRowAsync lưu row.NC vào WtsCode cho non-GC).
                 NC             = log.NC ?? log.WtsCode,
+                StepNC         = log.StepNC,         // [TARO-NC-MA 2026-11-06] NC Taro của dòng (giữ khi Sửa dòng)
                 HtspSubGroup   = log.HtspSubGroup,   // [FIX-NONGC-SUBGROUP] giữ nhóm nhỏ khi Sửa dòng
 
                 PartNo         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.KhPlanDetailId)?.PartNo,
@@ -5114,6 +5119,7 @@ else
         if (!IsGcGroup && row.KhPlanDetailId.HasValue)
         {
             var keepCode   = row.NC;                 // log non-GC: Mã CV được nạp vào row.NC
+            var keepStepNc = row.StepNC;             // [TARO-NC-MA] NC Taro của dòng (OnGroupHtspSubChanged xoá)
             var keepActual = row.ActualTimePerPc;
             grp.UseStdAsDefault = false;             // không để TryFillStdValues ghi đè T.Thực tế đã lưu
             await OnSubRowKhChanged(grp, row, row.KhPlanDetailId.Value.ToString());
@@ -5124,6 +5130,7 @@ else
                 OnGroupHtspSubChanged(grp, grp.HtspSubGroup);
 
             row.WtsCode         = keepCode;
+            row.StepNC          = keepStepNc;   // [TARO-NC-MA]
             row.WtsName         = grp.WtsItems.FirstOrDefault(i => i.NC == keepCode)?.Name;
             row.ActualTimePerPc = keepActual;
             StateHasChanged();
@@ -5628,7 +5635,7 @@ else
 
     // [ML35-PO-CAP 2026-10-30] Số chưa làm / nhận của PO dòng này — cùng sổ / cùng trần với lúc Lưu (GetWtsCap)
     private HandoverLedgerService.WtsCapInfo? RowCap(WtsGroup grp, WtsRow sub)
-        => sub.KhPlanDetailId.HasValue ? GetWtsCap(sub.KhPlanDetailId, CurrentPg(grp), IsGcGroup ? grp.NC : sub.WtsCode) : null;
+        => sub.KhPlanDetailId.HasValue ? GetWtsCap(sub.KhPlanDetailId, CurrentPg(grp), CapCode(grp, sub)) : null;   // [TARO-NC-MA] khoá (mã, NC)
     private string RowCapText(WtsGroup grp, WtsRow sub)
     {
         var cap = RowCap(grp, sub);
@@ -6189,6 +6196,7 @@ else
         // [RA-CASCADE 2026-11-01] Đổi sang mã KHÁC: T.Thực tế/pc là của mã cũ → xoá (trước: mã mới không có chuẩn thì TryFillStdValues
         //   giữ số mã cũ → Dự kiến + chia giờ nhóm sai). Bật Tham khảo chuẩn thì điền lại chuẩn mã mới bên dưới.
         if (!IsGcGroup && !string.Equals(sub.WtsCode, code, StringComparison.Ordinal)) sub.ActualTimePerPc = null;
+        if (!string.Equals(sub.WtsCode, code, StringComparison.OrdinalIgnoreCase)) sub.StepNC = null;   // [TARO-NC-MA] mã khác → chọn lại NC Taro (mã 1 NC: không cần NC)
         sub.WtsCode = code;
 
         var item = grp.WtsItems.FirstOrDefault(i => i.NC == code);
@@ -6208,7 +6216,7 @@ else
                 if (IsHtspGroup)
                     stdTime = grp.HtspSubGroup switch
                     {
-                        "Taro"  => fsnap.Taro.FirstOrDefault(s => (s.WtsTaskCode ?? s.NC) == code)?.StandardTime,
+                        "Taro"  => TaroStdRow(fsnap, code, sub.StepNC, out _)?.StandardTime,   // [TARO-NC-MA] đúng dòng (mã, NC)
                         "Bavia" => fsnap.Bavia.FirstOrDefault(s => s.NC == code)?.StandardTime,
                         "Rua"   => fsnap.Washing.FirstOrDefault(s => s.NC == code)?.StandardTime,
                         _       => null
@@ -6444,7 +6452,7 @@ else
 
         // Reset WtsCode cũ
 
-        foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; }
+        foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; s.StepNC = null; }   // [TARO-NC-MA] + NC Taro
         // [RA-CASCADE 2026-11-01] Đổi nhóm nhỏ Taro / Bavia / Rửa: mã CV đã xoá → xoá luôn T.Thực tế/pc + T.Chuẩn/pc của mã cũ
         //   (trước: giữ → Dự kiến + chia giờ theo mã cũ). Sửa dòng đã lưu (EditSavedRow) tự khôi phục mã + T.Thực tế sau bước này.
         foreach (var s in grp.SubRows) { s.ActualTimePerPc = null; s.StandardTimePerPc = null; }
@@ -6465,7 +6473,8 @@ else
 
         {
 
-            "Taro"  => snap.Taro   .Select(s => new WtsItem(s.WtsTaskCode ?? s.NC, s.StepName ?? s.NC)).ToList(),
+            // [TARO-NC-MA 2026-11-06] mã dùng ở nhiều NC chỉ hiện 1 lần trong danh sách mã CV (chọn NC ở ô NC Taro bên dưới)
+            "Taro"  => snap.Taro   .Select(s => new WtsItem(s.WtsTaskCode ?? s.NC, s.StepName ?? s.NC)).DistinctBy(i => i.NC, StringComparer.OrdinalIgnoreCase).ToList(),
 
             "Bavia" => snap.Bavia  .Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
 
@@ -6486,7 +6495,13 @@ else
         sub.ErrorMsg = null;
 
         if (!sub.KhPlanDetailId.HasValue) return;
-        if (IsPrepNoQty(sub)) return;   // [FLAT-QTY-ZERO] mã chuẩn bị: không kiểm tra SL / giao nhận
+        if (IsPrepNoQty(sub))   // [FLAT-QTY-ZERO] mã chuẩn bị: không kiểm tra SL / giao nhận
+        {
+            // [TARO-NC-MA 2026-11-06] mã chuẩn bị Taro dùng ở nhiều NC: chưa chọn NC → báo ngay (chỉ để lấy T.Chuẩn đúng dòng; máy chủ cũng chặn — rà độc lập 06/11 mục 4)
+            if (grp != null && TaroNcsForSub(grp, sub) is { } pNcs && !pNcs.Contains((sub.StepNC ?? "").Trim(), StringComparer.OrdinalIgnoreCase))
+                sub.ErrorMsg = $"⚠️ Mã {sub.WtsCode} dùng ở {pNcs.Count} NC Taro ({string.Join(", ", pNcs.Select(n => "NC " + n))}) — chọn NC đang làm.";
+            return;
+        }
 
         var poQty = _allRows.FirstOrDefault(r => r.KhPlanDetailId == sub.KhPlanDetailId)?.Quantity ?? 0m;
 
@@ -6502,9 +6517,12 @@ else
         // So OK + NG (trước: chỉ so OK). Cộng các dòng CÙNG PO + CÙNG NC/mã CV đang nhập trong form.
         // Trước: GC trần = min(NC trước, PO) − đã làm; non-GC trần = SL nhận gộp mọi phiếu − OK cả nhóm.
         if (grp == null) return;
-        var wf = GetWfNcCeiling(grp, sub.KhPlanDetailId, IsGcGroup ? grp.NC : sub.WtsCode);
+        // [TARO-NC-MA 2026-11-06] Taro mã dùng ở nhiều NC: chưa chọn NC → báo ngay (máy chủ cũng chặn)
+        if (TaroNcsForSub(grp, sub) is { } tNcs && CapCode(grp, sub) == null)
+        { sub.ErrorMsg = $"⚠️ Mã {sub.WtsCode} dùng ở {tNcs.Count} NC Taro ({string.Join(", ", tNcs.Select(n => "NC " + n))}) — chọn NC đang làm."; return; }
+        var wf = GetWfNcCeiling(grp, sub.KhPlanDetailId, CapCode(grp, sub));
         if (wf == null || wf.Unlimited) return;
-        var totalQty = SumFormQty(grp, sub.KhPlanDetailId, IsGcGroup ? grp.NC : sub.WtsCode);
+        var totalQty = SumFormQty(grp, sub.KhPlanDetailId, CapCode(grp, sub));
         if (totalQty <= 0) return;
         if (wf.Locked)
             sub.ErrorMsg = $"⚠️ {wf.Label}: chưa nhận hàng — chưa nhập số lượng được. ({wf.Detail})";   // [GN-TEXT] trước: "chưa có hàng vào"
@@ -6521,7 +6539,7 @@ else
         var main = GetWtsCap(khPlanDetailId, pg, code)?.Code ?? code;
         return grp.SubRows
             .Where(s => s.KhPlanDetailId == khPlanDetailId)
-            .Where(s => string.Equals(GetWtsCap(khPlanDetailId, pg, IsGcGroup ? grp.NC : s.WtsCode)?.Code ?? (IsGcGroup ? grp.NC : s.WtsCode), main, StringComparison.OrdinalIgnoreCase))
+            .Where(s => string.Equals(GetWtsCap(khPlanDetailId, pg, CapCode(grp, s))?.Code ?? CapCode(grp, s), main, StringComparison.OrdinalIgnoreCase))   // [TARO-NC-MA] khoá (mã, NC)
             .Sum(s => s.QtyDone);
     }
 
@@ -7112,6 +7130,7 @@ else
                 WtsLogId = sub.WtsLogId, ActivityLogId = sub.ActivityLogId, KhPlanDetailId = sub.KhPlanDetailId,
                 StartTime = sub.StartTime, EndTime = sub.EndTime, PO = sub.PO, NC = sub.NC, WtsCode = sub.WtsCode, WtsName = sub.WtsName,
                 HtspSubGroup = sub.HtspSubGroup, MachineUsed = sub.MachineUsed,
+                StepNC = sub.StepNC,   // [TARO-NC-MA] máy chủ kiểm + chuẩn hoá
                 QtyDone = sub.QtyDone, QtyOk = sub.QtyOk, QtyNg = sub.QtyNg, NgCategoryId = sub.NgCategoryId, NgCaseId = sub.NgCaseId,
                 Notes = sub.Notes, IsOvertime = sub.IsOvertime,
                 SetupTime_Actual = sub.SetupTime_Actual, MachiningTime_Actual = sub.MachiningTime_Actual, InspectionTime_Actual = sub.InspectionTime_Actual,
@@ -7324,8 +7343,8 @@ else
     // [RA-SOCHUNG] "NC2b (gộp NC2)" khi dòng là NC / mã dự phòng — số "đã làm" là của NC chính
     private string NcMainLabel(WtsRow r)
     {
-        var main = GetWtsCap(r.KhPlanDetailId, PgOfRow(r), r.NC)?.Code ?? r.NC;
-        return string.Equals(main, r.NC, StringComparison.OrdinalIgnoreCase) ? r.NC ?? "" : $"{r.NC} (gộp {main})";
+        var main = GetWtsCap(r.KhPlanDetailId, PgOfRow(r), RowKey(r))?.Code ?? r.NC;   // [TARO-NC-MA] khoá (mã, NC)
+        return string.Equals(main, RowKey(r), StringComparison.OrdinalIgnoreCase) || string.Equals(main, r.NC, StringComparison.OrdinalIgnoreCase) ? r.NC ?? "" : $"{r.NC} (gộp {main})";
     }
     // [RA-SOCHUNG] ProcessGroup của 1 dòng (nhóm HTSP theo nhóm nhỏ của dòng)
     private string PgOfRow(WtsRow r) => IsGcGroup ? "GC"
@@ -7359,7 +7378,7 @@ else
 
         var lnRow = row.KhPlanDetailId.HasValue && _ledgerCache.TryGetValue(row.KhPlanDetailId.Value, out var lrRow)
 
-            ? LedgerQtyText.Step(lrRow, pgRow, GetWtsCap(row.KhPlanDetailId, pgRow, row.NC)?.Code ?? row.NC) : null;
+            ? LedgerQtyText.Step(lrRow, pgRow, GetWtsCap(row.KhPlanDetailId, pgRow, RowKey(row))?.Code ?? RowKey(row)) : null;   // [TARO-NC-MA] khoá (mã, NC)
 
         var wtsDoneAtNc = lnRow != null ? lnRow.Ok + lnRow.Ng : 0m;
 
@@ -7467,6 +7486,99 @@ else
     // Cache WTS logs theo PO — để hiện bảng quy trình real-time
 
     private Dictionary<string, List<WtsProductionLog>> _wtsLogsCache = new();
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // [TARO-NC-MA 2026-11-06] Taro: 1 mã CV dùng ở NHIỀU NC của PO (vd 1T / 3T1 ở cả NC 3 lẫn NC 5) → dòng WTS bắt buộc chọn NC
+    //   (ô "NC Taro" dưới ô Mã CV); trần + số đã làm + T.Chuẩn theo cặp (mã, NC) — cùng sổ chung (HandoverLedgerService.TaroKey / WtsKey).
+    //   Mã chỉ ở 1 NC: không hiện ô, form như cũ. Máy chủ (WtsSaveService) kiểm lại NC dưới khoá PO.
+    //   Nguồn: KHÁCH 02/11 09:14 (anh Ngọc chọn B: giữ mã chung, form WTS Taro thêm ô chọn NC, NC lấy như Part Master).
+    // ════════════════════════════════════════════════════════════════════════════
+    private static string TaroCodeOf(KhPlanRouteSnapshotTaro s) => (string.IsNullOrWhiteSpace(s.WtsTaskCode) ? s.NC : s.WtsTaskCode)?.Trim() ?? "";
+
+    /// <summary>NC (thứ tự quy trình) của mã Taro trong snapshot PO — chỉ dòng chính (cùng luật sổ TaroSharedNcs + TaroPrepNcs).
+    /// [TARO-NC-MA] rà độc lập 06/11 mục 4: gồm cả mã chuẩn bị (1T ở NC 3 + NC 5 → chọn NC để lấy T.Chuẩn đúng dòng; sổ không đếm mã chuẩn bị nên khoá sổ vẫn = mã).</summary>
+    private static List<string> TaroNcsSnap(RouteSnapshotData snap, string? code)
+        => string.IsNullOrWhiteSpace(code) ? new()
+           : snap.Taro.Where(s => !s.IsBackup && string.Equals(TaroCodeOf(s), code.Trim(), StringComparison.OrdinalIgnoreCase))
+                      .OrderBy(s => s.StepOrder).Select(s => (s.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>Dòng snapshot Taro lấy T.Chuẩn: mã dùng ở nhiều NC → đúng dòng (mã, NC) (chưa chọn NC → null); mã 1 NC → như cũ (dòng đầu khớp mã).</summary>
+    private static KhPlanRouteSnapshotTaro? TaroStdRow(RouteSnapshotData snap, string? code, string? stepNc, out bool shared)
+    {
+        shared = TaroNcsSnap(snap, code).Count > 1;
+        if (!shared) return snap.Taro.FirstOrDefault(s => (s.WtsTaskCode ?? s.NC) == code);
+        return string.IsNullOrWhiteSpace(stepNc) ? null
+            : snap.Taro.Where(s => !s.IsBackup && string.Equals(TaroCodeOf(s), code!.Trim(), StringComparison.OrdinalIgnoreCase)
+                                   && string.Equals((s.NC ?? "").Trim(), stepNc.Trim(), StringComparison.OrdinalIgnoreCase))
+                       .OrderBy(s => s.StepOrder).FirstOrDefault();
+    }
+
+    /// <summary>NC của mã Taro dòng đang nhập khi mã dùng ở nhiều NC; null = không phải Taro / mã 1 NC.</summary>
+    private List<string>? TaroNcsForSub(WtsGroup grp, WtsRow sub)
+    {
+        if (CurrentPg(grp) != "TARO" || string.IsNullOrEmpty(sub.PO) || !_fullSnapshotCache.TryGetValue(sub.PO, out var snap)) return null;
+        var ncs = TaroNcsSnap(snap, sub.WtsCode);
+        return ncs.Count > 1 ? ncs : null;
+    }
+
+    /// <summary>Khoá sổ của dòng đang nhập (GC: NC nhóm; Taro mã nhiều NC: (mã, NC) — chưa chọn / sai NC → null; còn lại: mã CV).</summary>
+    private string? CapCode(WtsGroup grp, WtsRow s)
+    {
+        if (IsGcGroup) return grp.NC;
+        var pg = CurrentPg(grp);
+        if (pg == "TARO" && s.KhPlanDetailId.HasValue && _ledgerCache.TryGetValue(s.KhPlanDetailId.Value, out var lr)
+            && HandoverLedgerService.TaroNcsOf(lr, pg, s.WtsCode) != null)
+            return HandoverLedgerService.WtsKey(lr, pg, s.WtsCode, s.StepNC);
+        return s.WtsCode;
+    }
+
+    /// <summary>Khoá sổ của dòng đã lưu / đang sửa (r.NC = mã CV với nhóm không phải GC).</summary>
+    private string? RowKey(WtsRow r)
+    {
+        var pg = PgOfRow(r);
+        if (pg == "TARO" && r.KhPlanDetailId.HasValue && _ledgerCache.TryGetValue(r.KhPlanDetailId.Value, out var lr)
+            && HandoverLedgerService.TaroNcsOf(lr, pg, r.NC) != null)
+            return HandoverLedgerService.WtsKey(lr, pg, r.NC, r.StepNC) ?? r.NC;
+        return r.NC;
+    }
+
+    /// <summary>Bảng quy trình Taro: NC của dòng khi mã dòng chính dùng ở nhiều NC của PO (null = mã 1 NC / dòng dự phòng).</summary>
+    private string? TaroPanelNc(string po, KhPlanRouteSnapshotTaro s)
+    {
+        if (s.IsBackup || !_fullSnapshotCache.TryGetValue(po, out var snap)) return null;
+        return TaroNcsSnap(snap, TaroCodeOf(s)).Count > 1 ? (s.NC ?? "").Trim() : null;
+    }
+
+    /// <summary>Dòng WTS Taro của 1 mã; mã nhiều NC → chỉ dòng đúng NC (dòng cũ không NC tính vào NC đầu — cùng luật sổ).</summary>
+    private List<WtsProductionLog> GetTaroLogsFor(string po, string? code, string? nc)
+    {
+        var logs = GetWtsLogsFor(po, "TARO", code);
+        if (nc == null || !_fullSnapshotCache.TryGetValue(po, out var snap)) return logs;
+        var ncs = TaroNcsSnap(snap, code);
+        return logs.Where(l => string.Equals((l.StepNC ?? "").Trim(), nc, StringComparison.OrdinalIgnoreCase)
+                            || (!ncs.Contains((l.StepNC ?? "").Trim(), StringComparer.OrdinalIgnoreCase) && ncs.Count > 0 && string.Equals(ncs[0], nc, StringComparison.OrdinalIgnoreCase))).ToList();
+    }
+
+    private void OnSubStepNcChanged(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString();
+        sub.StepNC = string.IsNullOrWhiteSpace(v) ? null : v;
+        OnSubWtsCodeChanged(grp, sub, sub.WtsCode);   // T.Chuẩn + trần + chia giờ theo (mã, NC) mới (cùng mã → không xoá T.Thực tế)
+    }
+
+    private RenderFragment TaroNcPicker(WtsGroup grp, WtsRow sub) => __builder =>
+    {
+        var ncs = TaroNcsForSub(grp, sub);
+        if (ncs == null) return;
+        <select class="form-select form-select-sm mt-1" style="font-size:11px" title="Mã này dùng ở nhiều NC Taro — chọn NC đang làm"
+                @onchange="e => OnSubStepNcChanged(grp, sub, e)">
+            <option value="" selected="@string.IsNullOrEmpty(sub.StepNC)">— chọn NC Taro —</option>
+            @foreach (var n in ncs)
+            {
+                <option value="@n" selected="@string.Equals(sub.StepNC, n, StringComparison.OrdinalIgnoreCase)">NC @n</option>
+            }
+        </select>
+    };
 
     private List<WtsProductionLog> GetWtsLogsFor(string po, string group, string? wtsCode = null)
 
@@ -7642,7 +7754,7 @@ else
             if (IsHtspGroup)
                 v = sub.HtspSubGroup switch
                 {
-                    "Taro"  => snap.Taro   .FirstOrDefault(s => (s.WtsTaskCode ?? s.NC) == code)?.StandardTime,
+                    "Taro"  => TaroStdRow(snap, code, sub.StepNC, out _)?.StandardTime,   // [TARO-NC-MA] đúng dòng (mã, NC)
                     "Bavia" => snap.Bavia  .FirstOrDefault(s => s.NC == code)?.StandardTime,
                     "Rua"   => snap.Washing.FirstOrDefault(s => s.NC == code)?.StandardTime,
                     _       => null
@@ -7761,7 +7873,10 @@ else
         if (IsHtspGroup)
             return sub.HtspSubGroup switch
             {
-                "Taro"  => PickStdSource(snap.Taro, StdTrack.Table.Taro, sub.WtsCode, sub.NC,
+                "Taro"  => TaroStdRow(snap, sub.WtsCode, sub.StepNC, out var tShared) is { } tRow && tShared
+                               ? (StdTrack.Table.Taro, tRow.SnapshotId)   // [TARO-NC-MA] mã dùng ở nhiều NC: đúng dòng (mã, NC)
+                               : tShared ? null
+                               : PickStdSource(snap.Taro, StdTrack.Table.Taro, sub.WtsCode, sub.NC,
                                s => s.WtsTaskCode ?? s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId),
                 "Bavia" => PickStdSource(snap.Bavia, StdTrack.Table.Bavia, sub.WtsCode, sub.NC,
                                s => s.NC, s => s.NC, s => s.StandardTime, s => s.SnapshotId),
@@ -7949,6 +8064,9 @@ else
         public string? WtsCode { get; set; }
 
         public string? WtsName { get; set; }
+
+        /// <summary>[TARO-NC-MA 2026-11-06] NC Taro đang làm (mã CV dùng ở nhiều NC của PO bắt buộc chọn) — lưu WtsProductionLogs.StepNC.</summary>
+        public string? StepNC  { get; set; }
 
         public List<KhPlanRouteSnapshotMachining> AvailableNCs { get; set; } = new();
 

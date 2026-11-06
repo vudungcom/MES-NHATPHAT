@@ -17,7 +17,8 @@ if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
-if (args.Length > 0 && args[0] == "form") { return await FormScen.Run(); }   // [GN-FORM1] form Giao / xử lý hàng (1 form 4 bước)
+if (args.Length > 0 && args[0] == "form") { return await FormScen.Run(); }
+if (args.Length > 0 && args[0] == "taro") { return await TaroScen.Run(); }   // [TARO-NC-MA][TARO-3T-GOP] Taro mã dùng chung nhiều NC + mã gộp 3T   // [GN-FORM1] form Giao / xử lý hàng (1 form 4 bước)
 if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
@@ -100,6 +101,20 @@ for (int po = startPo; po < startPo + poCount; po++)
             await db.SaveChangesAsync();
             sigNb = ChuoiHelp.LedgerSig((await new HandoverLedgerService(db).GetLedgerForDetailAsync(nbId))!);
             nbDocs = db.HandoverTransactions.List.Count(t => t.KhPlanDetailId == nbId) + db.HandoverReceives.List.Count(r => r.Transaction.KhPlanDetailId == nbId) + db.WtsProductionLogs.List.Count(w => w.KhPlanDetailId == nbId) + db.NgCases.List.Count(x => x.KhPlanDetailId == nbId) + db.HandoverNgReports.List.Count(b => b.KhPlanDetailId == nbId);
+        }
+        if (Environment.GetEnvironmentVariable("TARO") == "1" && shape.ExclAt < 0 && shape.Taro > 0)
+        {   // [TARO-NC-MA][TARO-3T-GOP 2026-11-06] lượt chuoi_taro: đưa sẵn 1 phần hàng qua Gia công vào HTSP (hàm thật) để thao tác WTS Taro có hàng
+            var tsvc = new HandoverService(db);
+            var r0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(1))!;
+            var gcN = r0.G("GC").Steps.Where(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Select(s => s.Code).ToList();
+            var feed = rnd.Next(Math.Max(1, q1 / 2), q1 + 1);
+            bool fok = gcN.Count > 0 && (await tsvc.IssueByCellAsync(1, "KHO", "GC", feed, 1, "MOI", false, "MOI", null, gcN[0])).Ok
+                       && (await tsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, feed, 0, null, 1)).Ok;
+            foreach (var n in gcN) if (fok) fok = (await WtsSvcHelp.SaveAsync(db, 1, "GC", n, null, feed, 0, 1)).Ok;
+            fok = fok && (await tsvc.IssueByCellAsync(1, "GC", "HTSP", feed, 1, "MOI", false, "MOI")).Ok
+                      && (await tsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, feed, 0, null, 1)).Ok;
+            if (!fok) fails.Add($"[CHUOI TARO] PO{po} đưa hàng vào HTSP lỗi");
+            else Inc("taro.feed");
         }
         snapSig0 = ChuoiHelp.SnapPicture(db, 1).Sig;
         (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, 1);
@@ -336,19 +351,20 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var cs = codeOf[g].codes;
                     if (cs.Length == 0) { Inc("skip.wts"); continue; }   // [CHUOI] Part Master không có mã cho nhóm này
                     var c = cs[rnd.Next(cs.Length)];
-                    string pg = codeOf[g].pg, code = c;
-                    if (g == "HTSP") { pg = c.Split('|')[0]; code = c.Split('|')[1]; }
-                    var cap = HandoverLedgerService.WtsCap(row, pg, code);
+                    string pg = codeOf[g].pg, code = c; string? tnc = null;   // [TARO-NC-MA] mã Taro dùng ở nhiều NC: "TARO|mã|NC"
+                    if (g == "HTSP") { var cp0 = c.Split('|'); pg = cp0[0]; code = cp0[1]; tnc = cp0.Length > 2 ? cp0[2] : null; }
+                    string CapKey(string cd, string? n) => n == null ? cd : HandoverLedgerService.TaroKey(cd, n);
+                    var cap = HandoverLedgerService.WtsCap(row, pg, CapKey(code, tnc));
                     if (smart && (cap.Max == null || cap.Locked || cap.Max <= 0))
                     {
                         // [GN-NG-TRACE] LOI=1: tìm mã CV / NC đang có hàng chờ
                         var all = codeOf.SelectMany(kv => kv.Value.codes.Select(x => (kv.Key, x))).OrderBy(_ => rnd.Next()).ToList();
                         foreach (var (gg, cc) in all)
                         {
-                            string p2 = codeOf[gg].pg, c2 = cc;
-                            if (gg == "HTSP") { p2 = cc.Split('|')[0]; c2 = cc.Split('|')[1]; }
-                            var cp = HandoverLedgerService.WtsCap(row, p2, c2);
-                            if (cp.Max != null && !cp.Locked && cp.Max > 0) { g = gg; pg = p2; code = c2; cap = cp; break; }
+                            string p2 = codeOf[gg].pg, c2 = cc; string? n2 = null;
+                            if (gg == "HTSP") { var cp2 = cc.Split('|'); p2 = cp2[0]; c2 = cp2[1]; n2 = cp2.Length > 2 ? cp2[2] : null; }
+                            var cp = HandoverLedgerService.WtsCap(row, p2, CapKey(c2, n2));
+                            if (cp.Max != null && !cp.Locked && cp.Max > 0) { g = gg; pg = p2; code = c2; tnc = n2; cap = cp; break; }
                         }
                     }
                     if (row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code)) && rnd.NextDouble() < 0.05)
@@ -361,16 +377,25 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (cap.Max == null || cap.Locked || cap.Max <= 0) { Inc("skip.wts"); continue; }
                     var q = rnd.Next(1, (int)cap.Max.Value + 1);
                     var ng = rnd.NextDouble() < (smart ? 0.4 : 0.2) ? rnd.Next(0, q + 1) : 0;
-                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, null, ng > 0 ? -1 : null) };   // [VULOI] dòng mới: vụ mới
+                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, null, ng > 0 ? -1 : null, StepNC: tnc) };   // [VULOI] dòng mới: vụ mới · [TARO-NC-MA] + NC Taro
                     var after = (await led.GetLedgerForDetailAsync(1, null, extra))!;
                     var bad = HandoverLedgerService.NewNegatives(row, after);
-                    desc = $"wts {pg} {code} ok={q - ng} ng={ng} cap={cap.Max}";
+                    desc = $"wts {pg} {code}{(tnc == null ? "" : " NC " + tnc)} ok={q - ng} ng={ng} cap={cap.Max}";
                     if (bad.Any()) { if (Environment.GetEnvironmentVariable("DUMP") == "1") { Console.WriteLine("BEFORE " + desc); Dbg.Dump(row); foreach (var t in db.HandoverTransactions.List) Console.WriteLine($"   tx#{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} {t.FromCell}->{t.ToCell} q={t.QtyIssued} cl={t.QtyClosed} st={t.Status} void={t.IsVoided} fnc={t.FromNC} tnc={t.ToNC} src={t.SourceReceiveId} rec={string.Join(",", t.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); foreach (var w in db.WtsProductionLogs.List) Console.WriteLine($"   wts#{w.WtsLogId} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.QtyOk}/{w.QtyNg} void={w.IsVoided}"); Console.WriteLine("AFTER"); Dbg.Dump(after); } Inc("rej.wts.k5"); fails.Add($"[WTS bị chặn oan dù trong trần] PO{po} op{op} {desc} → {string.Join("; ", bad)}"); continue; }
                     // [WTS-SVC] lưu bằng HÀM THẬT WtsSaveService.SaveGroupAsync (trần + K5 + ghi dòng + vụ lỗi + số chuẩn, 1 giao dịch);
                     //   bộ kiểm đã tự tính trần + K5 ở trên → service phải cho lưu, không thì "chặn oan"
                     var catW = rnd.Next(1, 6);
-                    var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), catW);
+                    if (tnc != null && rnd.NextDouble() < 0.1)
+                    {   // [TARO-NC-MA] mã dùng ở nhiều NC mà không chọn NC / chọn NC lạ → máy chủ PHẢI chặn, không ghi gì
+                        var nW0 = db.WtsProductionLogs.List.Count;
+                        var bx = await WtsSvcHelp.SaveAsync(db, 1, pg, null, code, q - ng, ng, Uid(g), catW, stepNc: rnd.NextDouble() < 0.5 ? null : "ZZ");
+                        Inc("taro.nc.thieu");
+                        if (bx.Ok || db.WtsProductionLogs.List.Count != nW0) fails.Add($"[TARO-NC-MA thiếu / sai NC không bị chặn] PO{po} op{op} {desc}");
+                    }
+                    var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), catW, stepNc: tnc);
                     if (!sv.Ok) { Inc("rej.wts.svc"); fails.Add($"[WtsSaveService chặn oan dù trong trần + qua K5] PO{po} op{op} {desc} → {sv.Err}"); continue; }
+                    if (tnc != null) Inc("taro.nc.wts");   // [TARO-NC-MA] dòng WTS mã Taro dùng chung nhiều NC
+                    if (tnc != null && db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId).StepNC != tnc) fails.Add($"[TARO-NC-MA StepNC ghi sai] PO{po} op{op} {desc}");
                     {
                         var wNew = db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId);
                         if (wNew.QtyOk != q - ng || wNew.QtyNg != ng || wNew.IsVoided) fails.Add($"[WtsSaveService ghi sai số] PO{po} op{op} {desc} → ok={wNew.QtyOk} ng={wNew.QtyNg}");
@@ -496,17 +521,17 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (rnd.NextDouble() < 0.3) tot = Math.Max(1, tot + rnd.Next(-1, 2));   // [WTS-SUA-PHAN 2026-11-05] 30%: sửa đổi cả tổng (tăng / giảm 1) — rà độc lập lần 2
                     var ng2 = (decimal)rnd.Next(0, (int)tot + 1);
                     var keep = ng2 > 0 ? w.NgCaseId : null;
-                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, null, ng2 > 0 ? (keep ?? -1) : null) };
+                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, null, ng2 > 0 ? (keep ?? -1) : null, StepNC: w.StepNC) };   // [TARO-NC-MA] giữ NC Taro
                     var after = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }, extra))!;
                     var bad = HandoverLedgerService.NewNegatives(row, after);
                     desc = $"wtsedit #{w.WtsLogId} {w.ProcessGroup} {w.NC ?? w.WtsCode} NG {w.QtyNg}->{ng2} vu={w.NgCaseId}";
                     if (bad.Any()) { Inc("rej.wtsedit"); if (w.NgCaseId != null && bad.Any(b => b.Contains("VL"))) Inc("vu.k5.wtsedit"); continue; }
                     {   // [WTS-SVC] trần L3 khi sửa như trang: sổ bỏ dòng đang sửa, OK + NG mới ≤ Chưa làm (dòng mồ côi do lần nhận đã huỷ → "chưa nhận hàng")
                         var basis = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }))!;
-                        var capE = HandoverLedgerService.WtsCap(basis, w.ProcessGroup, w.NC ?? w.WtsCode);
+                        var capE = HandoverLedgerService.WtsCap(basis, w.ProcessGroup, HandoverLedgerService.WtsKey(basis, w.ProcessGroup, w.NC ?? w.WtsCode, w.StepNC) ?? (w.NC ?? w.WtsCode));   // [TARO-NC-MA] khoá (mã, NC)
                         if (capE.Max != null && (capE.Locked || tot > capE.Max.Value))
                         {
-                            var seB = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, w.NgCaseId != null ? db.NgCases.List.First(x => x.NgCaseId == w.NgCaseId).NgCategoryId : 1, keep, w.WtsLogId);
+                            var seB = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, w.NgCaseId != null ? db.NgCases.List.First(x => x.NgCaseId == w.NgCaseId).NgCategoryId : 1, keep, w.WtsLogId, stepNc: w.StepNC);
                             if (seB.Ok) fails.Add($"[WtsSaveService cho sửa vượt trần L3] PO{po} op{op} {desc} cap={capE.Max} locked={capE.Locked}");
                             else if (!seB.Err!.StartsWith("PO ")) fails.Add($"[WtsSaveService chặn sửa sai lời] PO{po} op{op} {desc} → {seB.Err}");
                             Inc("rej.wtsedit.cap"); continue;
@@ -526,7 +551,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (loopBad.Any())
                         {
                             var catL = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? 1;
-                            var seL = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catL, keep, w.WtsLogId);
+                            var seL = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catL, keep, w.WtsLogId, stepNc: w.StepNC);
                             if (seL.Ok) fails.Add($"[WtsSaveService cho sửa lọt vòng tròn theo thời gian] PO{po} op{op} {desc}");
                             else if (!(seL.Err ?? "").Contains("theo thứ tự thời gian")) fails.Add($"[WtsSaveService chặn sửa (vòng) sai lời] PO{po} op{op} {desc} → {seL.Err}");
                             if (db.WtsProductionLogs.List.First(x => x.WtsLogId == w.WtsLogId).IsVoided) fails.Add($"[Sửa bị chặn mà dòng cũ đã huỷ] PO{po} op{op} {desc}");
@@ -548,7 +573,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {   // [WTS-SVC] sửa dòng bằng hàm thật: huỷ dòng cũ (Sửa lại) + ghi dòng mới giữ vụ, cùng giao dịch
                         var catE = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? rnd.Next(1, 6);
                         var oldId = w.WtsLogId;
-                        var se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId);
+                        var se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId, stepNc: w.StepNC);
                         if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5] PO{po} op{op} {desc} → {se.Err}"); continue; }
                         var wOld = db.WtsProductionLogs.List.First(x => x.WtsLogId == oldId);
                         var wNew = db.WtsProductionLogs.List.First(x => x.WtsLogId == se.LogId);
@@ -1180,12 +1205,26 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     //   (gồm dòng NC / mã dự phòng gộp vào mã chính), cùng công thức OK dòng cũ (QtyDone − NG) mà 2 trang dùng cho cột OK / NG.
     {
         var wl = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();
+        // [TARO-NC-MA 2026-11-06] đáp án độc lập (đọc thẳng bảng snapshot Taro, không dùng row.TaroNcs): mã Taro dòng chính dùng ở nhiều NC
+        //   → dòng WTS thuộc cặp (mã, StepNC); thiếu / sai NC tính vào NC đầu (thứ tự quy trình) — luật câu B3 Hùng 06/11
+        var tSnap = db.KhPlanRouteSnapshotTaro.List.Where(t => t.KhPlanDetailId == 1 && !t.IsBackup).OrderBy(t => t.StepOrder).ToList();
+        string TCode(KhPlanRouteSnapshotTaro t) => (string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode)!.Trim();
+        var tShared = tSnap.Where(t => !HandoverLedgerService.IsPrepCode(TCode(t))).GroupBy(TCode, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (g.Key, Ncs: g.Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()))
+            .Where(g => g.Ncs.Count > 1).ToDictionary(g => g.Key, g => g.Ncs, StringComparer.OrdinalIgnoreCase);
+        string? WKey(WtsProductionLog w)
+        {
+            var c = (w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC))?.Trim();
+            if (w.ProcessGroup != "TARO" || c == null || !tShared.TryGetValue(c, out var ncs)) return c;
+            var n = ncs.FirstOrDefault(x => string.Equals(x, (w.StepNC ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) ?? ncs[0];
+            return $"{c} (NC {n})";
+        }
         foreach (var G in row.Groups.Values)
             foreach (var s in G.Steps.Where(s => !s.IsPrep && !s.IsExcluded))
             {
                 checks++;
                 var mine = wl.Where(w => w.ProcessGroup == s.Pg && string.Equals(
-                    row.CodeMain.TryGetValue(s.Pg + "|" + (w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC))?.Trim(), out var mm) ? mm : (w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC))?.Trim(),
+                    row.CodeMain.TryGetValue(s.Pg + "|" + WKey(w), out var mm) ? mm : WKey(w),
                     s.Code, StringComparison.OrdinalIgnoreCase)).ToList();
                 var o = mine.Sum(LedgerQtyText.LogOk); var g = mine.Sum(LedgerQtyText.LogNg);
                 if (o != s.Ok || g != s.Ng) F("Bảng quy trình ≠ dòng WTS", $"{s.Pg} {s.Code}: sổ OK {s.Ok} NG {s.Ng} · cộng dòng WTS OK {o} NG {g}");
@@ -1193,6 +1232,64 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
                 var t = LedgerQtyText.Text(LedgerQtyText.Step(row, s.Pg, s.Code));
                 if (t != $"OK {s.Ok:0.##} / vào {(s.In ?? 0):0.##}" + (s.Ng > 0 ? $" · NG {s.Ng:0.##}" : "")) F("Chữ badge ≠ sổ", $"{s.Pg} {s.Code}: {t}");
             }
+    }
+    // [TARO-NC-MA][TARO-3T-GOP 2026-11-06] HTSP Đã làm tính ĐỘC LẬP từ bảng (snapshot Taro / Bavia / Rửa + khai báo gộp chụp vào PO + dòng WTS):
+    //   đơn vị = mã thường (dòng chính, không mã chuẩn bị) hoặc bộ gộp (mã gộp + mã thành phần cùng NC) → OK bộ = OK mã gộp + min OK thành phần;
+    //   Đã làm = min các đơn vị. Bộ gộp: chiếc đã vào bộ (OK+NG mã gộp + max OK+NG thành phần) ≤ hàng thật đã nhận vào HTSP (Σ lần nhận).
+    {
+        var wlH = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();
+        var tS = db.KhPlanRouteSnapshotTaro.List.Where(t => t.KhPlanDetailId == 1).OrderBy(t => t.StepOrder).ToList();
+        var bS = db.KhPlanRouteSnapshotBavia.List.Where(t => t.KhPlanDetailId == 1).ToList();
+        var rS = db.KhPlanRouteSnapshotWashing.List.Where(t => t.KhPlanDetailId == 1).ToList();
+        if (tS.Any(t => !t.IsBackup) || bS.Any(t => !t.IsBackup) || rS.Any(t => !t.IsBackup))
+        {
+            string Tc(KhPlanRouteSnapshotTaro t) => (string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode)!.Trim();
+            static bool Eq(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+            var mainsT = tS.Where(t => !t.IsBackup && !HandoverLedgerService.IsPrepCode(Tc(t))).ToList();
+            var shared = mainsT.GroupBy(Tc, StringComparer.OrdinalIgnoreCase).Where(g => g.Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+                               .ToDictionary(g => g.Key, g => g.OrderBy(t => t.StepOrder).Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
+            // dòng WTS Taro thuộc dòng quy trình nào (mã + NC; dự phòng gộp về dòng cha cùng NC)
+            (decimal ok, decimal ng) Done(KhPlanRouteSnapshotTaro m)
+            {
+                var code = Tc(m); var nc = (m.NC ?? "").Trim();
+                var codes = new List<string> { code };
+                codes.AddRange(tS.Where(b => b.IsBackup && Eq(b.ParentNC, m.NC) && tS.FirstOrDefault(x => !x.IsBackup && Eq(x.NC, b.ParentNC)) == m).Select(Tc));
+                var rows = wlH.Where(w => w.ProcessGroup == "TARO" && codes.Contains((w.WtsCode ?? w.NC ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+                    && (!shared.TryGetValue((w.WtsCode ?? w.NC ?? "").Trim(), out var ncs) || Eq(ncs.FirstOrDefault(x => Eq(x, w.StepNC)) ?? ncs[0], nc))).ToList();
+                return (rows.Sum(LedgerQtyText.LogOk), rows.Sum(LedgerQtyText.LogNg));
+            }
+            var gopsS = db.KhPlanRouteSnapshotWtsGops.List.Where(g => g.KhPlanDetailId == 1).ToList();
+            var used = new HashSet<KhPlanRouteSnapshotTaro>(ReferenceEqualityComparer.Instance);
+            var units = new List<decimal>();
+            decimal recvH = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && t.ToGroupCode == "HTSP" && !t.IsVoided)
+                              .SelectMany(t => t.Receives.Where(r => !r.IsVoided)).Sum(r => r.QtyOk + r.QtyNg)
+                            // + chiếc HTSP sửa tại chỗ ĐẠT đã được KCS xác nhận: quay lại HTSP ô Hàng lỗi đã xử lý, làm lại các mã như hàng vào mới ([GC-SUA-TAI-CHO] — không phải lần nhận phiếu)
+                            //   (fuzz seed 77 PO16 op112: 18 nhận + 1 chiếc sửa đạt → 8G1 NC T9 làm 19 là đúng; bản đầu bộ kiểm chỉ cộng lần nhận → báo oan)
+                            + db.HandoverRepairChecks.List.Where(c => !c.IsVoided && db.HandoverRepairResults.List.Any(r => r.HandoverRepairResultId == c.HandoverRepairResultId
+                                  && !r.IsVoided && r.KhPlanDetailId == 1 && r.GroupCode == "HTSP")).Sum(c => c.QtyOk);
+            foreach (var g in mainsT)
+            {
+                var pc = gopsS.Where(x => Eq(x.GopCode, Tc(g))).Select(x => x.PartCode.Trim()).ToList();
+                var parts = pc.Count == 0 ? new() : mainsT.Where(p => p != g && Eq(p.NC, g.NC) && pc.Contains(Tc(p), StringComparer.OrdinalIgnoreCase)).ToList();
+                if (parts.Count == 0 || used.Contains(g) || parts.Any(used.Contains)) continue;
+                used.Add(g); foreach (var p in parts) used.Add(p);
+                var dg = Done(g); var dps = parts.Select(Done).ToList();
+                units.Add(dg.ok + dps.Min(x => x.ok));
+                checks++;
+                if (dg.ok + dg.ng + dps.Max(x => x.ok + x.ng) > recvH)
+                    F("TARO-3T-GOP bộ gộp vượt hàng thật", $"{Tc(g)} NC {g.NC}: gộp {dg.ok + dg.ng} + thành phần {dps.Max(x => x.ok + x.ng)} > đã nhận vào HTSP {recvH}");
+            }
+            foreach (var m in mainsT.Where(m => !used.Contains(m))) units.Add(Done(m).ok);
+            foreach (var (pgB, list) in new[] { ("BAVIA", bS.Where(x => !x.IsBackup).Select(x => (x.NC, x.IsBackup)).ToList()), ("WASHING", rS.Where(x => !x.IsBackup).Select(x => (x.NC, x.IsBackup)).ToList()) })
+                foreach (var m in list.Where(m => !HandoverLedgerService.IsPrepCode(m.NC)))
+                {
+                    var bk = (pgB == "BAVIA" ? bS.Where(b => b.IsBackup && Eq(b.ParentNC, m.NC)).Select(b => b.NC) : rS.Where(b => b.IsBackup && Eq(b.ParentNC, m.NC)).Select(b => b.NC)).Append(m.NC).ToList();
+                    units.Add(wlH.Where(w => w.ProcessGroup == pgB && bk.Contains((w.WtsCode ?? w.NC ?? "").Trim(), StringComparer.OrdinalIgnoreCase)).Sum(LedgerQtyText.LogOk));
+                }
+            checks++;
+            var expDaLam = units.Count == 0 ? row.G("HTSP").DaLam : units.Min();   // không có mã thường nào (chỉ mã chuẩn bị) → sổ cộng mọi mã, không xét ở đây
+            if (row.G("HTSP").DaLam != expDaLam) F("HTSP Đã làm ≠ đáp án độc lập (TARO-NC-MA / 3T gộp)", $"sổ {row.G("HTSP").DaLam} · tính tay {expDaLam}");
+        }
     }
     // GC: Σ chờ các NC = Chưa GC
     var gc = row.G("GC");

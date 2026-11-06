@@ -635,6 +635,9 @@ public class KhPlanService
                 "DELETE FROM KhPlanRouteSnapshotPackaging WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotMachineExclude WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            // [TARO-3T-GOP 2026-11-06] khai báo gộp chụp vào PO (SQL 07, FK NO ACTION vào KhPlanDetails — không xoá thì xoá PO lỗi khoá ngoại)
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotWtsGops WHERE KhPlanDetailId = {0}", khPlanDetailId);
             // [STD-UPDATE] Xóa trạng thái xác nhận snapshot (không có FK — phải xóa tay)
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotStdConfirms WHERE KhPlanDetailId = {0}", khPlanDetailId);
@@ -737,6 +740,7 @@ public class KhPlanService
         var pack = await _db.KhPlanRouteSnapshotPackaging.Where(s => s.KhPlanDetailId == fromId).AsNoTracking().ToListAsync();
         var excl = await _db.KhPlanRouteSnapshotMachineExclude.Where(s => s.KhPlanDetailId == fromId).AsNoTracking().ToListAsync();
         var conf = await _db.KhPlanRouteSnapshotStdConfirms.Where(s => s.KhPlanDetailId == fromId).AsNoTracking().ToListAsync();
+        var gops = await _db.KhPlanRouteSnapshotWtsGops.Where(s => s.KhPlanDetailId == fromId).AsNoTracking().ToListAsync();   // [TARO-3T-GOP 2026-11-06]
 
         // Ghép dòng cũ → dòng mới để đổi SnapshotRowId của trạng thái xác nhận
         var pairs = new List<(string Table, long OldId, Func<long> NewId)>();
@@ -760,6 +764,7 @@ public class KhPlanService
         foreach (var o in insp) { var n = CopyScalars(o); n.SnapshotId = 0; n.KhPlanDetailId = toId; _db.KhPlanRouteSnapshotInspection.Add(n); pairs.Add((StdTrack.Table.Inspection, o.SnapshotId, () => n.SnapshotId)); }
         foreach (var o in pack) { var n = CopyScalars(o); n.SnapshotId = 0; n.KhPlanDetailId = toId; _db.KhPlanRouteSnapshotPackaging.Add(n);  pairs.Add((StdTrack.Table.Packaging, o.SnapshotId, () => n.SnapshotId)); }
         foreach (var o in excl) { var n = CopyScalars(o); n.SnapshotId = 0; n.KhPlanDetailId = toId; _db.KhPlanRouteSnapshotMachineExclude.Add(n); }
+        foreach (var o in gops) { var n = CopyScalars(o); n.SnapshotId = 0; n.KhPlanDetailId = toId; _db.KhPlanRouteSnapshotWtsGops.Add(n); }   // [TARO-3T-GOP] Tách PO: PO mới mang cùng khai báo gộp
         await _db.SaveChangesAsync();   // có Id mới
 
         var map = pairs.ToDictionary(x => (x.Table, x.OldId), x => x.NewId());
@@ -786,6 +791,7 @@ public class KhPlanService
         await _db.Database.ExecuteSqlRawAsync("DELETE FROM KhPlanRouteSnapshotInspection     WHERE KhPlanDetailId = {0}", khPlanDetailId);
         await _db.Database.ExecuteSqlRawAsync("DELETE FROM KhPlanRouteSnapshotPackaging      WHERE KhPlanDetailId = {0}", khPlanDetailId);
         await _db.Database.ExecuteSqlRawAsync("DELETE FROM KhPlanRouteSnapshotMachineExclude WHERE KhPlanDetailId = {0}", khPlanDetailId);
+        await _db.Database.ExecuteSqlRawAsync("DELETE FROM KhPlanRouteSnapshotWtsGops        WHERE KhPlanDetailId = {0}", khPlanDetailId);   // [TARO-3T-GOP 2026-11-06]
         await _db.Database.ExecuteSqlRawAsync("DELETE FROM KhPlanRouteSnapshotStdConfirms    WHERE KhPlanDetailId = {0}", khPlanDetailId);
     }
 
@@ -1249,6 +1255,7 @@ public class KhPlanService
         var pk = await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
         var ex = await _db.KhPlanRouteSnapshotMachineExclude.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
         var cf = await _db.KhPlanRouteSnapshotStdConfirms.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();
+        var gp = await _db.KhPlanRouteSnapshotWtsGops.AsNoTracking().Where(s => s.KhPlanDetailId == khPlanDetailId).ToListAsync();   // [TARO-3T-GOP 2026-11-06]
         // dòng snapshot → chữ ký của dòng (thay khoá SnapshotRowId của xác nhận bằng nội dung dòng nó trỏ tới)
         var rowSig = new Dictionary<(string, long), string>();
         void Tab(string name, IEnumerable<object> rows, Func<object, long> key)
@@ -1266,6 +1273,7 @@ public class KhPlanService
         Tab(StdTrack.Table.Inspection, ins, o => ((KhPlanRouteSnapshotInspection)o).SnapshotId);
         Tab(StdTrack.Table.Packaging, pk, o => ((KhPlanRouteSnapshotPackaging)o).SnapshotId);
         foreach (var x in ex.Select(Row).OrderBy(s => s, StringComparer.Ordinal)) sb.Append("EX#").Append(x).Append('\n');
+        foreach (var x in gp.Select(g => g.GopCode + ">" + g.PartCode).OrderBy(s => s, StringComparer.Ordinal)) sb.Append("GOP#").Append(x).Append('\n');   // [TARO-3T-GOP] khai báo gộp đổi = quy trình đổi
         foreach (var x in cf.Select(c => $"{c.SnapshotTable}|{rowSig.GetValueOrDefault((c.SnapshotTable, c.SnapshotRowId))}|{c.FieldName}|{c.IsConfirmed}|{c.ConfirmedBy}")
                             .OrderBy(s => s, StringComparer.Ordinal))
             sb.Append("CF#").Append(x).Append('\n');
@@ -1337,6 +1345,9 @@ public class KhPlanService
                 "DELETE FROM KhPlanRouteSnapshotPackaging  WHERE KhPlanDetailId = {0}", khPlanDetailId);
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotMachineExclude WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            // [TARO-3T-GOP 2026-11-06] khai báo gộp cũ — CopyRouteSnapshotAsync chụp lại theo WTS tiêu chuẩn hiện tại (PO chưa chạy)
+            await _db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM KhPlanRouteSnapshotWtsGops WHERE KhPlanDetailId = {0}", khPlanDetailId);
             // [STD-UPDATE] Xóa trạng thái xác nhận snapshot cũ — CopyRouteSnapshotAsync ghi lại theo Part Master
             await _db.Database.ExecuteSqlRawAsync(
                 "DELETE FROM KhPlanRouteSnapshotStdConfirms WHERE KhPlanDetailId = {0}", khPlanDetailId);
@@ -1491,6 +1502,9 @@ public class KhPlanService
             MachineExclude = await _db.KhPlanRouteSnapshotMachineExclude
                 .Where(s => s.KhPlanDetailId == khPlanDetailId)
                 .OrderBy(s => s.SoMay).AsNoTracking().ToListAsync(),
+            TaroGops       = await _db.KhPlanRouteSnapshotWtsGops   // [TARO-3T-GOP 2026-11-06]
+                .Where(s => s.KhPlanDetailId == khPlanDetailId)
+                .OrderBy(s => s.GopCode).ThenBy(s => s.PartCode).AsNoTracking().ToListAsync(),
         };
         return result;
     }
@@ -1632,6 +1646,30 @@ public class KhPlanService
                 IsBackup       = s.IsBackup,
                 ParentNC       = s.ParentNC,
             });
+        }
+
+        // [TARO-3T-GOP 2026-11-06] Chụp khai báo mã gộp (WTS tiêu chuẩn) của các mã CV có trong Taro dòng chính của Part: chỉ cặp mà CẢ mã gộp
+        //   lẫn mã thành phần có trong Taro. PO giữ bản chụp này (sổ không đọc khai báo sống — K6). Nguồn: KHÁCH 02/11 09:14 (3T thay bộ 3T1–3T3),
+        //   HÙNG 02/11 10:34 (khai trong WTS tiêu chuẩn), HÙNG 06/11 21:45 (SQL 07 đã chạy; PO đã chạy giữ như cũ).
+        {
+            var taroCodes = taro.Where(s => !s.IsBackup)
+                .Select(s => (string.IsNullOrWhiteSpace(s.WtsTaskCode) ? (s.NC ?? "") : s.WtsTaskCode!).Trim())
+                .Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (taroCodes.Count > 1)
+            {
+                var gopRows = await _db.StandardWtsTaskGops.AsNoTracking().Where(g => g.IsActive).ToListAsync();
+                foreach (var g in gopRows.Where(g => taroCodes.Contains((g.GopTaskCode ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+                                                  && taroCodes.Contains((g.PartTaskCode ?? "").Trim(), StringComparer.OrdinalIgnoreCase))
+                                         .OrderBy(g => g.GopTaskCode).ThenBy(g => g.PartTaskCode))
+                    _db.KhPlanRouteSnapshotWtsGops.Add(new KhPlanRouteSnapshotWtsGop
+                    {
+                        KhPlanDetailId = khPlanDetailId,
+                        GopCode        = g.GopTaskCode.Trim(),
+                        PartCode       = g.PartTaskCode.Trim(),
+                        SnapshotAt     = now,
+                        SnapshotBy     = snapshotBy,
+                    });
+            }
         }
 
         // ── C.2 Bavia ───────────────────────────────────────────
@@ -1978,6 +2016,8 @@ public class RouteSnapshotData
     public List<KhPlanRouteSnapshotPackaging>       Packaging      { get; set; } = new();
     /// <summary>Danh sách máy loại trừ tại thời điểm tạo phiếu (global setting)</summary>
     public List<KhPlanRouteSnapshotMachineExclude>  MachineExclude { get; set; } = new();
+    /// <summary>[TARO-3T-GOP 2026-11-06] Khai báo mã gộp Taro chụp vào PO (mã gộp → mã thành phần).</summary>
+    public List<KhPlanRouteSnapshotWtsGop>          TaroGops       { get; set; } = new();
 
     public bool HasAny => Machining.Count > 0 || Taro.Count > 0 || Bavia.Count > 0
                        || Washing.Count > 0 || Inspection.Count > 0 || Packaging.Count > 0;

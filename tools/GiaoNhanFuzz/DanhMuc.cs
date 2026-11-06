@@ -16,7 +16,7 @@ static class DanhMuc
     {
         ["kh"] = "KhScen.cs", ["loi"] = "LoiScen.cs", ["vu"] = "VuScen.cs", ["chuoi"] = "ChuoiScen.cs", ["wts"] = "WtsScen.cs",
         ["quyen"] = "QuyenScen.cs", ["iso"] = "IsoScen.cs", ["quet"] = "QuetScen.cs", ["nghi"] = "NghiScen.cs", ["viec"] = "ViecScen.cs",
-        ["auth"] = "AuthScen.cs", ["scen"] = "Scen.cs", ["std"] = "StdScen.cs", ["sua"] = "SuaScen.cs", ["form"] = "FormScen.cs",   // [GC-SUA-TAI-CHO] [GN-FORM1]   // [STD-UPDATE] Update TG chuẩn
+        ["auth"] = "AuthScen.cs", ["scen"] = "Scen.cs", ["std"] = "StdScen.cs", ["sua"] = "SuaScen.cs", ["form"] = "FormScen.cs", ["taro"] = "TaroScen.cs",   // [TARO-NC-MA]   // [GC-SUA-TAI-CHO] [GN-FORM1]   // [STD-UPDATE] Update TG chuẩn
     };
     static readonly HashSet<string> Plain = new() { "nang", "giaodien", "chung", "CHUA" };
 

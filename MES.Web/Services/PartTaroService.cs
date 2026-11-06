@@ -47,6 +47,14 @@ public class PartTaroService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
         PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
+        // [TARO-NC-MA 2026-11-06] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId> (như PM-NC-DUP-SVC các nhóm khác); dòng chính: cặp (mã CV, NC)
+        //   không trùng dòng chính khác (đọc DB dưới khoá) — cùng mã ở NC khác được (khách chốt B 02/11)
+        return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
+        {
+        if (!newStep.IsBackup)
+            PartStepGuard.CheckTaroMain("Taro", newStep.WtsTaskCode, newStep.NC, (await _db.PartTaroSteps.AsNoTracking()
+                .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => new { s.WtsTaskCode, s.NC }).ToListAsync())
+                .Select(s => (s.WtsTaskCode, (string?)s.NC)));
 
         var maxOrder = await _db.PartTaroSteps
             .Where(s => s.PartId == partId)
@@ -74,6 +82,7 @@ public class PartTaroService
         await _db.SaveChangesAsync();
 
         return newStep.StepId;
+        });   // [TARO-NC-MA]
     }
 
     public async Task UpdateAsync(long stepId, PartTaroStep updated, int userId, string reason)
@@ -81,13 +90,25 @@ public class PartTaroService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
 
+        // [TARO-NC-MA 2026-11-06] Sửa = giao dịch + khoá MES_PM_STEPS_<PartId> (như các nhóm khác); đổi mã CV / NC / dự phòng thành dòng chính
+        //   thì kiểm cặp (mã CV, NC) không trùng dòng chính khác — đọc DB dưới khoá
+        var lockPid = await _db.PartTaroSteps.Where(s => s.StepId == stepId).Select(s => (int?)s.PartId).FirstOrDefaultAsync();
+        if (lockPid == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
+        await PartStepGuard.RunLockedAsync(_db, lockPid.Value, async () =>
+        {
         var existing = await _db.PartTaroSteps.FirstOrDefaultAsync(s => s.StepId == stepId);
         if (existing == null) throw new InvalidOperationException($"Không tìm thấy dòng công đoạn StepId={stepId}");
+        await _db.Entry(existing).ReloadAsync();   // [TARO-NC-MA] đọc lại dưới khoá (DbContext dùng chung cả phiên trang — như PM-NC-DUP-THAP V1)
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
         // [PM-NC-AT 2026-11-05] chỉ kiểm mã đổi (đọc DB, không dùng bản EF trang đang giữ) — dòng cũ có sẵn "@" vẫn sửa được ô khác
-        var dbCode = await _db.PartTaroSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.WtsTaskCode }).FirstAsync();
+        var dbCode = await _db.PartTaroSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.WtsTaskCode, s.IsBackup }).FirstAsync();
         if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
         if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
+        if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(dbCode.NC, updated.NC)
+                || !PartStepGuard.SameCode(PartStepGuard.TaroCode(dbCode.WtsTaskCode, dbCode.NC), PartStepGuard.TaroCode(updated.WtsTaskCode, updated.NC))))
+            PartStepGuard.CheckTaroMain("Taro", updated.WtsTaskCode, updated.NC, (await _db.PartTaroSteps.AsNoTracking()
+                .Where(s => s.PartId == existing.PartId && s.IsActive && !s.IsBackup && s.StepId != stepId).Select(s => new { s.WtsTaskCode, s.NC }).ToListAsync())
+                .Select(s => (s.WtsTaskCode, (string?)s.NC)));
 
         var pid = existing.PartId;
         var changedCount = 0;
@@ -100,7 +121,7 @@ public class PartTaroService
         changedCount += LogStringDiff("ParentNC",     existing.ParentNC,     updated.ParentNC,     stepId, pid, userId, reason, now);
         changedCount += LogDecimalDiff("StandardTime", existing.StandardTime, updated.StandardTime, stepId, pid, userId, reason, now);
 
-        if (changedCount == 0) return;
+        if (changedCount == 0) return 0;   // [TARO-NC-MA] trong khoá (lambda trả số như các nhóm khác)
 
         existing.NC = updated.NC;
         existing.WtsTaskCode = updated.WtsTaskCode;
@@ -129,6 +150,8 @@ public class PartTaroService
         }
 
         await _db.SaveChangesAsync();
+        return 0;
+        });   // [TARO-NC-MA]
     }
 
     /// <summary>
