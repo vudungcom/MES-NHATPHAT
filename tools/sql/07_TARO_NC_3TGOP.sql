@@ -1,5 +1,6 @@
 ﻿-- =====================================================================================================
--- [TARO-NC-MA][TARO-3T-GOP] 2026-11-03 — BẢN NHÁP GỬI HÙNG DUYỆT (CHƯA CHẠY)
+-- [TARO-NC-MA][TARO-3T-GOP] 2026-11-03 — BẢN CHỐT 06/11 GỬI HÙNG DUYỆT (CHƯA CHẠY): rà lại với master 4b05c99 — độ dài cột khớp
+--   (PartTaroSteps.NC / WtsProductionLogs.NC = 20, StandardWtsTasks.TaskCode = 50), chưa có cột / bảng trùng tên; nội dung không đổi so với bản nháp 03/11.
 --   Khách chốt 02/11 09:14 (anh Ngọc): Taro làm 2 lần (2 mặt) dùng CHUNG bộ mã CV giữa các NC → form WTS Taro thêm ô chọn NC
 --   (phương án B); 3T là cách làm gộp THAY cho 3T1 + 3T2 + 3T3. Hùng chốt 02/11 10:34: khai rõ 3T gộp trong WTS tiêu chuẩn
 --   (không suy theo tên mã).

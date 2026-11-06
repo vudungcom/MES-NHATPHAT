@@ -497,6 +497,26 @@ public static class FormScen
             await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vu9, toCell: HandoverCell.Xl), "Đúng vụ: Kho giao Gia công ô Hàng lỗi đã xử lý (NC theo vụ)");
         }
 
+        // [KHACH-GUI-LAI 06/11] Câu khách 06/11 (qua Hùng): Kho nhận phôi → phát hiện 1 chiếc lỗi bề mặt (phôi khách) → Trả khách; khách gửi lại
+        //   1 chiếc thì làm thế nào. Cách dùng hiện có (không đổi code): trang Kho sửa "Số lượng thực nhận" + 1 (kèm lý do) → Phôi còn + 1 → giao tiếp
+        //   như hàng tốt. Kiểm đường đó bằng hàm thật: sổ cân (Phôi = tồn + đang giao + … + trả khách), vụ lỗi cũ vẫn ghi "Trả khách 1".
+        Console.WriteLine("[F17] [KHACH-GUI-LAI] Kho: phôi lỗi có sẵn → Trả khách 1; khách gửi lại 1 → Kho sửa SL thực nhận 30 → 31 → Phôi còn + 1, giao tiếp được, sổ cân");
+        {
+            var dk = Seed();
+            await Save(dk, Req("KHO", Kho, HandoverForm.Loi, "PHOI", HandoverForm.AKhach, 1, prev: true, cat: 1), "Kho: 1 phôi lỗi có sẵn (phôi khách) → Trả khách");
+            var r1 = await Check(dk, "sau trả khách");
+            var vu = r1.Cases.Values.Single();
+            Ok(r1.G("KHO").ConGiao == 29 && r1.TraKhach == 1 && vu.TraKhach == 1, "Sau trả khách: Kho Phôi còn 29, PO Trả khách 1, vụ lỗi ghi Trả khách 1", $"còn {r1.G("KHO").ConGiao} · trả khách {r1.TraKhach} · vụ {vu.No} trả khách {vu.TraKhach}");
+            var kho = new KhoVatLieuService(dk, new UserService(null));
+            var k = await kho.SaveKhoInputAsync(1, DateTime.Now, 31, null, null, null, null, null, "Khach gui lai 1 chiec thay chiec loi BM da tra", 1);
+            dk.Fixup();
+            var r2 = await Check(dk, "sau khi Kho sửa SL thực nhận 31");
+            var vu2 = r2.Cases.Values.Single();
+            Ok(k.Success && r2.G("KHO").ConGiao == 30 && r2.TraKhach == 1 && vu2.TraKhach == 1 && r2.Balanced,
+               "Kho sửa SL thực nhận 30 → 31 (lý do khách gửi lại): Phôi còn 30, trả khách vẫn 1 (truy vết giữ), sổ cân", $"{k.Error} · còn {r2.G("KHO").ConGiao} · trả khách {r2.TraKhach} · cân={r2.Balanced}");
+            await Save(dk, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 30, "GC"), "Kho giao đủ 30 phôi (gồm chiếc khách gửi lại) cho Gia công");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }
