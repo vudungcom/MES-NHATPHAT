@@ -35,6 +35,9 @@ public static class QuetCore
     // [QUET-VU-SOLE 2026-11-06] Nguồn: CLAUDE 06/11 (bản "em hiểu" Bước 1 — QuetSo chưa kiểm vụ cân; B3 RS-E9 Hùng chốt 05/11 15:37 "kiểm DB trước")
     public const string VuLech     = "VU_LECH";          // vụ lỗi không cân (Sinh ra ≠ giữ + chuyển + xử lý + huỷ + trả khách) / Σ vụ ≠ ô Hàng lỗi · Hàng sửa / khung lỗi báo lệch
     public const string SoLe       = "SO_LE";            // số lẻ (không nguyên) ở SL PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa (B3 RS-E9)
+    // [K5-CLOSE-NHIEU 2026-11-06] Σ dòng HandoverTxCloses ≠ QtyClosed của phiếu. Ít hơn = huỷ làm trước khi code mới lên (sổ tự bù 1 dòng, chỉ để biết);
+    //   nhiều hơn / có dòng mà phiếu không có QtyClosed = không thể khi code ghi đúng → báo Claude (sổ tính như cũ theo bộ cột cũ).
+    public const string CloseLech  = "CLOSE_LECH";
 
     public sealed class Result
     {
@@ -221,6 +224,21 @@ public static class QuetCore
         foreach (var t in txAll.Where(t => Le(t.QtyIssued) || Le(t.NgQty) || LeN(t.QtyClosed)))
             AddLe(t.KhPlanDetailId, $"phiếu #{t.HandoverTxId}{(t.IsVoided ? " (đã huỷ)" : "")}: giao {t.QtyIssued:0.####} · NG {t.NgQty:0.####} · huỷ phần chưa nhận {t.QtyClosed:0.####}");
         var txDet = txAll.ToDictionary(t => t.HandoverTxId, t => t.KhPlanDetailId);
+        // [K5-CLOSE-NHIEU 2026-11-06] dòng từng lần huỷ phần chưa nhận khớp bộ cột cũ
+        var closeSum = db.HandoverTxCloses.ToList().GroupBy(c => c.HandoverTxId).ToDictionary(g => g.Key, g => (Sum: g.Sum(c => c.Qty), N: g.Count()));
+        foreach (var t in txAll)
+        {
+            var col = t.QtyClosed ?? 0;
+            var (sum, n) = closeSum.TryGetValue(t.HandoverTxId, out var cs) ? cs : (0m, 0);
+            if (sum == col) continue;
+            var what = sum < col
+                ? $"phiếu #{t.HandoverTxId}{(t.IsVoided ? " (đã huỷ)" : "")}: huỷ phần chưa nhận {col:0.##} mà bảng từng lần chỉ có {sum:0.##} ({n} dòng) — phần chênh {col - sum:0.##} làm trước khi code mới lên, sổ tự bù 1 dòng (không lệch số)"
+                : $"phiếu #{t.HandoverTxId}{(t.IsVoided ? " (đã huỷ)" : "")}: bảng từng lần {sum:0.##} ({n} dòng) > huỷ phần chưa nhận {col:0.##} trên phiếu — KHÔNG THỂ khi code ghi đúng, báo Claude (sổ đang tính theo phiếu)";
+            if (plans.TryGetValue(t.KhPlanDetailId, out var rc)) Add(rc, CloseLech, what);
+            else res.Findings.Add(new Finding { DetailId = t.KhPlanDetailId, Po = $"(KhPlanDetailId {t.KhPlanDetailId})", Kind = CloseLech, Detail = what });
+        }
+        foreach (var orphan in closeSum.Keys.Where(k => !txDet.ContainsKey(k)))
+            res.Findings.Add(new Finding { DetailId = 0, Po = "(không có phiếu)", Kind = CloseLech, Detail = $"dòng huỷ phần chưa nhận của phiếu #{orphan} không có trong HandoverTransactions" });
         foreach (var x in db.HandoverReceives.ToList().Where(x => Le(x.QtyOk) || Le(x.QtyNg)))
             AddLe(txDet.TryGetValue(x.HandoverTxId, out var dd) ? dd : 0, $"lần nhận #{x.ReceiveId} (phiếu #{x.HandoverTxId}): OK {x.QtyOk:0.####} · NG {x.QtyNg:0.####}");
         foreach (var x in db.WtsProductionLogs.ToList().Where(x => Le(x.QtyDone) || LeN(x.QtyOk) || LeN(x.QtyNg)))
@@ -246,6 +264,7 @@ public static class QuetCore
             o.WriteLine($"  {k.Key,-16} {k.Count(),5} dòng · {k.Select(f => f.DetailId).Distinct().Count()} PO");
         // [QUET-VU-SOLE 2026-11-06] 2 mục mới in rõ cả khi không có gì (để biết đã kiểm)
         o.WriteLine($"  Vụ lỗi cân ({VuLech}): {(res.Findings.Any(f => f.Kind == VuLech) ? "CÓ LỆCH — xem từng PO" : "mọi vụ cân, khớp ô sổ + khung lỗi")}");
+        o.WriteLine($"  Huỷ phần chưa nhận từng lần ({CloseLech}): {(res.Findings.Any(f => f.Kind == CloseLech) ? "CÓ LỆCH — xem từng PO" : "bảng HandoverTxCloses khớp mọi phiếu")}");   // [K5-CLOSE-NHIEU]
         o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");
         o.WriteLine();
         foreach (var g in byPo.OrderBy(g => g.First().Plan).ThenBy(g => g.First().Po))

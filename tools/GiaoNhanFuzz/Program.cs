@@ -267,6 +267,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var cell = t.SourceReceiveId != null ? HandoverCell.Loi : (HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell : null);
                     // [VULOI] 15%: bên nhận đổi ô (thử nhận vào Hàng lỗi / Hàng sửa / Hàng lỗi đã xử lý / Hàng mới khác ô chỉ định)
                     string? pickCell = null;
+                    var desig0 = cell;   // [NHAN-DOI-O-NC] ô bên giao chỉ định
                     if (cell != null && t.SourceReceiveId == null && rnd.NextDouble() < 0.15)
                     { pickCell = HandoverCell.ReceiveCells[rnd.Next(4)]; if (pickCell == cell) pickCell = null; else cell = pickCell; }
                     decimal ng = 0;
@@ -278,9 +279,34 @@ for (int po = startPo; po < startPo + poCount; po++)
                     bool carryR = t.SourceReceiveId == null && tfc is HandoverCell.Loi or HandoverCell.Sua;
                     bool needCat = t.SourceReceiveId == null && !carryR && (cell is HandoverCell.Loi or HandoverCell.Sua || (cell != HandoverCell.Sua && (cell == HandoverCell.Loi ? q : ng) > 0));
                     int? rcat = rnd.NextDouble() < 0.06 ? null : rnd.Next(1, 6);
-                    desc = $"recv #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} cell={cell}{(pickCell != null ? "(đổi)" : "")} ok={okq} ng={ng} rem={rem} cat={rcat} carry={carryR}";
+                    // [NHAN-DOI-O-NC 2026-11-06] đổi ô vào Gia công (Hàng lỗi đã xử lý / Hàng mới) với phiếu không có NC nhận: NC của lần nhận theo vụ (K2).
+                    //   Đáp án độc lập FormHelp.ExpectNextNc; 20% chọn NC trước + lý do; 10% thử NC sau (vụ có mã) → phải bị chặn, không ghi.
+                    var (ncsR, vaoR) = FormHelp.Chain(db, 1);
+                    //   Chỉ khi bên nhận ĐỔI từ ô chỉ định Hàng lỗi / Hàng sửa sang ô đạt (rà độc lập 06/11 C1: phiếu chỉ định sẵn ô đạt không NC = bên giao
+                    //   đã chọn "như hàng mới" — không điền đè). Đáp án cũ (seed 26) xét cả phiếu chỉ định ô đạt — đổi theo luật đã sửa.
+                    bool ncApp = pickCell != null && desig0 is HandoverCell.Loi or HandoverCell.Sua
+                                 && t.SourceReceiveId == null && t.ToGroupCode == "GC" && cell is HandoverCell.Xl or HandoverCell.Moi && string.IsNullOrEmpty(t.ToNC)
+                                 && t.Purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn) && ncsR.Count > 0;
+                    long caseK = carryR ? (t.NgCaseId ?? 0) : 0;
+                    string? defR = ncApp ? FormHelp.ExpectNextNc(db, 1, caseK, "GC") : null, pickNc = null, ncWhyR = null;
+                    if (ncApp)
+                    {
+                        int diR = defR == null ? (vaoR ? -1 : 0) : ncsR.FindIndex(x => x.Equals(defR, StringComparison.OrdinalIgnoreCase));
+                        var earR = ncsR.Where((c, i) => i < diR).ToList();
+                        var latR = ncsR.Where((c, i) => i > diR).ToList();
+                        if (caseK != 0 && latR.Any() && rnd.NextDouble() < 0.1)
+                        {
+                            var nRc = db.HandoverReceives.List.Count;
+                            var bl = await svc.ReceiveAsync(t.HandoverTxId, cell == HandoverCell.Loi ? 0 : okq, cell == HandoverCell.Sua ? 0 : ng, null, Uid(t.ToGroupCode),
+                                null, pickCell, pickCell != null ? "doi o" : null, rcat, latR[rnd.Next(latR.Count)], "thu nc sau");
+                            Inc("recv.nc.sau");
+                            if (bl.Ok || db.HandoverReceives.List.Count != nRc) fails.Add($"[Nhận đổi ô vào NC sau lọt (K2)] PO{po} op{op} #{t.HandoverTxId} vụ {caseK}");
+                        }
+                        if (earR.Any() && rnd.NextDouble() < 0.2) { pickNc = earR[rnd.Next(earR.Count)]; ncWhyR = "lam lai nc truoc"; Inc("recv.nc.truoc"); }
+                    }
+                    desc = $"recv #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} cell={cell}{(pickCell != null ? "(đổi)" : "")} ok={okq} ng={ng} rem={rem} cat={rcat} carry={carryR}" + (ncApp ? $" nc={pickNc ?? defR ?? "mới"}" : "");
                     var r = await svc.ReceiveAsync(t.HandoverTxId, cell == HandoverCell.Loi ? 0 : okq, cell == HandoverCell.Sua ? 0 : ng, null, Uid(t.ToGroupCode),
-                        null, pickCell, pickCell != null ? "doi o" : null, rcat);
+                        null, pickCell, pickCell != null ? "doi o" : null, rcat, pickNc, ncWhyR);
                     ok = r.Ok; if (!ok) { Inc("rej.recv"); desc += " ERR " + r.Error; }
                     if (ok && needCat && rcat == null) fails.Add($"[Nhận sinh vụ không có loại lỗi] PO{po} op{op} {desc}");
                     if (!ok && !needCat && r.Error == NgCaseService.MsgPickCategory) fails.Add($"[Nhận phiếu mang vụ bị bắt chọn lỗi] PO{po} op{op} {desc}");
@@ -290,6 +316,17 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (needCat && (rr0.NgCaseId == null || db.NgCases.List.First(x => x.NgCaseId == rr0.NgCaseId).NgCategoryId != rcat)) fails.Add($"[Lần nhận sinh vụ sai] PO{po} op{op} {desc}");
                         if (!needCat && rr0.NgCaseId != t.NgCaseId) fails.Add($"[Lần nhận không theo vụ phiếu] PO{po} op{op} {desc}");
                         if (ok && pickCell != null) Inc("vu.recv.doio");
+                        // [NHAN-DOI-O-NC] NC lưu trên lần nhận = NC chọn / mặc định theo vụ; không bao giờ sau công đoạn vụ đã tới; lý do lùi vào Ghi chú
+                        var wantNc = ncApp ? (pickNc ?? defR) : null;
+                        if (!string.Equals(rr0.ToNC, wantNc, StringComparison.OrdinalIgnoreCase) || (ncWhyR != null && !(rr0.Notes ?? "").Contains(ncWhyR)))
+                            fails.Add($"[Nhận đổi ô lưu sai NC (K2)] PO{po} op{op} {desc}: {rr0.ToNC ?? "null"} ≠ {wantNc ?? "null"} · {rr0.Notes}");
+                        if (ncApp && rr0.ToNC != null)
+                        {
+                            Inc("recv.nc.luu");
+                            var mxR = FormHelp.MaxReachIdx(db, 1, caseK, "GC");
+                            var tiR = ncsR.FindIndex(x => x.Equals(rr0.ToNC, StringComparison.OrdinalIgnoreCase));
+                            if (mxR != null && tiR > mxR) fails.Add($"[Nhận đổi ô vào NC sau công đoạn đã tới] PO{po} op{op} {desc}: {rr0.ToNC} (#{tiR}) > #{mxR}");
+                        }
                     }
                     break;
                 }
@@ -999,24 +1036,34 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!ts.Any()) { Inc("skip.close"); continue; }
                     var t = ts[rnd.Next(ts.Count)];
                     desc = $"close #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} issued={t.QtyIssued} auto={t.SourceReceiveId}";
+                    var closedBefore = t.QtyClosed ?? 0;   // rà độc lập T1: đọc TRƯỚC khi gọi (đối tượng EF giả bị sửa tại chỗ)
                     var deny = await svc.CloseRemainderAsync(t.HandoverTxId, "huy phan con", 99, groups.Where(x => x != t.FromGroupCode).ToList());
                     if (deny.Ok) fails.Add($"[Quyền] PO{po} op{op} người ngoài nhóm giao huỷ được phần chưa nhận #{t.HandoverTxId}");
                     var res = await svc.CloseRemainderAsync(t.HandoverTxId, "huy phan con", Uid(t.FromGroupCode), new List<string> { t.FromGroupCode });
                     ok = res.Ok; if (!ok) Inc("rej.close");
-                    // [K5-CLOSE-NHIEU 2026-11-05] ĐÃ BIẾT, chờ Hùng chốt (cần SQL): phiếu chỉ có 1 ClosedAt cho mọi lần huỷ phần chưa nhận → huỷ lần 2
-                    //   trên PO có hàng sửa trả về bị chặn oan theo thời gian. Đếm riêng (in ở bảng đếm), không tính SAI; trường hợp khác vẫn kiểm như cũ.
-                    //   Chỉ ghi nhận khi tính lại với ClosedAt GIỮ giờ cũ thì hết chặn (đúng lỗi đã biết); còn chặn → kiểm như cũ (rà độc lập lần 4 Vừa).
-                    if (!ok && (t.QtyClosed ?? 0) > 0 && res.Error.Contains("theo thứ tự thời gian"))
+                    // [K5-CLOSE-NHIEU 2026-11-06] ĐÃ SỬA (bảng HandoverTxCloses, mỗi lần huỷ 1 dòng): bỏ đếm riêng ghinhan.K5-CLOSE-NHIEU → bị chặn thì
+                    //   kiểm như mọi thao tác (lời khuyên phải gỡ được). Huỷ lần ≥ 2 đếm riêng để biết fuzz có đi qua đường này.
+                    if (closedBefore > 0) Inc(ok ? "close.lan2.ok" : "close.lan2.rej");
+                    // rà độc lập T1: fuzz gần như không tự đi qua "huỷ nhiều lần" → 35%: huỷ 1 lần nhận (không NG) của phiếu vừa đóng rồi huỷ phần chưa nhận lần nữa
+                    if (ok && t.SourceReceiveId == null && rnd.NextDouble() < 0.35)
                     {
-                        var kb = (await led.GetInputForDetailAsync(1))!;
-                        var kbRow = HandoverLedgerService.Compute(kb);
-                        var ka = HandoverWhyTest.CloneInput(kb);
-                        var kt = ka.Txs.First(x => x.Id == t.HandoverTxId);
-                        var krec = kt.Receives.Sum(r => r.Ok + r.Ng);
-                        kt.Closed += kt.Issued - krec; kt.Issued = krec; kt.Status = "COMPLETED";   // ClosedAt giữ nguyên giờ lần huỷ trước
-                        bool goneWithOldTime = !HandoverLedgerService.NewNegatives(kbRow, HandoverLedgerService.Compute(ka)).Any()
-                                               && !HandoverLedgerService.NewLoopKeys(kb, kbRow, ka).Any();
-                        if (goneWithOldTime) { Inc("ghinhan.K5-CLOSE-NHIEU"); continue; }
+                        db.Fixup();
+                        var rv = t.Receives.Where(x => !x.IsVoided && x.QtyNg == 0).OrderBy(_ => rnd.Next()).FirstOrDefault();
+                        if (rv != null && t.Receives.Count(x => !x.IsVoided) >= 2)
+                        {
+                            var vr2 = await svc.VoidReceiveAsync(rv.ReceiveId, "nhan nham", Uid(t.ToGroupCode), All);
+                            db.Fixup();
+                            if (vr2.Ok)
+                            {
+                                var tid2 = t.HandoverTxId; var fg2 = t.FromGroupCode;
+                                var c2 = await svc.CloseRemainderAsync(tid2, "huy lan nua", Uid(fg2), new List<string> { fg2 });
+                                Inc(c2.Ok ? "close.chuoi.ok" : "close.chuoi.rej");
+                                if (!c2.Ok && c2.Error.StartsWith("Không lưu"))
+                                    await WhyCheck(db, svc, led, HandoverWhy.OpCloseRemainder(tid2), new HashSet<string> { "T:" + tid2 },
+                                        async () => (await svc.CloseRemainderAsync(tid2, "thu lai", Uid(fg2), All)).Ok, null, rnd, po, op, desc + " (huỷ lần 2)", c2.Error, loop: true);
+                                desc += " +vrecv +close2";
+                            }
+                        }
                     }
                     if (!ok && res.Error.StartsWith("Không lưu"))
                     {
@@ -1105,6 +1152,17 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     foreach (var G in row.Groups.Values)
         foreach (var w in G.Warnings.Where(w => w.Contains("WTS nhập vượt")))
         { checks++; F("WTS vượt hàng thật", w); }
+    // [K5-CLOSE-NHIEU 2026-11-06] mỗi phiếu: Σ dòng HandoverTxCloses = QtyClosed (code mới luôn ghi cả 2 cùng giao dịch); mỗi dòng > 0;
+    //   số dòng = số lần huỷ thành công (đếm ở thao tác close) — đọc thẳng bảng, độc lập với sổ
+    foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1))
+    {
+        checks++;
+        var rows = db.HandoverTxCloses.List.Where(c => c.HandoverTxId == t.HandoverTxId).ToList();
+        if (rows.Sum(c => c.Qty) != (t.QtyClosed ?? 0) || rows.Any(c => c.Qty <= 0))
+            F("Huỷ phần chưa nhận ≠ bảng từng lần", $"#{t.HandoverTxId}: phiếu {t.QtyClosed} · bảng {string.Join("+", rows.Select(c => c.Qty))}");
+        if (rows.Count > 0 && t.ClosedAt != rows.Max(c => c.ClosedAt))
+            F("Giờ huỷ phần chưa nhận lệch", $"#{t.HandoverTxId}: phiếu {t.ClosedAt:HH:mm:ss.fff} · dòng cuối {rows.Max(c => c.ClosedAt):HH:mm:ss.fff}");
+    }
     // [GC-SUA-TAI-CHO] Cảnh báo tự kiểm của sổ (Tồn ≠ tổng các phần — gồm Chờ KCS; vụ ≠ ô) không bao giờ được hiện
     foreach (var G in row.Groups.Values)
         foreach (var w in G.Warnings.Where(w => w.Contains("báo lại để kiểm")))

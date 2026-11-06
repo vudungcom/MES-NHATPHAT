@@ -532,7 +532,8 @@ namespace MES.Web.Services
     }
     public record InRecv(long Id, DateTime At, decimal Ok, decimal Ng, string? NgReason,
                          string? Cell = null, string? CellReason = null,   // [GN-CELL2] ô bên nhận thực nhận + lý do đổi
-                         long? NgCaseId = null);   // [VULOI] vụ lỗi sinh ra ở lần nhận (phiếu chưa mang vụ)
+                         long? NgCaseId = null,    // [VULOI] vụ lỗi sinh ra ở lần nhận (phiếu chưa mang vụ)
+                         string? ToNC = null);     // [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (đổi ô, phiếu không có NC). null = theo phiếu
     public class InTx
     {
         public long    Id        { get; set; }
@@ -557,12 +558,17 @@ namespace MES.Web.Services
         /// <summary>[GN-VOID-RULE] Phần chưa nhận đã huỷ (Issued đã trừ phần này). Chỉ dùng hiển thị dòng B.</summary>
         public decimal Closed    { get; set; }
         public DateTime? ClosedAt { get; set; }
+        /// <summary>[K5-CLOSE-NHIEU 2026-11-06] Từng lần huỷ phần chưa nhận (bảng HandoverTxCloses), tăng dần theo giờ; Σ Qty = Closed.
+        /// Rỗng / lệch Closed (input dựng tay, dữ liệu trước SQL 10) → ClosesOf coi như 1 lần lúc ClosedAt như cũ.</summary>
+        public List<InClose> Closes { get; set; } = new();
         /// <summary>[VULOI] Vụ lỗi của phiếu (phiếu hàng lỗi). Null = không mang vụ / hàng lỗi cũ chưa có mã.</summary>
         public long?   NgCaseId  { get; set; }
         public List<InRecv> Receives { get; set; } = new();
         /// <summary>[GN-WHY] Bản sao để tính thử (danh sách lần nhận riêng).</summary>
-        public InTx CloneTx() { var c = (InTx)MemberwiseClone(); c.Receives = new List<InRecv>(Receives); return c; }
+        public InTx CloneTx() { var c = (InTx)MemberwiseClone(); c.Receives = new List<InRecv>(Receives); c.Closes = new List<InClose>(Closes); return c; }   // [K5-CLOSE-NHIEU] + danh sách lần huỷ riêng
     }
+    /// <summary>[K5-CLOSE-NHIEU 2026-11-06] 1 lần huỷ phần chưa nhận: Id dòng HandoverTxCloses (0 = dòng bù / dựng từ bộ cột cũ), giờ máy chủ, số.</summary>
+    public record InClose(long Id, DateTime At, decimal Qty);
     public record InWts(long Id, DateTime At, string ProcessGroup, string? NC, string? WtsCode,
                         decimal Ok, decimal Ng, string? Worker,
                         long? NgCaseId = null,   // [VULOI] vụ lỗi của phần NG
@@ -685,6 +691,13 @@ namespace MES.Web.Services
                 .Where(t => ids.Contains(t.KhPlanDetailId) && !t.IsVoided)
                 .Include(t => t.Receives)
                 .AsNoTracking().ToListAsync();
+            // [K5-CLOSE-NHIEU 2026-11-06] từng lần huỷ phần chưa nhận — chỉ đọc khi có phiếu đã huỷ phần còn (đa số PO không có)
+            var closedTxIds = txs.Where(t => (t.QtyClosed ?? 0) > 0).Select(t => t.HandoverTxId).ToList();
+            var closeRows = closedTxIds.Any()
+                ? await _db.HandoverTxCloses.Where(c => closedTxIds.Contains(c.HandoverTxId))
+                    .Select(c => new { c.CloseId, c.HandoverTxId, c.ClosedAt, c.Qty, c.IsMigrated })
+                    .AsNoTracking().ToListAsync()
+                : new();
 
             var wts = await _db.WtsProductionLogs
                 .Where(w => ids.Contains(w.KhPlanDetailId) && !w.IsVoided)
@@ -811,9 +824,11 @@ namespace MES.Web.Services
                         SourceReceiveId = t.SourceReceiveId, // [GN-RECV-NG]
                         ToCell = t.ToCell, // [GN-CELL2]
                         Closed = t.QtyClosed ?? 0, ClosedAt = t.ClosedAt, // [GN-VOID-RULE]
+                        Closes = CloseRows(t.QtyClosed ?? 0, t.ClosedAt, t.IssuedAt,   // [K5-CLOSE-NHIEU] từng lần huỷ (+ dòng bù phần chênh)
+                                    closeRows.Where(c => c.HandoverTxId == t.HandoverTxId).Select(c => (c.CloseId, c.ClosedAt, c.Qty, c.IsMigrated))),
                         NgCaseId = t.NgCaseId, // [VULOI]
                         Receives = t.Receives.Where(r => !r.IsVoided)
-                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl), r.ToCell, r.ToCellReason, r.NgCaseId)).ToList()   // [DS-LOI-LIVE]
+                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl), r.ToCell, r.ToCellReason, r.NgCaseId, r.ToNC)).ToList()   // [DS-LOI-LIVE] · [NHAN-DOI-O-NC] + NC lần nhận
                     }).ToList(),
                     Wts = wts.Where(w => w.KhPlanDetailId == id).Select(w => new InWts(
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
@@ -1026,6 +1041,41 @@ namespace MES.Web.Services
             return origin;
         }
 
+        /// <summary>
+        /// [K5-CLOSE-NHIEU 2026-11-06] Danh sách lần huỷ phần chưa nhận của 1 phiếu từ bảng HandoverTxCloses + bộ cột cũ (QtyClosed / ClosedAt).
+        /// Σ dòng = QtyClosed → đúng các dòng. Σ dòng &lt; QtyClosed (huỷ làm giữa lúc chạy SQL 10 và lúc code mới lên — chỉ bộ cột cũ có) →
+        /// thêm 1 dòng bù (Id 0) phần chênh, giờ = ClosedAt cũ (không trễ hơn lần huỷ đầu ghi bằng code mới — phần chênh làm trước code mới).
+        /// Σ dòng &gt; QtyClosed (không thể khi code ghi đúng — QuetSo báo CLOSE_LECH) → trả rỗng: ClosesOf tính như cũ (1 lần lúc ClosedAt).
+        /// </summary>
+        public static List<InClose> CloseRows(decimal closedCol, DateTime? closedAtCol, DateTime issuedAt,
+                                              IEnumerable<(long Id, DateTime At, decimal Qty, bool Migrated)> rows)
+        {
+            if (closedCol <= 0) return new List<InClose>();
+            var list = rows.OrderBy(r => r.At).ThenBy(r => r.Id).ToList();
+            var sum = list.Sum(r => r.Qty);
+            if (sum > closedCol) return new List<InClose>();
+            var res = list.Select(r => new InClose(r.Id, r.At, r.Qty)).ToList();
+            if (sum < closedCol)
+            {
+                var at = closedAtCol ?? issuedAt;
+                var firstNew = list.Where(r => !r.Migrated).Select(r => (DateTime?)r.At).FirstOrDefault();
+                if (firstNew is DateTime fn && fn < at) at = fn;
+                var lastMig = list.Where(r => r.Migrated).Select(r => (DateTime?)r.At).LastOrDefault();
+                if (lastMig is DateTime lm && at < lm) at = lm;
+                res.Add(new InClose(0, at, closedCol - sum));
+                res = res.OrderBy(r => r.At).ThenBy(r => r.Id == 0 ? 0 : 1).ToList();   // trùng giờ: dòng bù (làm trước code mới) đứng trước
+            }
+            return res;
+        }
+
+        /// <summary>[K5-CLOSE-NHIEU] Các lần huỷ phần chưa nhận của phiếu (tăng dần). Closes rỗng / lệch Closed → 1 lần (Closed, lúc ClosedAt) như trước SQL 10.</summary>
+        public static List<InClose> ClosesOf(InTx t)
+        {
+            if (t.Closed <= 0) return new List<InClose>();
+            if (t.Closes.Count > 0 && t.Closes.Sum(c => c.Qty) == t.Closed) return t.Closes.OrderBy(c => c.At).ToList();
+            return new List<InClose> { new InClose(0, t.ClosedAt ?? t.At, t.Closed) };
+        }
+
         /// <summary>[K5-VONG-SUA] Ảnh sổ ngay trước lúc <paramref name="cut"/>: chỉ giữ chứng từ ghi TRƯỚC lúc đó (giờ máy chủ).</summary>
         public static LedgerInput SnapshotBefore(LedgerInput i, DateTime cut)
         {
@@ -1038,8 +1088,17 @@ namespace MES.Web.Services
                 var nDrop = c.Receives.Count(r => r.At >= cut);
                 foreach (var r in c.Receives.Where(r => r.At >= cut)) dropRecv.Add(r.Id);
                 c.Receives.RemoveAll(r => r.At >= cut);
-                bool reopened = c.Closed > 0 && (c.ClosedAt ?? c.At) >= cut;
-                if (reopened) { c.Issued += c.Closed; c.Closed = 0; }   // huỷ phần chưa nhận sau lúc đó: lúc đó phiếu còn mở
+                // [K5-CLOSE-NHIEU 2026-11-06] mở lại ĐÚNG các lần huỷ phần chưa nhận làm từ lúc cut (mỗi lần 1 dòng HandoverTxCloses).
+                //   Trước: 1 ClosedAt cho cả số đã huỷ → huỷ lần 2 kéo luôn số huỷ lần 1 về "còn giao" ở các mốc cũ → chặn oan (fuzz seed 602).
+                var cls = ClosesOf(c);
+                var reo = cls.Where(x => x.At >= cut).Sum(x => x.Qty);
+                bool reopened = reo > 0;
+                if (reopened)   // huỷ phần chưa nhận sau lúc đó: lúc đó phiếu còn mở phần này
+                {
+                    c.Issued += reo; c.Closed -= reo;
+                    c.Closes = cls.Where(x => x.At < cut).ToList();
+                    c.ClosedAt = c.Closes.Count > 0 ? c.Closes[^1].At : null;
+                }
                 if ((nDrop > 0 || reopened) && !HandoverPurpose.IsOut(c.Purpose))   // (rà độc lập T3) phiếu không đổi gì thì giữ trạng thái gốc (dữ liệu cũ)
                 {
                     var rec = c.Receives.Sum(r => r.Ok + r.Ng);
@@ -1428,8 +1487,9 @@ namespace MES.Web.Services
                     else
                     {
                         AddRecvCell(t.To, cell, r.Ok + r.Ng, rDoc);
-                        if (t.To == "GC" && !string.IsNullOrEmpty(t.ToNC) && cell is HandoverCell.Moi or HandoverCell.Xl)
-                            Add("GC", "in:" + t.ToNC, "Nhận vào NC " + t.ToNC, r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text }); // chỉ phần OK
+                        var rNc = !string.IsNullOrEmpty(r.ToNC) ? r.ToNC : t.ToNC;   // [NHAN-DOI-O-NC 2026-11-06] NC của lần nhận (đổi ô, phiếu không có NC) trước NC phiếu
+                        if (t.To == "GC" && !string.IsNullOrEmpty(rNc) && cell is HandoverCell.Moi or HandoverCell.Xl)
+                            Add("GC", "in:" + rNc, "Nhận vào NC " + rNc, r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text }); // chỉ phần OK
                         if (cell == HandoverCell.Sua) suaRunning[t.To] += r.Ok; // [GN-CELL] phần NG đếm lúc nhận trả ngay, không vào ô Hàng sửa
                     }
                     // ── [VULOI] vụ lỗi của lần nhận ──
@@ -2044,6 +2104,7 @@ namespace MES.Web.Services
                             : $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} · ô {HandoverCell.Label(recCell)}"
                               + (recCell is HandoverCell.Xl ? " (SP đã OK, nhập WTS được)" : "")
                               + CellChangeNote(desigCell, r)   // [GN-CELL2]
+                              + (!string.IsNullOrEmpty(r.ToNC) ? $" · vào {NcText(r.ToNC)}" : "")   // [NHAN-DOI-O-NC] NC của lần nhận
                               + (r.Ng > 0 && recCell != HandoverCell.Loi ? (back != null   // [GN-RECV-NG2][GN-CELL2] nhận vào ô Hàng lỗi: số ở ô NG là hàng lỗi nhận, không phải "NG lúc nhận"
                                     ? $" · NG lúc nhận {r.Ng:0.##} → phiếu trả #{back.Id} chờ {GroupLabel(t.From)} nhận"   // [GN-RECV-NG]
                                     : $" · NG lúc nhận {r.Ng:0.##} trả ngay {GroupLabel(t.From)}") : "")
@@ -2053,19 +2114,27 @@ namespace MES.Web.Services
                 }
             }
             // [GN-VOID-RULE] Bước "huỷ phần chưa nhận": số phiếu về bằng số đã nhận, phần còn lại trả về ô bên giao
+            //   [K5-CLOSE-NHIEU 2026-11-06] mỗi lần huỷ (dòng HandoverTxCloses) = 1 bước, đúng giờ lần đó (trước: 1 bước cho tổng, giờ lần cuối)
             foreach (var t in inp.Txs.Where(x => x.Closed > 0))
             {
                 var ttx = t;
-                events.Add((t.ClosedAt ?? t.At, 2, t.Id, () =>
+                var cls = ClosesOf(t);
+                for (int k = 0; k < cls.Count; k++)
                 {
-                    var c = Copy(ttx);
-                    c.Issued = ttx.Issued;
-                    c.Status = StepStatus(c);
-                }, new LedgerStepRow
-                {
-                    Kind = "DONG", Group = t.From, Other = t.To, Cell = HandoverCell.IssueCellOf(Classify(t, gcLastNc), t.FromCell), Qty = -t.Closed, RefId = t.Id,
-                    Text = $"{GroupLabel(t.From)} huỷ phần chưa nhận {t.Closed:0.##} của phiếu #{t.Id} (phiếu còn {t.Issued:0.##}) · hàng về lại {GroupLabel(t.From)}"
-                }));
+                    var cq = cls[k].Qty;
+                    var left = t.Issued + cls.Skip(k + 1).Sum(x => x.Qty);   // phiếu còn sau lần huỷ này
+                    events.Add((cls[k].At, 2, t.Id, () =>
+                    {
+                        var c = Copy(ttx);
+                        c.Issued -= cq;
+                        c.Status = StepStatus(c);
+                    }, new LedgerStepRow
+                    {
+                        Kind = "DONG", Group = t.From, Other = t.To, Cell = HandoverCell.IssueCellOf(Classify(t, gcLastNc), t.FromCell), Qty = -cq, RefId = t.Id,
+                        Text = $"{GroupLabel(t.From)} huỷ phần chưa nhận {cq:0.##} của phiếu #{t.Id} (phiếu còn {left:0.##})"
+                             + (cls.Count > 1 ? $" · lần {k + 1}/{cls.Count}" : "") + $" · hàng về lại {GroupLabel(t.From)}"
+                    }));
+                }
             }
             // [GN-NG-AFTER] Báo hàng lỗi phát hiện sau khi nhận
             foreach (var b in inp.NgReps)

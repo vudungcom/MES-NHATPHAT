@@ -45,6 +45,22 @@ public static class SuaScen
     }
 
     static long LastTx(AppDbContext db) => db.HandoverTransactions.List.Max(t => t.HandoverTxId);
+    /// <summary>[NHAN-DOI-O-NC] S36: Kho→GC 2 (NC1) · WTS NC1 OK 2 · WTS NC2 NG 1 (vụ ở NC2) · GC giao ô Hàng lỗi → Kho ô Hàng lỗi · Kho nhận ·
+    /// Kho giao ô Hàng lỗi → GC ô Hàng lỗi (phiếu không NC) — trả phiếu chờ GC nhận.</summary>
+    static void Seed36(out AppDbContext d, out HandoverService s, out long txBack)
+    {
+        d = Seed(); s = new HandoverService(d); WtsSvcHelp.Reset();
+        s.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI", toNC: "NC1").GetAwaiter().GetResult();
+        s.ReceiveAsync(LastTx(d), 2, 0, null, Gc).GetAwaiter().GetResult();
+        WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 2, 0, Gc).GetAwaiter().GetResult();
+        var w = WtsSvcHelp.SaveAsync(d, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2).GetAwaiter().GetResult();
+        var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w.LogId).NgCaseId;
+        var g1 = s.IssueByCellAsync(1, "GC", "KHO", 1, Gc, "LOI", false, "LOI", ngCaseId: vu).GetAwaiter().GetResult();
+        var k1 = s.ReceiveAsync(LastTx(d), 0, 1, null, 1, null, HandoverCell.Loi).GetAwaiter().GetResult();
+        var g2 = s.IssueByCellAsync(1, "KHO", "GC", 1, 1, "LOI", false, "LOI", ngCaseId: vu).GetAwaiter().GetResult();
+        Ok(w.Ok && g1.Ok && k1.Ok && g2.Ok && d.HandoverTransactions.List.Last().ToNC == null, "S36 dựng xong (phiếu Kho → GC ô Hàng lỗi, không NC)", $"{w.Err}|{g1.Error}|{k1.Error}|{g2.Error}");
+        txBack = LastTx(d);
+    }
     static long LastRep(AppDbContext db) => db.HandoverRepairResults.List.Max(t => t.HandoverRepairResultId);
     static long LastChk(AppDbContext db) => db.HandoverRepairChecks.List.Max(t => t.HandoverRepairCheckId);
 
@@ -877,6 +893,180 @@ public static class SuaScen
             Ok(a.Ok && b.Ok && c.Ok && x.Ok && rr.Ok && ed.Ok, "S33b dựng xong", $"{a.Err}|{b.Err}|{c.Err}|{x.Error}|{rr.Error}|{ed.Err}");
             var v = await s.VoidReceiveAsync(ridB, "huy thu", 1, new[] { "KHO", "GC" });
             Ok(!v.Ok, "Huỷ lần nhận 1 chiếc (trước lúc hàng sửa về NC1 đã làm 3 chiếc từ 3 chiếc nhận) phải bị chặn theo thời gian", v.Error ?? "(huỷ được)");
+        }
+        // ─────────────────────────────────────────────────────────────────
+        // [K5-CLOSE-NHIEU 2026-11-06] SQL 10 HandoverTxCloses: mỗi lần huỷ phần chưa nhận 1 dòng — ca đúng lỗi fuzz seed 602 PO5 (05/11):
+        //   huỷ phần chưa nhận → (hàng sửa về Kho) → huỷ 1 lần nhận → huỷ phần chưa nhận lần 2. Bản cũ: 1 ClosedAt cho cả 8 chiếc đã huỷ →
+        //   ảnh sổ lúc hàng sửa về coi 8 chiếc còn giao (Kho −6) → chặn oan. Nay chỉ 2 chiếc của lần 2 là sau mốc đó.
+        Console.WriteLine("[S34] [K5-CLOSE-NHIEU] Huỷ phần chưa nhận 2 lần trên 1 phiếu, giữa 2 lần có hàng sửa về Kho: lần 2 lưu được (bản cũ chặn oan Kho −6); mỗi lần 1 dòng, dòng B 2 bước, Lịch sử 2 lần");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            var kho = new List<string> { "KHO" };
+            var b0 = await s.ReportNgAfterReceiveAsync(1, "KHO", HandoverNgSource.Phoi, null, 2, HandoverNgSource.DauVao, "KHACH", "", null, 1, kho, ngCategoryId: 1);
+            var vu = d.HandoverNgReports.List.Last().NgCaseId;
+            var i1 = await s.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI", toNC: "NC1"); var t1 = LastTx(d);
+            var ra = await s.ReceiveAsync(t1, 2, 0, null, Gc);
+            var rb = await s.ReceiveAsync(t1, 2, 0, null, Gc);
+            var ridB = d.HandoverTransactions.List.Single(t => t.HandoverTxId == t1).Receives.Where(r => !r.IsVoided).Max(r => r.ReceiveId);
+            await Task.Delay(5);
+            var cl1 = await s.CloseRemainderAsync(t1, "huy lan 1", 1, kho);
+            var i2 = await s.IssueByCellAsync(1, "KHO", "GC", 14, 1, "MOI", false, "MOI", toNC: "NC1");
+            var r2 = await s.ReceiveAsync(LastTx(d), 14, 0, null, Gc);
+            await Task.Delay(5);
+            var k = await s.CreateRepairResultAsync(1, "KHO", HandoverCell.Loi, vu, 2, 0, null, null, 1);
+            var x = await s.ConfirmRepairAsync(LastRep(d), 2, 0, null, Kcs);
+            await Task.Delay(5);
+            var vr = await s.VoidReceiveAsync(ridB, "nhan nham", 1, new[] { "KHO", "GC" });
+            await Check(d, "S34 trước huỷ lần 2");
+            Ok(b0.Ok && i1.Ok && ra.Ok && rb.Ok && cl1.Ok && i2.Ok && r2.Ok && k.Ok && x.Ok && vr.Ok, "S34 dựng xong",
+               $"{b0.Error}|{i1.Error}|{ra.Error}|{rb.Error}|{cl1.Error}|{i2.Error}|{r2.Error}|{k.Error}|{x.Error}|{vr.Error}");
+            // lời khuyên gỡ (HandoverWhy.OpCloseRemainder) phải tính như máy chủ: lần huỷ mới ở giờ hiện tại, các lần cũ giữ giờ của chúng
+            var simIn = HandoverWhyTest.CloneInput((await new HandoverLedgerService(d).GetInputForDetailAsync(1))!);
+            var rAt = d.HandoverRepairChecks.List.Max(c => c.CheckedAt);
+            HandoverWhy.OpCloseRemainder(t1)(simIn);
+            var simT = HandoverLedgerService.SnapshotBefore(simIn, rAt).Txs.Single(t => t.Id == t1);
+            Ok(simT.Issued == 4 && simT.Closed == 6 && HandoverLedgerService.LoopTimeline(simIn).Count == 0,
+               "Lời khuyên gỡ mô phỏng huỷ lần 2: lúc hàng sửa về phiếu còn 4 (chỉ mở lại 2 chiếc lần 2), không ô âm", $"{simT.Issued}/{simT.Closed}");
+            await Task.Delay(5);
+            var c2 = await s.CloseRemainderAsync(t1, "huy lan 2", Other, new List<string> { "KHO" });
+            var c2b = c2.Ok ? c2 : await s.CloseRemainderAsync(t1, "huy lan 2", 1, kho);   // Other có thể không có quyền nhóm Kho → admin
+            await Check(d, "S34 huỷ lần 2");
+            Ok(c2b.Ok, "Huỷ phần chưa nhận lần 2 lưu được (không chặn oan theo thời gian)", c2b.Error);
+            var tx = d.HandoverTransactions.List.Single(t => t.HandoverTxId == t1);
+            var rows = d.HandoverTxCloses.List.Where(c => c.HandoverTxId == t1).OrderBy(c => c.ClosedAt).ToList();
+            Ok(rows.Count == 2 && rows[0].Qty == 6 && rows[1].Qty == 2 && rows[0].Reason == "huy lan 1" && rows[1].Reason == "huy lan 2" && rows[0].ClosedAt < rows[1].ClosedAt
+               && tx.QtyClosed == 8 && tx.QtyIssued == 2 && tx.ClosedAt == rows[1].ClosedAt && !rows.Any(r => r.IsMigrated),
+               "Bảng HandoverTxCloses: 2 dòng (6 · lần 1, 2 · lần 2, đúng lý do, đúng giờ); phiếu: QtyClosed 8, còn 2, ClosedAt = lần 2",
+               string.Join(" | ", rows.Select(r => $"{r.Qty} {r.Reason} {r.ClosedAt:HH:mm:ss.fff}")) + $" · phiếu {tx.QtyClosed}/{tx.QtyIssued}");
+            var inp = (await new HandoverLedgerService(d).GetInputForDetailAsync(1))!;
+            var steps = HandoverLedgerService.ComputeSteps(inp);
+            var dong = steps.Where(st => st.Kind == "DONG" && st.RefId == t1).ToList();
+            Ok(dong.Count == 2 && dong[0].Qty == -6 && dong[1].Qty == -2 && dong[0].At < dong[1].At && dong[1].Text.Contains("lần 2/2"),
+               "Dòng B: 2 bước huỷ phần chưa nhận (−6 lúc lần 1, −2 lúc lần 2)", string.Join(" | ", dong.Select(st => $"{st.Qty} {st.At:HH:mm:ss.fff} {st.Text}")));
+            var tl = HandoverLedgerService.LoopTimeline(inp);
+            Ok(tl.Count == 0, "Ảnh sổ lúc hàng sửa về Kho: không ô âm (bản cũ: Kho −6)", string.Join(",", tl.Select(z => z.Key + "=" + z.Value.Value)));
+            var logs = await s.GetLogsAsync(1);
+            var lt = logs.Single(l => l.HandoverTxId == t1);
+            Ok(lt.Closes.Count == 2 && lt.Closes[0].Qty == 6 && lt.Closes[1].Qty == 2 && lt.Closes.All(c => !string.IsNullOrEmpty(c.ByName)),
+               "Lịch sử phiếu: 2 lần huỷ, có tên người từng lần", string.Join(" | ", lt.Closes.Select(c => $"{c.Qty} {c.ByName} {c.Reason}")));
+            // đối chứng: bỏ 2 dòng (như dữ liệu trước SQL 10, chỉ bộ cột cũ) → sổ tính như bản cũ: mốc hàng sửa về có Kho âm (đúng lỗi cũ, chứng minh ca này bắt được)
+            var oldInp = HandoverWhyTest.CloneInput(inp);
+            foreach (var t in oldInp.Txs) t.Closes = new List<InClose>();
+            var tlOld = HandoverLedgerService.LoopTimeline(oldInp);
+            Ok(tlOld.Count > 0, "Đối chứng: tính theo bộ cột cũ (1 giờ cho cả 8) thì ảnh sổ lúc hàng sửa về có ô âm — ca này đúng là lỗi cũ", $"{tlOld.Count}");
+            // giữa 2 lần huỷ: ảnh sổ ngay sau lần 1 → phiếu còn 4 (2 lần nhận); ngay trước lần 1 → 10
+            var mid = HandoverLedgerService.SnapshotBefore(inp, rows[1].ClosedAt);
+            var pre = HandoverLedgerService.SnapshotBefore(inp, rows[0].ClosedAt);
+            var tm = mid.Txs.Single(t => t.Id == t1); var tp = pre.Txs.Single(t => t.Id == t1);
+            Ok(tm.Issued == 2 + 2 && tm.Closed == 6 && tp.Issued == 10 && tp.Closed == 0,
+               "SnapshotBefore: trước lần 2 phiếu 4 (đã huỷ 6), trước lần 1 phiếu 10", $"mid {tm.Issued}/{tm.Closed} pre {tp.Issued}/{tp.Closed}");
+        }
+
+        // khung hàng lỗi (HandoverNgTrace): phiếu HÀNG LỖI huỷ phần chưa nhận 2 lần → mỗi bước trừ đúng số lần đó (đột biến dùng tổng Closed phải SAI)
+        Console.WriteLine("[S34b] [K5-CLOSE-NHIEU] Phiếu hàng lỗi Gia công → Kho huỷ phần chưa nhận 2 lần: khung hàng lỗi cân từng bước, đang chuyển = 0");
+        {
+            var d = Seed(); var s = new HandoverService(d); WtsSvcHelp.Reset();
+            await s.IssueByCellAsync(1, "KHO", "GC", 4, 1, "MOI", false, "MOI", toNC: "NC1"); await s.ReceiveAsync(LastTx(d), 4, 0, null, Gc);
+            var w = await WtsSvcHelp.SaveAsync(d, 1, "GC", "NC1", null, 0, 4, Gc, catId: 2);
+            var vu = d.WtsProductionLogs.List.Single(z => z.WtsLogId == w.LogId).NgCaseId;
+            var gL = await s.IssueByCellAsync(1, "GC", "KHO", 4, Gc, "LOI", false, "LOI", ngCaseId: vu); var tl = LastTx(d);
+            var k1 = await s.ReceiveAsync(tl, 0, 1, null, 1, null, HandoverCell.Loi);
+            var k2 = await s.ReceiveAsync(tl, 0, 1, null, 1, null, HandoverCell.Loi);
+            var cA = await s.CloseRemainderAsync(tl, "tra lai 2", Gc, new List<string> { "GC" });
+            var rid = d.HandoverTransactions.List.Single(t => t.HandoverTxId == tl).Receives.Where(r => !r.IsVoided).Max(r => r.ReceiveId);
+            var vr = await s.VoidReceiveAsync(rid, "nhan nham", 1, new[] { "KHO", "GC" });
+            var cB = await s.CloseRemainderAsync(tl, "tra lai 1", Gc, new List<string> { "GC" });
+            var a = await Check(d, "S34b");
+            var tr = HandoverNgTrace.Build((await new HandoverLedgerService(d).GetInputForDetailAsync(1))!);
+            var dong = tr.Events.Where(e => e.Type == "DONG").ToList();
+            Ok(w.Ok && gL.Ok && k1.Ok && k2.Ok && cA.Ok && vr.Ok && cB.Ok && tr.Problems.Count == 0 && dong.Count == 2 && dong[0].Qty == 2 && dong[1].Qty == 1,
+               "Khung hàng lỗi: 2 bước huỷ phần chưa nhận (2, 1), không lệch", $"{w.Err}|{gL.Error}|{k1.Error}|{k2.Error}|{cA.Error}|{vr.Error}|{cB.Error} · {string.Join(" | ", tr.Problems)} · {string.Join(",", dong.Select(e => e.Qty))}");
+        }
+
+        Console.WriteLine("[S35] [K5-CLOSE-NHIEU] Dữ liệu cũ / phần chênh: CloseRows bù 1 dòng phần chênh (giờ không trễ hơn lần ghi bằng code mới); dòng nhiều hơn phiếu → tính như cũ; QuetSo báo CLOSE_LECH");
+        {
+            var t0 = new DateTime(2026, 11, 6, 17, 0, 0);
+            var none = HandoverLedgerService.CloseRows(5, t0.AddMinutes(30), t0, Array.Empty<(long, DateTime, decimal, bool)>());
+            Ok(none.Count == 1 && none[0].Qty == 5 && none[0].At == t0.AddMinutes(30) && none[0].Id == 0, "Không có dòng: 1 dòng bù = tổng, lúc ClosedAt cũ", string.Join(",", none));
+            var gap = HandoverLedgerService.CloseRows(8, t0.AddMinutes(50), t0, new[] { (11L, t0.AddMinutes(10), 3m, true), (12L, t0.AddMinutes(40), 2m, false) });
+            Ok(gap.Count == 3 && gap.Sum(c => c.Qty) == 8 && gap[1].Id == 0 && gap[1].Qty == 3 && gap[1].At == t0.AddMinutes(40) && gap[2].Id == 12,
+               "Có dòng chuyển (3) + dòng code mới (2), phiếu 8: bù 3, giờ = lần code mới đầu (không trễ hơn), đứng trước dòng đó", string.Join(",", gap));
+            var over = HandoverLedgerService.CloseRows(2, t0, t0, new[] { (1L, t0, 3m, false) });
+            Ok(over.Count == 0, "Dòng nhiều hơn phiếu → rỗng (ClosesOf tính theo bộ cột cũ)");
+            var tx = new InTx { Id = 1, Closed = 2, ClosedAt = t0, At = t0.AddHours(-1), Closes = over };
+            var co = HandoverLedgerService.ClosesOf(tx);
+            Ok(co.Count == 1 && co[0].Qty == 2 && co[0].At == t0, "ClosesOf rỗng → 1 lần (2, lúc ClosedAt) như bản cũ");
+            // QuetSo: phiếu có QtyClosed mà không có dòng → CLOSE_LECH (ít hơn, sổ tự bù); dòng nhiều hơn → CLOSE_LECH (báo Claude)
+            var d = Seed(); var s = new HandoverService(d);
+            await s.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI", toNC: "NC1"); var t1 = LastTx(d);
+            await s.ReceiveAsync(t1, 4, 0, null, Gc);
+            var cl1 = await s.CloseRemainderAsync(t1, "huy", 1, new List<string> { "KHO" });
+            d.HandoverTxCloses.List.Clear();   // giả dữ liệu huỷ trước khi code mới lên (chỉ bộ cột cũ)
+            var a = await Check(d, "S35 phiếu không có dòng");
+            Ok(cl1.Ok && a.G("KHO").ConGiao == 16 && a.Balanced, "Phiếu cũ (chỉ bộ cột cũ): sổ đúng như trước (Kho còn 16)", cl1.Error + $" {a.G("KHO").ConGiao}");
+            var q1 = await QuetSo.QuetCore.ScanAsync(d, new HandoverLedgerService(d));
+            Ok(q1.Findings.Any(f => f.Kind == QuetSo.QuetCore.CloseLech && f.Detail.Contains("sổ tự bù")), "QuetSo: CLOSE_LECH (ít hơn — sổ tự bù)", string.Join(" | ", q1.Findings.Select(f => f.Kind)));
+            d.HandoverTxCloses.List.Add(new HandoverTxClose { CloseId = 1, HandoverTxId = t1, Qty = 9, ClosedBy = 1, ClosedAt = DateTime.Now });
+            var q2 = await QuetSo.QuetCore.ScanAsync(d, new HandoverLedgerService(d));
+            var a2 = await Check(d, "S35 dòng nhiều hơn");
+            Ok(q2.Findings.Any(f => f.Kind == QuetSo.QuetCore.CloseLech && f.Detail.Contains("KHÔNG THỂ")) && a2.G("KHO").ConGiao == 16,
+               "Dòng nhiều hơn phiếu: QuetSo báo KHÔNG THỂ, sổ vẫn tính theo phiếu (Kho còn 16)", string.Join(" | ", q2.Findings.Select(f => f.Detail)));
+            d.HandoverTxCloses.List.Clear();
+            var q3 = await QuetSo.QuetCore.ScanAsync(d, new HandoverLedgerService(d));
+            d.HandoverTxCloses.List.Add(new HandoverTxClose { CloseId = 2, HandoverTxId = t1, Qty = 6, ClosedBy = 1, ClosedAt = DateTime.Now });
+            var q4 = await QuetSo.QuetCore.ScanAsync(d, new HandoverLedgerService(d));
+            Ok(!q4.Findings.Any(f => f.Kind == QuetSo.QuetCore.CloseLech), "Khớp → QuetSo không báo CLOSE_LECH");
+        }
+        // [NHAN-DOI-O-NC 2026-11-06] SQL 14 HandoverReceives.ToNC: phiếu mang vụ vào Gia công ô Hàng lỗi (không NC), bên nhận đổi ô sang Hàng lỗi đã xử lý
+        //   → trước: hàng vào NC đầu (lùi không lý do). Nay NC của vụ (vụ NG ở NC2 → NC2), chỉ lùi NC trước + lý do, NC sau chặn.
+        Console.WriteLine("[S36] [NHAN-DOI-O-NC] Vụ NG ở NC2 → GC trả Kho ô Hàng lỗi → Kho chuyển lại GC ô Hàng lỗi → GC nhận đổi ô Hàng lỗi đã xử lý: vào NC2 (trước: NC1); NC3 chặn; NC1 cần lý do");
+        {
+            Seed36(out var d, out var s, out var txBack);
+            var b = await Check(d, "S36 trước nhận");
+            var r3 = await s.ReceiveAsync(txBack, 1, 0, null, Gc, null, HandoverCell.Xl, "da sua xong", null, "NC3", "thu nc sau");
+            Ok(!r3.Ok && r3.Error.Contains("không bỏ qua NC") && d.HandoverReceives.List.Count(r => r.HandoverTxId == txBack) == 0, "Chọn NC3 (sau NC của vụ) bị chặn, không ghi", r3.Error);
+            var r1 = await s.ReceiveAsync(txBack, 1, 0, null, Gc, null, HandoverCell.Xl, "da sua xong", null, "NC1", null);
+            Ok(!r1.Ok && r1.Error.Contains("lý do"), "Chọn NC1 (làm lại) không lý do bị chặn", r1.Error);
+            var x0 = await s.ReceiveAsync(txBack, 0, 1, null, Gc, null, null, null, null, "NC2", null);   // nhận vào ô Hàng lỗi: số ở ô NG
+            Ok(!x0.Ok && x0.Error.Contains("không chọn NC"), "Không đổi ô (vào ô Hàng lỗi) mà gửi NC → báo không chọn NC được", x0.Error);
+            var r = await s.ReceiveAsync(txBack, 1, 0, null, Gc, null, HandoverCell.Xl, "da sua xong", null);
+            var a = await Check(d, "S36 nhận vào NC2");
+            var rr = d.HandoverReceives.List.Last();
+            var nc1b = b.G("GC").Steps.First(x => x.Code == "NC1").Waiting; var nc2b = b.G("GC").Steps.First(x => x.Code == "NC2").Waiting;
+            var nc1a = a.G("GC").Steps.First(x => x.Code == "NC1").Waiting; var nc2a = a.G("GC").Steps.First(x => x.Code == "NC2").Waiting;
+            Ok(r.Ok && rr.ToNC == "NC2" && nc2a == nc2b + 1 && nc1a == nc1b, "Mặc định theo vụ: lần nhận lưu NC2, chờ NC2 +1, NC1 không đổi", $"{r.Error} · ToNC {rr.ToNC} · NC1 {nc1b}→{nc1a} NC2 {nc2b}→{nc2a}");
+            var inp = (await new HandoverLedgerService(d).GetInputForDetailAsync(1))!;
+            Ok(inp.Txs.Single(t => t.Id == txBack).Receives.Single().ToNC == "NC2", "Sổ nạp ToNC của lần nhận");
+            // làm lại NC1 có lý do
+            Seed36(out var e, out var se, out var txE);
+            var re = await se.ReceiveAsync(txE, 1, 0, null, Gc, null, HandoverCell.Xl, "da sua xong", null, "nc1", "kiem lai kich thuoc");   // chữ thường: lưu đúng mã NC1 (rà độc lập T3)
+            var ae = await Check(e, "S36 làm lại NC1");
+            var rre = e.HandoverReceives.List.Last();
+            Ok(re.Ok && rre.ToNC == "NC1" && (rre.Notes ?? "").Contains("Làm lại từ NC1") && (rre.Notes ?? "").Contains("kiem lai kich thuoc"),
+               "Làm lại NC1 + lý do: lưu NC1, lý do vào Ghi chú lần nhận", re.Error + " · " + rre.ToNC + " · " + rre.Notes);
+            // rà độc lập 06/11 C1: phiếu CHỈ ĐỊNH SẴN ô Hàng lỗi đã xử lý không NC (bên giao chọn "như hàng mới — làm lại từ đầu") → nhận không đổi ô:
+            //   giữ ý bên giao (vào NC đầu), KHÔNG tự điền NC vụ; gửi NC thì báo không chọn được
+            {
+                var f = Seed(); var sf = new HandoverService(f); WtsSvcHelp.Reset();
+                await sf.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI", toNC: "NC1"); await sf.ReceiveAsync(LastTx(f), 2, 0, null, Gc);
+                await WtsSvcHelp.SaveAsync(f, 1, "GC", "NC1", null, 2, 0, Gc);
+                var wf = await WtsSvcHelp.SaveAsync(f, 1, "GC", "NC2", null, 0, 1, Gc, catId: 2);
+                var vf = f.WtsProductionLogs.List.Single(z => z.WtsLogId == wf.LogId).NgCaseId;
+                await sf.IssueByCellAsync(1, "GC", "KHO", 1, Gc, "LOI", false, "LOI", ngCaseId: vf); await sf.ReceiveAsync(LastTx(f), 0, 1, null, 1, null, HandoverCell.Loi);
+                var gx = await sf.IssueByCellAsync(1, "KHO", "GC", 1, 1, "LOI", false, "XL", ngCaseId: vf); var tx = LastTx(f);
+                var bf = await Check(f, "S36 C1 trước");
+                var rz = await sf.ReceiveAsync(tx, 1, 0, null, Gc, null, null, null, null, "NC2", null);
+                var rf = await sf.ReceiveAsync(tx, 1, 0, null, Gc);
+                var af = await Check(f, "S36 C1 nhận");
+                Ok(gx.Ok && !rz.Ok && rf.Ok && f.HandoverReceives.List.Last().ToNC == null
+                   && af.G("GC").Steps.First(x => x.Code == "NC1").Waiting == bf.G("GC").Steps.First(x => x.Code == "NC1").Waiting + 1,
+                   "C1: phiếu chỉ định sẵn ô Hàng lỗi đã xử lý không NC → nhận giữ ý bên giao (vào NC1, ToNC trống); gửi NC → báo không chọn được", $"{gx.Error}|{rz.Error}|{rf.Error} · {f.HandoverReceives.List.Last().ToNC}");
+            }
+            // đối chứng: bỏ ToNC lần nhận (như dữ liệu trước SQL 14) → sổ tính như cũ: vào NC1
+            var inpOld = HandoverWhyTest.CloneInput(inp);
+            foreach (var t in inpOld.Txs) t.Receives = t.Receives.Select(x => x with { ToNC = null }).ToList();
+            var old = HandoverLedgerService.Compute(inpOld);
+            Ok(old.G("GC").Steps.First(x => x.Code == "NC1").Waiting == nc1b + 1, "Đối chứng: lần nhận không NC (dữ liệu cũ) → vào NC đầu như trước");
         }
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;

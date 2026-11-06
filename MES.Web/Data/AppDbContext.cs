@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<KhPlan> KhPlans => Set<KhPlan>();
     public DbSet<KhPlanDetail> KhPlanDetails => Set<KhPlanDetail>();
     public DbSet<KhPlanDetailChangeLog> KhPlanDetailChangeLogs => Set<KhPlanDetailChangeLog>();
+    public DbSet<KhPlanDeletedDetail> KhPlanDeletedDetails => Set<KhPlanDeletedDetail>();   // [KHE-5 2026-11-06] ảnh chụp PO trước khi xoá (SQL 11)
     public DbSet<StockTransaction> StockTransactions => Set<StockTransaction>();
     public DbSet<FileStorage> FileStorages => Set<FileStorage>();
     public DbSet<FileAttachment> FileAttachments => Set<FileAttachment>();
@@ -92,6 +93,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận
     public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO] Kết quả sửa (chứng từ nội bộ nhóm)
     public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO] KCS xác nhận hàng sửa
+    public DbSet<HandoverTxClose> HandoverTxCloses => Set<HandoverTxClose>();                 // [K5-CLOSE-NHIEU 2026-11-06] mỗi lần huỷ phần chưa nhận 1 dòng (SQL 10)
     // [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi (nhãn, không lưu số)
     public DbSet<NgCategory> NgCategories => Set<NgCategory>();
     public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
@@ -100,6 +102,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     // ==== Cài đặt ca làm việc ====
     public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
     public DbSet<CaLamViec_NghiGiaiLao> CaLamViec_NghiGiaiLaos => Set<CaLamViec_NghiGiaiLao>();
+    public DbSet<CaLamViecChangeLog> CaLamViecChangeLogs => Set<CaLamViecChangeLog>();   // [CA-LOG 2026-11-06] lịch sử sửa ca (SQL 13)
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -253,6 +256,18 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .WithMany(x => x.Details)
             .HasForeignKey(x => x.KhPlanId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // ==== [KHE-5 2026-11-06] Ảnh chụp PO trước khi xoá (SQL 11_KHE5_KhPlanDeletedDetails.sql) — không khoá ngoại ====
+        mb.Entity<KhPlanDeletedDetail>().ToTable("KhPlanDeletedDetails");
+        mb.Entity<KhPlanDeletedDetail>().HasKey(x => x.DeletedId);
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.PlanNo).HasMaxLength(50);
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.PurchaseOrder).HasMaxLength(100);
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.PartNo).HasMaxLength(100);
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.DetailJson).IsRequired();
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.Reason).HasMaxLength(500).IsRequired();
+        mb.Entity<KhPlanDeletedDetail>().Property(x => x.DeletedAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<KhPlanDeletedDetail>().HasIndex(x => x.KhPlanDetailId).HasDatabaseName("IX_KhPlanDeletedDetails_Detail");
+        mb.Entity<KhPlanDeletedDetail>().HasIndex(x => x.PurchaseOrder).HasDatabaseName("IX_KhPlanDeletedDetails_PO");
 
         // ==== KhPlanDetailChangeLog ====
         mb.Entity<KhPlanDetailChangeLog>().HasIndex(x => new { x.KhPlanDetailId, x.FieldName, x.ChangedAt });
@@ -696,6 +711,21 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasForeignKey(x => x.VoidedBy)
             .OnDelete(DeleteBehavior.NoAction);
 
+        mb.Entity<HandoverReceive>().Property(x => x.ToNC).HasMaxLength(20);   // [NHAN-DOI-O-NC 2026-11-06] SQL 14
+
+        // ==== [K5-CLOSE-NHIEU 2026-11-06] Huỷ phần chưa nhận — mỗi lần 1 dòng (SQL 10_K5CLOSE_HandoverTxCloses.sql) ====
+        mb.Entity<HandoverTxClose>().ToTable("HandoverTxCloses");
+        mb.Entity<HandoverTxClose>().HasKey(x => x.CloseId);
+        mb.Entity<HandoverTxClose>().Property(x => x.Qty).HasPrecision(10, 2);
+        mb.Entity<HandoverTxClose>().Property(x => x.Reason).HasMaxLength(200);
+        mb.Entity<HandoverTxClose>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<HandoverTxClose>().HasIndex(x => new { x.HandoverTxId, x.ClosedAt }).HasDatabaseName("IX_HandoverTxCloses_Tx");
+        mb.Entity<HandoverTxClose>()
+            .HasOne<HandoverTransaction>().WithMany()
+            .HasForeignKey(x => x.HandoverTxId)
+            .HasConstraintName("FK_HandoverTxCloses_HandoverTransactions")
+            .OnDelete(DeleteBehavior.NoAction);
+
         // ==== [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi ====
         mb.Entity<NgCategory>().ToTable("NgCategories");
         mb.Entity<NgCategory>().HasKey(x => x.NgCategoryId);
@@ -711,8 +741,15 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         mb.Entity<NgCategoryChangeLog>().Property(x => x.NewValue).HasMaxLength(1000);
         mb.Entity<NgCase>().ToTable("NgCases");
         mb.Entity<NgCase>().HasKey(x => x.NgCaseId);
+        // [VL9 2026-11-06] Nguồn: CLAUDE 28/10 (VL9 mã vụ trùng từ vụ 1.000.001), HÙNG 05/11 15:37 chốt (B4).
+        //   Công thức mới = SQL 12_VL9_NgCaseNo.sql (Hùng chạy MES 06/11 17:47): < 1 triệu 6 số, ≥ 1 triệu đủ số — khớp NgCaseNo.Format.
+        //   Trước: RIGHT(…, 6) → vụ 1.000.001 cắt thành VL000001 (trùng vụ 1). Chỉ dùng khi app tự tạo DB trống (EnsureCreated); DB có sẵn không đổi gì.
         mb.Entity<NgCase>().Property(x => x.CaseNo).HasMaxLength(20)
-            .HasComputedColumnSql("('VL' + RIGHT('000000' + CAST([NgCaseId] AS varchar(20)), 6))", stored: true);
+            .HasComputedColumnSql("('VL' + CASE WHEN [NgCaseId] < 1000000 THEN RIGHT('000000' + CAST([NgCaseId] AS varchar(20)), 6) ELSE CAST([NgCaseId] AS varchar(20)) END)", stored: true);
+        // [VL9 2026-11-06] Khai chỉ mục duy nhất đang có trên DB MES (tạo bằng SQL lúc làm VULOI, trước đây không khai ở đây → DB dựng mới thiếu chỉ mục).
+        //   Hùng gửi sys.indexes 06/11 17:43: UX_NgCases_CaseNo NONCLUSTERED, unique, không lọc, 1 cột CaseNo.
+        //   HasFilter(null): cột cho phép null → EF tự thêm lọc "[CaseNo] IS NOT NULL", mà SQL Server không cho lọc theo cột tính (rà độc lập T7) — DB thật không lọc.
+        mb.Entity<NgCase>().HasIndex(x => x.CaseNo).IsUnique().HasFilter(null).HasDatabaseName("UX_NgCases_CaseNo");
         mb.Entity<NgCase>().Property(x => x.OriginKind).HasMaxLength(10).IsRequired();
         mb.Entity<NgCase>().Property(x => x.DetectGroupCode).HasMaxLength(20).IsRequired();
         mb.Entity<NgCase>().Property(x => x.DetectNC).HasMaxLength(20);
@@ -726,6 +763,13 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasOne(x => x.NgCategory).WithMany()
             .HasForeignKey(x => x.NgCategoryId)
             .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [CA-LOG 2026-11-06] Lịch sử sửa ca (SQL 13_CA_CaLamViecChangeLogs.sql) — không khoá ngoại ====
+        mb.Entity<CaLamViecChangeLog>().ToTable("CaLamViecChangeLogs");
+        mb.Entity<CaLamViecChangeLog>().HasKey(x => x.LogId);
+        mb.Entity<CaLamViecChangeLog>().Property(x => x.Action).HasMaxLength(20).IsRequired();
+        mb.Entity<CaLamViecChangeLog>().Property(x => x.ChangedAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<CaLamViecChangeLog>().HasIndex(x => new { x.CaId, x.ChangedAt }).HasDatabaseName("IX_CaLamViecChangeLogs_Ca");
 
         // ==== CaLamViec ====
         mb.Entity<CaLamViec>().HasKey(x => x.CaId);

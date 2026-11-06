@@ -50,6 +50,8 @@ namespace MES.Web.Services
         public string? ToCell            { get; set; }
         /// <summary>[VULOI] Vụ lỗi phiếu mang theo (bên nhận không chọn — vụ đi theo phiếu).</summary>
         public long?   NgCaseId          { get; set; }
+        /// <summary>[NHAN-DOI-O-NC 2026-11-06] NC nhận bên giao chọn (Gia công). Trống + nhận ô Hàng lỗi đã xử lý / Hàng mới → bên nhận chọn NC theo vụ.</summary>
+        public string? ToNC              { get; set; }
     }
 
     /// <summary>[GN-NG-AFTER] Dòng "Báo hàng lỗi phát hiện sau khi nhận" cho Lịch sử phiếu.</summary>
@@ -72,6 +74,16 @@ namespace MES.Web.Services
         public string?  VoidReason     { get; set; }
         public string   VoidedByName   { get; set; } = string.Empty;
         public DateTime? VoidedAt      { get; set; }
+    }
+
+    /// <summary>[K5-CLOSE-NHIEU 2026-11-06] 1 lần huỷ phần chưa nhận để hiện ở Lịch sử phiếu.</summary>
+    public class HandoverCloseItem
+    {
+        public decimal  Qty      { get; set; }
+        public DateTime ClosedAt { get; set; }
+        public string?  Reason   { get; set; }
+        public string   ByName   { get; set; } = string.Empty;
+        public bool     IsMigrated { get; set; }
     }
 
     public class HandoverLogItem
@@ -102,6 +114,8 @@ namespace MES.Web.Services
         public DateTime? ClosedAt    { get; set; }
         public string? ClosedReason  { get; set; }
         public string  ClosedByName  { get; set; } = string.Empty;
+        /// <summary>[K5-CLOSE-NHIEU 2026-11-06] Từng lần huỷ phần chưa nhận (bảng HandoverTxCloses), cũ → mới. Rỗng = phiếu chưa có dòng (dữ liệu trước SQL 10) → trang hiện bộ cột cũ.</summary>
+        public List<HandoverCloseItem> Closes { get; set; } = new();
 
         public string? Notes         { get; set; }
 
@@ -156,6 +170,7 @@ namespace MES.Web.Services
         public string? ToCell         { get; set; }
         public string? ToCellReason   { get; set; }
         public long?   NgCaseId       { get; set; }   // [VULOI] vụ lỗi sinh ra ở lần nhận (hoặc vụ của phiếu)
+        public string? ToNC           { get; set; }   // [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (đổi ô, phiếu không có NC)
         public bool    IsVoided       { get; set; }
 
         public string? VoidReason     { get; set; }
@@ -252,7 +267,12 @@ namespace MES.Web.Services
                 .ToListAsync();
 
             // [GN-VOID-RULE] tên người huỷ phần chưa nhận (không có navigation cho ClosedBy)
-            var closerIds = txs.Where(t => t.ClosedBy != null).Select(t => t.ClosedBy!.Value).Distinct().ToList();
+            // [K5-CLOSE-NHIEU 2026-11-06] từng lần huỷ (bảng HandoverTxCloses)
+            var closedIds = txs.Where(t => (t.QtyClosed ?? 0) > 0).Select(t => t.HandoverTxId).ToList();
+            var closeRows = closedIds.Count == 0 ? new List<HandoverTxClose>()
+                : await _db.HandoverTxCloses.AsNoTracking().Where(c => closedIds.Contains(c.HandoverTxId)).ToListAsync();
+            var closerIds = txs.Where(t => t.ClosedBy != null).Select(t => t.ClosedBy!.Value)
+                .Concat(closeRows.Select(c => c.ClosedBy)).Distinct().ToList();
             var closers = closerIds.Count == 0 ? new Dictionary<int, string>()
                 : (await _db.Users.Where(u => closerIds.Contains(u.UserId)).AsNoTracking().ToListAsync())
                     .ToDictionary(u => u.UserId, u => string.IsNullOrEmpty(u.FullName) ? u.Username : u.FullName);
@@ -284,6 +304,9 @@ namespace MES.Web.Services
                 ClosedAt      = t.ClosedAt,
                 ClosedReason  = t.ClosedReason,
                 ClosedByName  = t.ClosedBy != null && closers.TryGetValue(t.ClosedBy.Value, out var cn) ? cn : "",
+                Closes        = closeRows.Where(c => c.HandoverTxId == t.HandoverTxId).OrderBy(c => c.ClosedAt).ThenBy(c => c.CloseId)   // [K5-CLOSE-NHIEU]
+                                    .Select(c => new HandoverCloseItem { Qty = c.Qty, ClosedAt = c.ClosedAt, Reason = c.Reason, IsMigrated = c.IsMigrated,
+                                                                         ByName = closers.TryGetValue(c.ClosedBy, out var cb) ? cb : "" }).ToList(),
 
                 Notes         = t.Notes,
 
@@ -320,6 +343,7 @@ namespace MES.Web.Services
                     ToCell         = r.ToCell,         // [GN-CELL2]
                     ToCellReason   = r.ToCellReason,   // [GN-CELL2]
                     NgCaseId       = r.NgCaseId,       // [VULOI]
+                    ToNC           = r.ToNC,           // [NHAN-DOI-O-NC]
                     IsVoided       = r.IsVoided,
 
                     VoidReason     = r.VoidReason,
@@ -403,6 +427,7 @@ namespace MES.Web.Services
                                      : HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell
                                      : (t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : null)) is string pp2 ? HandoverCell.ReceiveCellOf(pp2) : null,
                     NgCaseId         = t.NgCaseId,    // [VULOI]
+                    ToNC             = t.ToNC,        // [NHAN-DOI-O-NC]
                 };
 
             }).ToList();
@@ -758,8 +783,9 @@ namespace MES.Web.Services
 
         // ----------------------------------------------------------------
 
-        public Task<(bool Ok, string Error)> ReceiveAsync(long handoverTxId, decimal qtyOk, decimal qtyNg, string? ngReason, int receivedByUserId, string? notes = null, string? toCell = null, string? toCellReason = null, int? ngCategoryId = null)
-            => RetryDeadlockAsync(() => ReceiveOnceAsync(handoverTxId, qtyOk, qtyNg, ngReason, receivedByUserId, notes, toCell, toCellReason, ngCategoryId));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
+        public Task<(bool Ok, string Error)> ReceiveAsync(long handoverTxId, decimal qtyOk, decimal qtyNg, string? ngReason, int receivedByUserId, string? notes = null, string? toCell = null, string? toCellReason = null, int? ngCategoryId = null,
+                                                        string? toNc = null, string? toNcReason = null)   // [NHAN-DOI-O-NC] NC nhận khi đổi ô vào Gia công (null = mặc định theo vụ, "@NEW" = như hàng mới)
+            => RetryDeadlockAsync(() => ReceiveOnceAsync(handoverTxId, qtyOk, qtyNg, ngReason, receivedByUserId, notes, toCell, toCellReason, ngCategoryId, toNc, toNcReason));   // [RS-D10] tự thử lại khi bị chọn làm nạn nhân deadlock
 
         private async Task<(bool Ok, string Error)> ReceiveOnceAsync(
 
@@ -777,7 +803,9 @@ namespace MES.Web.Services
 
             string? toCell = null,          // [GN-CELL2] ô bên nhận chọn (null = theo ô bên giao chỉ định)
             string? toCellReason = null,    // [GN-CELL2] bắt buộc khi đổi khác ô chỉ định
-            int? ngCategoryId = null)       // [VULOI] loại lỗi khi lần nhận SINH vụ mới (NG đếm lúc nhận / nhận vào ô Hàng lỗi, Hàng sửa)
+            int? ngCategoryId = null,       // [VULOI] loại lỗi khi lần nhận SINH vụ mới (NG đếm lúc nhận / nhận vào ô Hàng lỗi, Hàng sửa)
+            string? toNc = null,            // [NHAN-DOI-O-NC] NC nhận (xem ReceiveNcAsync)
+            string? toNcReason = null)      // [NHAN-DOI-O-NC] lý do khi lùi về NC trước NC của vụ
         {
 
             if (qtyOk < 0 || qtyNg < 0)
@@ -882,11 +910,15 @@ namespace MES.Web.Services
                 ngReason = !string.IsNullOrWhiteSpace(txHead.NgReason) ? txHead.NgReason : "Hàng lỗi trả về";   // phiếu mang vụ: lỗi theo phiếu
             if (qtyNg > 0 && string.IsNullOrWhiteSpace(ngReason))
                 return (false, "Bắt buộc nhập lý do khi có hàng NG.");
+            // [NHAN-DOI-O-NC 2026-11-06] NC nhận của lần nhận này (đổi ô vào Gia công, phiếu không có NC) — theo vụ, K2
+            var (eNc, rcvToNc, ncNote) = ReceiveNc(before, tx, desigCell, effCell, carryTx, toNc, toNcReason);
+            if (eNc != null) return (false, eNc);
+            if (ncNote != null) { notes = string.IsNullOrWhiteSpace(notes) ? ncNote : ncNote + " | " + notes; if (notes.Length > 500) notes = notes[..500]; }
             if (rcvCat != null)
             {
                 var vu = await NgCaseService.CreateCaseAsync(_db, tx.KhPlanDetailId, rcvCat,
                     effCell is HandoverCell.Loi or HandoverCell.Sua ? NgOrigin.NhanLoi : NgOrigin.Nhan,
-                    tx.ToGroupCode, tx.ToGroupCode == "GC" ? tx.ToNC : null, tx.FromGroupCode, receivedByUserId);
+                    tx.ToGroupCode, tx.ToGroupCode == "GC" ? (rcvToNc ?? tx.ToNC) : null, tx.FromGroupCode, receivedByUserId);   // [NHAN-DOI-O-NC] NG lúc nhận ở NC lần nhận
                 rcvCaseId = vu.NgCaseId;
             }
 
@@ -907,6 +939,7 @@ namespace MES.Web.Services
                 ToCell       = desigCell != null ? effCell : null,                 // [GN-CELL2] ô thực nhận
                 ToCellReason = cellChanged ? toCellReason!.Trim() : null,          // [GN-CELL2]
                 NgCaseId     = rcvCaseId,                                          // [VULOI]
+                ToNC         = rcvToNc,                                            // [NHAN-DOI-O-NC]
                 ReceivedBy   = receivedByUserId,
 
                 ReceivedAt   = DateTime.Now,
@@ -965,6 +998,38 @@ namespace MES.Web.Services
 
             return (true, string.Empty);
 
+        }
+
+        /// <summary>
+        /// [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của 1 lần nhận. Áp khi: nhận vào Gia công ô Hàng lỗi đã xử lý / Hàng mới, phiếu KHÔNG có NC
+        ///   nhận (vd phiếu mang vụ giao ô Hàng lỗi / Hàng sửa, bên nhận đổi ô), không phải phiếu theo NC, PO có NC thường. Trước SQL 14: luôn vào NC đầu
+        ///   (lùi không lý do, trái K2). Nay theo luật NC làm tiếp như form Giao (HandoverForm.CaseNextNc / CheckNextNc): mặc định NC của vụ, chỉ lùi về
+        ///   NC trước + lý do (ghi vào Ghi chú), NC sau chặn; hàng lỗi cũ chưa mã vụ (vụ 0) / phiếu không mang vụ = như hàng mới, được chọn NC khác + lý do.
+        ///   Trả (lỗi, NC lưu vào HandoverReceives.ToNC — null = như hàng mới / không áp, chữ thêm vào Ghi chú). Nguồn: HÙNG 06/11 06:56 + 18:11 (ô chọn NC).
+        /// </summary>
+        static (string? Error, string? ToNc, string? Note) ReceiveNc(LedgerRow? before, HandoverTransaction tx, string? desigCell, string? effCell, bool carryTx, string? toNc, string? reason)
+        {
+            var raw = string.IsNullOrWhiteSpace(toNc) ? null : toNc.Trim();
+            // [NHAN-DOI-O-NC] rà độc lập 06/11 C1 (Cao): CHỈ khi bên nhận đổi từ ô bên giao chỉ định Hàng lỗi / Hàng sửa sang ô đạt. Phiếu chỉ định
+            //   sẵn ô Hàng lỗi đã xử lý / Hàng mới: bên giao đã qua luật NC (form Giao — CaseToNcAsync), ToNC trống ở đó là CHỦ Ý ("như hàng mới — làm lại
+            //   từ đầu" kèm lý do) → không được tự điền NC vụ đè lên (trước bản vá: hàng phải làm lại từ đầu nằm chờ NC cuối, bỏ qua NC). Cũng hết T4
+            //   (phôi Kho → GC Hàng mới không NC hiện ô chọn NC).
+            bool applies = before != null && tx.ToGroupCode == "GC" && effCell is HandoverCell.Xl or HandoverCell.Moi
+                        && desigCell is HandoverCell.Loi or HandoverCell.Sua
+                        && string.IsNullOrWhiteSpace(tx.ToNC)
+                        && tx.Purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn)
+                        && before.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
+            if (!applies)
+                return raw == null ? (null, null, null) : ("Lần nhận này không chọn NC nhận được (phiếu đã có NC nhận, hoặc không vào Gia công ô Hàng lỗi đã xử lý / Hàng mới).", null, null);
+            var caseKey = carryTx ? (tx.NgCaseId ?? 0) : 0;
+            var def = HandoverForm.CaseNextNc(before!, caseKey, "GC");
+            var chosen = raw == null ? def : raw == FormNewNc ? null : raw;
+            // [NHAN-DOI-O-NC] rà độc lập T3: đưa về đúng chữ mã NC như sổ (khoá "in:"+NC phân biệt hoa thường) — trước: gửi "nc2" lưu "nc2", sổ cho vào NC đầu
+            if (chosen != null)
+                chosen = before!.G("GC").Steps.FirstOrDefault(s => s.Pg == "GC" && string.Equals(s.Code, chosen, StringComparison.OrdinalIgnoreCase))?.Code ?? chosen;
+            var (err, add) = HandoverForm.CheckNextNc(before!, def, chosen, reason, free: caseKey == 0);
+            if (err != null) return (err, null, null);
+            return (null, chosen, add);
         }
 
         // ----------------------------------------------------------------
@@ -1472,12 +1537,22 @@ namespace MES.Web.Services
             if (closed <= 0)
                 return (false, "Phiếu đã nhận đủ, không còn phần chưa nhận.");
 
+            var closedAt = DateTime.Now;   // [K5-CLOSE-NHIEU] 1 giờ chung cho dòng huỷ + bộ cột cũ
             tx.QtyIssued    = received;
             tx.QtyClosed    = (tx.QtyClosed ?? 0) + closed;
             tx.ClosedBy     = userId;
-            tx.ClosedAt     = DateTime.Now;
+            tx.ClosedAt     = closedAt;
             var why = string.IsNullOrEmpty(tx.ClosedReason) ? reason.Trim() : tx.ClosedReason + " | " + reason.Trim();
             tx.ClosedReason = why.Length > 200 ? why[..200] : why;
+            // [K5-CLOSE-NHIEU 2026-11-06] mỗi lần huỷ phần chưa nhận = 1 dòng HandoverTxCloses (số, người, giờ, lý do lần này), cùng giao dịch.
+            //   Bộ cột cũ ở trên vẫn ghi tổng (trang cũ / báo cáo); sổ đọc từng dòng (HandoverLedgerService.LoadInputsAsync).
+            //   Trước: chỉ bộ cột cũ → lần 2 ghi đè giờ / người lần 1 + chặn oan theo thời gian (fuzz seed 602). Nguồn: HÙNG 05/11 19:33 chốt A.
+            var why1 = reason.Trim();
+            _db.HandoverTxCloses.Add(new HandoverTxClose
+            {
+                HandoverTxId = tx.HandoverTxId, Qty = closed, ClosedBy = userId, ClosedAt = closedAt,
+                Reason = why1.Length > 200 ? why1[..200] : why1, IsMigrated = false, CreatedAt = closedAt,
+            });
             if (tx.NgQty > tx.QtyIssued) tx.NgQty = tx.QtyIssued;   // phiếu hàng lỗi: số NG khai báo theo phiếu còn lại
             tx.Status       = "COMPLETED";
             await _db.SaveChangesAsync();
@@ -1910,7 +1985,7 @@ namespace MES.Web.Services
 
                          && r.Transaction.ToGroupCode == groupCode)
 
-                .Select(r => new { r.QtyOk, r.Transaction.ToNC })
+                .Select(r => new { r.QtyOk, ToNC = r.ToNC ?? r.Transaction.ToNC })   // [NHAN-DOI-O-NC] NC của lần nhận nếu có
 
                 .ToListAsync();
 

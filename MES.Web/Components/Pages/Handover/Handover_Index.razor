@@ -596,6 +596,7 @@ else
                                                 </div>
                                             }
                                         }
+                                        @RecvNcPicker(p)   @* [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công theo vụ (đổi ô, phiếu không có NC) *@
                                         @* [GN-RECV-NG2] Nhận vào ô Hàng lỗi (phiếu hàng lỗi lập tay / tự lập, hoặc bên nhận chọn ô Hàng lỗi): toàn bộ là hàng lỗi →
                                            giữ bố cục form, ô "Số lượng nhận đạt" khoá xám, nhập số nhận ở ô Hàng lỗi, lỗi lấy theo phiếu *@
                                         <div class="row g-2 mb-2">
@@ -816,6 +817,7 @@ else
                                             <td>@r.ReceivedByName</td>
                                             <td>
                                                 @HandoverCell.Label(r.ToCell ?? tx.ToCell)
+                                                @if (!string.IsNullOrEmpty(r.ToNC)) { <span class="text-muted"> · vào @HandoverLedgerService.NcText(r.ToNC)</span> }   @* [NHAN-DOI-O-NC] *@
                                                 @if (!string.IsNullOrEmpty(r.ToCellReason))
                                                 {
                                                     <div class="small text-warning-emphasis" title="@r.ToCellReason">đổi từ @HandoverCell.Label(tx.ToCell): @r.ToCellReason</div>
@@ -998,6 +1000,8 @@ else
     // [VULOI] _receiveNgReason bỏ: lỗi chọn từ DS Lỗi, không gõ tay
     string  _receiveNotes    = "";
     string  _receiveCell       = "";   // [GN-CELL2] ô bên nhận chọn ("" = theo bên giao chỉ định)
+    string  _receiveNc         = "";   // [NHAN-DOI-O-NC] "" = NC mặc định theo vụ; "@NEW" = như hàng mới; khác = NC chọn (chỉ NC trước, bắt lý do)
+    string  _receiveNcReason   = "";   // [NHAN-DOI-O-NC]
     string  _receiveCellReason = "";   // [GN-CELL2] lý do khi đổi
 
     List<HandoverLogItem> _logItems  = new();
@@ -1896,6 +1900,7 @@ else
         _receiveQtyOk = 0; _receiveQtyNg = 0; _receiveNotes = "";
         _receiveCatId = null;   // [VULOI]
         _receiveCell = ""; _receiveCellReason = "";   // [GN-CELL2]
+        _receiveNc = ""; _receiveNcReason = "";       // [NHAN-DOI-O-NC]
     }
 
     void ToggleExpandTx(long txId)
@@ -1927,6 +1932,8 @@ else
         if (pend != null && cell != null && cell != pend.ToCell && string.IsNullOrWhiteSpace(_receiveCellReason))
         { _modalError = "Đổi phân loại khác bên giao chỉ định: bắt buộc ghi lý do."; _saving = false; return; }
         if (pend != null && pend.IsAutoReturn) cell = null;
+        if (pend != null && RecvNcEarlier(pend) && _receiveNcReason.Trim().Length < HandoverForm.NcReasonMin)   // [NHAN-DOI-O-NC] máy chủ cũng kiểm
+        { _modalError = $"Ghi lý do chọn NC này (ít nhất {HandoverForm.NcReasonMin} ký tự)."; _saving = false; return; }
         // [VULOI] lần nhận sinh vụ mới (phiếu không mang vụ + vào ô Hàng lỗi / Hàng sửa, hoặc có NG lúc nhận): bắt chọn loại lỗi
         if (pend != null && !RecvCarry(pend) && (RecvLoi(pend) || RecvSua(pend) || _receiveQtyNg > 0) && _receiveCatId == null)
         { _modalError = NgCaseService.MsgPickCategory; _saving = false; return; }
@@ -1935,7 +1942,9 @@ else
         {
         (bool ok, string err) = await HandoverSvc.ReceiveAsync(txId, cell == HandoverCell.Loi ? 0 : _receiveQtyOk, cell == HandoverCell.Sua ? 0 : _receiveQtyNg, null, _currentUserId, _receiveNotes,
             toCell: cell, toCellReason: cell != null && pend != null && cell != pend.ToCell ? _receiveCellReason : null,
-            ngCategoryId: _receiveCatId);   // [VULOI] lỗi chọn từ DS Lỗi (trước: _receiveNgReason gõ tay)
+            ngCategoryId: _receiveCatId,   // [VULOI] lỗi chọn từ DS Lỗi (trước: _receiveNgReason gõ tay)
+            toNc: pend != null && RecvNcApplies(pend) && !string.IsNullOrEmpty(_receiveNc) ? _receiveNc : null,   // [NHAN-DOI-O-NC] trống = máy chủ tự điền NC theo vụ
+            toNcReason: pend != null && RecvNcEarlier(pend) ? _receiveNcReason : null);
         _saving = false;
         if (!ok) { _modalError = err; return; }
         _expandedTxId = 0;
@@ -1958,6 +1967,42 @@ else
         => p.Purpose ?? (p.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);
 
     // [GN-RECV-NG2] Nhận vào ô Hàng lỗi: ô "đạt" khoá xám, chỉ nhập ô Hàng lỗi. [GN-CELL2] xét theo ô bên nhận đang chọn (trước: theo loại phiếu)
+    // ── [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (SQL 14): nhận vào Gia công ô Hàng lỗi đã xử lý / Hàng mới, phiếu không có NC
+    //   (vd phiếu mang vụ giao ô Hàng lỗi, bên nhận đổi ô). Cùng hàm máy chủ kiểm (HandoverForm.CaseNextNc / NcOptions / CheckNextNc — K2):
+    //   mặc định NC của vụ, chỉ lùi về NC trước kèm lý do; hàng lỗi cũ chưa mã vụ = như hàng mới, chọn NC khác kèm lý do. Trước: luôn vào NC đầu.
+    bool RecvNcApplies(HandoverTxPending p)
+        => _selectedRow != null && _receiveToGroup == "GC" && !p.IsAutoReturn && string.IsNullOrEmpty(p.ToNC)
+           && RecvCellOf(p) is HandoverCell.Xl or HandoverCell.Moi
+           && p.ToCell is HandoverCell.Loi or HandoverCell.Sua   // rà độc lập C1: chỉ khi đổi từ ô Hàng lỗi / Hàng sửa (phiếu chỉ định ô đạt: bên giao đã chọn NC)
+           && p.Purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn)
+           && _selectedRow.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
+    long RecvNcCase(HandoverTxPending p) => RecvCarry(p) ? (p.NgCaseId ?? 0) : 0;
+    List<HandoverForm.NcOpt> RecvNcOpts(HandoverTxPending p)
+        => !RecvNcApplies(p) ? new()
+           : HandoverForm.NcOptions(_selectedRow!, HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC"), free: RecvNcCase(p) == 0);
+    static string RecvNcKey(HandoverForm.NcOpt o) => o.Default ? "" : o.Code ?? HandoverService.FormNewNc;
+    bool RecvNcEarlier(HandoverTxPending p) => !string.IsNullOrEmpty(_receiveNc) && RecvNcOpts(p).FirstOrDefault(o => RecvNcKey(o) == _receiveNc)?.Earlier == true;
+    void OnRecvNcChanged(ChangeEventArgs e) { _receiveNc = e.Value?.ToString() ?? ""; _receiveNcReason = ""; _modalError = ""; }
+    RenderFragment RecvNcPicker(HandoverTxPending p) => __builder =>
+    {
+        var opts = RecvNcOpts(p);
+        if (opts.Count == 0) return;
+        <div class="mb-2">
+            <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào NC (làm tiếp)</label>
+            <select class="form-select form-select-sm" @onchange="OnRecvNcChanged">
+                @foreach (var o in opts)
+                {
+                    <option value="@RecvNcKey(o)" selected="@(RecvNcKey(o) == _receiveNc)">@o.Label</option>
+                }
+            </select>
+            @if (RecvNcEarlier(p))
+            {
+                <label class="form-label form-label-sm mt-1 mb-1">Lý do chọn NC này <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" maxlength="200" @bind="_receiveNcReason" />
+            }
+        </div>
+    };
+
     string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn ? HandoverCell.Loi
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : p.ToCell;
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
@@ -1966,6 +2011,7 @@ else
     {
         var _prevCell = RecvCellOf(p);   // [RA-CASCADE 2026-11-01] ô đang chọn trước khi đổi
         _receiveCell = c; _modalError = "";
+        _receiveNc = ""; _receiveNcReason = "";   // [NHAN-DOI-O-NC] đổi ô → NC về mặc định theo vụ
         // [RA-CASCADE 2026-11-01] Rời ô Hàng lỗi sang ô đạt (Hàng mới / Hàng lỗi đã xử lý): số đã dồn sang ô Hàng lỗi trả về ô đạt
         //   (trước: chọn Hàng lỗi rồi chọn lại Hàng mới → OK 0, NG = cả số → lưu thành "NG đếm thấy", tự lập phiếu trả NG oan).
         if (_prevCell == HandoverCell.Loi && c != HandoverCell.Loi && c != HandoverCell.Sua) { _receiveQtyOk += _receiveQtyNg; _receiveQtyNg = 0; }
@@ -2122,10 +2168,21 @@ else
         => !tx.IsVoided && !r.IsVoided && HandoverService.CanVoidReceive(r.ReceivedBy, tx.ToGroupCode, _currentUserId, _myEditGroups);
     static string VoidIssueBtnText(HandoverLogItem tx) => tx.SourceReceiveId != null ? "Huỷ phiếu (huỷ lần nhận gốc)" : "Huỷ phiếu giao";
     static string ClosedText(HandoverLogItem tx)
-        => $"Đã huỷ phần chưa nhận {tx.QtyClosed:0.##} chiếc (phiếu gốc {tx.QtyIssued + tx.QtyClosed:0.##})"
+    {
+        var head = $"Đã huỷ phần chưa nhận {tx.QtyClosed:0.##} chiếc (phiếu gốc {tx.QtyIssued + tx.QtyClosed:0.##})";
+        // [K5-CLOSE-NHIEU 2026-11-06] có dòng từng lần (HandoverTxCloses) khớp tổng → hiện từng lần: số · người · giờ · lý do
+        if (tx.Closes.Count > 0 && tx.Closes.Sum(c => c.Qty) == tx.QtyClosed)
+            return head + (tx.Closes.Count > 1 ? $" — {tx.Closes.Count} lần: " : " · ")
+                 + string.Join("; ", tx.Closes.Select(c => $"{c.Qty:0.##} chiếc"
+                       + (string.IsNullOrEmpty(c.ByName) ? "" : $" · {c.ByName}")
+                       + $" · {c.ClosedAt:dd/MM HH:mm}"
+                       + (string.IsNullOrEmpty(c.Reason) ? "" : $" · {c.Reason}")
+                       + (c.IsMigrated ? " (chuyển từ dữ liệu cũ)" : "")));
+        return head   // dữ liệu trước SQL 10: bộ cột cũ (người / giờ lần huỷ cuối, lý do ghép)
            + (string.IsNullOrEmpty(tx.ClosedByName) ? "" : $" · {tx.ClosedByName}")
            + (tx.ClosedAt != null ? $" · {tx.ClosedAt:dd/MM HH:mm}" : "")
            + (string.IsNullOrEmpty(tx.ClosedReason) ? "" : $" · {tx.ClosedReason}");
+    }
     // [H10 2026-10-30] Phiếu trả tự lập của lần nhận này đã được bên giao nhận lại → huỷ dây chuyền (máy chủ kiểm quyền + K5 trên kết quả cuối)
     string AutoBackRecvNote(long receiveId)
     {

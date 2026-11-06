@@ -12,7 +12,8 @@ namespace MES.Web.Data.Entities
     public class NgCase
     {
         public long NgCaseId { get; set; }
-        /// <summary>Cột tính sẵn trên SQL ('VL' + 6 số) — chỉ để truy vấn SQL. Code luôn dùng NgCaseNo.Format(NgCaseId).</summary>
+        /// <summary>Cột tính sẵn trên SQL — chỉ để truy vấn SQL. Code luôn dùng NgCaseNo.Format(NgCaseId).
+        /// [VL9 2026-11-06] 'VL' + 6 số khi Id &lt; 1 triệu, đủ số khi ≥ 1 triệu (SQL 12, giống Format); chỉ mục duy nhất UX_NgCases_CaseNo.</summary>
         public string? CaseNo { get; set; }
         public int KhPlanDetailId { get; set; }
         public int NgCategoryId { get; set; }

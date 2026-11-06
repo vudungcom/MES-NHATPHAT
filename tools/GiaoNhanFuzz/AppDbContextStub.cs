@@ -19,6 +19,8 @@ namespace MES.Web.Data
         public DbSet<HandoverNgReport> HandoverNgReports => Set<HandoverNgReport>();   // [GN-NG-AFTER]
         public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO]
         public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO]
+        public DbSet<HandoverTxClose> HandoverTxCloses => Set<HandoverTxClose>();                 // [K5-CLOSE-NHIEU 2026-11-06]
+        public DbSet<KhPlanDeletedDetail> KhPlanDeletedDetails => Set<KhPlanDeletedDetail>();       // [KHE-5 2026-11-06]
         public DbSet<NgCategory> NgCategories => Set<NgCategory>();                   // [VULOI]
         public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
         public DbSet<NgCase> NgCases => Set<NgCase>();
@@ -68,6 +70,7 @@ namespace MES.Web.Data
         public DbSet<WorkerActivityLog> WorkerActivityLogs => Set<WorkerActivityLog>();
         public DbSet<WtsExtraItemLog> WtsExtraItems => Set<WtsExtraItemLog>();
         public DbSet<CaLamViec> CaLamViecs => Set<CaLamViec>();
+        public DbSet<CaLamViecChangeLog> CaLamViecChangeLogs => Set<CaLamViecChangeLog>();   // [CA-LOG 2026-11-06]
         public DbSet<CaLamViec_NghiGiaiLao> CaLamViec_NghiGiaiLaos => Set<CaLamViec_NghiGiaiLao>();
         public DbSet<WtsBreakWorkLog> WtsBreakWorkLogs => Set<WtsBreakWorkLog>();   // [ML17-XN]
 
@@ -77,6 +80,7 @@ namespace MES.Web.Data
             _ = Customers; _ = Users; _ = KhPlans; _ = KhPlanDetails; _ = KhoVatLieus; _ = KhoVatLieuChangeLogs; _ = KhPlanDetailChangeLogs; _ = WtsProductionLogs;
             _ = NgCategories; _ = NgCategoryChangeLogs; _ = NgCases;   // [VULOI]
             _ = HandoverRepairResults; _ = HandoverRepairChecks;   // [GC-SUA-TAI-CHO]
+            _ = HandoverTxCloses; _ = KhPlanDeletedDetails; _ = CaLamViecChangeLogs;   // [K5-CLOSE-NHIEU][KHE-5][CA-LOG] 06/11 — giao dịch quay lại phải thấy cả 3 bảng
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;
             _ = KhPlanRouteSnapshotPackaging; _ = KhPlanRouteSnapshotMachineExclude;

@@ -392,6 +392,12 @@ else
                     <li>Part No: <code class="text-danger">@_deleteTarget.PartNo</code></li>
                     <li>SL: @_deleteTarget.Quantity.ToString("0.####") @_deleteTarget.Unit</li>
                 </ul>
+                @* [KHE-5 2026-11-06] lý do xoá bắt buộc — lưu cùng ảnh chụp PO (KhPlanDeletedDetails) *@
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold">Lý do xoá <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-sm" maxlength="500"
+                           @bind="_deleteReason" placeholder="Vì sao xoá PO này (ít nhất 3 ký tự)" />
+                </div>
                 <div class="mb-3">
                     <label class="form-label small fw-semibold">Nhập PIN xác nhận <span class="text-danger">*</span></label>
                     <input type="password" class="form-control form-control-sm" style="max-width:180px;"
@@ -742,6 +748,7 @@ else
     // ── Xóa phiếu KH ──
     private KhPlanDetailRow? _deleteTarget;
     private string _deletePin = "";
+    private string _deleteReason = "";   // [KHE-5]
     private string? _deleteError;
     private bool _deleting;
 
@@ -749,6 +756,7 @@ else
     {
         _deleteTarget = row;
         _deletePin = "";
+        _deleteReason = "";   // [KHE-5]
         _deleteError = null;
     }
 
@@ -756,6 +764,7 @@ else
     {
         _deleteTarget = null;
         _deletePin = "";
+        _deleteReason = "";   // [KHE-5]
         _deleteError = null;
     }
 
@@ -764,6 +773,8 @@ else
         if (_deleteTarget == null) return;
         _deleteError = null;
 
+        if ((_deleteReason ?? "").Trim().Length < KhPlanService.DeleteReasonMin)   // [KHE-5] máy chủ cũng kiểm
+        { _deleteError = $"Ghi lý do xoá (ít nhất {KhPlanService.DeleteReasonMin} ký tự)."; return; }
         if (string.IsNullOrWhiteSpace(_deletePin))
         { _deleteError = "Vui lòng nhập PIN."; return; }
 
@@ -785,7 +796,7 @@ else
         _deleting = true;
         try
         {
-            var (ok, err) = await KhSvc.DeleteDetailAsync(_deleteTarget.KhPlanDetailId, uid);
+            var (ok, err) = await KhSvc.DeleteDetailAsync(_deleteTarget.KhPlanDetailId, uid, _deleteReason);   // [KHE-5] + lý do
             if (!ok) { _deleteError = err ?? "Lỗi khi xóa."; return; }
 
             CloseDelete();

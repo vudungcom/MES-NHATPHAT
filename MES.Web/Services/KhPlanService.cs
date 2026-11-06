@@ -582,10 +582,16 @@ public class KhPlanService
     /// Nếu KhPlan không còn detail nào → xóa luôn KhPlan.
     /// Bắt buộc xác thực PIN trước khi gọi method này.
     /// </summary>
-    public async Task<(bool Success, string? Error)> DeleteDetailAsync(int khPlanDetailId, int deletedBy)
+    // [KHE-5 2026-11-06] + reason (bắt buộc ≥ 3 ký tự): ghi cùng ảnh chụp PO vào KhPlanDeletedDetails trước khi xoá. Nguồn: HÙNG 05/11 15:37 (A), 06/11 18:11 OK thêm ô lý do.
+    public const int DeleteReasonMin = 3;
+    public async Task<(bool Success, string? Error)> DeleteDetailAsync(int khPlanDetailId, int deletedBy, string reason)
     {
         if (!await PermCheck.CanEditAsync(_db, deletedBy, MES.Web.Constants.SystemPermissions.KeHoach))   // [KHE-PERM 2026-10-30] máy chủ kiểm quyền Sửa KE_HOACH (trước: chỉ trang — danh sách KH còn tin claim ADMIN)
             return (false, PermCheck.NoEdit("Kế hoạch"));
+        reason = (reason ?? "").Trim();   // [KHE-5]
+        if (reason.Length < DeleteReasonMin)
+            return (false, $"Ghi lý do xoá PO (ít nhất {DeleteReasonMin} ký tự) — lưu cùng ảnh chụp PO để truy vết.");
+        if (reason.Length > 500) reason = reason[..500];
         var detail = await _db.KhPlanDetails
             .Include(d => d.KhPlan)
             .FirstOrDefaultAsync(d => d.KhPlanDetailId == khPlanDetailId);
@@ -635,9 +641,34 @@ public class KhPlanService
 
             // [KH-GUARD] Bỏ lệnh xoá WtsProductionLogs: đã chặn ở trên (PO có WTS thì không xoá) — WTS chỉ ghi thêm, không xoá
 
-            // Xóa change logs
+            // [KHE-5 2026-11-06] Chụp dòng PO + toàn bộ lịch sử sửa + ai / lúc nào / lý do TRƯỚC khi xoá (cùng giao dịch, đã khoá PO).
+            //   Trước: DELETE thẳng KhPlanDetailChangeLogs, không ghi ai xoá — trái luật log chỉ thêm (khoá ngoại không null nên không giữ được log).
+            var logs = await _db.KhPlanDetailChangeLogs.AsNoTracking()
+                .Where(l => l.KhPlanDetailId == khPlanDetailId).OrderBy(l => l.ChangeId).ToListAsync();
+            // rà độc lập T10: chụp bản đọc SAU khi khoá (bản trước khoá có thể cũ) + đầu phiếu KH (bị xoá theo khi hết PO)
+            var snapDet = await _db.KhPlanDetails.AsNoTracking().FirstOrDefaultAsync(d => d.KhPlanDetailId == khPlanDetailId) ?? detail;
+            var snapPlan = await _db.KhPlans.AsNoTracking().FirstOrDefaultAsync(p => p.KhPlanId == detail.KhPlanId);
+            var delAt = DateTime.Now;
+            _db.KhPlanDeletedDetails.Add(new KhPlanDeletedDetail
+            {
+                KhPlanDetailId = detail.KhPlanDetailId,
+                KhPlanId       = detail.KhPlanId,
+                PlanNo         = detail.KhPlan?.PlanNo,
+                PurchaseOrder  = detail.PurchaseOrder,
+                PartNo         = detail.PartNo,
+                DetailJson     = System.Text.Json.JsonSerializer.Serialize(new { Detail = Scalars(snapDet), KhPlan = snapPlan == null ? null : Scalars(snapPlan) }, SnapJson),
+                ChangeLogsJson = logs.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(logs.Select(Scalars).ToList(), SnapJson),
+                Reason         = reason,
+                DeletedBy      = deletedBy,
+                DeletedAt      = delAt,
+            });
+            await _db.SaveChangesAsync();
+
+            // Xóa change logs (đã chụp ở trên) — [KHE-5] rà độc lập V1: Architecture-Decisions v0.5.1 ghi FK KhPlanDetailChangeLogs → KhPlanDetails đã DROP
+            //   (Tách PO giữ log của PO đã xoá) → chỉ xoá khi DB còn khoá ngoại đó; không còn thì GIỮ log (chỉ ghi thêm), log trỏ về Id PO đã xoá như Tách PO.
             await _db.Database.ExecuteSqlRawAsync(
-                "DELETE FROM KhPlanDetailChangeLogs WHERE KhPlanDetailId = {0}", khPlanDetailId);
+                @"IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id = OBJECT_ID(N'dbo.KhPlanDetailChangeLogs') AND referenced_object_id = OBJECT_ID(N'dbo.KhPlanDetails'))
+                  DELETE FROM KhPlanDetailChangeLogs WHERE KhPlanDetailId = {0}", khPlanDetailId);
 
             // [KH-GUARD] Dòng Kho (chỉ còn thông tin order / vị trí, chưa có phôi nhận — đã chặn ở trên): tắt IsActive thay vì xoá cứng
             await _db.Database.ExecuteSqlRawAsync(
@@ -669,6 +700,25 @@ public class KhPlanService
             _db.ChangeTracker.Clear();
             return (false, ex.Message);
         }
+    }
+
+    // [KHE-5 2026-11-06] Ảnh chụp: chỉ cột dữ liệu (số, chữ, ngày, cờ) — bỏ navigation (KhPlan, danh sách con) để JSON không vòng / không phình
+    static readonly System.Text.Json.JsonSerializerOptions SnapJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,   // giữ chữ tiếng Việt đọc được trong SSMS
+    };
+    static Dictionary<string, object?> Scalars(object o)
+    {
+        var d = new Dictionary<string, object?>();
+        foreach (var p in o.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (!p.CanRead || p.GetIndexParameters().Length > 0) continue;
+            var t = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+            if (t.IsPrimitive || t.IsEnum || t == typeof(string) || t == typeof(decimal) || t == typeof(DateTime) || t == typeof(DateOnly)
+                || t == typeof(TimeOnly) || t == typeof(TimeSpan) || t == typeof(Guid) || t == typeof(DateTimeOffset))
+                d[p.Name] = p.GetValue(o);
+        }
+        return d;
     }
 
     // ================================================================
@@ -1062,6 +1112,13 @@ public class KhPlanService
         var lost = txs.Where(t => !string.IsNullOrEmpty(t.ToNC) && !mainNcs.Contains(t.ToNC!)).ToList();
         if (lost.Any())
             return $"phiếu Kho → Gia công #{string.Join(", #", lost.Select(t => t.HandoverTxId))} đã cấp phôi vào NC {string.Join(", ", lost.Select(t => t.ToNC ?? "(trống)").Distinct())} — quy trình Part Master mới không còn NC đó";
+        // [NHAN-DOI-O-NC 2026-11-06] lần nhận mang NC riêng (HandoverReceives.ToNC) cũng là hàng đã cấp vào NC đó
+        var lostR = await _db.HandoverReceives.AsNoTracking()
+            .Where(r => txIds.Contains(r.HandoverTxId) && !r.IsVoided && r.ToNC != null && r.ToNC != "")
+            .Select(r => new { r.HandoverTxId, r.ToNC }).ToListAsync();
+        var lostR2 = lostR.Where(r => !mainNcs.Contains(r.ToNC!)).ToList();
+        if (lostR2.Any())
+            return $"lần nhận của phiếu #{string.Join(", #", lostR2.Select(r => r.HandoverTxId).Distinct())} đã vào NC {string.Join(", ", lostR2.Select(r => r.ToNC).Distinct())} — quy trình Part Master mới không còn NC đó";
         return null;
     }
 
@@ -1083,6 +1140,10 @@ public class KhPlanService
         var pinned = await _db.HandoverTransactions.AsNoTracking()
             .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided && t.ToGroupCode == "GC" && t.ToNC != null && t.ToNC != "")
             .Select(t => t.ToNC!).Distinct().ToListAsync();
+        // [NHAN-DOI-O-NC 2026-11-06] + NC riêng của lần nhận (đổi ô vào Gia công)
+        pinned = pinned.Concat(await _db.HandoverReceives.AsNoTracking()
+            .Where(r => !r.IsVoided && r.ToNC != null && r.ToNC != "" && r.Transaction.KhPlanDetailId == khPlanDetailId && !r.Transaction.IsVoided && r.Transaction.ToGroupCode == "GC")
+            .Select(r => r.ToNC!).ToListAsync()).Distinct().ToList();
         foreach (var nc in pinned)
         {
             var sa = ga.Steps.FirstOrDefault(s => s.Pg == "GC" && s.Code == nc);

@@ -51,6 +51,78 @@ public static class HarnessSua
         return new { det.KhPlanDetailId };
     }
 
+    /// <summary>
+    /// [NHAN-DOI-O-NC][K5-CLOSE-NHIEU 2026-11-06] drive_nhannc.py: PO-NNC 10, GC NC01 → NC02. Kho → GC 2 (NC01) đã nhận + WTS NC01 OK 2 (dòng chép thẳng);
+    /// GC báo lỗi 1 chiếc "chưa làm NC02" (vụ ở NC02) → giao Kho ô Hàng lỗi → Kho nhận → Kho giao lại GC ô Hàng lỗi (phiếu KHÔNG NC, chờ GC nhận).
+    /// Phiếu Kho → GC 6 (NC01): nhận 1 + 1 → huỷ phần chưa nhận (4) → huỷ lần nhận thứ 2 → huỷ phần chưa nhận lần 2 (1) → 2 dòng HandoverTxCloses.
+    /// </summary>
+    public static async Task<object> SeedNhanNcAsync(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-NNC"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            var cust = db.Customers.List.First();
+            var t0 = DateTime.Now.AddHours(-2);
+            var plan = new KhPlan { PlanNo = "KH-NNC", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = t0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-NNC", PurchaseOrder = "PO-NNC", Quantity = 10, Unit = "EA", STD = t0.AddDays(10), CreatedAt = t0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+            db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "NC01", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 2, NC = "NC02", MachineRegistered = "M2", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = d.KhPlanDetailId, IsActive = true, SoLuongThucNhan = 10, SoLuongKeHoach = 10, NgayNhanPhoi = t0, OrderVatLieu = "OVL-NNC", ViTriDePhoi = "NNC", SoPO = "PO-NNC", PartNo = "PART-NNC", CreatedAt = t0, CreatedBy = admin.UserId });
+            await db.SaveChangesAsync();
+            db.Fixup();
+            var svc = new HandoverService(db);
+            async Task Must(Task<(bool Ok, string Error)> t, string what) { var r = await t; if (!r.Ok) throw new Exception("nhannc-seed " + what + ": " + r.Error); db.Fixup(); }
+            long Last() => db.HandoverTransactions.List.Max(x => x.HandoverTxId);
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 2, admin.UserId, "MOI", false, "MOI", toNC: "NC01"), "giao 2");
+            await Must(svc.ReceiveAsync(Last(), 2, 0, null, admin.UserId), "nhận 2");
+            db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "GC", NC = "NC01", QtyDone = 2, QtyOk = 2, QtyNg = 0,
+                StartTime = t0.AddMinutes(10), EndTime = t0.AddMinutes(20), WorkerId = admin.UserId, CreatedAt = t0.AddMinutes(20) });
+            await db.SaveChangesAsync(); db.Fixup();
+            var cat = db.NgCategories.List.FirstOrDefault(c => c.IsActive);
+            if (cat == null)
+            {
+                db.NgCategories.Add(new NgCategory { Code = "NUT", Name = "Phôi nứt", SortOrder = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = t0 });
+                await db.SaveChangesAsync();
+                cat = db.NgCategories.List.First(c => c.IsActive);
+            }
+            await Must(svc.ReportNgAfterReceiveAsync(d.KhPlanDetailId, "GC", HandoverNgSource.Chua, "NC02", 1, HandoverNgSource.DauRa, null, "", null, admin.UserId, new List<string> { "GC" }, cat.NgCategoryId), "báo lỗi NC02");
+            var vu = db.HandoverNgReports.List.Last().NgCaseId;
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "GC", "KHO", 1, admin.UserId, "LOI", false, "LOI", ngCaseId: vu), "GC trả Kho");
+            await Must(svc.ReceiveAsync(Last(), 0, 1, null, admin.UserId, null, HandoverCell.Loi), "Kho nhận");
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 1, admin.UserId, "LOI", false, "LOI", ngCaseId: vu), "Kho giao lại GC ô Hàng lỗi");
+            // huỷ phần chưa nhận 2 lần
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 6, admin.UserId, "MOI", false, "MOI", toNC: "NC01"), "giao 6");
+            var t6 = Last();
+            await Must(svc.ReceiveAsync(t6, 1, 0, null, admin.UserId), "nhận 1");
+            await Must(svc.ReceiveAsync(t6, 1, 0, null, admin.UserId), "nhận 1 nữa");
+            await Must(svc.CloseRemainderAsync(t6, "huy lan dau", admin.UserId, new List<string> { "KHO" }), "huỷ phần còn 1");
+            var rid = db.HandoverTransactions.List.Single(x => x.HandoverTxId == t6).Receives.Where(r => !r.IsVoided).Max(r => r.ReceiveId);
+            await Must(svc.VoidReceiveAsync(rid, "nhan nham", admin.UserId, new List<string> { "KHO", "GC" }), "huỷ lần nhận 2");
+            await Must(svc.CloseRemainderAsync(t6, "huy lan hai", admin.UserId, new List<string> { "KHO" }), "huỷ phần còn 2");
+        }
+        var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-NNC");
+        return new { det.KhPlanDetailId };
+    }
+
+    public static async Task<object> DumpNhanNcAsync(AppDbContext db, HandoverLedgerService led)
+    {
+        var det = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-NNC");
+        if (det == null) return new { };
+        var id = det.KhPlanDetailId;
+        var row = (await led.GetLedgerForDetailAsync(id))!;
+        var txIds = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id).Select(t => t.HandoverTxId).ToHashSet();
+        var gc = row.G("GC");
+        return new
+        {
+            recs = db.HandoverReceives.List.Where(r => txIds.Contains(r.HandoverTxId)).Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.ToCell, r.ToNC, r.Notes, r.IsVoided }).ToList(),
+            closes = db.HandoverTxCloses.List.Where(c => txIds.Contains(c.HandoverTxId)).Select(c => new { c.HandoverTxId, c.Qty, c.Reason }).ToList(),
+            nc = gc.Steps.Where(s => s.Pg == "GC").ToDictionary(s => s.Code, s => s.Waiting),
+            balanced = row.Balanced, neg = HandoverLedgerService.NegativeCells(row).Count,
+        };
+    }
+
     /// <summary>[GN-FORM1 2026-11-06] drive_form.py D6: Kho nhận hết phiếu đang chờ của PO-SUA (ô Hàng lỗi nhận 0 đạt + n lỗi) — bằng ReceiveAsync thật, người admin.</summary>
     public static async Task<object> RecvKhoAsync(AppDbContext db)
     {

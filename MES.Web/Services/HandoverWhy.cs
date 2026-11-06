@@ -66,11 +66,15 @@ namespace MES.Web.Services
             var t = s.Txs.FirstOrDefault(x => x.Id == txId);
             if (t == null) return;
             var rec = t.Receives.Sum(r => r.Ok + r.Ng);
-            t.Closed += t.Issued - rec; t.Issued = rec; t.Status = "COMPLETED";
+            var q = t.Issued - rec;
+            t.Closes = HandoverLedgerService.ClosesOf(t);   // [K5-CLOSE-NHIEU 2026-11-06] giữ các lần huỷ cũ đúng giờ của chúng, thêm 1 lần mới lúc này (như máy chủ ghi 1 dòng HandoverTxCloses)
+            if (q > 0) t.Closes.Add(new InClose(0, DateTime.Now, q));
+            t.Closed += q; t.Issued = rec; t.Status = "COMPLETED";
             // [K5-CLOSE-NHIEU 2026-11-05] như máy chủ (HandoverService.CloseRemainderOnceAsync ghi ClosedAt = giờ lần huỷ mới nhất cho CẢ số đã huỷ):
             //   trước giữ ClosedAt cũ → huỷ phần chưa nhận lần 2 trên phiếu đã huỷ 1 lần, PO có hàng sửa trả về: máy chủ chặn theo thời gian
             //   mà lời khuyên rỗng (fuzz seed 602 PO5, 05/11). Nguồn: CLAUDE (lỗi có từ [K5-VONG-SUA], không thuộc gói A2–A4).
             t.ClosedAt = DateTime.Now;
+            // [K5-CLOSE-NHIEU 2026-11-06] nay máy chủ ghi từng lần (HandoverTxCloses) — sổ chỉ mở lại lần huỷ mới (giờ ClosedAt cột cũ chỉ còn để hiện / dữ liệu cũ)
         };
 
         /// <summary>Xoá / sửa dòng WTS: bỏ các dòng removeIds, thêm các dòng mới (Id âm).</summary>

@@ -70,21 +70,49 @@ public static class KhScen
         Console.WriteLine("[A2] Xoá PO");
         {
             var db = Seed(); var kh = new KhPlanService(db); EfRaw().Clear();
-            var r = await kh.DeleteDetailAsync(1, 1);
+            var r = await kh.DeleteDetailAsync(1, 1, "tao nham");
             Ok(!r.Success && r.Error!.Contains("phôi Kho đã nhận 40"), "PO có phôi nhận: không xoá", r.Error);
             Ok(db.KhPlanDetails.List.Count == 1 && EfRaw().Count == 0, "Không chạy lệnh xoá nào");
         }
         {
             var db = Seed(phoi: null); Wts(db, "NC1", 5, voided: true); var kh = new KhPlanService(db);
-            var r = await kh.DeleteDetailAsync(1, 1);
+            var r = await kh.DeleteDetailAsync(1, 1, "tao nham");
             Ok(!r.Success && r.Error!.Contains("1 dòng WTS (1 dòng đã huỷ)"), "PO chỉ có WTS đã huỷ: vẫn không xoá (WTS là lịch sử)", r.Error);
         }
         {
             var db = Seed(phoi: null); var kh = new KhPlanService(db); EfRaw().Clear();
-            var r = await kh.DeleteDetailAsync(1, 1);
+            var r = await kh.DeleteDetailAsync(1, 1, "tao nham");
             Ok(r.Success && db.KhPlanDetails.List.Count == 0, "PO trắng: xoá được", r.Error);
             Ok(EfRaw().Any(x => x.Contains("UPDATE KhoVatLieus SET IsActive = 0")) && !EfRaw().Any(x => x.Contains("DELETE FROM WtsProductionLogs")) && !EfRaw().Any(x => x.Contains("DELETE FROM KhoVatLieus")),
                "Dòng Kho tắt IsActive, không xoá cứng WTS / Kho");
+        }
+        // [KHE-5 2026-11-06] lý do bắt buộc + ảnh chụp PO (JSON dòng PO + lịch sử sửa + ai / lúc nào / lý do) trước khi xoá, cùng giao dịch
+        {
+            var db = Seed(phoi: null); var kh = new KhPlanService(db); EfRaw().Clear();
+            db.KhPlanDetailChangeLogs.List.Add(new KhPlanDetailChangeLog { ChangeId = 7, KhPlanDetailId = 1, FieldName = "Quantity", OldValue = "30", NewValue = "40", ChangedBy = 1, Reason = "khách đổi SL" });
+            var r0 = await kh.DeleteDetailAsync(1, 1, "  x ");
+            Ok(!r0.Success && r0.Error!.Contains("lý do") && db.KhPlanDetails.List.Count == 1 && db.KhPlanDeletedDetails.List.Count == 0 && EfRaw().Count == 0,
+               "[KHE-5] Lý do < 3 ký tự: không xoá, không chụp, không chạy lệnh nào", r0.Error);
+            var r = await kh.DeleteDetailAsync(1, 1, "  tạo nhầm PO  ");
+            var snap = db.KhPlanDeletedDetails.List.SingleOrDefault();
+            Ok(r.Success && snap != null && snap.KhPlanDetailId == 1 && snap.Reason == "tạo nhầm PO" && snap.DeletedBy == 1 && snap.PurchaseOrder == "PO1"
+               && snap.DetailJson.Contains("\"PurchaseOrder\":\"PO1\"") && snap.DetailJson.Contains("\"PlanNo\":\"KH-TEST\"") && !snap.DetailJson.Contains("\"Details\"") && !snap.DetailJson.Contains("\"Customer\"")
+               && (snap.ChangeLogsJson ?? "").Contains("khách đổi SL") && (snap.ChangeLogsJson ?? "").Contains("\"ChangeId\":7"),
+               "[KHE-5] Xoá có lý do: 1 dòng KhPlanDeletedDetails (PO, lý do đã cắt khoảng trắng, người xoá, JSON dòng PO + đầu phiếu KH không kèm navigation, JSON lịch sử sửa có dòng ChangeId 7)",
+               r.Error + " · " + snap?.DetailJson + " · " + snap?.ChangeLogsJson);
+            var iDel = EfRaw().FindIndex(x => x.Contains("DELETE FROM KhPlanDetailChangeLogs"));
+            Ok(iDel >= 0 && EfRaw()[iDel].Contains("IF EXISTS (SELECT 1 FROM sys.foreign_keys") && db.Database.Current == null,
+               "[KHE-5] Lịch sử sửa chỉ xoá khi DB còn khoá ngoại vào KhPlanDetails (rà độc lập V1: FK đã drop v0.5.1 → giữ log); giao dịch đã đóng", string.Join(" | ", EfRaw()));
+        }
+        {
+            // [KHE-5] lỗi giữa chừng (sau khi chụp) → quay lại: không còn dòng chụp, PO còn nguyên
+            var db = Seed(phoi: null); var kh = new KhPlanService(db); EfRaw().Clear();
+            var fire = 0;
+            AppDbContext.OnSave = () => ++fire == 2 ? new InvalidOperationException("giả lỗi DB lúc xoá PO") : null;   // lần lưu 1 = ảnh chụp, lần 2 = xoá PO
+            var r = await kh.DeleteDetailAsync(1, 1, "tao nham");
+            AppDbContext.OnSave = null;
+            Ok(!r.Success && db.KhPlanDetails.List.Count == 1 && db.KhPlanDeletedDetails.List.Count == 0,
+               "[KHE-5] Lỗi DB sau khi chụp: quay lại hết (không còn dòng chụp, PO còn)", r.Error + $" · chụp {db.KhPlanDeletedDetails.List.Count}");
         }
 
         Console.WriteLine("[A3] Tách PO");
@@ -524,7 +552,7 @@ public static class KhScen
                $"{rp.Error}{vr.Error}{k0.Error} · phôi {docs.PhoiNhan} WTS {docs.WtsAll} phiếu {docs.PhieuAll} báo lỗi {docs.BaoLoiAll}/{docs.BaoLoiActive}");
             Ok(docs.HasAny && docs.Text() == "1 phiếu báo hàng lỗi (1 phiếu đã huỷ)", "HasAny = true, Text nêu đúng '1 phiếu báo hàng lỗi (1 phiếu đã huỷ)'", docs.Text());
             EfRaw().Clear();
-            var d = await kh.DeleteDetailAsync(1, 1);
+            var d = await kh.DeleteDetailAsync(1, 1, "tao nham");
             Ok(!d.Success && d.Error!.Contains("1 phiếu báo hàng lỗi (1 phiếu đã huỷ)") && db.KhPlanDetails.List.Count == 1 && EfRaw().Count == 0,
                "Xoá PO: chặn, lời báo nêu phiếu báo lỗi, không chạy lệnh xoá nào", d.Error);
             string? err = null; try { await kh.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 20 }, new() { PurchaseOrder = "PO1B", Quantity = 20 } }, 1, "tach"); } catch (Exception ex) { err = ex.Message; }

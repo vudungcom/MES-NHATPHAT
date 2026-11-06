@@ -266,17 +266,45 @@ public static class AuthScen
                "Xoá ca chỉ có giờ nghỉ đã chép (WtsBreakWorkLogs): chặn, ca còn", d2.Error);
             var d4 = await cs.DeleteAsync(4, 3);
             Ok(d4.Ok && !db.CaLamViecs.List.Any(x => x.CaId == 4), "Xoá ca chưa ai dùng (người có quyền Sửa): xoá được như cũ", d4.Error);
+            // [CA-LOG 2026-11-06] lịch sử sửa ca: mỗi lần Tạo / Sửa / Ẩn / Xoá thành công 1 dòng (JSON trước / sau, người); bị chặn / không đổi → không ghi
+            {
+                var L = db.CaLamViecChangeLogs.List;
+                string Acts(int caId) => string.Join(",", L.Where(x => x.CaId == caId).OrderBy(x => x.LogId).Select(x => x.Action));
+                var l1 = L.SingleOrDefault(x => x.CaId == 1);
+                var newCa = db.CaLamViecs.List.Single(x => x.TenCa == "Ca mới");
+                var l4 = L.SingleOrDefault(x => x.CaId == 4);
+                Ok(L.All(x => x.ChangedBy is 1 or 3) && !L.Any(x => x.CaId == 99 || x.CaId == 2),
+                   "[CA-LOG] Lần bị chặn (không quyền / ca không còn / ca đã dùng) không ghi log", string.Join(" | ", L.Select(x => $"{x.CaId}:{x.Action}:{x.ChangedBy}")));
+                Ok(Acts(1) == "SUA" && l1!.ChangedBy == 3 && l1.BeforeJson!.Contains("\"TenCa\":\"Hành chính\"") && l1.BeforeJson.Contains("\"GioBatDau\":\"07:30\"") && l1.BeforeJson.Contains("12:00")
+                   && l1.AfterJson!.Contains("Hành chính mới") && l1.AfterJson.Contains("\"GioBatDau\":\"07:00\"") && l1.AfterJson.Contains("11:30") && !l1.AfterJson.Contains("12:00"),
+                   "[CA-LOG] Sửa ca 1: 1 dòng SUA, trước = tên / giờ / giờ nghỉ cũ (07:30, nghỉ 12:00), sau = mới (07:00, nghỉ 11:30)", l1?.BeforeJson + " → " + l1?.AfterJson);
+                Ok(Acts(3) == "AN,SUA", "[CA-LOG] Ca 3: Ẩn (lần Ẩn thứ 2 không đổi gì → không ghi) rồi Sửa tên", Acts(3));
+                Ok(Acts(newCa.CaId) == "TAO" && L.Single(x => x.CaId == newCa.CaId).BeforeJson == null && L.Single(x => x.CaId == newCa.CaId).AfterJson!.Contains("Ca mới"),
+                   "[CA-LOG] Thêm ca: 1 dòng TAO (trước rỗng, sau = ca mới)", Acts(newCa.CaId));
+                Ok(l4 != null && l4.Action == "XOA" && l4.AfterJson == null && l4.BeforeJson!.Contains("Ca thử"), "[CA-LOG] Xoá ca 4 chưa dùng: 1 dòng XOA, giữ ảnh chụp ca", Acts(4));
+                var n0 = L.Count;
+                var same = await cs.SaveAsync(Form(1, "Hành chính mới"), Nghi(), 3);
+                Ok(same.Ok && L.Count == n0, "[CA-LOG] Bấm Lưu không đổi gì → không ghi log", $"{L.Count - n0} dòng mới");
+                var hien = await cs.ToggleActiveAsync(3, true, 3);
+                Ok(hien.Ok && Acts(3) == "AN,SUA,HIEN" && L.Last().BeforeJson!.Contains("\"IsActive\":false") && L.Last().AfterJson!.Contains("\"IsActive\":true"),
+                   "[CA-LOG] Hiện lại ca 3: dòng HIEN (trước tắt, sau bật)", Acts(3));
+                var hien2 = await cs.ToggleActiveAsync(3, false, 3);
+            }
             // EfStub Remove xoá ngay khỏi List → giả SQL "không xoá" bằng cách trả ca lại vào bảng lúc SaveChanges ném lỗi
             Microsoft.EntityFrameworkCore.DbContext.OnSave = () => { if (!db.CaLamViecs.List.Contains(ca3)) db.CaLamViecs.List.Add(ca3); return new InvalidOperationException("FK WtsProductionLogs.CaId"); };
             try
             {
                 var dx = await cs.DeleteAsync(3, 1);
                 Ok(!dx.Ok && dx.Error.Contains("Không xoá được ca Ca 3 đêm") && db.CaLamViecs.List.Contains(ca3), "Xoá ca mà SQL báo lỗi (vd dòng WTS vừa ghi ca này): báo, ca còn, trang không chết", dx.Error);
+                Ok(!db.CaLamViecChangeLogs.List.Any(x => x.CaId == 3 && x.Action == "XOA"), "[CA-LOG] Xoá lỗi: không còn dòng log XOA (quay lại cùng giao dịch)");
                 Microsoft.EntityFrameworkCore.DbContext.OnSave = () => new InvalidOperationException("0 dòng bị xoá (người khác xoá trước)");
+                // [CA-LOG 2026-11-06] xoá nay chạy trong giao dịch: EfStub quay lại = trả bảng về lúc mở giao dịch → giả "người khác đã xoá và
+                //   đã ghi xong" bằng cách bỏ ca 3 SAU khi quay lại (như SQL thật: rollback của mình không khôi phục lệnh xoá của người khác)
+                Microsoft.EntityFrameworkCore.StubTransaction.OnRollback = () => db.CaLamViecs.List.Remove(ca3);
                 var dy = await cs.DeleteAsync(3, 1);
                 Ok(!dy.Ok && dy.Error.Contains("vừa bị người khác xoá"), "Xoá ca mà ca đã bị người khác xoá ngay trước: báo đúng (không đổ cho dòng WTS)", dy.Error);
             }
-            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; db.ChangeTracker.Clear(); }
+            finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; Microsoft.EntityFrameworkCore.StubTransaction.OnRollback = null; db.ChangeTracker.Clear(); }
         }
 
         Console.WriteLine("[U9] PHAT-HIEN-0311 — Sơ đồ tổ chức: Thêm / Sửa / Xoá / tải ảnh cần quyền Sửa SO_DO_TC (DB); ảnh chỉ .jpg / .jpeg / .png / .webp thật");

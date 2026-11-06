@@ -189,13 +189,13 @@ public static class ViecScen
             Ok(r.Ok && c1.GioSuaAll == 1 && c1.HasAny && c1.Text() == "1 dòng việc không ra sản phẩm (giờ sửa) ghi PO này",
                "Lưu 1 dòng việc không ra SP ghi PO3 → PoGuard đếm 1 dòng giờ sửa, HasAny", (r.ErrorMsg ?? "") + " · " + c1.Text());
             EfRaw().Clear();
-            var del = await kh.DeleteDetailAsync(3, 1);
+            var del = await kh.DeleteDetailAsync(3, 1, "tao nham");
             Ok(!del.Success && del.Error!.Contains("1 dòng việc không ra sản phẩm (giờ sửa) ghi PO này") && db.KhPlanDetails.List.Any(x => x.KhPlanDetailId == 3) && EfRaw().Count == 0,
                "Xoá PO3: chặn, lời báo nêu dòng giờ sửa, không chạy lệnh xoá nào", del.Error);
             var act = db.WorkerActivityLogs.List.Single(a => a.RefKhPlanDetailId == 3);
             var vd = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = act.ActivityLogId, UserId = UGc }); db.Fixup();
             var c2 = await PoGuard.CountDocsAsync(db, 3);
-            del = await kh.DeleteDetailAsync(3, 1);
+            del = await kh.DeleteDetailAsync(3, 1, "tao nham");
             Ok(vd.Ok && act.IsVoided && c2.GioSuaAll == 1 && !del.Success && del.Error!.Contains("giờ sửa"), "Huỷ dòng giờ sửa → vẫn đếm (lịch sử, khoá ngoại) → Xoá PO3 vẫn chặn", (vd.ErrorMsg ?? "") + " · " + del.Error);
             string? err = null; try { await kh.SplitPOAsync(3, new() { new() { PurchaseOrder = "PO3A", Quantity = 5 }, new() { PurchaseOrder = "PO3B", Quantity = 5 } }, 1, "tach"); } catch (Exception ex) { err = ex.Message; }
             Ok(err != null && err.Contains("không tách được") && err.Contains("giờ sửa") && !db.KhPlanDetails.List.Any(x => x.PurchaseOrder == "PO3A"), "Tách PO3: chặn, không sinh PO mới", err);

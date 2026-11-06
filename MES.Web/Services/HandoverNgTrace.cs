@@ -365,12 +365,13 @@ namespace MES.Web.Services
                         var fc = FromCell(t);
                         if (!IsLoiCell(fc) || HandoverPurpose.IsOut(t.Purpose)) break;
                         var purpose = HandoverLedgerService.Classify(t, gcLastNc);
-                        transit -= t.Closed;
+                        var cq = -st.Qty;   // [K5-CLOSE-NHIEU 2026-11-06] số của LẦN huỷ này (mỗi lần 1 bước); trước: t.Closed = tổng mọi lần → 2 lần huỷ trừ đôi
+                        transit -= cq;
                         var prev = purpose == HandoverPurpose.NgReturn;
-                        var e = New("DONG", t.From, t.To, t.Closed, $"Phiếu #{t.Id}", t.Id,
-                            $"{GL(t.From)} huỷ phần chưa nhận {t.Closed:0.##} của phiếu hàng lỗi #{t.Id} → "
+                        var e = New("DONG", t.From, t.To, cq, $"Phiếu #{t.Id}", t.Id,
+                            $"{GL(t.From)} huỷ phần chưa nhận {cq:0.##} của phiếu hàng lỗi #{t.Id} → "
                             + (prev ? "hàng về lại chưa làm (không còn tính là lỗi)" : $"hàng lỗi về lại {GL(t.From)}"));
-                        if (prev) { e.PhatSinh = -t.Closed; e.DetectedAt = t.From; e.CausedBy = t.To; }
+                        if (prev) { e.PhatSinh = -cq; e.DetectedAt = t.From; e.CausedBy = t.To; }
                         break;
                     }
                     case "NHAN":
@@ -424,6 +425,7 @@ namespace MES.Web.Services
                                     $"{GL(t.To)} nhận {r.Ok:0.##} vào ô {HandoverCell.Label(cell)} (đã OK, làm tiếp) · từ {GL(t.From)}"
                                     + (r.Ng > 0 ? $" · {r.Ng:0.##} vẫn lỗi{AutoNote(r)}" : ""));
                                 e.Who = who; e.VeSx = r.Ok; e.Reason = r.Ng > 0 ? r.NgReason : null;
+                                e.Code = r.ToNC ?? t.ToNC;   // [NHAN-DOI-O-NC] rà độc lập vòng 2: NC hàng đã xử lý vào (lần nhận đổi ô) — chỉ hiển thị
                             }
                             if (r.Ng > 0 && cell != HandoverCell.Loi) NgBackTransit(r);
                         }
@@ -439,7 +441,7 @@ namespace MES.Web.Services
                         {
                             var e = New("NHAN_NG", t.To, t.From, r.Ng, doc, r.Id,
                                 $"{GL(t.To)} nhận phiếu #{t.Id} từ {GL(t.From)}, đếm thấy {r.Ng:0.##} lỗi (nhận đạt {r.Ok:0.##}){AutoNote(r)}");
-                            e.Who = who; e.PhatSinh = r.Ng; e.DetectedAt = t.To; e.CausedBy = t.From; e.Reason = r.NgReason; e.Code = t.ToNC;
+                            e.Who = who; e.PhatSinh = r.Ng; e.DetectedAt = t.To; e.CausedBy = t.From; e.Reason = r.NgReason; e.Code = r.ToNC ?? t.ToNC;   // [NHAN-DOI-O-NC] NC của lần nhận nếu có
                             NgBackTransit(r);
                         }
                         break;
