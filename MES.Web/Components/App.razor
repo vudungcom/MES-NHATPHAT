@@ -12,6 +12,46 @@
 </head>
 <body>
     <Routes />
-    <script src="_framework/blazor.web.js"></script>
+    @* [BLZ-RECONNECT 2026-11-06] Khung nối lại do mình đặt (Blazor tự đổi class components-reconnect-show / -failed / -rejected trên khung có id này):
+       - mất kết nối: hiện dải báo, thử nối lại mỗi 3 giây trong ~30 phút = bằng thời gian máy chủ giữ phiên (Program.cs) (mặc định 8 lần ~ 1 phút rồi hiện "Could not reconnect");
+       - phiên bị từ chối (máy chủ đã khởi động lại, phiên cũ không còn): tự tải lại trang;
+       - hết lượt thử: chờ máy chủ trả lời rồi tự tải lại.
+       Không đổi luật / dữ liệu; ô chưa lưu chỉ mất khi phiên đã mất hẳn (như trước). Nguồn: CLAUDE 31/10, Hùng 05/11 15:37 cho làm. *@
+    <div id="components-reconnect-modal" class="mes-reconnect">
+        <span class="mes-reconnect-text mes-rc-show">Mất kết nối máy chủ — đang nối lại…</span>
+        <span class="mes-reconnect-text mes-rc-failed">Chưa nối lại được — đang chờ máy chủ, có lại sẽ tự tải trang.</span>
+        <span class="mes-reconnect-text mes-rc-rejected">Máy chủ vừa khởi động lại — đang tải lại trang…</span>
+    </div>
+    <style>
+        .mes-reconnect { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2000; padding: .5rem 1rem;
+                         background: #fff3cd; color: #664d03; border-top: 1px solid #ffda6a; font-size: .9rem; text-align: center; }
+        .mes-reconnect .mes-reconnect-text { display: none; }
+        .mes-reconnect.components-reconnect-show, .mes-reconnect.components-reconnect-failed, .mes-reconnect.components-reconnect-rejected { display: block; }
+        .mes-reconnect.components-reconnect-show .mes-rc-show,
+        .mes-reconnect.components-reconnect-failed .mes-rc-failed,
+        .mes-reconnect.components-reconnect-rejected .mes-rc-rejected { display: inline; }
+    </style>
+    <script src="_framework/blazor.web.js" autostart="false"></script>
+    <script>
+        (function () {
+            var waiting = false;
+            function reloadWhenServerUp() {
+                if (waiting) return;
+                waiting = true;
+                var tick = function () {
+                    fetch(location.href, { cache: 'no-store' })
+                        .then(function (r) { if (r.ok) location.reload(); else setTimeout(tick, 5000); })
+                        .catch(function () { setTimeout(tick, 5000); });
+                };
+                tick();
+            }
+            var box = document.getElementById('components-reconnect-modal');
+            new MutationObserver(function () {
+                if (box.classList.contains('components-reconnect-rejected')) location.reload();
+                else if (box.classList.contains('components-reconnect-failed')) reloadWhenServerUp();
+            }).observe(box, { attributes: true, attributeFilter: ['class'] });
+            Blazor.start({ circuit: { reconnectionOptions: { maxRetries: 600, retryIntervalMilliseconds: 3000 } } });
+        })();
+    </script>
 </body>
 </html>

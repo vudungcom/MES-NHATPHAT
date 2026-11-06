@@ -7,13 +7,15 @@ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\Sta
 D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\Services\WtsReportService.cs(41,35): warning CS8602: Dereference of a possibly null reference. [D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\MES.Web.csproj]
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 06/11/2026 04:02:59
+QUÉT SỔ (chỉ đọc) · DB MES · 06/11/2026 07:03:24
 PO: 69 · dòng WTS còn hiệu lực: 494 (dòng cũ chưa có QtyOk: 0)
 PO có vấn đề: 23 · tổng phát hiện: 82
   CANH_BAO_SO          8 dòng · 4 PO
   MA_TRUNG            50 dòng · 20 PO
   O_AM                15 dòng · 10 PO
   WTS_VUOT_TRAN        9 dòng · 8 PO
+  Vụ lỗi cân (VU_LECH): mọi vụ cân, khớp ô sổ + khung lỗi
+  Số lẻ (SO_LE, B3): không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)
 
 ── PO 0003918967 · KH KH-20260818-0001 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 22)
    [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã - · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10006 chụp 28/09 09:40; #2 NC - "Kiểm tra bề mặt" nguồn 10007 chụp 28/09 09:40; #3 NC - "Làm vát đón" nguồn 10008 chụp 28/09 09:40)
@@ -123,4 +125,4 @@ PO có vấn đề: 23 · tổng phát hiện: 82
 
 ── Part Master: 0 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1106040259.txt
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1106070324.txt

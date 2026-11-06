@@ -6153,7 +6153,7 @@ else
 
     {
 
-        sub.QtyOk = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        sub.QtyOk = decimal.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;   // [WTS-SO-CULTURE 2026-11-06] ô type=number luôn gửi dấu chấm → đọc theo InvariantCulture (trước đọc theo culture máy chủ: vi-VN đọc "2.5" ra 25). Nguồn: rà độc lập gói 1 06/11 (mục 4)
 
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
 
@@ -6169,7 +6169,7 @@ else
 
     {
 
-        sub.QtyNg = decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        sub.QtyNg = decimal.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;   // [WTS-SO-CULTURE 2026-11-06]
 
         sub.QtyDone = sub.QtyOk + sub.QtyNg;
 
@@ -6743,7 +6743,7 @@ else
 
     {
 
-        var val = decimal.TryParse(e.Value?.ToString(), out var v) ? (decimal?)v : null;
+        var val = decimal.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? (decimal?)v : null;   // [WTS-SO-CULTURE 2026-11-06]
 
         switch (field)
 

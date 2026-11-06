@@ -86,7 +86,7 @@ namespace MES.Web.Services
             foreach (var v in new[] { r.Qty, r.Pass, r.Fail })
             {
                 if (v < 0) return (false, "Số lượng không được âm.");
-                if (v != Math.Round(v, 2)) return (false, "Số lượng tối đa 2 chữ số thập phân.");
+                if (!QtyRule.IsWhole(v)) return (false, QtyRule.Msg);   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (trước: tối đa 2 số lẻ)
             }
             var notes = string.IsNullOrWhiteSpace(r.Notes) ? null : r.Notes.Trim();
             if (notes != null && notes.Length > 500) notes = notes[..500];
@@ -141,6 +141,10 @@ namespace MES.Web.Services
             if (pos.HeldCell != null)
             {
                 if (r.CaseId == null) return (false, $"Chọn {NgCaseNo.Term}.");
+                // [A7-VU-AM 2026-11-06] Mã vụ âm / không có trong sổ PO: trước rơi xuống kiểm NC làm tiếp (K2) và báo nhầm lời K2, hoặc lời "vụ mới không thuộc PO"
+                //   (chỉ sai chữ, không ghi gì). Nay báo thẳng trước mọi bước. Nguồn: CLAUDE (rà độc lập 06/11 gói GN-FORM1), Hùng 06/11 06:56 OK làm.
+                if (r.CaseId < 0 || (r.CaseId > 0 && !before.Cases.ContainsKey(r.CaseId.Value)))
+                    return (false, $"{NgCaseNo.TermCap} đã chọn không thuộc PO này — chọn lại {NgCaseNo.Term} ở bước 2.");
                 long? cs = r.CaseId == 0 ? null : r.CaseId;
                 if (pos.HeldCell == HandoverCell.Loi)
                 {

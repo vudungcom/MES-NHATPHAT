@@ -55,6 +55,9 @@ public class PartPackagingService
         if (!newStep.IsBackup)
             PartStepGuard.CheckMainCode(Label, newStep.NC, await _db.PartPackagingSteps
                 .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => s.NC).ToListAsync());
+        // [B6-DP-MA 2026-11-06] luật mã dòng dự phòng + mã chính không trùng mã dự phòng của dòng cha khác (đọc DB dưới khoá)
+        PartStepGuard.CheckBackupRules(Label, newStep.NC, newStep.IsBackup, newStep.ParentNC, (await _db.PartPackagingSteps.AsNoTracking()
+            .Where(s => s.PartId == partId && s.IsActive).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).ToListAsync()).Select(s => (s.NC, s.IsBackup, s.ParentNC)));
 
         var maxOrder = await _db.PartPackagingSteps
             .Where(s => s.PartId == partId)
@@ -102,7 +105,7 @@ public class PartPackagingService
         await _db.Entry(existing).ReloadAsync();
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
         // [PM-NC-DUP-SVC] mã / dự phòng đọc lại từ DB dưới khoá (existing có thể là bản EF trang đang giữ từ lần lưu trước — rà độc lập 02/11 T1)
-        var dbNow = await _db.PartPackagingSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup }).FirstAsync();
+        var dbNow = await _db.PartPackagingSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).FirstAsync();   // [B6-DP-MA] + ParentNC
         if (!PartStepGuard.SameCode(dbNow.NC, updated.NC)) PartStepGuard.CheckReservedCode(Label, updated.NC);   // [PM-NC-AT 2026-11-05] chỉ kiểm khi đổi mã
         if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
             PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartPackagingSteps
@@ -112,6 +115,10 @@ public class PartPackagingService
         if (!dbNow.IsBackup && updated.IsBackup && await _db.PartPackagingSteps.AsNoTracking()
                 .AnyAsync(s => s.PartId == existing.PartId && s.IsActive && s.IsBackup && s.StepId != stepId && s.ParentNC == dbNow.NC))
             throw new PartStepCodeException($"{Label}: NC / mã CV {PartStepGuard.Norm(dbNow.NC)} đang có dòng dự phòng — xoá dòng dự phòng trước khi đổi dòng này thành dự phòng.");
+        // [B6-DP-MA 2026-11-06] luật mã dòng dự phòng — chỉ khi mã / dự phòng / mã cha đổi (đọc DB dưới khoá)
+        if (PartStepGuard.NeedBackupCheckOnUpdate(dbNow.NC, dbNow.IsBackup, dbNow.ParentNC, updated.NC, updated.IsBackup, updated.ParentNC))
+            PartStepGuard.CheckBackupRules(Label, updated.NC, updated.IsBackup, updated.ParentNC, (await _db.PartPackagingSteps.AsNoTracking()
+                .Where(s => s.PartId == existing.PartId && s.IsActive && s.StepId != stepId).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).ToListAsync()).Select(s => (s.NC, s.IsBackup, s.ParentNC)));
 
         var pid = existing.PartId;
         var changedCount = 0;

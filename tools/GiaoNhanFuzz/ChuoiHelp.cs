@@ -279,8 +279,11 @@ public static class ChuoiHelp
             {
                 if (!mains.Any()) return "bỏ qua";
                 var s = mains[rnd.Next(mains.Count)];
-                await gc.AddAsync(partId, new PartMachiningStep { NC = s.NC + "-DP-09", MachineRegistered = "D9", IsBackup = true, ParentNC = s.NC, SetupTime = 1 }, Admin, Reason);
-                return $"PM thêm dự phòng cho {s.NC}";
+                // [B6-DP-MA 06/11] lần 2 cùng mã dự phòng (hoặc mã đã là dòng chính khác) = phải bị chặn (luật mã dự phòng); đáp án độc lập từ danh sách dòng đang dùng
+                var dpCode = s.NC + "-DP-09";
+                bool dpDup = db.PartMachiningSteps.List.Any(x => x.PartId == partId && x.IsActive && PartStepGuard.SameCode(x.NC, dpCode));
+                return await Guarded(dpDup, $"PM thêm dự phòng {dpCode} cho {s.NC}",
+                    () => gc.AddAsync(partId, new PartMachiningStep { NC = dpCode, MachineRegistered = "D9", IsBackup = true, ParentNC = s.NC, SetupTime = 1 }, Admin, Reason));
             }
             default:  // KCS / Đóng gói thêm dòng
             {

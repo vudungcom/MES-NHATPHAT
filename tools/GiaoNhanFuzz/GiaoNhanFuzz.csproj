@@ -18,6 +18,7 @@
     <Compile Include="../../MES.Web/Services/HandoverWhy.cs" />
     <Compile Include="../../MES.Web/Services/HandoverNgTrace.cs" />
     <Compile Include="../../MES.Web/Services/PoGuard.cs" />
+    <Compile Include="../../MES.Web/Services/QtyRule.cs" />   <!-- [B3-SO-NGUYEN] chỉ số nguyên -->
     <Compile Include="../../MES.Web/Services/PermCheck.cs" />   <!-- [RS-C1][RS-C2] kiểm quyền ma trận ở máy chủ -->
     <!-- [RS-C1][RS-E8] kịch bản `quyen`: service danh mục thật (kiểm quyền máy chủ, mã CV / khách hàng trùng, đổi / xoá mã đang dùng) -->
     <Compile Include="../../MES.Web/Services/AuthService.cs" />

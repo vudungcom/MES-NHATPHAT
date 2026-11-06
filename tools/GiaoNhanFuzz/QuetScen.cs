@@ -3,6 +3,9 @@
 //   Q2: cài lỗi cố ý (giống dữ liệu cũ ngoài đời) → quét phải bắt đúng loại:
 //       dòng WTS QtyDone ≠ OK + NG · WTS vượt trần (OK + NG > nhận vào) · PO không cân · ô âm (giao 16 khi NC sau chưa có WTS).
 //   Q3 [N3-FIRST 03/11]: NC đầu chuỗi Gia công là máy loại trừ → LOAI_TRU_DAU (PO) + mục Part Master.
+//   Q5 [QUET-VU-SOLE 06/11]: vụ lỗi đi đúng đường → không báo VU_LECH / SO_LE; số lẻ cài cố ý ở PO / lần nhận / WTS đã huỷ → SO_LE đúng chỗ.
+//       VU_LECH là lưới chặn lỗi CODE (sổ vụ tính lại từ chứng từ nên cân theo cấu trúc, sửa dữ liệu không làm lệch) — đột biến đảo điều kiện phải làm Q5 SAI.
+//       Nguồn: CLAUDE 06/11 (bản "em hiểu" Bước 1) + B3 RS-E9 (Hùng chốt 05/11 15:37 "kiểm DB trước").
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
@@ -174,6 +177,35 @@ public static class QuetScen
             var sw = new StringWriter(); QuetCore.Write(r, sw, "GIA");
             Ok(sw.ToString().Contains("── Part Master: 1 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 2 dòng mã bắt đầu \"@\" (PM_MA_A)"),
                "File kết quả có mục Part Master PM_TRUNG / PM_MA_A", sw.ToString().Split('\n').FirstOrDefault(l => l.Contains("PM_TRUNG")));
+        }
+        Console.WriteLine("[Q5] [QUET-VU-SOLE 06/11] vụ lỗi cân (VU_LECH) + số lẻ (SO_LE, B3)");
+        {
+            var db = Seed(true); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var kho = new KhoVatLieuService(db, new UserService(null));
+            WtsSvcHelp.Reset();
+            await kho.SaveKhoInputAsync(1, DateTime.Now, 16, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            Ok((await svc.IssueByCellAsync(1, "KHO", "GC", 16, 1, "MOI", false, "MOI", null, "NC1")).Ok, "Kho → GC 16");
+            Ok((await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 16, 0, null, 1)).Ok, "GC nhận 16");
+            Ok((await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 14, 2, 1, 1)).Ok, "WTS NC1 OK 14 NG 2 (sinh vụ)");
+            var r0 = await QuetCore.ScanAsync(db, led);
+            var row0 = (await led.GetLedgerForDetailAsync(1))!;
+            Ok(row0.Cases.Count == 1 && !r0.Findings.Any(f => f.Kind == QuetCore.VuLech || f.Kind == QuetCore.SoLe),
+               "Vụ đi đúng đường: 1 vụ, không báo VU_LECH / SO_LE", string.Join(" | ", r0.Findings.Select(f => $"[{f.Kind}] {f.Detail}")));
+            var sw0 = new StringWriter(); QuetCore.Write(r0, sw0, "GIA");
+            Ok(sw0.ToString().Contains("Vụ lỗi cân (VU_LECH): mọi vụ cân") && sw0.ToString().Contains("Số lẻ (SO_LE, B3): không có dòng nào"),
+               "File kết quả in rõ 2 mục mới khi không có gì", string.Join(" / ", sw0.ToString().Split('\n').Where(l => l.Contains("VU_LECH") || l.Contains("SO_LE"))));
+            // Số lẻ ghi thẳng như dữ liệu cũ: SL PO 16.5, WTS NC2 OK 1.5 (dòng đã huỷ vẫn xét), lần nhận NG 0.25
+            db.KhPlanDetails.List.First().Quantity = 16.5m;
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 950, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC2", QtyDone = 1.5m, QtyOk = 1.5m, QtyNg = 0, WorkerId = 1, IsVoided = true, StartTime = DateTime.Now, EndTime = DateTime.Now });
+            db.HandoverReceives.List.First().QtyNg = 0.25m;
+            db.Fixup();
+            var r1 = await QuetCore.ScanAsync(db, led);
+            var le = r1.Findings.Where(f => f.Kind == QuetCore.SoLe).Select(f => f.Detail).ToList();
+            Ok(le.Count == 3 && le.Any(d => d.Contains("SL PO 16.5")) && le.Any(d => d.Contains("#950") && d.Contains("(đã huỷ)")) && le.Any(d => d.StartsWith("lần nhận #") && d.Contains("NG 0.25"))
+               && r1.Findings.Where(f => f.Kind == QuetCore.SoLe).All(f => f.Po == "PO1"),
+               "SO_LE: đúng 3 chỗ (SL PO, dòng WTS đã huỷ, lần nhận) và ghi đúng PO", string.Join(" | ", le));
+            var sw1 = new StringWriter(); QuetCore.Write(r1, sw1, "GIA");
+            Ok(sw1.ToString().Contains("Số lẻ (SO_LE, B3): CÓ"), "File kết quả báo CÓ số lẻ");
         }
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;

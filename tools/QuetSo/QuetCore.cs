@@ -32,6 +32,9 @@ public static class QuetCore
     public const string LoaiTruDau = "LOAI_TRU_DAU";     // [N3-FIRST 2026-11-03] quy trình GC (snapshot PO) BẮT ĐẦU bằng NC máy loại trừ (N3 đầu chuỗi)
     public const string PmTrung    = "PM_TRUNG";         // [PM-T4 2026-11-05] Part Master có 2 dòng CHÍNH đang dùng cùng mã trong 1 bảng → chặn tạo ràng buộc DB (T4)
     public const string PmMaA      = "PM_MA_A";          // [PM-NC-AT 2026-11-05] Part Master có mã NC / mã CV bắt đầu "@" (dành cho mã hệ thống như @VAO)
+    // [QUET-VU-SOLE 2026-11-06] Nguồn: CLAUDE 06/11 (bản "em hiểu" Bước 1 — QuetSo chưa kiểm vụ cân; B3 RS-E9 Hùng chốt 05/11 15:37 "kiểm DB trước")
+    public const string VuLech     = "VU_LECH";          // vụ lỗi không cân (Sinh ra ≠ giữ + chuyển + xử lý + huỷ + trả khách) / Σ vụ ≠ ô Hàng lỗi · Hàng sửa / khung lỗi báo lệch
+    public const string SoLe       = "SO_LE";            // số lẻ (không nguyên) ở SL PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa (B3 RS-E9)
 
     public sealed class Result
     {
@@ -65,7 +68,7 @@ public static class QuetCore
             if (!w.Balanced)
                 Add(r, DangODau, $"cộng các ô {w.Total:0.##} ≠ phôi {w.Phoi:0.##}");
             foreach (var G in r.Groups.Values)
-                foreach (var msg in G.Warnings.Where(m => !m.Contains("WTS nhập vượt")))   // "WTS nhập vượt" đã ghi ở WTS_VUOT_TRAN
+                foreach (var msg in G.Warnings.Where(m => !m.Contains("WTS nhập vượt") && !m.Contains("khác giữ + chuyển") && !m.Contains("tổng vụ lỗi đang giữ ô")))   // "WTS nhập vượt" đã ghi ở WTS_VUOT_TRAN; 2 loại vụ lệch ghi ở VU_LECH (không đếm 2 lần — rà độc lập 06/11 mục 8)
                     Add(r, CanhBao, msg);
         }
 
@@ -171,6 +174,26 @@ public static class QuetCore
                 res.PmFindings.Add($"[{PmMaA}] {PartTxt(x.Pid)} — {x.Tbl} StepId {x.Id}{(x.Backup ? " (dự phòng)" : "")}: NC \"{x.Nc}\"{(x.Code != null ? $" mã CV \"{x.Code}\"" : "")}");
         }
 
+        // [QUET-VU-SOLE 2026-11-06] Mỗi vụ lỗi cân + khớp ô sổ + khung lỗi (HandoverNgTrace) — như kiểm chung của bộ kiểm GiaoNhanFuzz.
+        //   Chỉ PO có vụ / hàng lỗi mới tính khung lỗi (đọc lại chứng từ từng PO).
+        foreach (var r in rows)
+        {
+            foreach (var cs in r.Cases.Values.Where(x => x.Lech != 0))
+                Add(r, VuLech, $"vụ {cs.No}: sinh {cs.SinhRa:0.##} ≠ giữ {cs.HeldTotal:0.##} + chuyển {cs.Transit:0.##} + xử lý {cs.DaXuLyTotal:0.##} + huỷ {cs.Huy:0.##} + trả khách {cs.TraKhach:0.##} (lệch {cs.Lech:0.##})");
+            foreach (var G in r.Groups.Values)
+            {
+                var vl = r.Cases.Values.Sum(x => x.HeldAt(G.Code, HandoverCell.Loi));
+                var vs = r.Cases.Values.Sum(x => x.HeldAt(G.Code, HandoverCell.Sua));
+                if (vl != G.LoiGiu || vs != G.SuaGiu)
+                    Add(r, VuLech, $"{G.Label}: Σ vụ đang giữ Hàng lỗi {vl:0.##} / Hàng sửa {vs:0.##} ≠ ô sổ {G.LoiGiu:0.##} / {G.SuaGiu:0.##}");
+            }
+            if (r.Cases.Count == 0 && !r.HasLoiGiu) continue;
+            var inp = await led.GetInputForDetailAsync(r.KhPlanDetailId);
+            if (inp == null) continue;
+            foreach (var pb in HandoverNgTrace.Build(inp).Problems)
+                Add(r, VuLech, "khung lỗi: " + pb);
+        }
+
         var wts = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
         res.WtsCount = wts.Count;
         foreach (var x in wts)
@@ -182,6 +205,34 @@ public static class QuetCore
             if (x.QtyDone < 0 || (x.QtyOk ?? 0) < 0 || (x.QtyNg ?? 0) < 0)
                 Add(r, WtsSoAm, $"dòng WTS #{x.WtsLogId} {x.ProcessGroup} {x.NC ?? x.WtsCode}: Done {x.QtyDone:0.##} OK {x.QtyOk:0.##} NG {x.QtyNg:0.##}");
         }
+
+        // [QUET-VU-SOLE 2026-11-06] B3 RS-E9: số lẻ ở mọi chỗ ghi số lượng (kể cả dòng đã huỷ — vẫn là lịch sử). Kho (KhoVatLieus) là cột int nên không xét.
+        //   Không có dòng nào → máy chủ chỉ nhận số nguyên (Hùng chốt 05/11 15:37); có → báo Hùng trước khi chặn.
+        static bool Le(decimal v) => v != decimal.Truncate(v);
+        static bool LeN(decimal? v) => v.HasValue && Le(v.Value);
+        void AddLe(int det, string what)
+        {
+            if (plans.TryGetValue(det, out var r)) Add(r, SoLe, what);
+            else res.Findings.Add(new Finding { DetailId = det, Po = $"(KhPlanDetailId {det})", Kind = SoLe, Detail = what });
+        }
+        foreach (var d in db.KhPlanDetails.ToList().Where(d => Le(d.Quantity)))
+            AddLe(d.KhPlanDetailId, $"SL PO {d.Quantity:0.####}");
+        var txAll = db.HandoverTransactions.ToList();
+        foreach (var t in txAll.Where(t => Le(t.QtyIssued) || Le(t.NgQty) || LeN(t.QtyClosed)))
+            AddLe(t.KhPlanDetailId, $"phiếu #{t.HandoverTxId}{(t.IsVoided ? " (đã huỷ)" : "")}: giao {t.QtyIssued:0.####} · NG {t.NgQty:0.####} · huỷ phần chưa nhận {t.QtyClosed:0.####}");
+        var txDet = txAll.ToDictionary(t => t.HandoverTxId, t => t.KhPlanDetailId);
+        foreach (var x in db.HandoverReceives.ToList().Where(x => Le(x.QtyOk) || Le(x.QtyNg)))
+            AddLe(txDet.TryGetValue(x.HandoverTxId, out var dd) ? dd : 0, $"lần nhận #{x.ReceiveId} (phiếu #{x.HandoverTxId}): OK {x.QtyOk:0.####} · NG {x.QtyNg:0.####}");
+        foreach (var x in db.WtsProductionLogs.ToList().Where(x => Le(x.QtyDone) || LeN(x.QtyOk) || LeN(x.QtyNg)))
+            AddLe(x.KhPlanDetailId, $"dòng WTS #{x.WtsLogId}{(x.IsVoided ? " (đã huỷ)" : "")} {x.ProcessGroup} {x.NC ?? x.WtsCode}: Done {x.QtyDone:0.####} OK {x.QtyOk:0.####} NG {x.QtyNg:0.####}");
+        foreach (var x in db.HandoverNgReports.ToList().Where(x => Le(x.Qty)))
+            AddLe(x.KhPlanDetailId, $"báo lỗi #{x.HandoverNgReportId}: {x.Qty:0.####}");
+        var kqAll = db.HandoverRepairResults.ToList();
+        foreach (var x in kqAll.Where(x => Le(x.QtyPass) || Le(x.QtyFail)))
+            AddLe(x.KhPlanDetailId, $"Kết quả sửa #{x.HandoverRepairResultId}: đạt {x.QtyPass:0.####} · không đạt {x.QtyFail:0.####}");
+        var kqDet = kqAll.ToDictionary(x => x.HandoverRepairResultId, x => x.KhPlanDetailId);
+        foreach (var x in db.HandoverRepairChecks.ToList().Where(x => Le(x.QtyOk) || Le(x.QtyNg)))
+            AddLe(kqDet.TryGetValue(x.HandoverRepairResultId, out var kd) ? kd : 0, $"KCS xác nhận #{x.HandoverRepairCheckId} (Kết quả sửa #{x.HandoverRepairResultId}): đạt {x.QtyOk:0.####} · loại {x.QtyNg:0.####}");
         return res;
     }
 
@@ -193,6 +244,9 @@ public static class QuetCore
         o.WriteLine($"PO có vấn đề: {byPo.Count} · tổng phát hiện: {res.Findings.Count}");
         foreach (var k in res.Findings.GroupBy(f => f.Kind).OrderBy(g => g.Key))
             o.WriteLine($"  {k.Key,-16} {k.Count(),5} dòng · {k.Select(f => f.DetailId).Distinct().Count()} PO");
+        // [QUET-VU-SOLE 2026-11-06] 2 mục mới in rõ cả khi không có gì (để biết đã kiểm)
+        o.WriteLine($"  Vụ lỗi cân ({VuLech}): {(res.Findings.Any(f => f.Kind == VuLech) ? "CÓ LỆCH — xem từng PO" : "mọi vụ cân, khớp ô sổ + khung lỗi")}");
+        o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");
         o.WriteLine();
         foreach (var g in byPo.OrderBy(g => g.First().Plan).ThenBy(g => g.First().Po))
         {

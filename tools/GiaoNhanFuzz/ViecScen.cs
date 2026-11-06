@@ -23,9 +23,9 @@ public static class ViecScen
 
     /// <summary>Seed của kịch bản wts (PO1 Workflow ON 40 chiếc đã vào GC) + mã CV "VS" (nhóm CHUNG → GC), "XX" (nhóm KHAC, không ánh xạ),
     /// "NG0" đã ngưng; nhóm quyền WTSGC (Xem + Sửa "Nhập WTS: Gia công") cho u7.</summary>
-    static async Task<AppDbContext> SeedAsync()
+    static async Task<AppDbContext> SeedAsync(int po1 = 40)
     {
-        var db = await WtsScen.SeedAsync();
+        var db = await WtsScen.SeedAsync(po1);
         db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "VS", TaskName = "Vệ sinh máy", IsActive = true });
         db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 2, CategoryCode = "KHAC", CategoryName = "Khác", TaskCode = "XX", TaskName = "Việc nhóm khác", IsActive = true });
         db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 3, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "NG0", TaskName = "Mã đã ngưng", IsActive = false });
@@ -205,7 +205,7 @@ public static class ViecScen
         //   khoá WTS_WORKER_ đầu tiên (thứ tự người → máy → PO); WTS chồng WTS (GC nhiều máy) vẫn được.
         Console.WriteLine("[X7] ML16-Q — lưu WTS sản xuất chồng giờ việc không ra SP của chính mình: chặn; chạm mép / người khác / việc đã huỷ: được; khoá người → máy → PO");
         {
-            var db = await SeedAsync(); var s = WtsScen.Svc(db);
+            var db = await SeedAsync(1000); var s = WtsScen.Svc(db);   // [B3-SO-NGUYEN 06/11] PO1 1000: phần trộn ngẫu nhiên ghi WTS 1 chiếc / dòng (trước 0.01)
             db.Users.List.First(u => u.UserId == 2).GroupId = 77; db.Users.List.First(u => u.UserId == 2).Group = db.UserGroups.List.First(x => x.GroupId == 77); db.Fixup();
             var a1 = await s.SaveActivityAsync(Req(2, "VS", D.AddHours(10), D.AddHours(11)));
             int w0 = db.WtsProductionLogs.List.Count;
@@ -243,7 +243,7 @@ public static class ViecScen
                 var st = D.AddHours(6).AddMinutes(rnd.Next(0, 14 * 60) / 5 * 5); var en = st.AddMinutes(5 + rnd.Next(0, 12) * 5);
                 if (en > D.AddDays(1)) en = D.AddDays(1);
                 WtsSaveService.WtsSaveResult r;
-                if (rnd.Next(2) == 0) { var gg = WtsScen.Gc(machine: "MR" + rnd.Next(1, 40)); gg.Rows.Add(WtsScen.Row(1, 0.01m, 0, st, en)); r = await s.SaveGroupAsync(gg); if (r.Ok) okW++; }
+                if (rnd.Next(2) == 0) { var gg = WtsScen.Gc(machine: "MR" + rnd.Next(1, 40)); gg.Rows.Add(WtsScen.Row(1, 1m, 0, st, en)); r = await s.SaveGroupAsync(gg); if (r.Ok) okW++; }
                 else { r = await s.SaveActivityAsync(Req(2, "VS", st, en)); if (r.Ok) okA++; }
                 if (!r.Ok) blk++;
                 db.Fixup();

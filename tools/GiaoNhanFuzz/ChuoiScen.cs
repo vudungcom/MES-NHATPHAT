@@ -729,6 +729,57 @@ public static class ChuoiScen
                "Dòng cũ có sẵn \"@OLD\" / mã CV \"@OT\": sửa giờ vẫn lưu (không đổi mã); đổi \"@OLD\" → 9R lưu được", $"{u3} | {u4} | {u5}");
         }
 
+        Console.WriteLine("[C19] [B6-DP-MA 06/11] Luật mã dòng dự phòng: phải có mã; = mã cha được; khác mã cha thì không trùng dòng chính khác / dự phòng khác; mã chính không trùng dự phòng của cha khác");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-019", Full());
+            var pkg = new PartPackagingService(db); var kcs = new PartInspectionService(db); var gc = new PartMachiningService(db);
+            var bav = new PartBaviaService(db); var rua = new PartWashingService(db);
+            async Task<string?> Err(Func<Task> a) { try { await a(); return null; } catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; } }
+            int N() => db.PartMachiningSteps.List.Count + db.PartBaviaSteps.List.Count + db.PartWashingSteps.List.Count + db.PartInspectionSteps.List.Count + db.PartPackagingSteps.List.Count;
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", StepName = "a", StandardTime = 1 }, 1, "them PA");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PB", StepName = "b", StandardTime = 1 }, 1, "them PB");
+            int n0 = N();
+            // (1) dự phòng trống / '-' ở cả 5 service → chặn
+            var e1 = new[]
+            {
+                await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = " ", IsBackup = true, ParentNC = "NC01", MachineRegistered = "D7", SetupTime = 1 }, 1, "dp trong")),
+                await Err(() => bav.AddAsync(pid, new PartBaviaStep { NC = "-", IsBackup = true, ParentNC = "B1", StepName = "x", StandardTime = 1 }, 1, "dp trong")),
+                await Err(() => rua.AddAsync(pid, new PartWashingStep { NC = null, IsBackup = true, ParentNC = "1R", StepName = "x", StandardTime = 1 }, 1, "dp trong")),
+                await Err(() => kcs.AddAsync(pid, new PartInspectionStep { NC = "", IsBackup = true, ParentNC = "K1", StepName = "x", StandardTime = 1 }, 1, "dp trong")),
+                await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = " - ", IsBackup = true, ParentNC = "PA", StepName = "x", StandardTime = 1 }, 1, "dp trong")),
+            };
+            Ok(e1.All(e => e != null && e.StartsWith("PartStepCodeException") && e.Contains("dòng dự phòng chưa có")) && N() == n0 && db.Database.CurrentTransaction == null,
+               "Dự phòng mã trống / '-' ở Gia công, Bavia, Rửa, KCS, Đóng gói → chặn, không thêm dòng, giao dịch đã đóng", string.Join(" | ", e1));
+            // (2) trùng dòng chính khác / trùng dự phòng khác (khác hoa thường + khoảng trắng) → chặn
+            var e2 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = " pb", IsBackup = true, ParentNC = "PA", StepName = "x", StandardTime = 1 }, 1, "dp trung chinh"));
+            var e3 = await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = "NC02", IsBackup = true, ParentNC = "NC01", MachineRegistered = "D7", SetupTime = 1 }, 1, "dp trung chinh"));
+            Ok(e2 != null && e2.Contains("trùng mã dòng chính khác") && e3 != null && e3.Contains("trùng mã dòng chính khác") && N() == n0,
+               "Dự phòng của PA mang mã ' pb' (= dòng chính PB) / dự phòng NC01 mang mã NC02 → chặn", $"{e2} | {e3}");
+            // (3) không chặn oan: = mã cha, mã riêng chưa có
+            var ok1 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", IsBackup = true, ParentNC = "PA", StepName = "x", StandardTime = 1 }, 1, "dp = cha"));
+            var ok2 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "PA-DP-01", IsBackup = true, ParentNC = "PA", StepName = "x", StandardTime = 1 }, 1, "dp rieng"));
+            var ok3 = await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = "NC02-DP-01", IsBackup = true, ParentNC = "NC02", MachineRegistered = "D8", SetupTime = 1 }, 1, "dp rieng"));
+            Ok(ok1 == null && ok2 == null && ok3 == null && N() == n0 + 3, "Dự phòng mã = mã cha (PA) / mã riêng PA-DP-01 / NC02-DP-01 → lưu được", $"{ok1} | {ok2} | {ok3}");
+            var e4 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "pa-dp-01 ", IsBackup = true, ParentNC = "PB", StepName = "x", StandardTime = 1 }, 1, "dp trung dp"));
+            var e5 = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "PA-DP-01", StepName = "chinh", StandardTime = 1 }, 1, "chinh trung dp"));
+            var e6 = await Err(() => gc.AddAsync(pid, new PartMachiningStep { NC = "nc01-dp-01", MachineRegistered = "M9", SetupTime = 1 }, 1, "chinh trung dp"));
+            Ok(e4 != null && e4.Contains("dòng dự phòng khác") && e5 != null && e5.Contains("đang là mã dòng dự phòng") && e6 != null && e6.Contains("đang là mã dòng dự phòng") && N() == n0 + 3,
+               "Dự phòng của PB mang mã 'pa-dp-01 ' (dự phòng PA đã có) / dòng chính PA-DP-01 / dòng chính Gia công 'nc01-dp-01' → chặn", $"{e4} | {e5} | {e6}");
+            // (4) sửa: đổi mã dự phòng sang mã dòng chính khác → chặn; sang mã riêng → được; dữ liệu cũ (dự phòng mã trống) sửa ô khác vẫn được
+            var dp = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.NC == "PA-DP-01");
+            var u1 = await Err(() => pkg.UpdateAsync(dp.StepId, new PartPackagingStep { NC = "PB", IsBackup = true, ParentNC = "PA", StepName = dp.StepName, StandardTime = dp.StandardTime }, 1, "doi ma dp"));
+            var u2 = await Err(() => pkg.UpdateAsync(dp.StepId, new PartPackagingStep { NC = "PA-DP-02", IsBackup = true, ParentNC = "PA", StepName = dp.StepName, StandardTime = dp.StandardTime }, 1, "doi ma dp"));
+            Ok(u1 != null && u1.Contains("trùng mã dòng chính khác") && u2 == null && dp.NC == "PA-DP-02", "Sửa mã dự phòng sang PB (dòng chính) chặn; sang PA-DP-02 lưu được", $"{u1} | {u2} | {dp.NC}");
+            var u3 = await Err(() => pkg.UpdateAsync(dp.StepId, new PartPackagingStep { NC = "PA-DP-02", IsBackup = true, ParentNC = "PB", StepName = dp.StepName, StandardTime = dp.StandardTime }, 1, "doi cha"));
+            Ok(u3 == null && dp.ParentNC == "PB", "Đổi cha của dự phòng (mã riêng không trùng ai) → lưu được", u3);
+            var old = new PartBaviaStep { StepId = 9191, PartId = pid, StepOrder = 97, NC = "", IsBackup = true, ParentNC = "B1", StepName = "cu", StandardTime = 1, IsActive = true, CreatedBy = 1, CreatedAt = DateTime.Now };
+            db.PartBaviaSteps.List.Add(old); db.Fixup();
+            var u4 = await Err(() => bav.UpdateAsync(9191, new PartBaviaStep { NC = "", IsBackup = true, ParentNC = "B1", StepName = "cu", StandardTime = 4 }, 1, "sua gio"));
+            var u5 = await Err(() => bav.UpdateAsync(9191, new PartBaviaStep { NC = "B2", IsBackup = true, ParentNC = "B1", StepName = "cu", StandardTime = 4 }, 1, "dat ma"));
+            Ok(u4 == null && old.StandardTime == 4 && (u5 == null || !u5.Contains("trùng")) , "Dữ liệu cũ dự phòng mã trống: sửa giờ vẫn lưu (không đổi mã); đặt mã riêng B2 lưu được", $"{u4} | {u5}");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

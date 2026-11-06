@@ -2990,7 +2990,11 @@ else
         if (string.IsNullOrWhiteSpace(baseNC) || baseNC == "NC") return;
 
         var count = list.Count(e => (e.ParentNC == baseNC || (e.NC != null && e.NC.StartsWith($"{baseNC}-DP-"))) && e.NC != baseNC);
-        var newBackup = factory($"{baseNC}-DP-{count + 1:D2}", baseNC);
+        // [B6-DP-MA 2026-11-06] Mã dự phòng mới không trùng mã dòng nào đang có trên trang (kể cả dòng đang chờ xoá): trước lấy số đếm + 1
+        //   → xoá DP-01 rồi tạo dự phòng mới ra lại DP-02 đang có → máy chủ (B6) chặn, người dùng không gỡ được. Nguồn: rà độc lập gói 1 06/11 (mục 2).
+        var n = count + 1;
+        while (list.Any(e => PartStepGuard.SameCode(e.NC, $"{baseNC}-DP-{n:D2}"))) n++;
+        var newBackup = factory($"{baseNC}-DP-{n:D2}", baseNC);
         
         var idx = list.IndexOf(parent);
         if (idx >= 0)
@@ -3663,13 +3667,9 @@ else
                     if (!_daoList.Any(d => d.TenDao == dao))
                         validationErrors.Add($"NC {e.NC}: Loại dao '{dao}' không có trong danh mục.");
             }
-            if (!string.IsNullOrEmpty(e.TimingMachine))
-            {
-                var timingItems = e.TimingMachine.Split(new[]{',',';'}, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var tm in timingItems)
-                    if (!_thietBiList.Any(m => m.SoMay == tm))
-                        validationErrors.Add($"NC {e.NC}: Máy bấm giờ '{tm}' không có trong danh sách thiết bị.");
-            }
+            // [B7-TIMING-MAY 2026-11-06] Không chặn lưu khi chữ "Máy bấm giờ" (TimingMachine) ghi máy đã xoá: từ B7 xoá máy không xét cột này,
+            //   mà trang không có ô sửa cột này (chỉ chép sang dòng dự phòng) → chặn ở đây thì cả lượt Lưu B–E kẹt, không gỡ được trên giao diện.
+            //   Cột chỉ là ghi chép máy đã bấm giờ chuẩn (WTS / sổ không đọc). Nguồn: rà độc lập gói 1 06/11 (mục 1 CAO).
         }
         // [PM-DUP] Chốt chặn cuối: máy trùng trong 1 NC (máy đăng ký / các dòng đồng dạng) thì không lưu.
         // Chỉ kiểm NC đang sửa (NC hoặc dòng đồng dạng mới / sửa) — NC cũ không đụng tới thì không chặn oan.

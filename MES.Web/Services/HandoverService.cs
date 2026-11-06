@@ -573,6 +573,7 @@ namespace MES.Web.Services
                 return (false, "Ô nhận không hợp lệ.");   // [GN-CELL2]
             if (cellPurpose) toCell ??= HandoverCell.ReceiveCellOf(purpose);
             if (qtyIssued <= 0) return (false, "Số lượng giao phải lớn hơn 0.");
+            if (QtyRule.CheckWhole(qtyIssued) is string eWhole) return (false, eWhole);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
             bool isOut = HandoverPurpose.IsOut(purpose);   // [GN-NG-OUT] Huỷ / Trả khách: không có nhóm nhận
             if (isOut) toGroupCode = HandoverPurpose.OutTarget(purpose)!;
@@ -786,6 +787,7 @@ namespace MES.Web.Services
             if (qtyOk + qtyNg <= 0)
 
                 return (false, "Phải nhập ít nhất 1 chiếc OK hoặc NG.");
+            if (QtyRule.CheckWhole(qtyOk, qtyNg) is string eWholeR) return (false, eWholeR);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
 
             // [GN-RECV-NG2] Kiểm lý do NG dời xuống sau khi đọc phiếu: phiếu Hàng lỗi công đoạn trước lấy lỗi theo phiếu
 
@@ -1290,6 +1292,7 @@ namespace MES.Web.Services
             var denyRep = await DenyGroupAsync(userId, groupCode, "báo lỗi");
             if (denyRep != null) return (false, denyRep);
             if (qty <= 0) return (false, "Số lượng lỗi phải lớn hơn 0.");
+            if (QtyRule.CheckWhole(qty) is string eWholeB) return (false, eWholeB);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
             if (groupCode == "KHO" ? sourceCell != HandoverNgSource.Phoi : sourceCell is not (HandoverNgSource.Chua or HandoverNgSource.Da))
                 return (false, groupCode == "KHO" ? "Kho báo lỗi từ phôi còn." : "Chọn hàng lỗi đang nằm ở: chưa làm, hay đã làm chưa giao.");
             if (origin is not (HandoverNgSource.DauVao or HandoverNgSource.DauRa))

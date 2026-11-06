@@ -531,6 +531,62 @@ public static class KhScen
             Ok(err != null && err.Contains("không tách được") && err.Contains("1 phiếu báo hàng lỗi") && db.KhPlanDetails.List.Count == 1, "Tách PO: chặn, không sinh PO mới", err);
         }
 
+        Console.WriteLine("[A17] [B3-SO-NGUYEN 06/11] Máy chủ chỉ nhận số nguyên: tạo KH / tách PO / sửa SL PO / lập phiếu / nhận / báo lỗi / form / WTS / Kết quả sửa — số lẻ bị chặn, không ghi gì");
+        {
+            var db = Seed(); var kh = new KhPlanService(db); var svc = new HandoverService(db);
+            WtsSvcHelp.Reset();
+            int Docs() => db.HandoverTransactions.List.Count + db.HandoverReceives.List.Count + db.HandoverNgReports.List.Count + db.WtsProductionLogs.List.Count + db.KhPlanDetails.List.Count + db.HandoverRepairResults.List.Count;
+            string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
+            int d0 = Docs();
+            var plan = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] };
+            plan.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-LE", PartNo = "P", Quantity = 10.5m });
+            var eCreate = E(() => kh.CreateAsync(plan, 1));
+            var dbS = Seed(phoi: null); var khS = new KhPlanService(dbS);   // tách chỉ được khi PO trắng
+            var eSplit = E(() => khS.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 20.5m }, new() { PurchaseOrder = "PO1B", Quantity = 19.5m } }, 1, "tach"));
+            Ok(eSplit != null && dbS.KhPlanDetails.List.Count == 1, "Tách PO trắng 20.5 + 19.5 → chặn, không sinh PO mới", eSplit);
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 40.25m;
+            var eEdit = await kh.SaveEditAsync(1, 1, o, n, 1, "sua sl le");
+            Ok(eCreate != null && eCreate.Contains("số nguyên") && eSplit != null && eSplit.Contains("số nguyên") && eEdit != null && eEdit.Contains("số nguyên")
+               && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).Quantity == 40 && Docs() == d0,
+               "KH: tạo PO SL 10.5 / tách 20.5 + 19.5 / sửa SL 40.25 → chặn, SL giữ 40", $"{eCreate} | {eSplit} | {eEdit}");
+            var okSplit = E(() => khS.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 21 }, new() { PurchaseOrder = "PO1B", Quantity = 19 } }, 1, "tach"));
+            Ok(okSplit == null && dbS.KhPlanDetails.List.Count(x => x.PurchaseOrder.StartsWith("PO1")) >= 2, "Tách PO trắng 21 + 19 (số nguyên) → được", okSplit);
+            var i1 = await svc.IssueByCellAsync(1, "KHO", "GC", 2.5m, 1, "MOI", false, "MOI", null, "NC1");
+            Ok(!i1.Ok && i1.Error.Contains("số nguyên") && Docs() == d0, "Lập phiếu Kho → GC 2.5 → chặn", i1.Error);
+            var i2 = await svc.IssueByCellAsync(1, "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC1");
+            var tx = db.HandoverTransactions.List.Last().HandoverTxId; int d1 = Docs();
+            var r1 = await svc.ReceiveAsync(tx, 9.5m, 0.5m, null, 2);
+            Ok(i2.Ok && !r1.Ok && r1.Error.Contains("số nguyên") && Docs() == d1, "Nhận OK 9.5 + NG 0.5 → chặn", r1.Error);
+            var r2 = await svc.ReceiveAsync(tx, 10, 0, null, 2);
+            int d2 = Docs();
+            var w1 = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 4.5m, 0, 2);
+            var w2 = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 4, 0.5m, 2, 1);
+            Ok(r2.Ok && !w1.Ok && !w2.Ok && (w1.Err ?? "").Contains("số nguyên") && (w2.Err ?? "").Contains("số nguyên") && Docs() == d2, "WTS OK 4.5 / NG 0.5 → chặn", $"{w1.Err} | {w2.Err}");
+            var b1 = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC1", 1.5m, HandoverNgSource.DauRa, null, "", null, 1, new List<string> { "GC" }, ngCategoryId: 1);
+            var f1 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = 1, Group = "GC", UserId = 1, Kind = HandoverForm.Loi, Pos = "NC:NC1", Action = HandoverForm.AGiu, Qty = 1.5m, CatId = 1 });
+            Ok(!b1.Ok && b1.Error.Contains("số nguyên") && !f1.Ok && f1.Error.Contains("số nguyên") && Docs() == d2, "Báo lỗi 1.5 / form báo lỗi 1.5 → chặn", $"{b1.Error} | {f1.Error}");
+            var w3 = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 8, 2, 2, 1);
+            var row = await new HandoverLedgerService(db).GetLedgerForDetailAsync(1);
+            var vu = row!.CasesHeldAt("GC", HandoverCell.Loi).First().Id;
+            var k1 = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, vu, 1.5m, 0, null, null, 1);
+            Ok(w3.Ok && !k1.Ok && k1.Error.Contains("số nguyên"), "Kết quả sửa đạt 1.5 → chặn (trước: nhận tới 2 số lẻ)", k1.Error);
+            var w4 = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC2", null, 3, 0, 2);
+            Ok(w4.Ok, "Số nguyên vẫn lưu bình thường (WTS NC2 OK 3)", w4.Err);
+        }
+
+        Console.WriteLine("[A18] [WTS-AM 06/11] WTS OK / NG âm bị chặn ở máy chủ (cả Workflow OFF — trước: OK 5 + NG -2 lưu được, ghi Done 3 / NG -2)");
+        {
+            var db = Seed(workflow: false); WtsSvcHelp.Reset();
+            int W() => db.WtsProductionLogs.List.Count(x => !x.IsVoided);
+            var a = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 5, -2, 2);
+            var b = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, -1, 3, 2);
+            Ok(!a.Ok && !b.Ok && (a.Err ?? "").Contains("âm") && (b.Err ?? "").Contains("âm") && W() == 0, "Thêm WTS OK 5 / NG -2 và OK -1 / NG 3 → chặn, không ghi", $"{a.Err} | {b.Err} | W={W()}");
+            var c = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 5, 0, 2);
+            var e = await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 6, -1, 2, null, null, c.LogId);
+            var old = db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == c.LogId);
+            Ok(c.Ok && !e.Ok && (e.Err ?? "").Contains("âm") && old != null && !old.IsVoided && old.QtyNg == 0 && W() == 1, "Sửa dòng WTS sang NG -1 → chặn, dòng cũ giữ nguyên (không bị huỷ)", $"{e.Err} | voided={old?.IsVoided} ng={old?.QtyNg} W={W()}");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

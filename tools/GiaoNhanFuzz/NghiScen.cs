@@ -383,7 +383,7 @@ public static class NghiScen
     {
         Console.WriteLine($"[N6] Ngẫu nhiên qua service: {n} nhóm");
         var rnd = new Random(seed);
-        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        var db = await WtsScen.SeedAsync(1000); var s = WtsScen.Svc(db);   // [B3-SO-NGUYEN 06/11] PO1 1000 chiếc: mỗi dòng ghi 1 (trước 0.01)
         var ca = AddCa(db, 1, new TimeOnly(6, 0), new TimeOnly(22, 0), (9, 30, 9, 45, "G1"), (12, 0, 13, 0, "Trưa"), (15, 0, 15, 10, "G2"), (18, 0, 18, 30, "Tối"));
         int saved = 0;
         var curM = new Dictionary<string, DateTime> { ["M1"] = D0.AddHours(6), ["M2"] = D0.AddHours(6).AddMinutes(rnd.Next(60)), ["M3"] = D0.AddHours(6).AddMinutes(rnd.Next(60)) };
@@ -403,7 +403,7 @@ public static class NghiScen
             var worked = WorkMinutes.Touching(ca, st, en).ToDictionary(t => t.BreakStart, t => rnd.Next(3) == 0 ? 0 : rnd.Next(0, t.OverlapMin + 1));
             for (int k = 0; k + 1 < pts.Count; k++)
             {
-                var row = WtsScen.Row(1, 0.01m, 0, pts[k], pts[k + 1]);
+                var row = WtsScen.Row(1, 1m, 0, pts[k], pts[k + 1]);
                 row.Breaks = WorkMinutes.SplitForLine(segs, st, worked, pts[k], pts[k + 1], 1)
                     .Select(t => new WorkMinutes.SentBreak { BreakStart = t.BreakStart, BreakEnd = t.BreakEnd, WorkedMin = t.WorkedMin }).ToList();
                 g.Rows.Add(row);

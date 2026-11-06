@@ -85,6 +85,35 @@ public static class PartStepGuard
             throw new PartStepCodeException($"{label}: NC / mã CV {n} đã có ở dòng chính khác của Part này (có thể vừa được người khác lưu) — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng). Tải lại trang rồi kiểm tra.");
     }
 
+    // [B6-DP-MA 2026-11-06] Luật mã dòng dự phòng (T3 PM-NC-DUP-THAP). Nguồn: CLAUDE (rà độc lập 02/11 T3), Hùng 05/11 15:37 chốt làm theo đề xuất.
+    //   Trước: dự phòng không bị kiểm mã — trống vẫn lưu (trang chặn, service không), hoặc mang đúng mã 1 dòng chính khác / dự phòng của dòng cha khác
+    //   (vd dự phòng "P2" của P1 khi đã có dòng chính P2) → sổ (CodeMain "nhóm|mã" → mã chính) gộp WTS mã đó về 1 cha, cha kia mất số.
+    //   Luật: dự phòng phải có mã (không trống / "-"); mã dự phòng bằng mã CHA thì được (cùng gộp về cha); khác mã cha thì không được trùng mã dòng chính
+    //   khác, không trùng mã dự phòng khác. Chiều ngược: mã dòng chính không trùng mã dự phòng của dòng cha khác. Đọc DB dưới khoá MES_PM_STEPS_.
+    //   Sửa dòng: chỉ kiểm khi mã / dự phòng / mã cha đổi — dữ liệu cũ không đụng tới mã vẫn sửa được ô khác. Taro không xét (gói TARO-NC-MA).
+    public static void CheckBackupRules(string label, string? code, bool isBackup, string? parentCode, IEnumerable<(string? Code, bool Backup, string? Parent)> others)
+    {
+        var n = Norm(code);
+        var list = others.ToList();
+        if (isBackup)
+        {
+            if (IsBlank(code))
+                throw new PartStepCodeException($"{label}: dòng dự phòng chưa có NC / mã — nhập mã (vd {(IsBlank(parentCode) ? "<mã cha>" : Norm(parentCode))}-DP-01) hoặc xoá dòng.");
+            if (SameCode(n, parentCode)) return;
+            if (list.Any(o => !o.Backup && SameCode(o.Code, n)))
+                throw new PartStepCodeException($"{label}: mã dự phòng {n} trùng mã dòng chính khác của Part này — WTS mã này sẽ bị gộp nhầm. Đặt mã khác (vd {(IsBlank(parentCode) ? "<mã cha>" : Norm(parentCode))}-DP-01).");
+            if (list.Any(o => o.Backup && SameCode(o.Code, n)))
+                throw new PartStepCodeException($"{label}: mã dự phòng {n} đã có ở dòng dự phòng khác của Part này (có thể vừa được người khác lưu) — mỗi dòng dự phòng 1 mã riêng. Tải lại trang rồi kiểm tra.");
+            return;
+        }
+        if (!IsBlank(code) && list.Any(o => o.Backup && SameCode(o.Code, n) && !SameCode(o.Parent, n)))
+            throw new PartStepCodeException($"{label}: NC / mã {n} đang là mã dòng dự phòng của dòng khác trong Part này — đặt mã khác.");
+    }
+
+    /// <summary>[B6-DP-MA] Lúc sửa: kiểm luật dự phòng khi mã, dự phòng hay mã cha đổi.</summary>
+    public static bool NeedBackupCheckOnUpdate(string? oldCode, bool oldIsBackup, string? oldParent, string? newCode, bool newIsBackup, string? newParent)
+        => oldIsBackup != newIsBackup || !SameCode(oldCode, newCode) || (newIsBackup && !SameCode(oldParent, newParent));
+
     /// <summary>Lúc sửa: chỉ kiểm khi dòng (sau sửa) là dòng chính VÀ (đổi mã hoặc từ dự phòng thành chính).</summary>
     public static bool NeedCheckOnUpdate(string? oldCode, bool oldIsBackup, string? newCode, bool newIsBackup)
         => !newIsBackup && (oldIsBackup || !SameCode(oldCode, newCode));

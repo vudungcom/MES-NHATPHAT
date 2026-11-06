@@ -457,6 +457,19 @@ public static class HarnessSeed
         };
     }
 
+    // ── [B7-TIMING-MAY 06/11] drive_dpma.py: NC 1 (chính) của PART-ML9 ghi Máy bấm giờ "MTIM", máy MTIM đã xoá (IsActive = false)
+    //    = trạng thái sau khi xoá máy chỉ dùng để bấm giờ (xoá được từ B7 — GiaoNhanFuzz quyen Q7b kiểm bước xoá). Dựng khi drive gọi.
+    public static async Task<object> SeedB7Async(AppDbContext db)
+    {
+        var part = db.PartMasters.List.First(p => p.PartNo == "PART-ML9");
+        var st = db.PartMachiningSteps.List.First(s => s.PartId == part.PartId && s.NC == "1" && s.IsActive && !s.IsBackup);
+        st.TimingMachine = "MTIM";
+        if (!db.ThietBis.List.Any(t => t.SoMay == "MTIM"))
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = db.ThietBis.List.Count == 0 ? 1 : db.ThietBis.List.Max(t => t.ThietBiId) + 1, SoMay = "MTIM", TenMay = "May bam gio da xoa", IsActive = false });
+        await db.SaveChangesAsync();
+        return new { st.StepId, st.TimingMachine };
+    }
+
     // ── [PHAT-HIEN-0311 04/11] dữ liệu drive_p0311.py (dựng khi drive gọi POST /harness/p0311-seed — KHÔNG trong seed khởi động,
     //    để /harness/dump của drive.py không đổi). xem0311 = chỉ Xem 3 mục, sua0311 = Xem + Sửa 3 mục (CA_LAM_VIEC / SO_DO_TC / DS_LOI);
     //    mật khẩu 123456, PIN 1111. Ca 1 đã có WTS (seed) → không xoá được; "Ca thử xoá" chưa ai dùng; Sơ đồ: Giám đốc + Sản xuất.

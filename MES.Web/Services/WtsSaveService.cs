@@ -261,6 +261,10 @@ namespace MES.Web.Services
                 { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return Fail(); }
                 if (sub.QtyDone <= 0 && !IsQtyOptional(grp, sub))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
                 { sub.ErrorMsg = "SL (OK+NG) phải > 0."; grp.ErrorMsg = "Có hàng SL = 0."; return Fail(); }
+                if (QtyRule.CheckWhole(sub.QtyDone, sub.QtyOk, sub.QtyNg) is string eWholeS)   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
+                { sub.ErrorMsg = eWholeS; grp.ErrorMsg = "Có hàng " + eWholeS; return Fail(); }
+                if (QtyRule.CheckNonNegative(sub.QtyOk, sub.QtyNg) is string eAmS)   // [WTS-AM 2026-11-06] OK / NG không âm (QtyRule)
+                { sub.ErrorMsg = eAmS; grp.ErrorMsg = "Có hàng " + eAmS; return Fail(); }
 
                 // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
                 var _missSerial = GetMissingSerialTimesMsg(grp, sub);
@@ -694,6 +698,10 @@ namespace MES.Web.Services
             // Validate SL > 0 — áp dụng cho TẤT CẢ nhóm (GC, HTSP, KCS, PKG)
             if (row.QtyDone <= 0 && row.KhPlanDetailId.HasValue && !IsQtyOptional(grp, row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
             { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
+            if (QtyRule.CheckWhole(row.QtyDone, row.QtyOk, row.QtyNg) is string eWholeR)   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
+            { row.ErrorMsg = eWholeR; return; }
+            if (QtyRule.CheckNonNegative(row.QtyOk, row.QtyNg) is string eAmR)   // [WTS-AM 2026-11-06] OK / NG không âm (QtyRule)
+            { row.ErrorMsg = eAmR; return; }
 
             // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế — kiểm tra TRƯỚC khi void bản ghi cũ
             var _missSerialRow = GetMissingSerialTimesMsg(grp, row);

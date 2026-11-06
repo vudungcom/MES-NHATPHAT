@@ -22,7 +22,7 @@ public static class WtsScen
 
     /// <summary>PO1 40 chiếc Workflow ON: NC1 (M1, số chuẩn + máy đồng dạng M3) → NC2 (M2); Taro T1 / 1T, Bavia B1, Rửa R1, KCS K1, PKG P1.
     /// Kho đã giao GC 40 (nhận vào NC1). PO2 Workflow OFF 20 chiếc, cùng quy trình, GC đã nhận 20.</summary>
-    internal static async Task<AppDbContext> SeedAsync()
+    internal static async Task<AppDbContext> SeedAsync(int po1 = 40)   // [B3-SO-NGUYEN 06/11] po1: SL PO1 (nghi N6 / viec ngẫu nhiên cần nhiều hàng vì WTS nay chỉ nhận số nguyên — trước dùng 0.01)
     {
         var db = new AppDbContext();
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };
@@ -33,11 +33,11 @@ public static class WtsScen
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-WTS", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
         var plan2 = new KhPlan { KhPlanId = 2, PlanNo = "KH-OFF", Customer = cust, CustomerId = 1, ApplyWorkflow = false };
         db.KhPlans.List.Add(plan); db.KhPlans.List.Add(plan2);
-        var d1 = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, Unit = "EA", LineNo = 1 };
+        var d1 = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = po1, Unit = "EA", LineNo = 1 };
         var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 2, KhPlan = plan2, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, Unit = "EA", LineNo = 1 };
         db.KhPlanDetails.List.Add(d1); plan.Details.Add(d1); db.KhPlanDetails.List.Add(d2); plan2.Details.Add(d2);
         int sid = 0, tid = 0;
-        foreach (var (id, q) in new[] { (1, 40), (2, 20) })
+        foreach (var (id, q) in new[] { (1, po1), (2, 20) })
         {
             db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = id, PlanDetailId = id, IsActive = true, SoLuongThucNhan = q, NgayNhanPhoi = T, OrderVatLieu = "OVL", ViTriDePhoi = "A1", SoPO = "PO" + id, PartNo = "P" });
             var m1 = new KhPlanRouteSnapshotMachining { SnapshotId = ++sid, KhPlanDetailId = id, StepOrder = 1, NC = "NC1", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 };
@@ -57,7 +57,7 @@ public static class WtsScen
         VuHelp.SeedCats(db);
         db.Fixup();
         var svc = new HandoverService(db);
-        foreach (var (id, q) in new[] { (1, 40m), (2, 20m) })
+        foreach (var (id, q) in new[] { (1, (decimal)po1), (2, 20m) })
         {
             var r = await svc.IssueByCellAsync(id, "KHO", "GC", q, 1, "MOI", false, "MOI", null, "NC1");
             if (!r.Ok) throw new Exception("seed giao: " + r.Error);

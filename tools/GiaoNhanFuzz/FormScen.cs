@@ -271,7 +271,8 @@ public static class FormScen
             await Save(db, Req("GC", Gc, HandoverForm.Tot, "NC:NC1", HandoverForm.AGiao, 1, "HTSP"), "Dòng không có trong bước 2 hàng tốt", false, "bước 2");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ATraLai, 1, "KHO", caseId: 0), "Việc không hợp lệ với dòng (Tồn hàng lỗi · Trả lại nơi gửi)", false, "bước 3");
             await Save(db, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 999, "HTSP"), "Hàng tốt vượt Đã làm chưa giao", false, "tối đa");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC1", HandoverForm.AGiao, 1.234m, "HTSP", HandoverForm.PNho, cat: 2), "Số lẻ 3 chữ số", false, "thập phân");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC1", HandoverForm.AGiao, 1.234m, "HTSP", HandoverForm.PNho, cat: 2), "Số lẻ 1.234 (đổi đáp án 06/11 [B3-SO-NGUYEN]: chỉ số nguyên)", false, "số nguyên");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC1", HandoverForm.AGiao, 1.5m, "HTSP", HandoverForm.PNho, cat: 2), "Số lẻ 1.5 (trước 06/11 lưu được)", false, "số nguyên");
         }
 
         Console.WriteLine("[F9] Khoá PO + mọi lần ghi dưới khoá + tự thử lại khi deadlock (không ghi 2 lần)");
@@ -464,6 +465,36 @@ public static class FormScen
             await s8.ReceiveAsync(LastTx(d8), 2, 0, null, Gc);
             await Save(d8, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASua, pass: 1, caseId: vuK.NgCaseId), "V-a: Gia công sửa đạt 1 (mặc định)");
             Ok(d8.HandoverRepairResults.List.Last().ToNC == "NC3", "V-a: Kết quả sửa làm tiếp NC3 (không phải làm lại từ NC1)", d8.HandoverRepairResults.List.Last().ToNC);
+        }
+
+        Console.WriteLine("[F16] [A7-VU-AM 06/11] Tồn hàng lỗi chọn mã vụ âm / không có trong PO → báo thẳng \"không thuộc PO này\", không lời K2, không ghi gì");
+        {
+            var d9 = Seed(); var s9 = new HandoverService(d9);
+            await Save(d9, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 10, "GC"), "Kho giao 10");
+            await s9.ReceiveAsync(LastTx(d9), 10, 0, null, Gc);
+            var w9 = await VuHelp.Wts(d9, "GC", "NC1", null, 8, 2, Gc, 2);
+            var vu9 = w9.NgCaseId ?? 0;
+            Ok(vu9 > 0, "WTS NC1 NG 2 sinh vụ", vu9.ToString());
+            foreach (var bad in new long[] { -1, -vu9, vu9 + 9999 })
+                foreach (var act in new[] { HandoverForm.AGiao, HandoverForm.ASua, HandoverForm.AHuy })
+                {
+                    var rq = act == HandoverForm.ASua ? Req("GC", Gc, HandoverForm.Loi, "TONLOI", act, pass: 1, caseId: bad)
+                           : Req("GC", Gc, HandoverForm.Loi, "TONLOI", act, 1, act == HandoverForm.AGiao ? "HTSP" : null, act == HandoverForm.AGiao ? HandoverForm.PNho : null, caseId: bad);
+                    var res = await Save(d9, rq, $"vụ {bad} · {act}", false, "không thuộc PO này");
+                    Ok(!res.Error.Contains("NC "), $"vụ {bad} · {act}: lời báo không nhắc NC làm tiếp (K2)", res.Error);
+                }
+            await Save(d9, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "HTSP", HandoverForm.PNho, caseId: vu9), "Đúng vụ: GC gửi HTSP nhờ sửa 1");
+            // Đường K2 (phiếu MANG VỤ vào Gia công ô Hàng lỗi đã xử lý): Kho giữ vụ ở Tồn hàng lỗi rồi giao Gia công — mã vụ sai trước báo lời NC làm tiếp
+            await Save(d9, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "KHO", HandoverForm.PTra, caseId: vu9), "GC trả Kho 1 chiếc của vụ (ô Hàng lỗi)");
+            { var rk = await s9.ReceiveAsync(LastTx(d9), 0, 1, null, Kho); Ok(rk.Ok && (await Row(d9)).CaseHeld(vu9, "KHO", HandoverCell.Loi) == 1, "Kho nhận 1 vào ô Hàng lỗi (giữ vụ)", rk.Error); }
+            foreach (var bad in new long[] { -1, vu9 + 9999 })
+                foreach (var nc in new string?[] { null, "NC3" })
+                {
+                    var res = await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: bad, toCell: HandoverCell.Xl, toNc: nc),
+                                         $"Kho → Gia công ô Hàng lỗi đã xử lý, vụ {bad}, NC {nc ?? "mặc định"}", false, "không thuộc PO này");
+                    Ok(!res.Error.Contains("lý do") && !res.Error.Contains("NC làm tiếp"), $"vụ {bad} NC {nc ?? "mặc định"}: không báo lời K2", res.Error);
+                }
+            await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vu9, toCell: HandoverCell.Xl), "Đúng vụ: Kho giao Gia công ô Hàng lỗi đã xử lý (NC theo vụ)");
         }
 
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");

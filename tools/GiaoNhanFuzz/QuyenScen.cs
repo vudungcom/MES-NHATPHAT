@@ -323,6 +323,27 @@ public static class QuyenScen
             r = await tb.SoftDeleteAsync(3, CatEdit, "1111");
             Ok(!r.Success && r.Error!.Contains("danh sách máy loại trừ") && db.ThietBis.List[2].IsActive, "M8 trong danh sách máy loại trừ: không xoá", r.Error);
         }
+        Console.WriteLine("[Q7b] [B7-TIMING-MAY 06/11] Máy chỉ ghi ở cột Máy bấm giờ (TimingMachine) của Part Master: XOÁ được; ĐỔI số vẫn chặn; máy đăng ký trong quy trình vẫn không xoá");
+        {
+            var db = Seed(); var auth = new AuthService(db);
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 11, SoMay = "M5", TenMay = "May 5", IsActive = true });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 12, SoMay = "M6", TenMay = "May 6", IsActive = true });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 13, SoMay = "M4", TenMay = "May 4", IsActive = true });
+            db.PartMasters.List.Add(new PartMaster { PartId = 71, PartNo = "P-TIM", IsActive = true });
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 711, PartId = 71, StepOrder = 1, NC = "NC1", MachineRegistered = "M6", TimingMachine = "M5", IsActive = true });
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 712, PartId = 71, StepOrder = 2, NC = "NC2", MachineRegistered = "M9", TimingMachine = "M2, m4", IsActive = true });
+            db.Fixup();
+            var tb = new ThietBiService(db, auth);
+            var r = await tb.UpdateAsync(new ThietBi { ThietBiId = 11, SoMay = "M5X", TenMay = "May 5" }, "doi so", null, null, CatEdit, "1111");
+            Ok(!r.Success && r.Error!.Contains("Part Master P-TIM") && db.ThietBis.List.Single(x => x.ThietBiId == 11).SoMay == "M5",
+               "M5 là máy bấm giờ ở P-TIM: ĐỔI số bị chặn (giữ truy vết chữ máy bấm giờ)", r.Error);
+            r = await tb.SoftDeleteAsync(11, CatEdit, "1111");
+            Ok(r.Success && !db.ThietBis.List.Single(x => x.ThietBiId == 11).IsActive, "M5 chỉ là máy bấm giờ: XOÁ được (trước bị chặn)", r.Error);
+            r = await tb.SoftDeleteAsync(13, CatEdit, "1111");
+            Ok(r.Success, "M4 nằm trong CSV máy bấm giờ \"M2, m4\": XOÁ được", r.Error);
+            r = await tb.SoftDeleteAsync(12, CatEdit, "1111");
+            Ok(!r.Success && r.Error!.Contains("Part Master P-TIM") && db.ThietBis.List.Single(x => x.ThietBiId == 12).IsActive, "M6 là máy đăng ký NC1 của P-TIM: vẫn KHÔNG xoá", r.Error);
+        }
 
         // [WTS-ORDER-SAVE 2026-11-02] WTS tiêu chuẩn mục 14: chỉ đổi Thứ tự hiển thị phải LƯU + có dòng lịch sử
         //   (trước: không có dòng log nào → bỏ qua cả lượt lưu mà vẫn báo thành công).

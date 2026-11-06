@@ -93,7 +93,7 @@ namespace MES.Web.Services
             if (sourceCell is not (HandoverCell.Sua or HandoverCell.Loi))
                 return (false, "Chọn hàng sửa lấy từ ô Hàng sửa (nhóm khác gửi nhờ sửa) hay ô Hàng lỗi (hàng lỗi của nhóm).");
             if (qtyPass < 0 || qtyFail < 0) return (false, "Số lượng không được âm.");
-            if (qtyPass != Math.Round(qtyPass, 2) || qtyFail != Math.Round(qtyFail, 2)) return (false, "Số lượng tối đa 2 chữ số thập phân.");   // cột decimal(10,2) (rà độc lập T5)
+            if (QtyRule.CheckWhole(qtyPass, qtyFail) is string eWhole) return (false, eWhole);   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (trước: tối đa 2 số lẻ — cột decimal(10,2), rà độc lập T5)
             if (qtyPass + qtyFail <= 0) return (false, "Nhập số sửa đạt hoặc không đạt.");
             if (sourceCell == HandoverCell.Loi && qtyFail > 0)
                 return (false, "Lấy từ ô Hàng lỗi: chiếc sửa không đạt vẫn nằm ở ô Hàng lỗi — chỉ ghi số đạt.");
@@ -180,7 +180,7 @@ namespace MES.Web.Services
         private async Task<(bool Ok, string Error)> ConfirmRepairOnceAsync(long repairId, decimal qtyOk, decimal qtyNg, string? notes, int userId)
         {
             if (qtyOk < 0 || qtyNg < 0) return (false, "Số lượng không được âm.");
-            if (qtyOk != Math.Round(qtyOk, 2) || qtyNg != Math.Round(qtyNg, 2)) return (false, "Số lượng tối đa 2 chữ số thập phân.");   // (rà độc lập T5)
+            if (QtyRule.CheckWhole(qtyOk, qtyNg) is string eWhole) return (false, eWhole);   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (trước: tối đa 2 số lẻ, rà độc lập T5)
             if (qtyOk + qtyNg <= 0) return (false, "Nhập số KCS xác nhận đạt hoặc loại.");
             var head = await _db.HandoverRepairResults.AsNoTracking().Where(x => x.HandoverRepairResultId == repairId && !x.IsVoided)
                 .Select(x => new { x.KhPlanDetailId, x.CreatedBy }).FirstOrDefaultAsync();

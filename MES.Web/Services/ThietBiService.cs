@@ -258,11 +258,15 @@ public class ThietBiService
             && csv.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(Eq);
         var where = new List<string>();
 
+        // [B7-TIMING-MAY 2026-11-06] Cột TimingMachine (Máy bấm giờ) chỉ ghi máy đã bấm giờ chuẩn — không phải máy trong quy trình (WTS / sổ không đọc cột này).
+        //   XOÁ máy: không còn tính TimingMachine là "máy có trong quy trình" (trước: máy chỉ dùng để bấm giờ cũng bị chặn xoá).
+        //   ĐỔI số máy vẫn xét TimingMachine như cũ: cột là chữ nối với số máy, đổi số làm chữ máy bấm giờ ở Part Master trỏ vào máy không còn (mất truy vết).
+        //   Nguồn: CLAUDE 02/11 (PHAT-HIEN-0211 mục 6), Hùng 05/11 15:37 chốt (a); phạm vi "chỉ nhánh xoá" gửi Hùng 06/11 bản "em hiểu".
         var steps = await _db.PartMachiningSteps.AsNoTracking().Include(s => s.Timings)
-            .Where(s => s.MachineRegistered == so || (s.TimingMachine != null && s.TimingMachine.Contains(so)) || s.Timings.Any(t => t.SoMay.Contains(so)))
+            .Where(s => s.MachineRegistered == so || (!forDelete && s.TimingMachine != null && s.TimingMachine.Contains(so)) || s.Timings.Any(t => t.SoMay.Contains(so)))
             .ToListAsync();
         var hitSteps = steps
-            .Where(s => Eq(s.MachineRegistered) || Tok(s.TimingMachine) || s.Timings.Any(t => (!forDelete || t.IsActive) && Tok(t.SoMay)))
+            .Where(s => Eq(s.MachineRegistered) || (!forDelete && Tok(s.TimingMachine)) || s.Timings.Any(t => (!forDelete || t.IsActive) && Tok(t.SoMay)))
             .Where(s => !forDelete || s.IsActive).ToList();
         var pIds = hitSteps.Select(s => s.PartId).Distinct().ToList();
         var parts = await _db.PartMasters.AsNoTracking().Where(p => pIds.Contains(p.PartId))

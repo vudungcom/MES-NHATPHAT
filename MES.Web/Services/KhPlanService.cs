@@ -66,6 +66,10 @@ public class KhPlanService
         var dupDb = await _db.KhPlanDetails.AsNoTracking().Where(x => poList.Contains(x.PurchaseOrder)).Select(x => x.PurchaseOrder).Distinct().ToListAsync();
         if (dupDb.Any())
             throw new InvalidOperationException($"Số PO đã có trong hệ thống: {string.Join(", ", dupDb)} — mỗi số PO chỉ 1 dòng.");
+        // [B3-SO-NGUYEN 2026-11-06] SL PO chỉ nhận số nguyên (phôi Kho là số nguyên — số lẻ làm sổ lệch phần lẻ). Nguồn: Hùng 05/11 15:37 + QuetSo 06/11.
+        var leKh = plan.Details.FirstOrDefault(d => !QtyRule.IsWhole(d.Quantity));
+        if (leKh != null)
+            throw new InvalidOperationException($"PO {leKh.PurchaseOrder}: {QtyRule.Msg}");
         plan.PlanNo = await GenerateNextPlanNoAsync(plan.PlanDate);
         plan.CreatedBy = userId;
         plan.CreatedAt = DateTime.Now;
@@ -334,6 +338,8 @@ public class KhPlanService
                 throw new InvalidOperationException("PO mới không được trống");
             if (r.Quantity <= 0)
                 throw new InvalidOperationException($"SL của PO {r.PurchaseOrder} phải > 0");
+            if (!QtyRule.IsWhole(r.Quantity))   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên
+                throw new InvalidOperationException($"PO {r.PurchaseOrder}: {QtyRule.Msg}");
 
             var exists = await _db.KhPlanDetails
                 .AnyAsync(x => x.PurchaseOrder == r.PurchaseOrder && x.KhPlanDetailId != sourceDetailId);
@@ -939,6 +945,7 @@ public class KhPlanService
                 OrderVL = d.OrderVL, MaterialCondition = d.MaterialCondition, PartNotes = d.PartNotes
             };
             if (Mine("SL", orig.Quantity, now.Quantity, d.Quantity, x => x.ToString(QtyFormat)))                     nv.Quantity = now.Quantity;
+            if (nv.Quantity != d.Quantity && !QtyRule.IsWhole(nv.Quantity)) { await RollbackOwnAsync(ownTx); return QtyRule.Msg; }   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (SL cũ không đụng)
             if (Mine("Đơn vị", S(orig.Unit), S(now.Unit), S(d.Unit), x => x))                                         nv.Unit = now.Unit;
             if (Mine("STD", orig.STD.Date, now.STD.Date, d.STD.Date, x => x.ToString("yyyy-MM-dd")))                  nv.STD = now.STD;
             if (Mine("Loại", S(orig.Type), S(now.Type), S(d.Type), x => x))                                           nv.Type = now.Type;
