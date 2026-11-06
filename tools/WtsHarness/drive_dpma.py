@@ -3,7 +3,9 @@
 #       (trước: lấy số đếm + 1 → ra lại 1-DP-02 đang có → máy chủ B6 chặn "đã có ở dòng dự phòng khác", người dùng không gỡ được).
 #   T (B7): NC 1 ghi Máy bấm giờ "MTIM" mà máy MTIM đã xoá (B7 cho xoá) → sửa NC 1 / tạo dự phòng NC 1 vẫn LƯU được
 #       (trước: trang chặn cả lượt Lưu "Máy bấm giờ 'MTIM' không có trong danh sách thiết bị", ô này không sửa được trên trang).
-#   Nguồn: rà độc lập gói 1 06/11 mục 1 (CAO) + mục 2 (VỪA).
+#   R (B6-DP-THAP mục 6): đổi tên nối chuỗi Q1 → Q2, Q2 → Q3 + sửa giờ dự phòng mã Q1 trong 1 lần Lưu → lưu đủ (trước: dự phòng ghi trước → bị chặn, mất giờ).
+#   Nguồn: rà độc lập gói 1 06/11 mục 1 (CAO) + mục 2 (VỪA) + mục 6.
+#   L (PM-SNAP-MID / A1): 1 lượt Lưu giữ khoá phiên MES_PM_SAVE_ trước mọi khoá dòng, nhả sau cùng + đóng kết nối, trước bước tự cập nhật PO.
 # Chạy: python3 drive_dpma.py <port> <nhãn>   (harness dựng bằng mk.sh, DB giả mới tinh — chạy 1 lần / 1 lần khởi động)
 import sys, asyncio, json, re, urllib.request
 from playwright.async_api import async_playwright
@@ -54,6 +56,27 @@ async def main():
         b = await p.chromium.launch()
         pg = await login(b)
 
+        print("[L] [PM-SNAP-MID] lượt Lưu Part Master giữ khoá phiên MES_PM_SAVE_<Part> suốt A–E, nhả trước bước tự cập nhật PO chưa chạy")
+        try:
+            await open_part(pg)
+            rw = await row(pg, "1")
+            await rw.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(400)
+            nums = rw.locator("input[type=number]"); v0 = await nums.first.input_value()
+            await nums.first.fill(str(int(float(v0 or 0)) + 1)); await nums.first.press("Tab"); await pg.wait_for_timeout(400)
+            n0 = len(json.loads(urllib.request.urlopen(BASE + "/harness/applocks").read().decode())["raw"])
+            t = await save(pg)
+            al = json.loads(urllib.request.urlopen(BASE + "/harness/applocks").read().decode())
+            raw = al["raw"][n0:]
+            iS = next((i for i, x in enumerate(raw) if "'Session'" in x and "sp_getapplock" in x and "'Exclusive'" in x), -1)
+            iR = next((i for i, x in enumerate(raw) if "sp_releaseapplock" in x), -1)
+            iStep = next((i for i, x in enumerate(raw) if i > iS and "'Transaction'" in x and "'Exclusive'" in x), -1)
+            iShared = [i for i, x in enumerate(raw) if "'Shared'" in x]
+            ok("✗" not in t and iS >= 0 and iS < iStep < iR and not al["session"] and not al["connOpen"] and all(i > iR for i in iShared),
+               "L1 lưu: lấy khoá phiên Exclusive trước khoá dòng (MES_PM_STEPS_), nhả (sp_releaseapplock) sau cùng, kết nối đóng; khoá đọc của bước tự cập nhật PO (nếu có) chỉ sau khi nhả",
+               f"{lines(t, '✗', 'Không thể')} · S={iS} step={iStep} R={iR} shared={iShared} session={al['session']} conn={al['connOpen']}")
+        except Exception as e:
+            ok(False, "L! pha [L] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
         print("[D] [B6-DP-MA] nút \"Tạo dự phòng\" không đặt lại mã dự phòng đang có")
         try:
             await open_part(pg)
@@ -94,6 +117,75 @@ async def main():
                "T2 tạo dự phòng NC 1 (chép Máy bấm giờ MTIM sang dòng mới) → LƯU được", f"{before} → {after} · {lines(t, 'Máy bấm giờ', 'Không thể', '✗')}")
         except Exception as e:
             ok(False, "T! pha [T] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
+        print("[R] [B6-DP-THAP] (6) đổi tên nối chuỗi Q1 → Q2, Q2 → Q3 + sửa giờ dòng dự phòng mã Q1 (= mã cha) trong 1 lần Lưu")
+        try:
+            post("/harness/b6-seed")
+            await open_part(pg)
+            async def cde_rows(nc):   # các dòng bảng Đóng gói (sau nút "Thêm dòng" thứ 6) có ô mã = nc
+                trs = pg.locator("xpath=(//button[@title='Thêm dòng'])[6]/following::table[1]//tbody/tr"); out = []
+                for i in range(await trs.count()):
+                    inp = trs.nth(i).locator("input").first
+                    if await inp.count() and (await inp.input_value()) == nc: out.append(trs.nth(i))
+                return out
+            for frm, to in (("Q1", "Q2~"), ("Q2", "Q3~")):
+                r = (await cde_rows(frm))[0]
+                await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
+                r = (await cde_rows(frm))[0]; inp = r.locator("input").first
+                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+            r = (await cde_rows("Q1"))[0]   # còn lại đúng dòng dự phòng mã Q1
+            await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
+            r = (await cde_rows("Q1"))[0]; num = r.locator("input[type=number]").first
+            await num.fill("7"); await num.press("Tab"); await pg.wait_for_timeout(200)
+            for to in ("Q2", "Q3"):
+                r = (await cde_rows(to + "~"))[0]; inp = r.locator("input").first
+                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+            t = await save(pg)
+            rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
+            q = [(x["nc"], x["isBackup"], x["parentNC"], x["standardTime"]) for x in rows if x["nc"] in ("Q1", "Q2", "Q3")]
+            mains = sorted(x[0] for x in q if not x[1]); bkr = [x for x in q if x[1]]
+            ok("✗" not in t and mains == ["Q2", "Q3"] and len(bkr) == 1 and bkr[0][2] == "Q2" and bkr[0][3] == 7,
+               "R1 lưu được: dòng chính Q2 (cũ Q1) + Q3 (cũ Q2), dự phòng trỏ cha Q2 và GIỜ MỚI 7 được lưu (trước: dự phòng bị chặn \"trùng mã dòng chính khác\", mất giờ sửa)",
+               f"{lines(t, '✗', '⚠')} · {q}")
+        except Exception as e:
+            ok(False, "R! pha [R] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
+        print("[R2] [B6-DP-THAP] T7 1 lần Lưu: dự phòng SQ (của S1) đổi mã → S1-DP-01 và dòng chính S2 đổi mã → SQ")
+        try:
+            await open_part(pg)
+            for frm, to in (("SQ", "S1-DP-01"), ("S2", "SQ")):
+                r = (await cde_rows(frm))[0]
+                await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
+                r = (await cde_rows(frm))[0]; inp = r.locator("input").first
+                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(250)
+            t = await save(pg)
+            rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
+            q = [(x["nc"], x["isBackup"], x["parentNC"]) for x in rows if x["nc"] in ("S1", "S2", "SQ", "S1-DP-01")]
+            ok("✗" not in t and sorted(q) == sorted([("S1", False, None), ("SQ", False, None), ("S1-DP-01", True, "S1")]),
+               "R2 lưu được cả 2: dự phòng ghi trước (giải phóng mã SQ) rồi S2 → SQ (trước: S2 → SQ ghi trước, bị báo \"đang là mã dòng dự phòng của dòng khác\")",
+               f"{lines(t, '✗', '⚠')} · {q}")
+        except Exception as e:
+            ok(False, "R2! pha [R2] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
+
+        print("[P] [B6-DP-THAP] T5c thêm dòng Đóng gói P77 + Tạo dự phòng (P77-DP-01) rồi sửa NC dòng mới thành P78 → trang báo trước, không lưu dở")
+        try:
+            await open_part(pg)
+            n0 = len(json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode()))
+            await pg.locator("button[title='Thêm dòng']").nth(5).click(); await pg.wait_for_timeout(400)
+            inp = pg.locator("xpath=(//button[@title='Thêm dòng'])[6]/following::table[1]//tbody/tr[last()]//input").first
+            await inp.fill("P77"); await inp.press("Tab"); await pg.wait_for_timeout(300)
+            r = (await cde_rows("P77"))[0]
+            await r.locator("button[title='Tạo dự phòng']").click(); await pg.wait_for_timeout(400)
+            r = (await cde_rows("P77"))[0]; inp = r.locator("input").first
+            await inp.fill("P78"); await inp.press("Tab"); await pg.wait_for_timeout(300)
+            t = await save(pg)
+            body = await pg.inner_text("body")
+            rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
+            ok("trên trang không có dòng chính" in (t + body) and len(rows) == n0 and not any(x["nc"] in ("P78", "P77-DP-01") for x in rows),
+               "P1 trang chặn trước khi lưu: \"dòng dự phòng P77-DP-01 trỏ về dòng cha P77 nhưng trên trang không có dòng chính mã đó\", không ghi dòng nào (trước: P78 lưu, dự phòng bị máy chủ báo \"người khác vừa đổi\")",
+               f"{lines(t + chr(10) + body, 'dòng cha', '✗', 'Không thể')} · {[x['nc'] for x in rows][-5:]}")
+        except Exception as e:
+            ok(False, "P! pha [P] dừng giữa chừng — lỗi bấm trang", repr(e)[:300])
 
         await pg.screenshot(path=f"dpma_{OUT}.png", full_page=True)
         await b.close()

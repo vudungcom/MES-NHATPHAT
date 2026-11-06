@@ -56,6 +56,7 @@ public class PartPackagingService
             PartStepGuard.CheckMainCode(Label, newStep.NC, await _db.PartPackagingSteps
                 .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => s.NC).ToListAsync());
         // [B6-DP-MA 2026-11-06] luật mã dòng dự phòng + mã chính không trùng mã dự phòng của dòng cha khác (đọc DB dưới khoá)
+        if (newStep.IsBackup && !string.IsNullOrWhiteSpace(newStep.ParentNC)) newStep.ParentNC = newStep.ParentNC.Trim();   // [B6-DP-THAP 2026-11-06] T6: lưu mã cha đã bỏ khoảng trắng (so cha ở service đổi tên / sổ không Trim) — rà độc lập gói 2
         PartStepGuard.CheckBackupRules(Label, newStep.NC, newStep.IsBackup, newStep.ParentNC, (await _db.PartPackagingSteps.AsNoTracking()
             .Where(s => s.PartId == partId && s.IsActive).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).ToListAsync()).Select(s => (s.NC, s.IsBackup, s.ParentNC)));
 
@@ -116,8 +117,9 @@ public class PartPackagingService
                 .AnyAsync(s => s.PartId == existing.PartId && s.IsActive && s.IsBackup && s.StepId != stepId && s.ParentNC == dbNow.NC))
             throw new PartStepCodeException($"{Label}: NC / mã CV {PartStepGuard.Norm(dbNow.NC)} đang có dòng dự phòng — xoá dòng dự phòng trước khi đổi dòng này thành dự phòng.");
         // [B6-DP-MA 2026-11-06] luật mã dòng dự phòng — chỉ khi mã / dự phòng / mã cha đổi (đọc DB dưới khoá)
+        if (updated.IsBackup && !string.IsNullOrWhiteSpace(updated.ParentNC) && !string.Equals(updated.ParentNC, dbNow.ParentNC, StringComparison.Ordinal)) updated.ParentNC = updated.ParentNC.Trim();   // [B6-DP-THAP 2026-11-06] T6: lưu mã cha đã bỏ khoảng trắng — CHỈ khi cha đổi (sửa ô khác của dữ liệu cũ không đụng ParentNC, không ghi ChangeLog thừa — rà độc lập gói 2 vòng 2 N2)
         if (PartStepGuard.NeedBackupCheckOnUpdate(dbNow.NC, dbNow.IsBackup, dbNow.ParentNC, updated.NC, updated.IsBackup, updated.ParentNC))
-            PartStepGuard.CheckBackupRules(Label, updated.NC, updated.IsBackup, updated.ParentNC, (await _db.PartPackagingSteps.AsNoTracking()
+            PartStepGuard.CheckBackupRules(Label, updated.NC, updated.IsBackup, updated.ParentNC, selfOldCode: dbNow.NC, others: (await _db.PartPackagingSteps.AsNoTracking()
                 .Where(s => s.PartId == existing.PartId && s.IsActive && s.StepId != stepId).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).ToListAsync()).Select(s => (s.NC, s.IsBackup, s.ParentNC)));
 
         var pid = existing.PartId;

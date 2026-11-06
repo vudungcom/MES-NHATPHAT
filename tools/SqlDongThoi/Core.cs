@@ -347,6 +347,130 @@ public static class Core
                $"P9: lưu {a7.Count(x => x.Ok)} · DB {nP9} · K9: lưu {b7.Count(x => x.Ok)} · DB {nK9} · {string.Join(" | ", a7.Concat(b7).Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
         }
 
+        // ── S8 [PM-SNAP-MID 06/11] (A1) khoá lượt lưu Part Master MES_PM_SAVE_<Part> (khoá phiên) với chụp quy trình (tạo KH) trên SQL THẬT ──
+        //   (a) A đang lưu → B tạo KH phải CHỜ tới khi A nhả rồi chụp được; (b) A giữ quá 15 giây → B báo "đang được lưu", không tạo PO;
+        //   (c) 2 người cùng lưu 1 Part → người sau chờ tối đa 10 giây rồi báo; (d) A bị bỏ dở (DbContext huỷ, kết nối về pool, KHÔNG nhả) → đo khoá
+        //   còn giữ không (APPLOCK_TEST từ kết nối khác) ngay lúc đó / sau khi kết nối pool được dùng lại — để chốt cách dự phòng nếu khoá treo.
+        Log("\n[S8] Khoá lượt lưu Part Master (MES_PM_SAVE_) với tạo KH chụp quy trình — chờ / báo, không chụp dở; kết nối pool có nhả khoá phiên không");
+        if (Sequential) Log("  (bỏ qua trên DB giả — cần SQL Server thật)");
+        else
+        {
+            int pid8; string pno8;
+            await using (var w = new Who())
+            {
+                var pm = new PartMaster { PartNo = $"T1-PM8-{_stamp}", PartName = "T1 SqlDongThoi (khoá lượt lưu)", CustomerId = _customer, IsActive = true, IsObsolete = true, CreatedAt = DateTime.Now };
+                w.Db.PartMasters.Add(pm); await w.Db.SaveChangesAsync(); pid8 = pm.PartId; pno8 = pm.PartNo; w.Db.ChangeTracker.Clear();
+                await new PartPackagingService(w.Db).AddAsync(pid8, new PartPackagingStep { NC = "P1", StepName = "T1 dong goi", StandardTime = 1 }, _admin, "T1 thu khoa luu");
+            }
+            string lk8 = PartStepGuard.SaveLockName(pid8);
+            int nKh = 0;
+            async Task<(bool Ok, string? Err, long Ms, int DetailId)> CreateKh()
+            {
+                var sw = Stopwatch.StartNew();
+                await using var w = new Who();
+                var kh = new KhPlanService(w.Db);
+                var plan = new KhPlan { CustomerId = _customer, PlanDate = DateTime.Today, ApplyWorkflow = true, Notes = "T1 SqlDongThoi " + _stamp };
+                plan.Details.Add(new KhPlanDetail { PartNo = pno8, PurchaseOrder = $"T1-{_stamp}-S8-{Interlocked.Increment(ref nKh)}", Quantity = 5, Unit = "EA", STD = DateTime.Today.AddDays(7) });
+                await using var tx = await w.Db.Database.BeginTransactionAsync();
+                try
+                {
+                    await PartStepGuard.LockSnapshotReadAsync(w.Db, pid8, pno8);   // như trang Create_Khplan: khoá đọc trước cấp số KH
+                    await kh.CreateAsync(plan, _admin);
+                    foreach (var d in plan.Details) await kh.CopyRouteSnapshotAsync(d.KhPlanDetailId, pid8, _admin);   // như trang Create_Khplan
+                    await tx.CommitAsync();
+                    return (true, null, sw.ElapsedMilliseconds, plan.Details[0].KhPlanDetailId);
+                }
+                catch (Exception ex) { await tx.RollbackAsync(); return (false, ex.GetBaseException().Message, sw.ElapsedMilliseconds, 0); }
+            }
+            async Task<bool> Free() { await using var w = new Who(); return await Host.AppLockFreeAsync(w.Db, lk8); }
+            // (a)
+            await using (var a = new Who())
+            {
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                var tb = CreateKh();
+                await Task.Delay(1500);
+                // A đang lưu dở: thêm dòng Đóng gói P1B GIỮA lượt (B đã bắt đầu tạo KH) → B phải chụp được bản trọn có P1B
+                await new PartPackagingService(a.Db).AddAsync(pid8, new PartPackagingStep { NC = "P1B", StepName = "T1 them giua luot", StandardTime = 1 }, _admin, "T1 thu khoa luu");
+                await Task.Delay(1500);
+                bool waiting = !tb.IsCompleted;
+                if (la != null) await la.DisposeAsync();
+                var rb = await tb;
+                List<string> snapNc;
+                await using (var w = new Who()) snapNc = await w.Db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(x => x.KhPlanDetailId == rb.DetailId).Select(x => x.NC ?? "").ToListAsync();
+                Ok(la != null && waiting && rb.Ok && rb.Ms >= 2500 && snapNc.Contains("P1") && snapNc.Contains("P1B"),
+                   "S8a A đang lưu Part (thêm P1B giữa lượt) → B tạo KH CHỜ (≥ 2,5 giây) tới khi A nhả, chụp bản TRỌN (có P1 + P1B)",
+                   $"A lấy khoá={la != null} · B còn chờ lúc 3 giây={waiting} · B {(rb.Ok ? "lưu được" : rb.Err)} sau {rb.Ms} ms · snapshot Đóng gói [{string.Join(",", snapNc)}]");
+            }
+            // (b)
+            await using (var a = new Who())
+            {
+                int nPo0, nPo;
+                await using (var w = new Who()) nPo0 = await w.Db.KhPlanDetails.AsNoTracking().CountAsync(d => d.PartNo == pno8);
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                var rb = await CreateKh();
+                if (la != null) await la.DisposeAsync();
+                await using (var w = new Who()) nPo = await w.Db.KhPlanDetails.AsNoTracking().CountAsync(d => d.PartNo == pno8);
+                Ok(la != null && !rb.Ok && (rb.Err ?? "").Contains("đang được lưu") && rb.Ms >= 14000 && nPo == nPo0,
+                   "S8b A giữ quá 15 giây → B báo \"đang được lưu — thử lại\" sau ~15 giây, không tạo PO", $"B: {Short(rb.Err ?? "lưu được")} sau {rb.Ms} ms · PO của Part trong DB {nPo}");
+            }
+            // (c)
+            await using (var a = new Who())
+            await using (var c = new Who())
+            {
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                var sw = Stopwatch.StartNew();
+                var lc = await PartStepGuard.AcquireSaveLockAsync(c.Db, pid8);
+                long msC = sw.ElapsedMilliseconds;
+                if (la != null) await la.DisposeAsync();
+                var lc2 = lc ?? await PartStepGuard.AcquireSaveLockAsync(c.Db, pid8);
+                bool got2 = lc2 != null;
+                if (lc2 != null) await lc2.DisposeAsync();
+                Ok(la != null && lc == null && msC >= 9000 && got2, "S8c 2 người cùng lưu 1 Part: người sau chờ ~10 giây rồi báo (không lưu); người trước nhả xong thì lấy được",
+                   $"người sau: {(lc == null ? "không lấy được" : "lấy được")} sau {msC} ms · lấy lại sau khi nhả={got2}");
+            }
+            Ok(await Free(), "S8 sau các bài: khoá MES_PM_SAVE_ không còn ai giữ");
+            // (e) [rà độc lập gói 2 T8b] trên CÙNG DbContext đang giữ khoá lượt lưu: service Part Master mở giao dịch + khoá MES_PM_STEPS_ ghi được;
+            //   nhả xong khoá rảnh. Rồi đo: cùng phiên đang giữ khoá phiên Exclusive mà xin khoá đọc (Shared / Transaction) thì có tự chờ không
+            //   (trang nhả khoá TRƯỚC bước tự cập nhật PO chính vì chỗ này — đo để chốt).
+            await using (var a = new Who())
+            {
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                string? eAdd = null;
+                try { await new PartPackagingService(a.Db).AddAsync(pid8, new PartPackagingStep { NC = "P8E", StepName = "T1 khoa luu", StandardTime = 1 }, _admin, "T1 thu khoa luu"); }
+                catch (Exception ex) { eAdd = ex.GetBaseException().Message; }
+                bool heldWhile = !await Free();
+                if (la != null) await la.DisposeAsync();
+                bool freeAfter = await Free();
+                Ok(la != null && eAdd == null && heldWhile && freeAfter, "S8e đang giữ khoá lượt lưu, service Part Master trên cùng kết nối thêm dòng được (giao dịch + khoá dòng); nhả xong khoá rảnh",
+                   $"thêm: {eAdd ?? "được"} · đang giữ={heldWhile} · rảnh sau nhả={freeAfter}");
+                var la2 = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                var sw = Stopwatch.StartNew(); string? eSelf = null;
+                await using (var tx = await a.Db.Database.BeginTransactionAsync())
+                {
+                    try { await PartStepGuard.LockSnapshotReadAsync(a.Db, pid8); } catch (Exception ex) { eSelf = ex.Message; }
+                    await tx.RollbackAsync();
+                }
+                if (la2 != null) await la2.DisposeAsync();
+                Log($"  ĐO   S8e cùng phiên giữ khoá lượt lưu (Session Exclusive) rồi xin khoá đọc (Shared / Transaction): {(eSelf == null ? "ĐƯỢC NGAY" : "BỊ CHẶN: " + Short(eSelf))} sau {sw.ElapsedMilliseconds} ms (trang luôn nhả trước bước tự cập nhật PO nên không gặp)");
+            }
+            // (d) bỏ dở: DbContext huỷ khi khoá phiên còn giữ (không gọi nhả)
+            {
+                var a = new Who();
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                await a.DisposeAsync();   // kết nối trả về pool, KHÔNG sp_releaseapplock
+                bool freeNow = await Free();
+                var reuse = new List<Who>();
+                for (int i = 0; i < 8; i++) { var w = new Who(); await w.Db.Users.AsNoTracking().AnyAsync(); reuse.Add(w); }
+                bool freeAfterReuse = await Free();
+                foreach (var w in reuse) await w.DisposeAsync();
+                var rb = await CreateKh();
+                Log($"  ĐO   S8d khoá phiên khi DbContext huỷ giữa lượt lưu (không nhả): lấy={la != null} · rảnh ngay sau khi huỷ={freeNow} · rảnh sau khi dùng lại 8 kết nối pool={freeAfterReuse} · tạo KH sau đó: {(rb.Ok ? "lưu được" : Short(rb.Err ?? ""))} sau {rb.Ms} ms");
+                Ok(la != null && (freeNow || freeAfterReuse), "S8d khoá không treo mãi khi lượt lưu bị bỏ dở (nhả ngay hoặc khi kết nối pool được dùng lại) — xem dòng ĐO",
+                   $"rảnh ngay={freeNow} · sau dùng lại={freeAfterReuse}");
+                Host.ClearPools();
+            }
+        }
+
         // ── S5: hỗn hợp ngẫu nhiên nhiều người × nhiều PO trong N giây ──────────
         Log($"\n[S5] {Workers} người làm ngẫu nhiên {Seconds} giây trên {PoCount} PO (giao, nhận, WTS NC01 / NC02 / Taro, giao GC → HTSP, huỷ nhận, huỷ phiếu, xoá WTS)");
         var pos = await NewPosAsync(PoCount, Phoi, "S5");

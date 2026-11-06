@@ -113,6 +113,7 @@ public static class ChuoiHelp
         await using var trx = await db.Database.BeginTransactionAsync();
         try
         {
+            await PartStepGuard.LockSnapshotReadAsync(db, partId, partNo);   // [PM-SNAP-MID 06/11] như trang Create_Khplan: khoá đọc TRƯỚC cấp số KH (rà độc lập gói 2 vòng 2 N3)
             await kh.CreateAsync(plan, Admin);
             foreach (var d in plan.Details) await kh.CopyRouteSnapshotAsync(d.KhPlanDetailId, partId, Admin);
             await trx.CommitAsync();

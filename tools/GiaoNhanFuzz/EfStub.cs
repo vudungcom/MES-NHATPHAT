@@ -255,12 +255,21 @@ namespace Microsoft.EntityFrameworkCore
             Current = new StubTransaction(_c, this, _c.Snapshot());
             return Task.FromResult(Current);
         }
+        // [PM-SNAP-MID 2026-11-06] kết nối giữ mở (OpenConnection / CloseConnection) + khoá phiên đang giữ (sp_getapplock Session / sp_releaseapplock)
+        public static bool ConnOpen; public static HashSet<string> SessionLocks = new(); public static int ConnOpens, ConnCloses;
+        public Task OpenConnectionAsync(CancellationToken ct = default) { ConnOpen = true; ConnOpens++; return Task.CompletedTask; }
+        public Task CloseConnectionAsync() { ConnOpen = false; ConnCloses++; return Task.CompletedTask; }
         public static int RawCalls; public static List<string> RawLog = new();
         public static List<string> LockNames = new(); public static Action<string>? OnAppLock;   // [KHE-6]
         public static Func<string, int>? AppLockResult;   // [RS-D10c]
         public Task<int> ExecuteSqlRawAsync(string sql, params object[] args)
         {
             RawCalls++; RawLog.Add(sql);
+            if (sql.Contains("sp_releaseapplock") && sql.Contains("'Session'") && args.Length > 0)   // [PM-SNAP-MID]
+            {
+                if (!SessionLocks.Remove(Convert.ToString(args[0]) ?? "")) throw new Exception("Cannot release the application lock (not held)");
+                return Task.FromResult(0);
+            }
             if (TrackPoLock && System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*UPDATE\s+(WtsProductionLogs|HandoverTransactions|HandoverReceives|HandoverNgReports|KhoVatLieus)\b"))
             {
                 // [ISO-FIX] UPDATE dòng WTS: PO lấy từ dòng thật trong DB giả (không tin PO trang gửi) — phải nằm trong tập PO đã khoá
@@ -289,6 +298,16 @@ namespace Microsoft.EntityFrameworkCore
                 var rr = AppLockResult?.Invoke(Convert.ToString(args[0]) ?? "") ?? 0;
                 if (rr == -3 && sql.Contains("IF @r = -3 THROW 51205")) throw new FakeSqlException(51205);
                 if (rr < 0 && sql.Contains("IF @r < 0 THROW 50001")) throw new Exception("PO đang có người khác lưu");
+                // [PM-SNAP-MID 2026-11-06] khoá lượt lưu Part Master (Session) + khoá chụp quy trình (Shared): giả hết giờ chờ + ghi khoá phiên đang giữ
+                if (rr < 0 && sql.Contains("IF @r < 0 THROW 50002")) throw new Exception("MES_PM_SAVE_BUSY");
+                if (rr < 0 && sql.Contains("IF @r < 0 THROW 50003")) throw new Exception("MES_PM_SAVE_WAIT");
+                if (sql.Contains("'Shared'") && SessionLocks.Contains(Convert.ToString(args[0]) ?? ""))   // [PM-SNAP-MID] rà độc lập gói 2 T8c
+                    throw new InvalidOperationException("EfStub: xin khoá đọc " + args[0] + " khi khoá lượt lưu cùng tên đang giữ (SQL thật: tự chờ chính mình tới hết giờ)");
+                if (sql.Contains("@LockOwner = 'Session'"))
+                {
+                    if (!ConnOpen) throw new InvalidOperationException("EfStub: khoá Session lấy khi chưa OpenConnection (EF thật trả kết nối về pool sau lệnh → khoá treo trên kết nối pool)");
+                    SessionLocks.Add(Convert.ToString(args[0]) ?? "");
+                }
             }
             // [CHUOI] Làm thật câu "DELETE FROM KhPlanRouteSnapshot… WHERE KhPlanDetailId = {0}" (RefreshRouteSnapshotAsync / WriteSnapshotStdConfirmsAsync)
             //   để kiểm được "làm mới quy trình = Part Master hiện tại". Các câu raw khác vẫn chỉ ghi log như cũ.

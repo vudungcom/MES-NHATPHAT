@@ -22,7 +22,9 @@ public static class Host
     public static ValueTask ReleaseAsync(AppDbContext db) => ValueTask.CompletedTask;
     public static Task<string> DbNameAsync(AppDbContext db) => Task.FromResult("MES_TEST");
     public static Task<int> RcsiAsync(AppDbContext db) => Task.FromResult(1);
-    public static Task<int> IsoLevelAsync(AppDbContext db) => Task.FromResult(2);   // [DONGTHOI-MES] Core đo mức cô lập (READ-DL) — DB giả: ReadCommitted
+    public static Task<int> IsoLevelAsync(AppDbContext db) => Task.FromResult(2);
+    public static Task<bool> AppLockFreeAsync(AppDbContext db, string name) => Task.FromResult(true);   // [PM-SNAP-MID] S8 chỉ chạy trên SQL thật
+    public static void ClearPools() { }   // [DONGTHOI-MES] Core đo mức cô lập (READ-DL) — DB giả: ReadCommitted
     public static async Task<int> Main(string[] args)
     {
         Core.Sequential = true; Core.Workers = 1; Core.Seconds = args.Length > 0 ? int.Parse(args[0]) : 5; Core.PoCount = 2; Core.Phoi = 50;

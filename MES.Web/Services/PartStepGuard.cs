@@ -1,4 +1,5 @@
 using MES.Web.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace MES.Web.Services;
 
@@ -91,7 +92,13 @@ public static class PartStepGuard
     //   Luật: dự phòng phải có mã (không trống / "-"); mã dự phòng bằng mã CHA thì được (cùng gộp về cha); khác mã cha thì không được trùng mã dòng chính
     //   khác, không trùng mã dự phòng khác. Chiều ngược: mã dòng chính không trùng mã dự phòng của dòng cha khác. Đọc DB dưới khoá MES_PM_STEPS_.
     //   Sửa dòng: chỉ kiểm khi mã / dự phòng / mã cha đổi — dữ liệu cũ không đụng tới mã vẫn sửa được ô khác. Taro không xét (gói TARO-NC-MA).
-    public static void CheckBackupRules(string label, string? code, bool isBackup, string? parentCode, IEnumerable<(string? Code, bool Backup, string? Parent)> others)
+    // [B6-DP-THAP 2026-11-06] (rà độc lập gói 1 mục 5 + 7). Nguồn: CLAUDE; Hùng 06/11 10:54 OK kế hoạch A1 (mục 5, 6 làm cùng A1);
+    //   mục 7 = vá chặn trùng mã ở máy chủ (luật Hùng 29/10: vá vênh dữ liệu tự làm rồi báo):
+    //   (7) dự phòng phải trỏ về 1 DÒNG CHÍNH đang dùng của Part (trước: cha "ZZ" không có / cha là mã của dự phòng khác vẫn lưu → nhánh "mã = mã cha"
+    //       thoát sớm, ra 2 dòng cùng mã). Chỉ kiểm khi thêm / đổi mã / đổi cha (dữ liệu cũ mồ côi không đụng tới vẫn sửa được ô khác).
+    //   (5) dòng chính đổi tên sang đúng mã dự phòng của CHÍNH NÓ (selfOldCode = mã cũ) không bị chặn oan: sau khi đổi, service kéo cha của dự phòng
+    //       theo tên mới → dự phòng có mã = mã cha (hợp lệ).
+    public static void CheckBackupRules(string label, string? code, bool isBackup, string? parentCode, IEnumerable<(string? Code, bool Backup, string? Parent)> others, string? selfOldCode = null)
     {
         var n = Norm(code);
         var list = others.ToList();
@@ -99,6 +106,8 @@ public static class PartStepGuard
         {
             if (IsBlank(code))
                 throw new PartStepCodeException($"{label}: dòng dự phòng chưa có NC / mã — nhập mã (vd {(IsBlank(parentCode) ? "<mã cha>" : Norm(parentCode))}-DP-01) hoặc xoá dòng.");
+            if (IsBlank(parentCode) || !list.Any(o => !o.Backup && SameCode(o.Code, parentCode)))   // [B6-DP-THAP] (7)
+                throw new PartStepCodeException($"{label}: dòng dự phòng {n} trỏ về dòng cha {(IsBlank(parentCode) ? "(trống)" : Norm(parentCode))} nhưng Part này không có dòng chính đang dùng mã đó (có thể vừa bị người khác đổi / xoá). Tải lại trang rồi kiểm tra.");
             if (SameCode(n, parentCode)) return;
             if (list.Any(o => !o.Backup && SameCode(o.Code, n)))
                 throw new PartStepCodeException($"{label}: mã dự phòng {n} trùng mã dòng chính khác của Part này — WTS mã này sẽ bị gộp nhầm. Đặt mã khác (vd {(IsBlank(parentCode) ? "<mã cha>" : Norm(parentCode))}-DP-01).");
@@ -106,7 +115,7 @@ public static class PartStepGuard
                 throw new PartStepCodeException($"{label}: mã dự phòng {n} đã có ở dòng dự phòng khác của Part này (có thể vừa được người khác lưu) — mỗi dòng dự phòng 1 mã riêng. Tải lại trang rồi kiểm tra.");
             return;
         }
-        if (!IsBlank(code) && list.Any(o => o.Backup && SameCode(o.Code, n) && !SameCode(o.Parent, n)))
+        if (!IsBlank(code) && list.Any(o => o.Backup && SameCode(o.Code, n) && !SameCode(o.Parent, n) && !(selfOldCode != null && SameCode(o.Parent, selfOldCode))))   // [B6-DP-THAP] (5)
             throw new PartStepCodeException($"{label}: NC / mã {n} đang là mã dòng dự phòng của dòng khác trong Part này — đặt mã khác.");
     }
 
@@ -117,4 +126,79 @@ public static class PartStepGuard
     /// <summary>Lúc sửa: chỉ kiểm khi dòng (sau sửa) là dòng chính VÀ (đổi mã hoặc từ dự phòng thành chính).</summary>
     public static bool NeedCheckOnUpdate(string? oldCode, bool oldIsBackup, string? newCode, bool newIsBackup)
         => !newIsBackup && (oldIsBackup || !SameCode(oldCode, newCode));
+
+    // ================================================================
+    // [PM-SNAP-MID 2026-11-06] (A1) Khoá CẢ LƯỢT LƯU trang Part Master "MES_PM_SAVE_<PartId>".
+    //   Vì sao: 1 lần bấm Lưu = nhiều giao dịch nhỏ (mỗi dòng B–E 1 giao dịch, khoá MES_PM_STEPS_ chỉ giữ trong từng dòng). Người khác tạo KH /
+    //   bấm "Cập nhật từ Part Master" / tự cập nhật PO chưa chạy / "Update TG chuẩn" chen vào giữa có thể chụp quy trình DỞ (vd đã xoá P9 cũ,
+    //   chưa thêm P9 mới) → PO mang quy trình thiếu bước từ đầu. Không dùng 1 giao dịch dài được: chuỗi kết nối MultipleActiveResultSets=true
+    //   → EF không có savepoint, lỗi 1 dòng giữa chừng không huỷ riêng dòng đó được.
+    //   Cách: trang mở 1 kết nối giữ suốt lượt lưu, sp_getapplock Exclusive LockOwner = Session (chờ tối đa 10 giây); chỗ chụp quy trình lấy cùng
+    //   tên khoá Shared LockOwner = Transaction trong giao dịch của nó (chờ tối đa 15 giây) → chờ tới khi lượt lưu xong, thấy bản trọn.
+    //   Thứ tự khoá: người lưu giữ MES_PM_SAVE_ rồi mới lấy MES_PM_STEPS_ (không lấy MES_PO_); người chụp lấy MES_PO_ rồi MES_PM_SAVE_ (không lấy
+    //   MES_PM_STEPS_) → không vòng chờ. Trang nhả khoá TRƯỚC bước tự cập nhật PO chưa chạy (K6-NOTRUN), để không tự chờ chính mình.
+    //   Nguồn: CLAUDE (rà độc lập 02/11 PM-SNAP-MID); Hùng 06/11 10:54 OK kế hoạch A1.
+    // ================================================================
+    public static string SaveLockName(int partId) => "MES_PM_SAVE_" + partId;
+    public const string SaveBusyMsg = "Đang có người khác lưu Part Master của Part này — chờ vài giây rồi bấm lưu lại (chưa lưu gì).";
+    public const string SnapBusyMsg = "Part Master của Part này đang được lưu — thử lại sau vài giây (chưa chụp quy trình, không ghi gì).";
+
+    /// <summary>Khoá lượt lưu đang giữ. DisposeAsync nhả khoá (sp_releaseapplock) rồi đóng kết nối — gọi được nhiều lần.</summary>
+    public sealed class SaveLock : IAsyncDisposable
+    {
+        private readonly AppDbContext _db; private readonly string _name; private bool _done;
+        internal SaveLock(AppDbContext db, string name) { _db = db; _name = name; }
+        public async ValueTask DisposeAsync()
+        {
+            if (_done) return;
+            _done = true;
+            try
+            {
+                // nhả cả khi còn giao dịch sót (sp_releaseapplock LockOwner = Session chạy được trong giao dịch) — rà độc lập gói 2 T3
+                await _db.Database.ExecuteSqlRawAsync("EXEC sp_releaseapplock @Resource = {0}, @LockOwner = 'Session';", _name);
+            }
+            catch { /* kết nối đã hỏng: SQL Server tự nhả khoá phiên khi phiên đóng (SqlDongThoi S8d đo trên SQL thật) */ }
+            finally { await _db.Database.CloseConnectionAsync(); }
+        }
+    }
+
+    /// <summary>Lấy khoá lượt lưu. null = người khác đang lưu cùng Part quá 10 giây (không lưu gì, báo SaveBusyMsg).</summary>
+    public static async Task<SaveLock?> AcquireSaveLockAsync(AppDbContext db, int partId)
+    {
+        var name = SaveLockName(partId);
+        await db.Database.OpenConnectionAsync();
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 10000; " +
+                "IF @r < 0 THROW 50002, N'MES_PM_SAVE_BUSY', 1;", name);
+            return new SaveLock(db, name);
+        }
+        catch (Exception ex) when (ex.GetBaseException().Message.Contains("MES_PM_SAVE_BUSY"))
+        {
+            await db.Database.CloseConnectionAsync();
+            return null;
+        }
+        catch
+        {
+            await db.Database.CloseConnectionAsync();
+            throw;
+        }
+    }
+
+    /// <summary>Chỗ chụp quy trình Part Master: chờ lượt lưu đang chạy của Part xong (khoá Shared trong giao dịch đang mở, chờ tối đa 15 giây).
+    /// Quá giờ → ném InvalidOperationException(SnapBusyMsg) — nơi gọi rollback, không chụp dở.</summary>
+    public static async Task LockSnapshotReadAsync(AppDbContext db, int partId, string? partNo = null)   // partNo: ghi tên Part vào lời báo (phiếu KH nhiều Part)
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DECLARE @r int; EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Shared', @LockOwner = 'Transaction', @LockTimeout = 15000; " +
+                "IF @r < 0 THROW 50003, N'MES_PM_SAVE_WAIT', 1;", SaveLockName(partId));
+        }
+        catch (Exception ex) when (ex.GetBaseException().Message.Contains("MES_PM_SAVE_WAIT"))
+        {
+            throw new InvalidOperationException(partNo == null ? SnapBusyMsg : SnapBusyMsg.Replace("của Part này", "của Part " + partNo));
+        }
+    }
 }

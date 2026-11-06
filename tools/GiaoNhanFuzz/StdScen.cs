@@ -242,6 +242,31 @@ public static class StdScen
                "S5b Chạy: đổi số các dòng đã có, KHÔNG thêm dòng snapshot nào", e);
         }
 
+        // [PM-SNAP-MID 2026-11-06] (A1) Update TG chuẩn: sau khoá PO lấy khoá đọc MES_PM_SAVE_<Part>; Part đang được lưu quá giờ → báo, không ghi gì
+        Console.WriteLine("[S6] [PM-SNAP-MID] Update TG chuẩn chờ lượt lưu Part Master: khoá PO rồi khoá đọc; đang bị giữ → báo, không ghi");
+        {
+            var w = await BuildAsync(); var db = w.Db; var svc = new StdUpdateService(db, new KhPlanService(db));
+            var pv = await svc.PreviewAsync(w.PartId, w.Moc);
+            var sel = new List<int> { w.A };
+            var fp = StdUpdateService.SnapshotFingerprint(pv, sel);
+            var lk = PartStepGuard.SaveLockName(w.PartId);
+            var sig0 = Sig(db, w.A) + WtsSig(db);
+            var locks = new List<string>();
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => locks.Add(n);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            string? err;
+            try { err = await Throws(async () => await svc.RunAsync(w.PartId, w.Moc, "sua TG chuan", Admin, sel, fp)); }
+            finally { Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null; Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null; }
+            Ok(err != null && err.Contains("đang được lưu") && Sig(db, w.A) + WtsSig(db) == sig0 && db.StdUpdateBatches.List.Count == 0 && db.Database.CurrentTransaction == null
+               && locks.IndexOf(lk) > locks.IndexOf("MES_PO_" + w.A) && locks.IndexOf("MES_PO_" + w.A) >= 0,
+               "S6 Part đang được lưu: khoá MES_PO_ rồi khoá đọc, báo \"đang được lưu\", snapshot / WTS / lịch sử y nguyên", $"{err} · khoá={string.Join(",", locks)}");
+            locks.Clear();
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => locks.Add(n);
+            try { err = await Throws(async () => await svc.RunAsync(w.PartId, w.Moc, "sua TG chuan", Admin, sel, fp)); }
+            finally { Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null; }
+            Ok(err == null && locks.Contains(lk) && db.StdUpdateBatches.List.Count == 1, "S6b không ai giữ: chạy được, có lấy khoá đọc", $"{err} · khoá={string.Join(",", locks)}");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: " + (fails == 0 ? "ĐẠT hết" : $"{fails} SAI"));   // chuỗi chuẩn chung — Nang.cs tìm đúng "KẾT QUẢ: ĐẠT hết"
         return fails == 0 ? 0 : 1;
     }

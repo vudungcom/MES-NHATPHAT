@@ -1116,18 +1116,11 @@ public class KhPlanService
         var dets = await _db.KhPlanDetails.AsNoTracking().Where(d => d.PartNo == part.PartNo)
             .Select(d => new { d.KhPlanDetailId, d.PurchaseOrder }).ToListAsync();
         // [K6-NOTRUN] chỉ đẩy quy trình đã CHỐT: mục nào có công đoạn mà chưa Xác nhận OK → không đẩy (vd người sửa mục E bấm OK khi mục B còn nháp)
-        var ngSec = new List<string>();
-        if (!part.IsMachiningConfirmed && await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("B Gia công");
-        if (!part.IsHtspConfirmed && (await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
-                                      || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
-                                      || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive))) ngSec.Add("C HTSP");
-        if (!part.IsKcsConfirmed && await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("D KCS");
-        if (!part.IsPkgConfirmed && await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("E Đóng gói");
-        if (ngSec.Any())
-        {
-            var note = $"Part Master còn mục {string.Join(", ", ngSec)} chưa Xác nhận OK — chưa đẩy quy trình sang PO";
+        //   [PM-SNAP-MID 2026-11-06] kiểm lại DƯỚI khoá đọc cho từng PO trong RefreshRouteCoreAsync (rà độc lập gói 2 V2): người khác Lưu nháp chen
+        //   giữa lúc này và lúc chép thì không đẩy bản nháp sang PO. Kiểm ở đây chỉ để trả sớm.
+        var note = await UnconfirmedRouteNoteAsync(partId);
+        if (note != null)
             return dets.Select(d => new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, note)).ToList();
-        }
         foreach (var d in dets.OrderBy(x => x.KhPlanDetailId))
         {
             var why = await RouteRefreshBlockAsync(d.KhPlanDetailId, partId);
@@ -1139,7 +1132,11 @@ public class KhPlanService
             }
             catch (InvalidOperationException ex) when (ex.Message.StartsWith("PO ") || ex.Message.StartsWith("Không lưu") || ex.Message.StartsWith("Part "))
             {
-                res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, ex.Message));   // luật chặn (K6 / K5 / RS-E15 / khoá PO)
+                // [PM-SNAP-MID 2026-11-06] Part Master đang được người khác lưu quá 15 giây → nói rõ cách làm lại (bước tự động không tự thử lại) — rà độc lập gói 2 T5a
+                var kn = ex.Message == PartStepGuard.SnapBusyMsg
+                    ? "Part Master đang được người khác lưu — PO giữ quy trình cũ; vào Sửa phiếu KH bấm \"Cập nhật từ Part Master\" sau khi họ lưu xong"
+                    : ex.Message;
+                res.Add(new AutoRouteResult(d.KhPlanDetailId, d.PurchaseOrder, AutoRouteResult.Kept, kn));   // luật chặn (K6 / K5 / RS-E15 / khoá PO / Part đang lưu)
             }
             catch (Exception ex)
             {
@@ -1149,6 +1146,22 @@ public class KhPlanService
             finally { _db.ChangeTracker.Clear(); }
         }
         return res;
+    }
+
+    /// <summary>[K6-NOTRUN] Mục Part Master có công đoạn mà chưa Xác nhận OK → câu báo "Part Master còn mục … chưa Xác nhận OK"; null = đã chốt hết.
+    /// [PM-SNAP-MID 2026-11-06] tách ra để kiểm lại dưới khoá đọc (RefreshRouteCoreAsync auto).</summary>
+    private async Task<string?> UnconfirmedRouteNoteAsync(int partId)
+    {
+        var part = await _db.PartMasters.AsNoTracking().FirstOrDefaultAsync(p => p.PartId == partId);
+        if (part == null) return "Part không còn trong Part Master — chưa đẩy quy trình sang PO";
+        var ngSec = new List<string>();
+        if (!part.IsMachiningConfirmed && await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("B Gia công");
+        if (!part.IsHtspConfirmed && (await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive))) ngSec.Add("C HTSP");
+        if (!part.IsKcsConfirmed && await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("D KCS");
+        if (!part.IsPkgConfirmed && await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("E Đóng gói");
+        return ngSec.Any() ? $"Part Master còn mục {string.Join(", ", ngSec)} chưa Xác nhận OK — chưa đẩy quy trình sang PO" : null;
     }
 
     /// <summary>[K6-NOTRUN] Chữ ký quy trình (snapshot) của 1 PO để biết làm mới có đổi gì không: mọi cột trừ khoá / giờ chụp / người chụp.</summary>
@@ -1218,6 +1231,11 @@ public class KhPlanService
             // [D3-LOCK 2026-10-28] K6 kiểm lại dưới khoá PO (trước: kiểm ngoài khoá, WTS / phiếu chen vào giữa vẫn làm mới quy trình được)
             var lockRf = await PoGuard.LockAsync(_db, khPlanDetailId);
             if (lockRf != null) throw new InvalidOperationException(lockRf);
+            // [PM-SNAP-MID 2026-11-06] khoá đọc Part Master NGAY sau khoá PO, TRƯỚC mọi bước đọc Part Master (K6 / RS-E15 / chép) — rà độc lập gói 2 V1:
+            //   trước chỉ lấy ở bước chép → RS-E15 kiểm trên quy trình đang lưu dở (Part còn công đoạn), xoá snapshot cũ rồi chép ra rỗng = PO mất quy trình.
+            await PartStepGuard.LockSnapshotReadAsync(_db, partId);
+            if (auto && await UnconfirmedRouteNoteAsync(partId) is string ngNote)   // [PM-SNAP-MID] V2: người khác Lưu nháp chen giữa → không đẩy bản nháp
+                throw new InvalidOperationException(ngNote);
             var whyRf = await RouteRefreshBlockAsync(khPlanDetailId, partId);
             if (whyRf != null)
                 throw new InvalidOperationException($"PO vừa có số chạy ({whyRf}) — không cập nhật quy trình được (K6).");
@@ -1442,6 +1460,30 @@ public class KhPlanService
     /// Nếu Part mới (chưa có steps) → không có gì để copy, bỏ qua.
     /// </summary>
     public async Task CopyRouteSnapshotAsync(int khPlanDetailId, int partId, int snapshotBy)
+    {
+        // [PM-SNAP-MID 2026-11-06] (A1) Chờ lượt lưu Part Master đang chạy của Part xong rồi mới chụp (khoá Shared MES_PM_SAVE_<Part> trong giao dịch
+        //   đang mở — tạo KH [E1-KH-TRX], "Cập nhật từ Part Master" / tự cập nhật PO chưa chạy [K6-NOTRUN] đều đã có giao dịch). Trước: chụp chen giữa
+        //   lượt lưu nhiều giao dịch nhỏ → PO mang quy trình dở. Không có giao dịch ngoài (dựng dữ liệu thử) thì tự mở. Nguồn: CLAUDE (rà độc lập 02/11);
+        //   Hùng 06/11 10:54 OK kế hoạch A1.
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            await PartStepGuard.LockSnapshotReadAsync(_db, partId);
+            await CopyRouteSnapshotCoreAsync(khPlanDetailId, partId, snapshotBy);
+            if (ownTx != null) await ownTx.CommitAsync();
+        }
+        catch
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
+    }
+
+    private async Task CopyRouteSnapshotCoreAsync(int khPlanDetailId, int partId, int snapshotBy)
     {
         var now = DateTime.Now;
 

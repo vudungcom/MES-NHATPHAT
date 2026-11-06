@@ -470,6 +470,29 @@ public static class HarnessSeed
         return new { st.StepId, st.TimingMachine };
     }
 
+    // ── [B6-DP-THAP 06/11] drive_dpma.py pha R: Đóng gói PART-ML9 thêm Q1 (chính) + dự phòng mã Q1 (= mã cha) + Q2 (chính) — đổi tên nối chuỗi.
+    public static async Task<object> SeedB6Async(AppDbContext db)
+    {
+        var part = db.PartMasters.List.First(p => p.PartNo == "PART-ML9");
+        var admin = db.Users.List.First(u => u.Username == "admin");
+        int ord = db.PartPackagingSteps.List.Where(x => x.PartId == part.PartId).Select(x => x.StepOrder).DefaultIfEmpty(0).Max();
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 1, NC = "Q1", StepName = "Q1 chinh", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 2, NC = "Q1", StepName = "Q1 du phong", StandardTime = 2, IsBackup = true, ParentNC = "Q1", IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 3, NC = "Q2", StepName = "Q2 chinh", StandardTime = 3, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        // [B6-DP-THAP] T7: S2 (chính, đứng TRƯỚC trên form) + S1 (chính) + dự phòng SQ của S1 — 1 lần lưu: dự phòng SQ → S1-DP-01 và S2 → SQ
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 5, NC = "S1", StepName = "S1 chinh", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 6, NC = "SQ", StepName = "S1 du phong", StandardTime = 2, IsBackup = true, ParentNC = "S1", IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 4, NC = "S2", StepName = "S2 chinh", StandardTime = 3, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        await db.SaveChangesAsync();
+        return DumpB6(db);
+    }
+    public static object DumpB6(AppDbContext db)
+    {
+        var part = db.PartMasters.List.First(p => p.PartNo == "PART-ML9");
+        return db.PartPackagingSteps.List.Where(x => x.PartId == part.PartId && x.IsActive).OrderBy(x => x.StepOrder)
+            .Select(x => new { x.StepId, x.NC, x.IsBackup, x.ParentNC, x.StepName, x.StandardTime }).ToList();
+    }
+
     // ── [PHAT-HIEN-0311 04/11] dữ liệu drive_p0311.py (dựng khi drive gọi POST /harness/p0311-seed — KHÔNG trong seed khởi động,
     //    để /harness/dump của drive.py không đổi). xem0311 = chỉ Xem 3 mục, sua0311 = Xem + Sửa 3 mục (CA_LAM_VIEC / SO_DO_TC / DS_LOI);
     //    mật khẩu 123456, PIN 1111. Ca 1 đã có WTS (seed) → không xoá được; "Ca thử xoá" chưa ai dùng; Sơ đồ: Giám đốc + Sản xuất.

@@ -28,6 +28,21 @@ public static class Host
     public static async Task<int> IsoLevelAsync(AppDbContext db)
         => await db.Database.SqlQueryRaw<int>("SELECT CAST(transaction_isolation_level AS int) AS [Value] FROM sys.dm_exec_sessions WHERE session_id = @@SPID").SingleAsync();
 
+    /// <summary>[PM-SNAP-MID 06/11] S8: khoá phiên <paramref name="name"/> có đang rảnh không (APPLOCK_TEST từ kết nối của db).</summary>
+    //   Đo bằng 1 kết nối RIÊNG không qua pool (Pooling=false) — không lấy lại đúng kết nối vừa trả về pool (rà độc lập gói 2 T8a).
+    public static async Task<bool> AppLockFreeAsync(AppDbContext db, string name)
+    {
+        var b = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_cs) { Pooling = false, ApplicationName = "SqlDongThoi-S8-do" };
+        await using var cn = new Microsoft.Data.SqlClient.SqlConnection(b.ConnectionString);
+        await cn.OpenAsync();
+        await using var cmd = cn.CreateCommand();
+        cmd.CommandText = "SELECT CAST(APPLOCK_TEST('public', @n, 'Exclusive', 'Session') AS int)";
+        cmd.Parameters.AddWithValue("@n", name);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 1;
+    }
+    /// <summary>[PM-SNAP-MID] S8d dọn pool sau bài đo kết nối bỏ dở.</summary>
+    public static void ClearPools() => Microsoft.Data.SqlClient.SqlConnection.ClearAllPools();
+
     static string? ReadAppSettings()
     {
         foreach (var path in new[] { "../../MES.Web/appsettings.json", "../MES.Web/appsettings.json", "MES.Web/appsettings.json" })

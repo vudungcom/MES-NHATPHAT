@@ -780,6 +780,105 @@ public static class ChuoiScen
             Ok(u4 == null && old.StandardTime == 4 && (u5 == null || !u5.Contains("trùng")) , "Dữ liệu cũ dự phòng mã trống: sửa giờ vẫn lưu (không đổi mã); đặt mã riêng B2 lưu được", $"{u4} | {u5}");
         }
 
+        // [PM-SNAP-MID 2026-11-06] (A1) khoá lượt lưu Part Master MES_PM_SAVE_<Part>: chụp quy trình (tạo KH / Cập nhật từ Part Master) lấy khoá đọc
+        //   trong giao dịch, sau khoá PO; người khác đang giữ lượt lưu quá giờ → báo, KHÔNG chụp / không ghi gì. Khoá phiên nhả + kết nối đóng.
+        //   + [B6-DP-THAP] (5) đổi tên dòng chính sang mã dự phòng của chính nó được; (7) dự phòng phải trỏ về dòng chính đang dùng.
+        Console.WriteLine("[C20] [PM-SNAP-MID][B6-DP-THAP 06/11] Khoá lượt lưu Part Master: chụp quy trình chờ / báo, không chụp dở; luật cha của dự phòng");
+        {
+            var DF = typeof(Microsoft.EntityFrameworkCore.DatabaseFacade);
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-020", Full());
+            var lk = PartStepGuard.SaveLockName(pid);
+            async Task<string?> Err(Func<Task> a) { try { await a(); return null; } catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; } }
+            // (a) bình thường: tạo KH lấy khoá đọc MES_PM_SAVE_ trong giao dịch, giao dịch đóng
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-020", new[] { 10m }, "PO-C20");
+            Ok(Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Contains(lk) && db.Database.CurrentTransaction == null && db.KhPlanRouteSnapshotMachining.List.Any(x => x.KhPlanDetailId == ids[0]),
+               $"Tạo KH: chụp quy trình lấy khoá đọc {lk} trong giao dịch, có snapshot", string.Join(",", Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames));
+            // (b) người khác đang giữ lượt lưu (sp_getapplock hết giờ) → tạo KH báo, không thêm PO / snapshot nào
+            int nPo = db.KhPlanDetails.List.Count, nSn = db.KhPlanRouteSnapshotMachining.List.Count;
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            var eb = await Err(() => ChuoiHelp.CreateKhAsync(db, pid, "P-020", new[] { 5m }, "PO-C20B"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
+            Ok(eb != null && eb.Contains("đang được lưu") && db.KhPlanDetails.List.Count == nPo && db.KhPlanRouteSnapshotMachining.List.Count == nSn && db.Database.CurrentTransaction == null,
+               "Người khác đang lưu Part Master quá 15 giây: tạo KH báo \"đang được lưu — thử lại\", không thêm PO / snapshot, giao dịch đóng", eb);
+            // (c) "Cập nhật từ Part Master" (làm mới quy trình PO trắng): khoá PO trước rồi khoá đọc; đang bị giữ → báo, snapshot y nguyên
+            string Sig() => string.Join(";", db.KhPlanRouteSnapshotMachining.List.Where(x => x.KhPlanDetailId == ids[0]).OrderBy(x => x.SnapshotId).Select(x => x.SnapshotId + ":" + x.NC));
+            var sig0 = Sig();
+            Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames.Clear();
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            var ec = await Err(() => new KhPlanService(db).RefreshRouteSnapshotAsync(ids[0], pid, 1, "lam moi"));
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
+            var ln = Microsoft.EntityFrameworkCore.DatabaseFacade.LockNames;
+            Ok(ec != null && ec.Contains("đang được lưu") && Sig() == sig0 && db.Database.CurrentTransaction == null
+               && ln.IndexOf("MES_PO_" + ids[0]) >= 0 && ln.IndexOf(lk) > ln.IndexOf("MES_PO_" + ids[0]),
+               "Cập nhật từ Part Master khi Part đang được lưu: khoá MES_PO_ rồi mới khoá đọc, báo, snapshot y nguyên (không xoá dở)", $"{ec} · khoá={string.Join(",", ln)}");
+            // (c2) [rà độc lập gói 2 V1] làm mới bình thường: khoá đọc lấy TRƯỚC lệnh xoá snapshot cũ (trước: chỉ ở bước chép → RS-E15 / xoá chạy trên bản dở)
+            {
+                var raw = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog; int r0 = raw.Count;
+                var en = await Err(() => new KhPlanService(db).RefreshRouteSnapshotAsync(ids[0], pid, 1, "lam moi"));
+                var seg = raw.Skip(r0).ToList();
+                int iLk = seg.FindIndex(x => x.Contains("sp_getapplock") && x.Contains("'Shared'"));
+                int iDel = seg.FindIndex(x => x.Contains("DELETE") && x.Contains("KhPlanRouteSnapshot"));
+                Ok(en == null && iLk >= 0 && iDel > iLk, "Cập nhật từ Part Master: khoá đọc lấy TRƯỚC lệnh xoá snapshot cũ (kiểm K6 / RS-E15 trên bản trọn)", $"{en} · khoá đọc ở lệnh {iLk}, xoá ở lệnh {iDel}");
+            }
+            // (c3) [rà độc lập gói 2 V2] tự cập nhật PO chưa chạy: người khác Lưu nháp xong ngay trước lúc mình lấy được khoá đọc (mục B về NG) → KHÔNG đẩy bản nháp
+            {
+                var pm = db.PartMasters.List.Single(x => x.PartId == pid);
+                pm.IsPlanConfirmed = pm.IsMachiningConfirmed = pm.IsHtspConfirmed = pm.IsKcsConfirmed = pm.IsPkgConfirmed = true;
+                await new PartPackagingService(db).AddAsync(pid, new PartPackagingStep { NC = "PNHAP", StepName = "nhap", StandardTime = 1 }, 1, "ban nhap");
+                string Pk() => string.Join(",", db.KhPlanRouteSnapshotPackaging.List.Where(x => x.KhPlanDetailId == ids[0]).Select(x => x.NC));
+                var pk0 = Pk();
+                Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = n => { if (n == lk) pm.IsPkgConfirmed = false; };
+                List<KhPlanService.AutoRouteResult> ar;
+                try { ar = await new KhPlanService(db).AutoRefreshRoutesForPartAsync(pid, 1, "luu part master"); }
+                finally { Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null; }
+                var me = ar.FirstOrDefault(a => a.KhPlanDetailId == ids[0]);
+                Ok(me != null && me.Status == KhPlanService.AutoRouteResult.Kept && (me.Note ?? "").Contains("chưa Xác nhận OK") && Pk() == pk0 && !Pk().Contains("PNHAP"),
+                   "Tự cập nhật PO chưa chạy: mục E về NG (Lưu nháp của người khác) ngay trước lúc lấy khoá đọc → PO giữ quy trình cũ, không chép bản nháp PNHAP",
+                   $"{me?.Status} · {me?.Note} · Đóng gói PO: {Pk()}");
+                pm.IsPkgConfirmed = true;
+                var ar2 = await new KhPlanService(db).AutoRefreshRoutesForPartAsync(pid, 1, "luu part master");
+                Ok(ar2.Any(a => a.KhPlanDetailId == ids[0] && a.Status == KhPlanService.AutoRouteResult.Updated) && Pk().Contains("PNHAP"), "Đã Xác nhận OK lại → tự cập nhật chép được (PNHAP vào PO)", Pk());
+            }
+            // (d) khoá lượt lưu (khoá phiên): lấy được → kết nối mở + khoá giữ; nhả → hết khoá, kết nối đóng; nhả 2 lần không lỗi
+            var sl = await PartStepGuard.AcquireSaveLockAsync(db, pid);
+            bool held = Microsoft.EntityFrameworkCore.DatabaseFacade.SessionLocks.Contains(lk) && Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpen;
+            await sl!.DisposeAsync(); await sl.DisposeAsync();
+            Ok(held && !Microsoft.EntityFrameworkCore.DatabaseFacade.SessionLocks.Contains(lk) && !Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpen,
+               "Khoá lượt lưu: giữ khoá phiên trên kết nối mở suốt lượt; nhả = sp_releaseapplock + đóng kết nối (nhả 2 lần không lỗi)");
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = n => n == lk ? -1 : 0;
+            var sl2 = await PartStepGuard.AcquireSaveLockAsync(db, pid);
+            Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
+            Ok(sl2 == null && !Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpen && !Microsoft.EntityFrameworkCore.DatabaseFacade.SessionLocks.Contains(lk),
+               "Người khác đang giữ lượt lưu quá 10 giây: không lấy được (null → trang báo, không lưu), kết nối đóng lại");
+            // (e) [B6-DP-THAP] (5) dòng chính PA có dự phòng mã "PX" → đổi PA thành PX được; sau đổi dự phòng trỏ cha PX
+            var pkg = new PartPackagingService(db);
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", StepName = "a", StandardTime = 1 }, 1, "them");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PX", IsBackup = true, ParentNC = "PA", StepName = "dp", StandardTime = 1 }, 1, "them dp");
+            var pa = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "PA");
+            var e5 = await Err(() => pkg.UpdateAsync(pa.StepId, new PartPackagingStep { NC = "PX", StepName = "a", StandardTime = 1 }, 1, "doi ten"));
+            var dpx = db.PartPackagingSteps.List.Single(x => x.PartId == pid && x.IsActive && x.IsBackup && x.NC == "PX");
+            Ok(e5 == null && pa.NC == "PX" && dpx.ParentNC == "PX", "(5) đổi tên dòng chính PA sang mã dự phòng của CHÍNH NÓ (PX) → lưu được, dự phòng trỏ cha PX (trước: chặn oan \"dự phòng của dòng khác\")", $"{e5} · cha={dpx.ParentNC}");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PB", StepName = "b", StandardTime = 1 }, 1, "them");
+            await pkg.AddAsync(pid, new PartPackagingStep { NC = "PB-DP-01", IsBackup = true, ParentNC = "PB", StepName = "dp", StandardTime = 1 }, 1, "them dp");
+            var e5b = await Err(() => pkg.UpdateAsync(pa.StepId, new PartPackagingStep { NC = "PB-DP-01", StepName = "a", StandardTime = 1 }, 1, "doi ten"));
+            Ok(e5b != null && e5b.Contains("đang là mã dòng dự phòng"), "(5) đổi tên PX sang mã dự phòng của dòng KHÁC (PB-DP-01) → vẫn chặn", e5b);
+            // (7) cha không có / cha là mã của dự phòng khác → chặn; cha đúng → được
+            int n0 = db.PartPackagingSteps.List.Count;
+            var e7a = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "ZZ-DP-01", IsBackup = true, ParentNC = "ZZ", StepName = "dp", StandardTime = 1 }, 1, "cha la"));
+            var e7b = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "PB-DP-01", IsBackup = true, ParentNC = "PB-DP-01", StepName = "dp", StandardTime = 1 }, 1, "cha la dp"));
+            var e7c = await Err(() => pkg.AddAsync(pid, new PartPackagingStep { NC = "PB-DP-02", IsBackup = true, ParentNC = " pb", StepName = "dp", StandardTime = 1 }, 1, "cha dung"));
+            Ok(e7a != null && e7a.Contains("không có dòng chính") && e7b != null && e7b.Contains("không có dòng chính") && e7c == null && db.PartPackagingSteps.List.Count == n0 + 1
+               && db.PartPackagingSteps.List.Any(x => x.NC == "PB-DP-02" && x.ParentNC == "pb"),   // [B6-DP-THAP] T6 lưu cha đã Trim
+               "(7) dự phòng cha 'ZZ' (không có) / cha 'PB-DP-01' (là dự phòng) → chặn (trước: lưu được, ra 2 dòng PB-DP-01); cha ' pb' → lưu được, lưu cha 'pb' (bỏ khoảng trắng)", $"{e7a} | {e7b} | {e7c}");
+            // T6 (vòng 2 N2): dữ liệu cũ dự phòng ParentNC 'PB ' (có khoảng trắng) chỉ sửa giờ → ParentNC giữ nguyên (không đổi dữ liệu cũ / ChangeLog thừa)
+            var oldDp = new PartPackagingStep { StepId = 9292, PartId = pid, StepOrder = 98, NC = "PB-DP-09", IsBackup = true, ParentNC = "PB ", StepName = "cu", StandardTime = 1, IsActive = true, CreatedBy = 1, CreatedAt = DateTime.Now };
+            db.PartPackagingSteps.List.Add(oldDp); db.Fixup();
+            var e6 = await Err(() => pkg.UpdateAsync(9292, new PartPackagingStep { NC = "PB-DP-09", IsBackup = true, ParentNC = "PB ", StepName = "cu", StandardTime = 5 }, 1, "sua gio"));
+            Ok(e6 == null && oldDp.StandardTime == 5 && oldDp.ParentNC == "PB ", "T6 dữ liệu cũ cha 'PB ' chỉ sửa giờ → lưu giờ, ParentNC giữ nguyên (chỉ chuẩn hoá khi đổi cha)", $"{e6} · cha='{oldDp.ParentNC}'");
+        }
+
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }

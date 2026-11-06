@@ -142,6 +142,9 @@ public class StdUpdateService
                 var lockErr = await PoGuard.LockAsync(_db, pid);
                 if (lockErr != null) throw new InvalidOperationException(lockErr);
             }
+            // [PM-SNAP-MID 2026-11-06] (A1) chờ lượt lưu Part Master đang chạy xong rồi mới đọc Part Master (không áp số chuẩn của quy trình dở).
+            //   Sau khoá PO (cùng thứ tự với "Cập nhật từ Part Master"). Nguồn: CLAUDE (rà độc lập 02/11); Hùng 06/11 10:54 OK kế hoạch A1.
+            await PartStepGuard.LockSnapshotReadAsync(_db, partId);
             var pv  = await ComputeAsync(partId, effectiveFrom);
 
             // [STD-UPDATE-V3] Chỉ giữ thay đổi của các phiếu ĐƯỢC TÍCH CHỌN (cả đang dở dang lẫn chưa có WTS — mặc định chọn tất cả ở UI)

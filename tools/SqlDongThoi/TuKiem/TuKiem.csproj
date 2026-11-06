@@ -7,7 +7,7 @@
   <ItemGroup>
     <Compile Include="../../../MES.Web/Data/Entities/*.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverService.cs" />
-    <Compile Include="../../../MES.Web/Services/HandoverService.KetQuaSua.cs;../../../MES.Web/Services/WorkMinutesService.cs;../../../MES.Web/Services/UserService.cs;../../../MES.Web/Services/LedgerQtyText.cs;../../../MES.Web/Services/PasswordHasher.cs" />   <!-- [DONGTHOI-MES 05/11] file mới từ 01/11 (TuKiem trước đó không biên dịch được) -->
+    <Compile Include="../../../MES.Web/Services/HandoverService.KetQuaSua.cs;../../../MES.Web/Services/WorkMinutesService.cs;../../../MES.Web/Services/UserService.cs;../../../MES.Web/Services/LedgerQtyText.cs;../../../MES.Web/Services/PasswordHasher.cs;../../../MES.Web/Services/QtyRule.cs;../../../MES.Web/Services/HandoverService.GiaoXuLy.cs;../../../MES.Web/Services/HandoverForm.cs" />   <!-- [PM-SNAP-MID 06/11] file mới của GN-FORM1 + gói 1 (TuKiem trước đó không biên dịch được) -->   <!-- [DONGTHOI-MES 05/11] file mới từ 01/11 (TuKiem trước đó không biên dịch được) -->
     <Compile Include="../../../MES.Web/Services/HandoverLedgerService.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverChangeNotifier.cs" />
     <Compile Include="../../../MES.Web/Services/HandoverWhy.cs" />

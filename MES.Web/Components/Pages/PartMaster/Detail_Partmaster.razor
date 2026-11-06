@@ -3814,6 +3814,28 @@ else
         bool okA = true, okB = true, okC = true, okD = true, okE = true;
         int errMark;
 
+        // [PM-SNAP-MID 2026-11-06] (A1) Giữ khoá lượt lưu MES_PM_SAVE_<Part> (khoá phiên, 1 kết nối mở suốt lượt) từ đầu tới hết A–E + cờ Xác nhận:
+        //   tạo KH / "Cập nhật từ Part Master" / "Update TG chuẩn" của người khác chờ tới khi lưu xong → không chụp quy trình dở (mỗi dòng B–E vẫn
+        //   1 giao dịch riêng như cũ). Người khác đang lưu cùng Part quá 10 giây → báo, không lưu gì. Nhả TRƯỚC bước tự cập nhật PO chưa chạy
+        //   (bước đó chụp quy trình = lấy khoá đọc, giữ thì tự chờ chính mình). Nguồn: CLAUDE (rà độc lập 02/11); Hùng 06/11 10:54 OK kế hoạch A1.
+        PartStepGuard.SaveLock? saveLockGot = null;
+        try { saveLockGot = _part == null ? null : await PartStepGuard.AcquireSaveLockAsync(Db, _part.PartId); }
+        catch (Exception exL)   // [PM-SNAP-MID] lỗi kết nối lúc lấy khoá → báo trên trang, không để lỗi thoát ra làm treo nút ([SAVE-HANG-FIX]) — rà độc lập gói 2 T2
+        {
+            _saving = false;
+            _saveHasError = true;
+            _saveResult = "Lỗi:\n✗ Lỗi hệ thống khi lưu: " + exL.GetBaseException().Message;
+            return;
+        }
+        await using var saveLock = saveLockGot;
+        if (_part != null && saveLock == null)
+        {
+            _saving = false;
+            _saveHasError = true;
+            _saveResult = "Lỗi:\n✗ " + PartStepGuard.SaveBusyMsg;
+            return;
+        }
+
         try
         {
             if (_canEditA)
@@ -3986,6 +4008,8 @@ else
                 }
             }
 
+            if (saveLock != null) await saveLock.DisposeAsync();   // [PM-SNAP-MID] nhả khoá lượt lưu trước bước tự cập nhật PO (bước đó lấy khoá đọc)
+
             // [K6-NOTRUN 2026-10-30] Master list mục 13: Lưu & Xác nhận OK không lỗi → PO chưa chạy của Part này tự lấy quy trình mới.
             //   Lưu nháp / có lỗi: không đẩy sang PO (quy trình chưa chốt). PO đã chạy giữ quy trình cũ, báo lý do.
             if (confirmOk && errors.Count == 0 && _part != null && (_canEditB || _canEditC || _canEditD || _canEditE))
@@ -4062,6 +4086,7 @@ else
         finally
         {
             _saving = false;
+            if (saveLock != null) await saveLock.DisposeAsync();   // [PM-SNAP-MID] nhánh lỗi cũng nhả ngay (trước LoadAllAsync) — rà độc lập gói 2 T4
         }
 
         _saveHasError = errors.Count > 0;
@@ -4120,7 +4145,16 @@ else
                 if (at != null)
                 { errs.Add($"{label}: mã \"{at}\" bắt đầu bằng \"@\" — ký tự @ đầu mã dành cho mã hệ thống (vd \"{HandoverLedgerService.VaoCode}\" = \"{HandoverLedgerService.VaoLabel}\"), đặt mã khác."); continue; }
             }
-            if (e.IsBackup) continue;
+            if (e.IsBackup)
+            {
+                // [B6-DP-THAP 2026-11-06] (7) trang: dòng dự phòng MỚI phải trỏ về dòng chính đang có trên trang (máy chủ cũng chặn, nhưng lời máy chủ
+                //   nói "người khác vừa đổi") — vd thêm P9 + tạo dự phòng P9-DP-01 rồi sửa NC dòng mới thành P10. Dòng cũ đang sửa không xét ở đây
+                //   (dữ liệu cũ mồ côi vẫn sửa được ô khác; máy chủ chỉ xét khi đổi mã / cha). Nguồn: rà độc lập gói 2 T5c.
+                if (codeOf == null && e.State == EditState.New
+                    && !live.Any(x => !x.IsBackup && (PartStepGuard.SameCode(x.NC, e.ParentNC) || (x.StepId > 0 && PartStepGuard.SameCode(x.OriginalNC, e.ParentNC)))))
+                    errs.Add($"{label}: dòng dự phòng {nc} trỏ về dòng cha {(e.ParentNC ?? "").Trim()} nhưng trên trang không có dòng chính mã đó (dòng cha vừa đổi NC?) — sửa NC dòng cha cho khớp, hoặc xoá dòng dự phòng rồi bấm \"Tạo dự phòng\" lại ở dòng cha.");
+                continue;
+            }
             var same = live.Count(x => !x.IsBackup && string.Equals(Code(x), nc, StringComparison.OrdinalIgnoreCase));
             if (same > 1)
                 errs.Add($"{label}: NC / mã CV {nc} bị trùng ở {same} dòng — mỗi mã chỉ 1 dòng chính (máy khác dùng dòng đồng dạng / dự phòng).");
@@ -4157,11 +4191,23 @@ else
     private static List<T> OrderRenames<T>(List<T> mods) where T : StepEditBase
     {
         bool Renamed(T x) => !x.IsBackup && !string.IsNullOrWhiteSpace(x.OriginalNC) && !PartStepGuard.SameCode(x.OriginalNC, x.NC);
+        bool RenamedBk(T x) => x.IsBackup && !string.IsNullOrWhiteSpace(x.OriginalNC) && !PartStepGuard.SameCode(x.OriginalNC, x.NC);   // [B6-DP-THAP] T7
         var rest = mods.ToList();
         var outp = new List<T>();
         while (rest.Count > 0)
         {
-            var next = rest.FirstOrDefault(r => r.IsBackup || !rest.Any(o => !ReferenceEquals(o, r) && Renamed(o) && PartStepGuard.SameCode(o.OriginalNC, r.NC)));
+            // [B6-DP-THAP 2026-11-06] (6) dòng dự phòng chờ tới khi dòng cha (tên mới ParentNC) đổi tên xong + không ghi khi mã của nó còn đang là mã cũ
+            //   của 1 dòng chính chưa đổi tên. Trước: dự phòng luôn ghi trước → đổi tên nối chuỗi A→B, B→C + sửa giờ dự phòng mã A (cha A → B trên form)
+            //   bị máy chủ B6 chặn ("A trùng mã dòng chính khác" vì A chưa đổi tên) → mất phần sửa giờ. Nguồn: CLAUDE (rà độc lập gói 1 06/11 mục 6);
+            //   Hùng 06/11 10:54 OK làm cùng A1.
+            var next = rest.FirstOrDefault(r => r.IsBackup
+                ? !rest.Any(o => !ReferenceEquals(o, r) && Renamed(o) && (PartStepGuard.SameCode(o.NC, r.ParentNC) || PartStepGuard.SameCode(o.OriginalNC, r.NC)))
+                : !rest.Any(o => !ReferenceEquals(o, r) && (Renamed(o) || (RenamedBk(o) && !PartStepGuard.SameCode(o.ParentNC, r.NC) && !PartStepGuard.SameCode(o.ParentNC, r.OriginalNC)))
+                                 && PartStepGuard.SameCode(o.OriginalNC, r.NC)));
+            //   (dòng chính KHÔNG chờ dự phòng của CHÍNH NÓ — P1 → Q khi dự phòng Q của P1 đổi sang Q2: dự phòng đang chờ cha, chờ nhau thì rơi về thứ tự
+            //   form; máy chủ cho P1 → Q qua bằng selfOldCode — rà độc lập gói 2 vòng 2 N1)
+            // [B6-DP-THAP 2026-11-06] T7: dòng chính đổi sang mã mà 1 dòng DỰ PHÒNG đang giữ (và dòng đó cũng đổi mã đi trong lượt này) → chờ dự phòng ghi trước
+            //   (trước: dòng chính ghi trước → máy chủ B6 báo "đang là mã dòng dự phòng của dòng khác"). Nguồn: rà độc lập gói 2 T7 (có từ trước gói).
             if (next == null) next = rest[0];
             outp.Add(next);
             rest.Remove(next);
@@ -4174,10 +4220,15 @@ else
         // [PM-PARENT 2026-10-29] NC chính đổi tên trong lượt lưu này → dòng dự phòng trên form trỏ theo tên MỚI trước khi lưu.
         //   Service đã tự sửa ParentNC trong DB cho các con, nhưng dòng con Modified / New lưu SAU sẽ mang ParentNC cũ từ form
         //   → ghi đè ngược về tên cũ (con mồ côi, sổ không gộp N2). Đồng bộ ở đây bịt cả 2 đường (con sửa + con thêm mới).
-        foreach (var m in edits.Where(x => !x.IsBackup && x.StepId > 0 && x.State == EditState.Modified
-                                           && !string.IsNullOrWhiteSpace(x.OriginalNC) && !string.Equals(x.OriginalNC, x.NC, StringComparison.Ordinal)))
-            foreach (var c in edits.Where(x => x.IsBackup && string.Equals(x.ParentNC, m.OriginalNC, StringComparison.OrdinalIgnoreCase)))
-                c.ParentNC = m.NC;
+        // [B6-DP-THAP 2026-11-06] (6) mỗi dòng dự phòng chỉ đổi cha 1 LẦN, theo tên cha TRƯỚC khi đổi (trước: vòng lồng đổi dần — đổi tên nối chuỗi
+        //   Q1 → Q2, Q2 → Q3 làm dự phòng của Q1 trôi tiếp sang Q3 = sai cha). Nguồn: harness drive_dpma R1 06/11 (rà độc lập gói 1 mục 6).
+        var renamedMains = edits.Where(x => !x.IsBackup && x.StepId > 0 && x.State == EditState.Modified
+                                           && !string.IsNullOrWhiteSpace(x.OriginalNC) && !string.Equals(x.OriginalNC, x.NC, StringComparison.Ordinal)).ToList();
+        foreach (var c in edits.Where(x => x.IsBackup).ToList())
+        {
+            var m = renamedMains.FirstOrDefault(r => string.Equals(c.ParentNC, r.OriginalNC, StringComparison.OrdinalIgnoreCase));
+            if (m != null) c.ParentNC = m.NC;
+        }
         // [PM-NC-DUP-SVC 2026-11-02] Thứ tự GHI: Xoá → Sửa / Khôi phục → Thêm (thứ tự dòng trên form không đổi). Service nay chặn mã chính
         //   trùng theo DB → xoá P9 rồi thêm P9 mới, hoặc đổi tên P9 → P10 rồi thêm P9 trong cùng 1 lần lưu không bị báo trùng oan.
         //   Dòng mới giữ đúng thứ tự trên form (StepOrder cấp tăng dần như cũ).

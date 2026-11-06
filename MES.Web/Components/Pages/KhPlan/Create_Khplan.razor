@@ -426,6 +426,12 @@
         await using var _trx = await Db.Database.BeginTransactionAsync();
         try
         {
+            // [PM-SNAP-MID 2026-11-06] (A1) chờ lượt lưu Part Master đang chạy của các Part trong phiếu xong rồi mới cấp số KH + chép quy trình
+            //   (khoá đọc MES_PM_SAVE_<Part>, PartId tăng dần; CopyRouteSnapshotAsync lấy lại cùng khoá trong giao dịch này = không chờ thêm).
+            //   Trước khoá cấp số KH chung: Part đang lưu lâu không làm người tạo KH Part khác phải chờ (rà độc lập gói 2 T1).
+            //   Nguồn: CLAUDE (rà độc lập 02/11 + 06/11); Hùng 06/11 10:54 OK kế hoạch A1.
+            foreach (var pmLock in _details.Where(x => _partLookup.ContainsKey(x.PartNo)).Select(x => _partLookup[x.PartNo]).DistinctBy(x => x.PartId).OrderBy(x => x.PartId))
+                await PartStepGuard.LockSnapshotReadAsync(Db, pmLock.PartId, pmLock.PartNo);
             foreach (var d in _details)
             {
                 // Chỉ cho phép Part đã có trong PartMaster — không tạo Part mới từ KhPlan
