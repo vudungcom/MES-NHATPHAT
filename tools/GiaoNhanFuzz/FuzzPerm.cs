@@ -18,11 +18,18 @@ public static class FuzzPerm
         MES.Web.Constants.SystemPermissions.HandoverPkg,
     };
 
+    // [WTS-QUYEN-MAY-CHU] máy chủ nay kiểm quyền nhập WTS lúc lưu / xoá → nhóm XUONG có cả 4 quyền WTS (giữ hành vi cũ); ca từ chối ở kịch bản wts W17.
+    public static readonly string[] AllWts =
+    {
+        MES.Web.Constants.SystemPermissions.WtsGc, MES.Web.Constants.SystemPermissions.WtsHtsp,
+        MES.Web.Constants.SystemPermissions.WtsKcs, MES.Web.Constants.SystemPermissions.WtsDongGoi,
+    };
+
     public static UserGroup Xuong(AppDbContext db)
     {
         var g = db.UserGroups.List.FirstOrDefault(x => x.GroupId == XuongId);
         if (g != null) return g;
-        g = new UserGroup { GroupId = XuongId, GroupCode = "XUONG", GroupName = "Xưởng (thử)", IsActive = true, Permissions = Json(AllHandover) };
+        g = new UserGroup { GroupId = XuongId, GroupCode = "XUONG", GroupName = "Xưởng (thử)", IsActive = true, Permissions = Json(AllHandover.Concat(AllWts).ToArray()) };
         db.UserGroups.List.Add(g);
         return g;
     }

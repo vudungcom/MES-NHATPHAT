@@ -169,14 +169,21 @@ namespace MES.Web.Services
                 return bad;
             }
 
+            // [H10-KET-WHY 2026-11-07] Thử lùi: chứng từ ứng viên mới nhất mà gỡ KHÔNG được (bước con của nó thất bại) thì trả sổ tạm về như trước
+            //   bước đó rồi thử ứng viên kế (trước: bỏ cuộc cả lượt → "chưa lần ra đường gỡ" dù có đường). Ca WHYALL seed 44 PO 54 (HEAD 1ee303c / 0594d93
+            //   cũng gặp): huỷ lần nhận hàng sửa Kho trả về Gia công — ứng viên mới nhất là lần Kho nhận phiếu trả NG (gỡ không được vì cần huỷ chính
+            //   lần nhận gốc), đường đúng là xoá WTS NC 3 → NC 2 → NC 1 không được thử. Nguồn: CLAUDE (sổ dòng H10-KET-WHY); Hùng 07/11 07:55 giao Gói 5.
+            int luiTong = 0;   // [H10-KET-WHY] tổng số lần lùi cả lượt tìm
             bool Clear(Action<LedgerInput> o, HashSet<string> skip, int depth, bool loop)
             {
+                var tried = new HashSet<string>();   // [H10-KET-WHY] ứng viên đã thử ở lượt này mà gỡ không được (không thử lại trong lượt này)
+                int lui = 0;   // [H10-KET-WHY] số lần lùi ở lượt này — tối đa LuiMax (rà độc lập gói 5 mục 2: không có đường thì trước bỏ cuộc ngay, nay không được chạy tới trần 5 s)
                 for (int guard = 0; guard < 150; guard++)   // [WHY-TRAN] trước 40
                 {
                     if (Over()) return false;
                     var bad = Bad(o, loop);
                     if (bad.Count == 0) return true;
-                    var d = NextCandidate(S, SRow(), bad, skip);
+                    var d = NextCandidate(S, SRow(), bad, tried.Count == 0 ? skip : new HashSet<string>(skip.Concat(tried)));   // [H10-KET-WHY]
                     if (d == null) return false;
                     var removeD = d.Kind switch
                     {
@@ -189,7 +196,18 @@ namespace MES.Web.Services
                     };
                     var sub = new HashSet<string>(skip) { Key(d) };
                     // [K5-VONG-HO-WTS 2026-11-05] bước gỡ "xoá dòng WTS" cũng xét theo thời gian như máy chủ (WtsSaveService.VoidRowOnceAsync)
-                    if (depth >= 8 || !Clear(removeD, sub, depth + 1, d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS")) return false;
+                    if (depth >= 8) return false;
+                    var keepS = S; var keepRow = sRow; var keepTl = sTl; var keepN = plan.Steps.Count;   // [H10-KET-WHY] chụp để lùi
+                    S = Clone(S);   // bước con sửa trên bản sao — thất bại thì lấy lại keepS nguyên vẹn
+                    if (!Clear(removeD, sub, depth + 1, d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS"))
+                    {
+                        // lùi về trước bước này (cả khi hết trần: phần gợi ý dở chỉ giữ các bước đã chắc — rà độc lập gói 5 mục 4)
+                        S = keepS; sRow = keepRow; sTl = keepTl;
+                        plan.Steps.RemoveRange(keepN, plan.Steps.Count - keepN);
+                        if (Over() || ++lui > LuiMax || ++luiTong > LuiTongMax) return false;   // + trần lùi cả lượt tìm (rà độc lập gói 5 vòng 2 mục 3)
+                        tried.Add(Key(d));
+                        continue;
+                    }
                     removeD(S); sRow = null; sTl = null;
                     plan.Steps.Add(d);
                 }
@@ -197,8 +215,80 @@ namespace MES.Web.Services
             }
 
             plan.Complete = Clear(op, new HashSet<string>(opDocs), 0, loopOp);
+            // [H10-KET-WHY 2026-11-07] Bỏ bước thừa: thử lùi có thể để lại bước đã làm mà không giúp gỡ (vd huỷ lần Kho nhận phiếu trả NG trước khi
+            //   tìm ra đường đúng) → người dùng huỷ chứng từ đúng một cách vô ích. Sau khi có đường đủ, thử bỏ từng bước (từ đầu): làm theo các bước
+            //   còn lại vẫn không bị K5 chặn và thao tác gốc lưu được thì bỏ hẳn. Hết trần tính thì giữ đường hiện có (vẫn đúng, chỉ chưa gọn).
+            //   Nguồn: CLAUDE (whyreplay seed 44 PO 54 — đường 4 bước có 1 bước thừa); Hùng 07/11 07:55 giao Gói 5.
+            //   Giới hạn (rà độc lập gói 5 mục 1): chỉ khi đường ≤ GonMaxSteps bước, tối đa GonMaxComputes lần tính riêng cho phần này; trạng thái sau
+            //   từng bước đầu được nhớ (states[i]) nên thử bỏ bước i chỉ tính lại từ bước i.
+            if (plan.Complete && plan.Steps.Count > 1 && plan.Steps.Count <= GonMaxSteps)
+            {
+                int gonStart = plan.Computes;
+                bool GonOver() => Over() || plan.Computes - gonStart >= GonMaxComputes;
+                bool Works(LedgerInput start, IEnumerable<WhyStep> steps)
+                {
+                    var sim = start;
+                    foreach (var st in steps)
+                    {
+                        if (GonOver()) return false;
+                        // làm được thật như trên trang: huỷ phiếu chỉ khi phiếu không còn lần nhận; huỷ Kết quả sửa chỉ khi không còn lần KCS xác nhận
+                        if (st.Kind is not ("WTS" or "NHAN" or "BAOLOI" or "KQSUA" or "XNSUA") && sim.Txs.Any(t => t.Id == st.Id && t.Receives.Any())) return false;
+                        if (st.Kind == "KQSUA" && sim.Repairs.Any(r => r.Id == st.Id && r.Checks.Any(c => c.Id > 0))) return false;
+                        // huỷ lần nhận có phiếu trả tự lập đã được nhận lại: tìm đường luôn gợi ý huỷ lần nhận phiếu trả trước (Actionable) → không bỏ bước đó
+                        //   (bỏ thì máy chủ chỉ cho làm theo dây chuyền H10, cần quyền cả 2 nhóm, lời gợi ý không nói) — rà độc lập gói 5 vòng 2 mục 1
+                        if (st.Kind == "NHAN" && sim.Txs.Any(b => b.SourceReceiveId == st.Id && b.Receives.Any())) return false;
+                        var o = StepOp(st);
+                        var a = Clone(sim); o(a);
+                        var r0 = Calc(sim);
+                        var bad = HandoverLedgerService.NewNegativeKeys(r0, Calc(a));
+                        if (bad.Count == 0 && st.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS" && HandoverLedgerService.RepairedReturnTimes(a).Count > 0)
+                            bad.AddRange(HandoverLedgerService.NewLoopKeys(sim, r0, a, HandoverLedgerService.LoopTimeline(sim)).Select(x => x.Key));
+                        if (bad.Count > 0) return false;
+                        sim = a;
+                    }
+                    if (GonOver()) return false;
+                    var f = Clone(sim); op(f);
+                    var rf = Calc(sim);
+                    var badF = HandoverLedgerService.NewNegativeKeys(rf, Calc(f));
+                    if (badF.Count == 0 && loopOp && HandoverLedgerService.RepairedReturnTimes(f).Count > 0)
+                        badF.AddRange(HandoverLedgerService.NewLoopKeys(sim, rf, f, HandoverLedgerService.LoopTimeline(sim)).Select(x => x.Key));
+                    return badF.Count == 0;
+                }
+                for (bool changed = true; changed && !GonOver(); )   // lặp tới khi không bỏ được nữa (bỏ 1 bước có thể làm bước trước nó thành thừa)
+                {
+                    changed = false;
+                    // states[i] = sổ tạm sau các bước 0..i-1 (đường hiện tại làm được trọn nên các trạng thái này hợp lệ)
+                    var states = new List<LedgerInput> { Clone(current) };
+                    foreach (var st in plan.Steps) { var nx = Clone(states[^1]); StepOp(st)(nx); states.Add(nx); }
+                    for (int i = 0; i < plan.Steps.Count && plan.Steps.Count > 1 && !GonOver(); i++)
+                    {
+                        if (Works(Clone(states[i]), plan.Steps.Skip(i + 1)))
+                        {
+                            plan.Steps.RemoveAt(i); changed = true;
+                            break;   // đường đổi → tính lại states rồi thử tiếp
+                        }
+                    }
+                }
+            }
             return plan;
         }
+
+        // [H10-KET-WHY 2026-11-07] Trần riêng của thử lùi / bỏ bước thừa (rà độc lập gói 5 mục 1–2). Nguồn: CLAUDE.
+        const int LuiMax = 4;            // mỗi tầng lùi tối đa 4 lần rồi thôi
+        const int LuiTongMax = 12;       // cả lượt tìm lùi tối đa 12 lần
+        const int GonMaxSteps = 16;      // đường dài hơn thì giữ nguyên (vẫn đúng, chỉ chưa gọn)
+        const int GonMaxComputes = 150;  // lần tính dành riêng cho phần bỏ bước thừa
+
+        /// <summary>[H10-KET-WHY] Thao tác gỡ của 1 bước gợi ý (dùng chung lúc tìm đường + bỏ bước thừa).</summary>
+        static Action<LedgerInput> StepOp(WhyStep d) => d.Kind switch
+        {
+            "WTS"    => OpWts(new[] { d.Id }),
+            "NHAN"   => OpVoidReceive(d.Id),
+            "BAOLOI" => OpVoidNgRep(d.Id),
+            "KQSUA"  => OpVoidRepair(d.Id),
+            "XNSUA"  => OpVoidRepairCheck(d.Id),
+            _        => OpVoidIssue(d.Id),
+        };
 
         static string WtsWhere(InWts w) => w.ProcessGroup switch
         {
@@ -299,7 +389,8 @@ namespace MES.Web.Services
                         var vg = p[2]; var vcell = p[3];
                         AddTx(t => t.From == vg && t.NgCaseId == want && t.SourceReceiveId == null
                                    && (HandoverPurpose.IsOut(t.Purpose)
-                                       || (t.Purpose != HandoverPurpose.NgReturn && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == vcell)));
+                                       || (vcell == HandoverCell.LamHo && HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell))   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ lấy từ ô vụ LAMHO
+                                       || (t.Purpose != HandoverPurpose.NgReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell) && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == vcell)));   // rà gói 6 mục 13
                         AddRepair(r => r.Group == vg && r.NgCaseId == want && r.Cell == vcell);   // [GC-SUA-TAI-CHO]
                     }
                     continue;
@@ -329,12 +420,36 @@ namespace MES.Web.Services
                         case "LamHoGiu":
                             AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
                             break;
+                        case "LamHoTot":   // [TARO-LAMHO-NC] hàng làm hộ còn tốt: phiếu trả về Gia công + WTS Taro làm hộ có NG (chiếc bị lỗi)
+                        {
+                            AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
+                            var lh = row.G(g).Steps.Where(x => x.LamHoNc != null).Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            AddWts(w => w.Ng > 0 && w.ProcessGroup == "TARO" && lh.Contains(Main("TARO", WtsKeyOf(w))));
+                            break;
+                        }
                     }
                 }
                 else if (p.Length == 3)
                 {
                     var pg = p[1]; var code = p[2];
-                    if (pg == "helpOut")
+                    if (pg == "LamHoRun")   // [TARO-LAMHO-NC] số dư đoạn âm: phiếu trả về NC sau đoạn + WTS Taro làm hộ có NG ở đoạn
+                    {
+                        var run = row.LamHoRuns.FirstOrDefault(x => x.Key == code);
+                        if (run != null)
+                        {
+                            AddTx(t => t.From == "HTSP" && t.Purpose == HandoverPurpose.HelpReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell) && string.Equals(t.ToNC, run.NextNc, StringComparison.OrdinalIgnoreCase));
+                            var lh = row.G("HTSP").Steps.Where(x => x.LamHoNc != null && run.Ncs.Contains(x.LamHoNc, StringComparer.OrdinalIgnoreCase)).Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            AddWts(w => w.Ng > 0 && w.ProcessGroup == "TARO" && lh.Contains(Main("TARO", WtsKeyOf(w))));
+                        }
+                    }
+                    else                     if (pg == "LamHoTaro")   // [TARO-LAMHO-NC] câu 1: đã trả về NC sau đoạn > OK bộ Taro làm hộ → gỡ phiếu trả về (hàng tốt) vào NC đó trước
+                    {
+                        var run = row.LamHoRuns.FirstOrDefault(x => x.Key == code);
+                        if (run != null)
+                            AddTx(t => t.From == "HTSP" && t.Purpose == HandoverPurpose.HelpReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell)
+                                       && string.Equals(t.ToNC, run.NextNc, StringComparison.OrdinalIgnoreCase));
+                    }
+                    else if (pg == "helpOut")
                         AddTx(t => t.From == "GC" && t.Purpose == HandoverPurpose.HelpSend && t.FromNC == code);
                     else if (pg == "GC")
                     {

@@ -87,6 +87,7 @@ namespace MES.Web.Services
             string? ncReason = null,
             FormTx? ftx = null)   // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync)
         {
+            toNC = HandoverLedgerService.TrimCode(toNC);   // [WTS-MA-TRIM]
             if (!HandoverLedgerService.GroupCodes.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
             var deny = await DenyGroupAsync(userId, groupCode, "ghi Kết quả sửa");
             if (deny != null) return (false, deny);
@@ -116,7 +117,9 @@ namespace MES.Web.Services
                 if (ngCaseId.Value <= 0 || !row.Cases.ContainsKey(ngCaseId.Value))
                     return (false, $"{NgCaseNo.Format(ngCaseId.Value)} không thuộc PO này.");
             }
-            else if (row.CaseHeld(0, groupCode, sourceCell) <= 0)
+            if (groupCode != "GC" && ngCaseId is long lhCs && row.Cases.TryGetValue(lhCs, out var lhC) && lhC.IsLamHo)   // [TARO-LAMHO-NC] vụ hàng làm hộ: chỉ sửa ở Gia công
+                return (false, $"{NgCaseNo.Format(lhCs)} là hàng Taro làm hộ bị lỗi (chiếc của chuỗi Gia công): sửa ở Gia công — giao trả Gia công, không sửa tại {HandoverLedgerService.GroupLabel(groupCode)}.");
+            if (ngCaseId == null && row.CaseHeld(0, groupCode, sourceCell) <= 0)
                 return (false, $"Chọn {NgCaseNo.Term} đang giữ ở ô {HandoverCell.Label(sourceCell)} của {HandoverLedgerService.GroupLabel(groupCode)}.");
 
             // Gia công: NC làm tiếp cho hàng đạt — NC thường có trong quy trình PO (như phiếu vào Gia công [N3-TONC]); trống = như hàng mới

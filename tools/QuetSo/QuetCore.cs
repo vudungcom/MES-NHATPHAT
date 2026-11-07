@@ -38,6 +38,14 @@ public static class QuetCore
     // [K5-CLOSE-NHIEU 2026-11-06] Σ dòng HandoverTxCloses ≠ QtyClosed của phiếu. Ít hơn = huỷ làm trước khi code mới lên (sổ tự bù 1 dòng, chỉ để biết);
     //   nhiều hơn / có dòng mà phiếu không có QtyClosed = không thể khi code ghi đúng → báo Claude (sổ tính như cũ theo bộ cột cũ).
     public const string CloseLech  = "CLOSE_LECH";
+    // [TARO-LAMHO-NC 2026-11-07] PO có Taro ở NC máy loại trừ GIỮA chuỗi Gia công (HTSP làm hộ): chỉ để biết — số các mã Taro đó nay tính theo hàng
+    //   giao theo NC (không theo hàng HTSP nhận), PO cũ đã ghi WTS Taro theo cách cũ có thể hiện "WTS vượt" ở mã đó. Nguồn: HÙNG 07/11 10:18 OK Gói 6.
+    public const string LamHoTaro  = "LAMHO_TARO";
+    // [WTS-MA-TRIM] dòng WTS còn hiệu lực có mã CV / NC / NC Taro dư khoảng trắng đầu cuối: trước Gói 7 sổ không ghép được với quy trình
+    //   (OK mất khỏi sổ, NG vẫn trừ nhóm). Nay sổ Trim khi đọc → số mã đó đổi (đúng hơn); chỉ để biết. Nguồn: rà độc lập toàn hệ thống 07/11 (Cao).
+    public const string WtsKhoangTrang = "WTS_MA_KHOANGTRANG";
+    //   + quy trình (snapshot) PO có NC / mã CV / dòng cha dư khoảng trắng: sổ nay bỏ khi đọc (cả 2 phía) — chỉ để biết, nguồn ở Part Master.
+    public const string SnapKhoangTrang = "SNAP_KHOANGTRANG";
 
     public sealed class Result
     {
@@ -70,6 +78,9 @@ public static class QuetCore
             var w = HandoverLedgerService.WhereIs(r);
             if (!w.Balanced)
                 Add(r, DangODau, $"cộng các ô {w.Total:0.##} ≠ phôi {w.Phoi:0.##}");
+            foreach (var lr in r.LamHoRuns.Where(x => x.HasTaro))   // [TARO-LAMHO-NC] chỉ để biết
+                Add(r, LamHoTaro, $"Taro làm hộ {string.Join(", ", lr.Ncs.Select(HandoverLedgerService.NcName))} ({HandoverLedgerService.NcName(lr.FromNc)} → {HandoverLedgerService.NcName(lr.NextNc)}): HTSP nhận theo NC {lr.In:0.##} · OK bộ Taro {lr.Done:0.##} · đã trả về {lr.Ret:0.##} · chiếc làm hộ bị lỗi đang giữ {r.LamHoNgHeld("HTSP"):0.##}"
+                    + $" · mã: {string.Join(", ", r.G("HTSP").Steps.Where(s => s.LamHoNc != null && !s.IsPrep && lr.Ncs.Contains(s.LamHoNc)).Select(s => $"{s.Code} OK {s.Ok:0.##} NG {s.Ng:0.##} chờ {s.Waiting:0.##}"))}");
             foreach (var G in r.Groups.Values)
                 foreach (var msg in G.Warnings.Where(m => !m.Contains("WTS nhập vượt") && !m.Contains("khác giữ + chuyển") && !m.Contains("tổng vụ lỗi đang giữ ô")))   // "WTS nhập vượt" đã ghi ở WTS_VUOT_TRAN; 2 loại vụ lệch ghi ở VU_LECH (không đếm 2 lần — rà độc lập 06/11 mục 8)
                     Add(r, CanhBao, msg);
@@ -90,6 +101,24 @@ public static class QuetCore
         snaps.AddRange(db.KhPlanRouteSnapshotWashing.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Rửa", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
         snaps.AddRange(db.KhPlanRouteSnapshotInspection.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "KCS", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
         snaps.AddRange(db.KhPlanRouteSnapshotPackaging.Where(x => !x.IsBackup).ToList().Select(x => (x.KhPlanDetailId, "Đóng gói", K(x.NC), I(x.StepOrder, x.NC, null, x.SourceStepId, x.SnapshotAt, x.StepName, x.StandardTime))));
+        // [WTS-MA-TRIM] snapshot dư khoảng trắng (mọi dòng, cả dự phòng)
+        static bool WsS(string? v) => v != null && v.Length > 0 && (char.IsWhiteSpace(v[0]) || char.IsWhiteSpace(v[^1]));
+        var wsSnap = new List<(int Det, string What)>();
+        wsSnap.AddRange(db.KhPlanRouteSnapshotMachining.ToList().Where(x => WsS(x.NC) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình Gia công #{x.StepOrder} NC \"{x.NC}\"{(x.ParentNC != null ? $" cha \"{x.ParentNC}\"" : "")}")));
+        wsSnap.AddRange(db.KhPlanRouteSnapshotTaro.ToList().Where(x => WsS(x.NC) || WsS(x.WtsTaskCode) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình Taro #{x.StepOrder} NC \"{x.NC}\" mã \"{x.WtsTaskCode}\"{(x.ParentNC != null ? $" cha \"{x.ParentNC}\"" : "")}")));
+        wsSnap.AddRange(db.KhPlanRouteSnapshotBavia.ToList().Where(x => WsS(x.NC) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình Bavia #{x.StepOrder} \"{x.NC}\"")));
+        wsSnap.AddRange(db.KhPlanRouteSnapshotWashing.ToList().Where(x => WsS(x.NC) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình Rửa #{x.StepOrder} \"{x.NC}\"")));
+        wsSnap.AddRange(db.KhPlanRouteSnapshotInspection.ToList().Where(x => WsS(x.NC) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình KCS #{x.StepOrder} \"{x.NC}\"")));
+        wsSnap.AddRange(db.KhPlanRouteSnapshotPackaging.ToList().Where(x => WsS(x.NC) || WsS(x.ParentNC)).Select(x => (x.KhPlanDetailId, $"quy trình Đóng gói #{x.StepOrder} \"{x.NC}\"")));
+        // + NC chứng từ (phiếu, lần nhận, báo lỗi, Kết quả sửa, vụ) — sổ cũng bỏ khoảng trắng khi đọc (rà Gói 7 vòng 2 mục Thấp 3)
+        wsSnap.AddRange(db.HandoverTransactions.Where(x => !x.IsVoided).ToList().Where(x => WsS(x.FromNC) || WsS(x.ToNC)).Select(x => (x.KhPlanDetailId, $"phiếu #{x.HandoverTxId} NC giao \"{x.FromNC}\" / nhận \"{x.ToNC}\"")));
+        var txDetW = db.HandoverTransactions.Select(x => new { x.HandoverTxId, x.KhPlanDetailId }).ToList().ToDictionary(x => x.HandoverTxId, x => x.KhPlanDetailId);
+        wsSnap.AddRange(db.HandoverReceives.Where(x => !x.IsVoided).ToList().Where(x => WsS(x.ToNC) && txDetW.ContainsKey(x.HandoverTxId)).Select(x => (txDetW[x.HandoverTxId], $"lần nhận #{x.ReceiveId} NC \"{x.ToNC}\"")));
+        wsSnap.AddRange(db.HandoverNgReports.ToList().Where(x => WsS(x.NC)).Select(x => (x.KhPlanDetailId, $"báo lỗi #{x.HandoverNgReportId} NC \"{x.NC}\"")));
+        wsSnap.AddRange(db.HandoverRepairResults.ToList().Where(x => WsS(x.ToNC)).Select(x => (x.KhPlanDetailId, $"Kết quả sửa #{x.HandoverRepairResultId} NC \"{x.ToNC}\"")));
+        wsSnap.AddRange(db.NgCases.ToList().Where(x => WsS(x.DetectNC)).Select(x => (x.KhPlanDetailId, $"vụ #{x.NgCaseId} NC phát hiện \"{x.DetectNC}\"")));
+        foreach (var w in wsSnap)
+            if (plans.TryGetValue(w.Det, out var rw)) Add(rw, SnapKhoangTrang, $"{w.What} — dư khoảng trắng (sổ nay bỏ khi đọc)");
         foreach (var g in snaps.GroupBy(x => (x.Det, x.Grp, x.Code)).Where(g => g.Count() > 1))
             if (plans.TryGetValue(g.Key.Det, out var r))
             {
@@ -200,6 +229,14 @@ public static class QuetCore
                 Add(r, VuLech, "khung lỗi: " + pb);
         }
 
+        var snapRaw = new HashSet<string>(StringComparer.Ordinal);   // [WTS-MA-TRIM] "PO|chữ snapshot" (Taro: mã CV, trống thì NC)
+        foreach (var x in db.KhPlanRouteSnapshotMachining.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{x.NC}");
+        foreach (var x in db.KhPlanRouteSnapshotTaro.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{(string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode)}");
+        foreach (var x in db.KhPlanRouteSnapshotBavia.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{x.NC}");
+        foreach (var x in db.KhPlanRouteSnapshotWashing.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{x.NC}");
+        foreach (var x in db.KhPlanRouteSnapshotInspection.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{x.NC}");
+        foreach (var x in db.KhPlanRouteSnapshotPackaging.ToList()) snapRaw.Add($"{x.KhPlanDetailId}|{x.NC}");
+        static bool Ws(string? v) => v != null && (v.Length == 0 || char.IsWhiteSpace(v[0]) || char.IsWhiteSpace(v[^1]));   // chuỗi rỗng: sổ coi là trống (null)
         var wts = db.WtsProductionLogs.Where(x => !x.IsVoided).ToList();
         res.WtsCount = wts.Count;
         foreach (var x in wts)
@@ -208,6 +245,8 @@ public static class QuetCore
             if (x.QtyOk == null) res.WtsOld++;
             if (x.QtyOk.HasValue && x.QtyDone != x.QtyOk.Value + (x.QtyNg ?? 0))
                 Add(r, WtsSoLech, $"dòng WTS #{x.WtsLogId} {x.ProcessGroup} {x.NC ?? x.WtsCode} {x.StartTime:dd/MM HH:mm}: QtyDone {x.QtyDone:0.##} ≠ OK {x.QtyOk:0.##} + NG {(x.QtyNg ?? 0):0.##}");
+            if ((Ws(x.NC) || Ws(x.WtsCode) || Ws(x.StepNC)) && !snapRaw.Contains($"{x.KhPlanDetailId}|{x.NC ?? x.WtsCode}"))   // [WTS-MA-TRIM] chữ trùng y snapshot (máy chủ cố ý ghi) → không báo
+                Add(r, WtsKhoangTrang, $"dòng WTS #{x.WtsLogId} {x.ProcessGroup} mã \"{x.NC ?? x.WtsCode}\"{(x.StepNC != null ? $" NC \"{x.StepNC}\"" : "")} OK {x.QtyOk:0.##} NG {(x.QtyNg ?? 0):0.##} — dư khoảng trắng, khác chữ snapshot (sổ nay bỏ khi đọc)");
             if (x.QtyDone < 0 || (x.QtyOk ?? 0) < 0 || (x.QtyNg ?? 0) < 0)
                 Add(r, WtsSoAm, $"dòng WTS #{x.WtsLogId} {x.ProcessGroup} {x.NC ?? x.WtsCode}: Done {x.QtyDone:0.##} OK {x.QtyOk:0.##} NG {x.QtyNg:0.##}");
         }
@@ -268,6 +307,7 @@ public static class QuetCore
         // [QUET-VU-SOLE 2026-11-06] 2 mục mới in rõ cả khi không có gì (để biết đã kiểm)
         o.WriteLine($"  Vụ lỗi cân ({VuLech}): {(res.Findings.Any(f => f.Kind == VuLech) ? "CÓ LỆCH — xem từng PO" : "mọi vụ cân, khớp ô sổ + khung lỗi")}");
         o.WriteLine($"  Huỷ phần chưa nhận từng lần ({CloseLech}): {(res.Findings.Any(f => f.Kind == CloseLech) ? "CÓ LỆCH — xem từng PO" : "bảng HandoverTxCloses khớp mọi phiếu")}");   // [K5-CLOSE-NHIEU]
+        o.WriteLine($"  Taro làm hộ ({LamHoTaro}, chỉ để biết): {res.Findings.Count(f => f.Kind == LamHoTaro)} đoạn · {res.Findings.Where(f => f.Kind == LamHoTaro).Select(f => f.DetailId).Distinct().Count()} PO");   // [TARO-LAMHO-NC]
         o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");
         o.WriteLine();
         foreach (var g in byPo.OrderBy(g => g.First().Plan).ThenBy(g => g.First().Po))

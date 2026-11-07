@@ -44,6 +44,33 @@ public static class FormHelp
             if (nx != null && !Ex(nx)) return nx.NC;
             return from.Equals("@VAO", IC) ? null : ncs.FirstOrDefault(x => x.Equals(from, IC));
         }
+        // [TARO-LAMHO-NC] vụ sinh từ WTS Taro LÀM HỘ bị NG (HTSP làm hỏng chiếc Gia công giao theo NC): như NG lúc nhận hàng giao theo NC —
+        //   NC làm tiếp = NC ngay trước đoạn máy loại trừ (làm lại NC đó rồi giao Taro lại), đoạn ở đầu chuỗi (@VAO) → như hàng mới.
+        //   Đáp án đọc thẳng snapshot (Taro: NC + mã; Gia công: máy loại trừ), không gọi sổ. (Kiểm trạm 07/11 seed 26172 PO38: đáp án cũ = NC cuối.)
+        var wl = db.WtsProductionLogs.List.FirstOrDefault(w => w.NgCaseId == caseId && !w.IsVoided && (w.QtyNg ?? 0) > 0
+                     && string.Equals(w.ProcessGroup, "TARO", IC) && c.DetectGroupCode == "HTSP");
+        if (wl != null && !string.IsNullOrWhiteSpace(wl.WtsCode))
+        {
+            static string K(string s) { var t = s.Trim(); if (t.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) t = t[2..]; t = t.TrimStart('0'); return t.ToUpperInvariant(); }
+            var code = wl.WtsCode.Trim();
+            var tnc = !string.IsNullOrWhiteSpace(wl.StepNC) ? wl.StepNC!.Trim() : null;
+            var taroRows = db.KhPlanRouteSnapshotTaro.List.Where(t => t.KhPlanDetailId == id && string.Equals((string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode).Trim(), code, IC)).ToList();
+            bool backup = taroRows.Any() && taroRows.All(t => t.IsBackup);
+            if (tnc == null) { var ncsT = taroRows.Where(t => !t.IsBackup).Select(t => t.NC.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); if (ncsT.Count == 1) tnc = ncsT[0]; }
+            bool prep = new[] { "1V", "1T", "1R", "1K", "1D", "1G" }.Contains(code, StringComparer.OrdinalIgnoreCase);
+            if (tnc != null && !backup && !prep)
+            {
+                var exclT = db.KhPlanRouteSnapshotMachineExclude.List.Where(e => e.KhPlanDetailId == id && !string.IsNullOrWhiteSpace(e.SoMay)).Select(e => e.SoMay!.Trim().ToUpperInvariant()).ToHashSet();
+                var rowsT = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == id && !s.IsBackup).OrderBy(s => s.StepOrder).ToList();
+                bool ExT(KhPlanRouteSnapshotMachining s) => !string.IsNullOrWhiteSpace(s.MachineRegistered) && exclT.Contains(s.MachineRegistered!.Trim().ToUpperInvariant());
+                int k = rowsT.FindIndex(r => K(r.NC) == K(tnc) && ExT(r));
+                if (k >= 0 && rowsT.Skip(k + 1).Any(r => !ExT(r)))
+                {
+                    int i = k - 1; while (i >= 0 && ExT(rowsT[i])) i--;
+                    return i < 0 ? null : ncs.FirstOrDefault(x => x.Equals(rowsT[i].NC, IC));
+                }
+            }
+        }
         switch (c.DetectGroupCode)
         {
             case "GC":
@@ -139,6 +166,12 @@ public static class FormHelp
             e.Purpose = HandoverPurpose.New; e.FromCell = HandoverCell.Moi; e.ToCell = tc;
             e.TxToNc = to == "GC" && tc is HandoverCell.Moi or HandoverCell.Xl ? r.ToNC : null;
             e.Add(g + ".Da", -n); ToRecv(tc); return e;
+        }
+        if (pos == "LAMHOLOI")
+        {   // [TARO-LAMHO-NC] hàng làm hộ bị lỗi (vụ ô LAMHO, nằm trong Tồn hàng giao theo NC) → 1 phiếu Trả về Gia công theo NC từ ô Hàng lỗi → ô Hàng lỗi, cùng vụ
+            e.Tx = 1; to = "GC"; e.Purpose = HandoverPurpose.HelpReturn; e.FromCell = HandoverCell.Loi; e.ToCell = HandoverCell.Loi;
+            e.Add(g + ".LamHo", -n); ToRecv(HandoverCell.Loi);
+            return e;
         }
         if (pos is "TONLOI" or "TONSUA")
         {

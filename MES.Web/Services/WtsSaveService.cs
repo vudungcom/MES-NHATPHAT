@@ -178,6 +178,36 @@ namespace MES.Web.Services
             return missing.Count == 0 ? null : $"Hàng loạt: chưa nhập {string.Join(", ", missing)}.";
         }
 
+        // [WTS-MA-TRIM] chữ đúng của mã / NC trong snapshot quy trình PO (so đã bỏ khoảng trắng, không phân biệt hoa thường); không có → mã đã Trim
+        private async Task<string?> SnapshotSpellingAsync(int detId, string pg, string? code)
+        {
+            if (string.IsNullOrWhiteSpace(code)) return code;
+            var c = code.Trim();
+            // (chữ, dự phòng, thứ tự) — dòng chính trước, theo StepOrder như trang (rà Gói 7 vòng 3: không lấy thứ tự vật lý DB)
+            List<(string? Txt, bool Bk, int Ord)> cands = pg switch
+            {
+                "GC"      => (await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.NC, x.IsBackup, x.StepOrder }).ToListAsync()).Select(x => ((string?)x.NC, x.IsBackup, x.StepOrder)).ToList(),
+                "TARO"    => (await _db.KhPlanRouteSnapshotTaro.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.WtsTaskCode, x.NC, x.IsBackup, x.StepOrder }).ToListAsync())
+                                 .Select(x => ((string?)(string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode), x.IsBackup, x.StepOrder)).ToList(),
+                "BAVIA"   => (await _db.KhPlanRouteSnapshotBavia.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.NC, x.IsBackup, x.StepOrder }).ToListAsync()).Select(x => ((string?)x.NC, x.IsBackup, x.StepOrder)).ToList(),
+                "WASHING" => (await _db.KhPlanRouteSnapshotWashing.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.NC, x.IsBackup, x.StepOrder }).ToListAsync()).Select(x => ((string?)x.NC, x.IsBackup, x.StepOrder)).ToList(),
+                "KCS"     => (await _db.KhPlanRouteSnapshotInspection.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.NC, x.IsBackup, x.StepOrder }).ToListAsync()).Select(x => ((string?)x.NC, x.IsBackup, x.StepOrder)).ToList(),
+                _         => (await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(x => x.KhPlanDetailId == detId).Select(x => new { x.NC, x.IsBackup, x.StepOrder }).ToListAsync()).Select(x => ((string?)x.NC, x.IsBackup, x.StepOrder)).ToList(),
+            };
+            if (cands.Any(x => x.Txt == code)) return code;   // trang gửi đúng chữ 1 dòng snapshot → giữ
+            return cands.Where(x => x.Txt != null && string.Equals(x.Txt.Trim(), c, StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(x => x.Bk).ThenBy(x => x.Ord).Select(x => x.Txt).FirstOrDefault() ?? c;
+        }
+
+        // [WTS-QUYEN-MAY-CHU] nhóm quyền WTS (PermCheck.WtsGroupKey) của nhóm công nhân / của ProcessGroup dòng đã lưu
+        private static string WtsPermKey(WtsSaveGroup grp) => grp.IsGc ? "GC" : grp.IsHtsp ? "HTSP" : grp.HandoverGroupCode == "KCS" ? "KCS" : "PKG";
+        private static string WtsPermKeyOfPg(string? pg) => (pg ?? "").ToUpperInvariant() switch
+        {
+            "GC" => "GC", "TARO" or "BAVIA" or "WASHING" => "HTSP", "KCS" => "KCS", _ => "PKG"
+        };
+        private static string WtsNoPermMsg(string key) =>
+            $"Bạn không có quyền nhập WTS nhóm {key switch { "GC" => "Gia công", "HTSP" => "HTSP", "KCS" => "KCS", _ => "Đóng gói" }} (ma trận phân quyền) — nhờ Admin cấp quyền rồi tải lại trang.";
+
         // ProcessGroup ghi trên WTS theo nhóm công nhân (trang: CurrentPg — khớp SaveRowAsync)
         private static string CurrentPg(WtsSaveGroup grp)
         {
@@ -238,6 +268,16 @@ namespace MES.Web.Services
             var result = new WtsSaveResult();
             WtsSaveResult Fail() { result.Ok = false; result.ErrorMsg = grp.ErrorMsg; return result; }
 
+            // [WTS-MA-TRIM 2026-11-07] Mã CV / NC / NC Taro bỏ khoảng trắng đầu cuối TRƯỚC mọi bước (kiểm trần, K5, ghi DB).
+            // Nguồn: rà độc lập toàn hệ thống 07/11 (Cao) — trước: WtsCap so mã đã Trim nhưng SaveRowAsync ghi nguyên chữ ("K1 "),
+            //   sổ so thô → OK mất khỏi sổ (công nhân ghi thêm được), NG vẫn trừ cả nhóm, K5 không bắt. Sổ cũng Trim khi đọc (dòng cũ).
+            //   Rà Gói 7 vòng 3: GIỮ chữ trang gửi (chữ snapshot) cho mã / NC — chỉ trống → null; bước kiểm so bản Trim, bước ghi lấy đúng chữ snapshot
+            //   (SnapshotSpellingAsync ưu tiên trùng y chữ) để 2 dòng snapshot "2V" / "2V " (MA_TRUNG) không bị đổi chữ khi lưu. NC Taro: Trim (trang so có Trim).
+            static string? Tn(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+            grp.NC = Blank(grp.NC);
+            foreach (var s0 in grp.Rows) { s0.NC = Blank(s0.NC); s0.WtsCode = Blank(s0.WtsCode); s0.StepNC = Tn(s0.StepNC); }
+
             // Validate nhóm
             if (grp.IsGc && string.IsNullOrEmpty(grp.NC))
             { grp.ErrorMsg = "Chưa chọn NC cho nhóm."; return Fail(); }
@@ -248,6 +288,15 @@ namespace MES.Web.Services
             { grp.ErrorMsg = "Chưa chọn nhóm nhỏ (Taro / Bavia / Rửa)."; return Fail(); }
             if (!grp.Rows.Any())
             { grp.ErrorMsg = "Nhóm trống."; return Fail(); }
+
+            // [WTS-QUYEN-MAY-CHU 2026-11-07] quyền nhập WTS của nhóm đọc DB lúc lưu (ma trận phân quyền), không tin quyền trang nạp lúc mở.
+            // Nguồn: rà độc lập toàn hệ thống 07/11 (Trung) — trước: chỉ "Việc không ra SP" kiểm PermCheck; Admin rút quyền / khoá tài khoản
+            //   thì tab đang mở vẫn lưu WTS có số lượng vào nhóm theo quyền cũ.
+            var _wgPerm = await PermCheck.WtsProcessGroupsAsync(_db, grp.UserId);
+            if (_wgPerm == null) { grp.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return Fail(); }
+            var _permKey = WtsPermKey(grp);
+            if (!_wgPerm.Value.IsAdmin && !_wgPerm.Value.Groups.Contains(_permKey))
+            { grp.ErrorMsg = WtsNoPermMsg(_permKey); return Fail(); }
 
             // Validate từng sub-row
             foreach (var sub in grp.Rows)
@@ -267,6 +316,10 @@ namespace MES.Web.Services
                 { sub.ErrorMsg = eWholeS; grp.ErrorMsg = "Có hàng " + eWholeS; return Fail(); }
                 if (QtyRule.CheckNonNegative(sub.QtyOk, sub.QtyNg) is string eAmS)   // [WTS-AM 2026-11-06] OK / NG không âm (QtyRule)
                 { sub.ErrorMsg = eAmS; grp.ErrorMsg = "Có hàng " + eAmS; return Fail(); }
+                // [WTS-PREP-NG 2026-11-07] mã chuẩn bị (1V/1T/1R/1K/1D/1G) chỉ tính giờ: máy chủ chặn số lượng ≠ 0 (trần + K5 bỏ qua dòng này).
+                // Nguồn: rà độc lập toàn hệ thống 07/11 (Trung) — trước: chỉ trang ẩn ô OK / NG; gửi thẳng "1K" NG 15 → vụ + NG trừ nhóm → ô âm cả khi Workflow ON.
+                if (IsPrepNoQty(grp, sub) && (sub.QtyDone != 0 || sub.QtyOk != 0 || sub.QtyNg != 0))
+                { sub.ErrorMsg = "Mã chuẩn bị chỉ tính giờ, không nhập số lượng."; grp.ErrorMsg = "Có hàng mã chuẩn bị mang số lượng — để SL = 0."; return Fail(); }
 
                 // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
                 var _missSerial = GetMissingSerialTimesMsg(grp, sub);
@@ -822,6 +875,10 @@ namespace MES.Web.Services
                         ncValue       = null;
                         wtsCodeValue  = row.NC;
                     }
+                    // [WTS-MA-TRIM] ghi ĐÚNG CHỮ mã / NC trong quy trình (snapshot) của PO — trang WTS so chữ snapshot thô khi sửa dòng / lấy số chuẩn / máy
+                    //   (rà Gói 7 vòng 2: lưu bản đã Trim mà snapshot "NC2 " → sửa dòng mất số chuẩn). Không có trong snapshot → bản đã Trim. Sổ so 2 phía đã Trim.
+                    if (grp.IsGc) ncValue = await SnapshotSpellingAsync(row.KhPlanDetailId!.Value, processGroup, ncValue);
+                    else wtsCodeValue = await SnapshotSpellingAsync(row.KhPlanDetailId!.Value, processGroup, wtsCodeValue);
 
                     // [VULOI 2026-10-28] NG → vụ lỗi: dòng mới tạo vụ (nơi phát hiện = nơi gây lỗi = nhóm này);
                     //   sửa dòng (void + dòng mới) thì GIỮ vụ cũ (đổi loại lỗi chỉ khi vụ chưa đi phiếu — đã kiểm ở SaveGroupAsync).
@@ -835,6 +892,8 @@ namespace MES.Web.Services
                         {
                             var _chg = await NgCaseService.ChangeCaseCategoryAsync(_db, row.NgCaseId.Value, _cat.NgCategoryId);
                             if (_chg != null) { row.ErrorMsg = _chg; return; }
+                            var _chgNc = await NgCaseService.ChangeCaseDetectNcAsync(_db, row.NgCaseId.Value, ncValue ?? wtsCodeValue);   // [WTS-SUA-NC-VU]
+                            if (_chgNc != null) { row.ErrorMsg = _chgNc; return; }
                             _ngCaseId = row.NgCaseId;
                         }
                         else
@@ -1306,11 +1365,16 @@ namespace MES.Web.Services
             if (row.WtsLogId.HasValue)
             {
                 var wl = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == row.WtsLogId.Value)
-                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime }).FirstOrDefaultAsync();
+                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup }).FirstOrDefaultAsync();
                 if (wl == null || wl.IsVoided)
                 { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
                 if (wl.WorkerId != row.UserId)
                 { result.ErrorMsg = "Chỉ xoá được dòng WTS của chính mình."; return result; }
+                // [WTS-QUYEN-MAY-CHU] xoá dòng WTS sản xuất cũng phải còn quyền nhập WTS nhóm của dòng (đọc DB)
+                var _wgV = await PermCheck.WtsProcessGroupsAsync(_db, row.UserId);
+                if (_wgV == null) { result.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return result; }
+                if (!_wgV.Value.IsAdmin && !_wgV.Value.Groups.Contains(WtsPermKeyOfPg(wl.ProcessGroup)))
+                { result.ErrorMsg = WtsNoPermMsg(WtsPermKeyOfPg(wl.ProcessGroup)); return result; }
                 if (wl.StartTime < DateTime.Today || wl.StartTime >= DateTime.Today.AddDays(1))
                 { result.ErrorMsg = "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn."; return result; }
                 int detId = wl.KhPlanDetailId;   // PO thật của dòng (dòng WTS append-only: PO không đổi)

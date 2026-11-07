@@ -69,6 +69,7 @@ public static class Host
             else rest.Add(args[i]);
         }
         if (_cs.Length == 0) _cs = Environment.GetEnvironmentVariable("MES_TEST_CS") ?? ReadAppSettings() ?? "";
+        MES.Web.Services.PartStepGuard.SessionLockOpener = MES.Web.Services.PmSaveLockSql.OpenAsync;   // [S8D-KHOA 07/11] như Program.cs MES.Web
         if (_cs.Length == 0) { Console.WriteLine("Không tìm thấy chuỗi kết nối. Chạy trong thư mục tools/SqlDongThoi của bản MES_TEST_APP, hoặc thêm --cs \"...Database=MES_TEST...\""); return 2; }
         if (rest.Count > 0) Core.Workers  = int.Parse(rest[0]);
         if (rest.Count > 1) Core.Seconds  = int.Parse(rest[1]);

@@ -18,6 +18,7 @@ if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "form") { return await FormScen.Run(); }
+if (args.Length > 0 && args[0] == "why") { return WhyScen.Run(); }   // [H10-KET-WHY] gợi ý gỡ K5 trên sổ các ca kẹt WHYALL
 if (args.Length > 0 && args[0] == "taro") { return await TaroScen.Run(); }   // [TARO-NC-MA][TARO-3T-GOP] Taro mã dùng chung nhiều NC + mã gộp 3T   // [GN-FORM1] form Giao / xử lý hàng (1 form 4 bước)
 if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [GN-NG-TRACE] kịch bản hàng lỗi qua nhiều nơi
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
@@ -31,6 +32,7 @@ if (args.Length > 0 && args[0] == "auth") { return await AuthScen.Run(); }   // 
 if (args.Length > 0 && args[0] == "viec") { return await ViecScen.Run(); }   // [ML16-ACT][TOOLS-PUSH] Việc không ra sản phẩm
 if (args.Length > 0 && args[0] == "std") { return await StdScen.Run(); }   // [STD-UPDATE][STD-UPD][STD-5] Update TG chuẩn Part Master bằng StdUpdateService thật
 if (args.Length > 0 && args[0] == "danhmuc") { return DanhMuc.Run(); }   // [KIEM-TONG] đối chiếu tools/DanhMucKiem.txt với tag trong code + ca kiểm
+if (args.Length > 2 && args[0] == "whyreplay") { return WhyReplay.Run(args[1], long.Parse(args[2])); }   // [H10-KET-WHY 07/11] tái hiện ca [H10 kẹt] từ JSON
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
@@ -39,6 +41,24 @@ var stats = new Dictionary<string, int>();
 void Inc(string k, int n = 1) { stats[k] = stats.TryGetValue(k, out var v) ? v + n : n; }
 var fails = new List<string>();
 int checks = 0;
+// [TARO-LAMHO-NC 2026-11-07] Đáp án trần trả hàng làm hộ về Gia công (từ ô sổ, theo luật Hùng 10:18 + rà độc lập gói 6 vòng 1–2):
+//   tốt = Tồn hàng giao theo NC − chiếc làm hộ bị lỗi (vụ ô LAMHO); Workflow ON + PO có đoạn Taro: nhóm khác HTSP → 0 nếu NC sau đoạn Taro;
+//   HTSP → NC sau đoạn R: ≤ (nhận − trả − NG) của R, R có Taro: ≤ OK bộ − đã trả; NC khác: ≤ hàng không thuộc đoạn nào
+static decimal ExpLamHoRet(LedgerRow row, string from, string? tnc)
+{
+    var good = row.G(from).LamHoGiu - row.Cases.Values.Sum(x => x.HeldAt(from, HandoverCell.LamHo));
+    if (row.ApplyWorkflow && row.LamHoRuns.Any(x => x.HasTaro))
+    {
+        var lr = row.LamHoRuns.FirstOrDefault(x => tnc != null && string.Equals(x.NextNc, tnc, StringComparison.OrdinalIgnoreCase));
+        if (from != "HTSP") return lr is { HasTaro: true } ? 0 : Math.Max(0, good);
+        var held = row.LamHoRuns.Sum(x => Math.Max(0, x.In - x.Ret - x.Ng));
+        if (lr == null) return Math.Max(0, Math.Min(good, good - held));
+        var cap = Math.Min(good, lr.In - lr.Ret - lr.Ng);
+        if (lr.HasTaro) cap = Math.Min(cap, lr.Done - lr.Ret);
+        return Math.Max(0, cap);
+    }
+    return Math.Max(0, good);
+}
 bool dumped = false;
 var whyMs = new List<double>(); var whyComputes = new List<int>(); var whyMiss = new List<string>(); string lastErr = "";
 var All = new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" };
@@ -116,6 +136,21 @@ for (int po = startPo; po < startPo + poCount; po++)
             if (!fok) fails.Add($"[CHUOI TARO] PO{po} đưa hàng vào HTSP lỗi");
             else Inc("taro.feed");
         }
+        if (Environment.GetEnvironmentVariable("LAMHO") == "1" && shape.TaroLamHo)
+        {   // [TARO-LAMHO-NC 2026-11-07] lượt chuoi_lamho: đưa sẵn 1 phần hàng qua các NC trước đoạn máy loại trừ rồi giao theo NC cho HTSP (hàm thật) để có Taro làm hộ
+            var lsvc = new HandoverService(db);
+            var r0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(1))!;
+            var lr = r0.LamHoRuns.FirstOrDefault(x => x.HasTaro);
+            var gcN = r0.G("GC").Steps.Where(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Select(s => s.Code).ToList();
+            var feed = rnd.Next(Math.Max(1, q1 / 2), q1 + 1);
+            bool fok = lr != null && gcN.Count > 0 && (await lsvc.IssueByCellAsync(1, "KHO", "GC", feed, 1, "MOI", false, "MOI", null, gcN[0])).Ok
+                       && (await lsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, feed, 0, null, 1)).Ok;
+            foreach (var n in gcN.TakeWhile(n => n != lr?.NextNc)) if (fok) fok = (await WtsSvcHelp.SaveAsync(db, 1, "GC", n, null, feed, 0, 1)).Ok;
+            fok = fok && (await lsvc.IssueSpecialAsync(1, "GC", "HTSP", feed, 1, HandoverPurpose.HelpSend, lr!.FromNc, null, "lam ho taro")).Ok
+                      && (await lsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, feed, 0, null, 1)).Ok;
+            if (!fok) fails.Add($"[CHUOI LAMHO] PO{po} đưa hàng làm hộ vào HTSP lỗi");
+            else Inc("lamho.feed");
+        }
         snapSig0 = ChuoiHelp.SnapPicture(db, 1).Sig;
         (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, 1);
         if (Environment.GetEnvironmentVariable("TRACEPO") == po.ToString()) Console.WriteLine($"   [TRACE] PO{po} SL={q1} Part Master:\n   " + snapSig0.Replace("\n", "\n   "));
@@ -182,10 +217,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                     // [N3-FIRST 2026-11-04] PO có dòng "Nhận vào (chưa qua NC)": đường duy nhất qua máy loại trừ đầu chuỗi là giao theo NC → trả về,
                     //   nên tăng tỉ lệ phiếu đặc biệt / giao theo NC / trả về cho các PO này (PO khác giữ y tỉ lệ cũ)
                     bool vaoPo = row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code));
-                    var special = rnd.NextDouble() < (vaoPo ? 0.35 : 0.12);
+                    var lhRun = row.LamHoRuns.FirstOrDefault(x => x.HasTaro);   // [TARO-LAMHO-NC] PO có Taro làm hộ (chỉ lượt LAMHO=1) → nhiều phiếu giao theo NC / trả về hơn
+                    var special = rnd.NextDouble() < (vaoPo || lhRun != null ? 0.35 : 0.12);
                     if (special)
                     {
-                        var p = vaoPo ? Pick(rnd, (HandoverPurpose.Scrap, 2), (HandoverPurpose.CustReturn, 1), (HandoverPurpose.HelpSend, 6), (HandoverPurpose.HelpReturn, 5))
+                        var p = vaoPo || lhRun != null ? Pick(rnd, (HandoverPurpose.Scrap, 2), (HandoverPurpose.CustReturn, 1), (HandoverPurpose.HelpSend, 6), (HandoverPurpose.HelpReturn, 5))
                                       : Pick(rnd, (HandoverPurpose.Scrap, 3), (HandoverPurpose.CustReturn, 2), (HandoverPurpose.HelpSend, 3), (HandoverPurpose.HelpReturn, 3));
                         var to = p == HandoverPurpose.HelpReturn ? "GC" : groups[rnd.Next(groups.Length)];
                         if (p == HandoverPurpose.HelpSend) from = "GC";
@@ -195,6 +231,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (p == HandoverPurpose.HelpSend && hasVao && rnd.NextDouble() < 0.8) fnc = HandoverLedgerService.VaoCode;
                         var ncsIn = row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => x.Code).ToArray();   // [N3-TONC] NC nhận vào hợp lệ (như trang) [N3-FIRST] trừ @VAO
                         var tnc = p == HandoverPurpose.HelpReturn ? (ncsIn.Length > 0 ? ncsIn[rnd.Next(ncsIn.Length)] : ncs[rnd.Next(ncs.Length)]) : null;
+                        if (lhRun != null && rnd.NextDouble() < 0.8)
+                        {   // [TARO-LAMHO-NC] giao theo NC từ NC trước đoạn / trả về NC sau đoạn (đường của khách)
+                            if (p == HandoverPurpose.HelpSend) fnc = lhRun.FromNc;
+                            if (p == HandoverPurpose.HelpReturn) { tnc = lhRun.NextNc; if (rnd.NextDouble() < 0.7) from = "HTSP"; }
+                        }
                         if (p == HandoverPurpose.HelpReturn && hasVao && rnd.NextDouble() < 0.08)
                         {   // [N3-FIRST] trả về vào "@VAO" phải bị chặn (trang không cho chọn; máy chủ kiểm lại)
                             var nb = db.HandoverTransactions.List.Count;
@@ -211,7 +252,14 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (!held.Any()) { Inc("skip.issue"); continue; }
                             var pk = held[rnd.Next(held.Count)]; vu = pk.Id == 0 ? null : pk.Id;
                         }
-                        var (max, _) = HandoverLedgerService.IssueCapCase(row, from, p, fnc, p is HandoverPurpose.Scrap or HandoverPurpose.CustReturn ? HandoverCell.Loi : null, vu);
+                        var (max, _) = HandoverLedgerService.IssueCapCase(row, from, p, fnc, p is HandoverPurpose.Scrap or HandoverPurpose.CustReturn ? HandoverCell.Loi : null, vu, tnc);   // [TARO-LAMHO-NC] + NC nhận (câu 1)
+                        // [TARO-LAMHO-NC] đáp án độc lập trần trả hàng làm hộ: Tồn hàng giao theo NC − chiếc làm hộ bị lỗi (vụ ô LAMHO), Workflow ON + NC sau đoạn Taro: ≤ OK bộ − đã trả
+                        if (p == HandoverPurpose.HelpReturn)
+                        {
+                            var expM = ExpLamHoRet(row, from, tnc);
+                            checks++;
+                            if (Math.Max(0, expM) != max) fails.Add($"[TARO-LAMHO-NC trần trả về ≠ đáp án] PO{po} op{op} {from}→GC {tnc}: trần {max} · tính tay {Math.Max(0, expM)}");
+                        }
                         if (max <= 0) { Inc("skip.issue"); continue; }
                         var q = rnd.NextDouble() < 0.06 ? (int)max + 1 : rnd.Next(1, (int)Math.Max(1, max) + 1);
                         desc = $"special {p} {from}->{to} {q} max={max} vu={vu} fnc={fnc} tnc={tnc}";
@@ -219,6 +267,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         ok = r.Ok; if (!ok) Inc("rej.issue");
                         if (ok && HandoverLedgerService.IsVao(fnc)) Inc("vao.helpsend.ok");   // [N3-FIRST]
                         if (ok && vaoPo && p == HandoverPurpose.HelpReturn) Inc("vao.helpreturn.ok");
+                        if (lhRun != null) { Inc("lamho.issue"); if (ok && p == HandoverPurpose.HelpReturn && from == "HTSP") Inc("lamho.ret.ok"); if (!ok && p == HandoverPurpose.HelpReturn && from == "HTSP") Inc("lamho.ret.rej"); if (ok && p == HandoverPurpose.HelpSend) Inc("lamho.send.ok"); }   // [TARO-LAMHO-NC]
                         if (ok && q > max) fails.Add($"[Giao vượt trần vụ] PO{po} op{op} {desc}");
                     }
                     else
@@ -367,6 +416,17 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (cp.Max != null && !cp.Locked && cp.Max > 0) { g = gg; pg = p2; code = c2; tnc = n2; cap = cp; break; }
                         }
                     }
+                    if (Environment.GetEnvironmentVariable("LAMHO") == "1" && row.LamHoRuns.Any(x => x.HasTaro) && rnd.NextDouble() < 0.6)
+                    {   // [TARO-LAMHO-NC] lượt chuoi_lamho: ưu tiên mã Taro làm hộ đang có hàng chờ (để có OK bộ → trả về NC sau đoạn / NG → trả lỗi)
+                        foreach (var cc in codeOf["HTSP"].codes.OrderBy(_ => rnd.Next()))
+                        {
+                            var cp2 = cc.Split('|'); if (cp2[0] != "TARO") continue;
+                            var n2 = cp2.Length > 2 ? cp2[2] : null; var k2 = CapKey(cp2[1], n2);
+                            if (!row.G("HTSP").Steps.Any(x => x.LamHoNc != null && x.Code == k2)) continue;
+                            var cpx = HandoverLedgerService.WtsCap(row, "TARO", k2);
+                            if (cpx.Max != null && !cpx.Locked && cpx.Max > 0) { g = "HTSP"; pg = "TARO"; code = cp2[1]; tnc = n2; cap = cpx; break; }
+                        }
+                    }
                     if (row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code)) && rnd.NextDouble() < 0.05)
                     {   // [N3-FIRST] WTS ghi vào "@VAO" phải bị chặn (không phải NC thật)
                         var nWtsVao = db.WtsProductionLogs.List.Count;
@@ -394,7 +454,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                     }
                     var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), catW, stepNc: tnc);
                     if (!sv.Ok) { Inc("rej.wts.svc"); fails.Add($"[WtsSaveService chặn oan dù trong trần + qua K5] PO{po} op{op} {desc} → {sv.Err}"); continue; }
-                    if (tnc != null) Inc("taro.nc.wts");   // [TARO-NC-MA] dòng WTS mã Taro dùng chung nhiều NC
+                    if (tnc != null) Inc("taro.nc.wts");
+                    if (row.G("HTSP").Steps.Any(x => x.LamHoNc != null && x.Pg == pg && x.Code == CapKey(code, tnc))) Inc(ng > 0 ? "lamho.wts.ng" : "lamho.wts");   // [TARO-LAMHO-NC]   // [TARO-NC-MA] dòng WTS mã Taro dùng chung nhiều NC
                     if (tnc != null && db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId).StepNC != tnc) fails.Add($"[TARO-NC-MA StepNC ghi sai] PO{po} op{op} {desc}");
                     {
                         var wNew = db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId);
@@ -709,7 +770,12 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!poss.Any()) { Inc("skip.form"); continue; }
                     var pos = poss[rnd.Next(poss.Count)];
                     var G = row.G(g);
-                    decimal? want = pos.Id switch { "PHOI" or "DA" => G.ConGiao, "CHUA" => G.ChuaLam, "TONLOI" => G.LoiGiu, "TONSUA" => G.SuaGiu, "LAMHO" => G.LamHoGiu, _ => null };
+                    // [TARO-LAMHO-NC] LAMHO = Tồn hàng giao theo NC − chiếc làm hộ bị lỗi (Workflow ON, HTSP 1 đoạn Taro: ≤ OK bộ − đã trả); LAMHOLOI = chiếc làm hộ bị lỗi
+                    var lhNgH = row.Cases.Values.Sum(x => x.HeldAt(g, HandoverCell.LamHo));
+                    var lhRuns = row.LamHoRuns.Where(x => x.HasTaro).ToList();
+                    decimal lhGood = row.ApplyWorkflow && lhRuns.Count > 0 ? row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => ExpLamHoRet(row, g, x.Code)).DefaultIfEmpty(0).Max()
+                                   : G.LamHoGiu - lhNgH;
+                    decimal? want = pos.Id switch { "PHOI" or "DA" => G.ConGiao, "CHUA" => G.ChuaLam, "TONLOI" => G.LoiGiu, "TONSUA" => G.SuaGiu, "LAMHO" => lhGood, "LAMHOLOI" => lhNgH, _ => null };
                     if (pos.Id.StartsWith("NC:")) { var st0 = G.Steps.First(x => x.Code == pos.Id[3..]); want = Math.Min(st0.Waiting ?? 0, G.ChuaLam); }
                     if (want != null && Math.Max(0, want.Value) != pos.Have) fails.Add($"[Form số dòng ≠ ô sổ] PO{po} op{op} {g} {pos.Id}: {pos.Have} ≠ {want}");
                     var req = new FormGiaoRequest { KhPlanDetailId = 1, Group = g, UserId = Uid(g), Kind = tot ? HandoverForm.Tot : HandoverForm.Loi, Pos = pos.Id };
@@ -743,12 +809,20 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (tot)
                     {
                         req.Action = HandoverForm.AGiao;
-                        if (pos.LamHo) { req.ToGroup = "GC"; if (rnd.NextDouble() < 0.9) req.ToNC = RndNc(); if (req.ToNC == null) expErr ??= "K3"; }
+                        if (pos.LamHo)
+                        {
+                            req.ToGroup = "GC"; if (rnd.NextDouble() < 0.9) req.ToNC = RndNc();
+                            // [TARO-LAMHO-NC] trả về NC sau đoạn Taro làm hộ (đường của khách); trần theo NC nhận đã chọn (câu 1)
+                            if (g == "HTSP" && lhRuns.Count > 0 && rnd.NextDouble() < 0.7) req.ToNC = lhRuns[0].NextNc;
+                            if (req.ToNC == null) expErr ??= "K3";
+                            if (req.ToNC != null) have = ExpLamHoRet(row, g, req.ToNC);
+                        }
                         else
                         {
                             var nx = HandoverForm.NextGroup(g);
                             req.ToGroup = rnd.NextDouble() < 0.7 && nx != "" ? nx : others[rnd.Next(others.Length)];
                             if (pos.HelpFrom != null) { if (rnd.NextDouble() < 0.9) req.Notes = "lam ho"; else expErr ??= "ghi chú"; }
+                            if (pos.HelpFrom != null && row.ApplyWorkflow && req.ToGroup != "HTSP" && row.LamHoRuns.Any(x => x.HasTaro && x.FromNc == pos.HelpFrom)) expErr ??= "HTSP";   // [TARO-LAMHO-NC] đoạn sau có Taro: chỉ HTSP
                             else
                             {
                                 if (rnd.NextDouble() < 0.15) req.ToCell = HandoverCell.ReceiveCells[rnd.Next(HandoverCell.ReceiveCells.Length)];
@@ -756,6 +830,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                             }
                         }
                         req.Qty = Q(have);
+                        if (req.Qty > have) over = true;   // trần đổi theo NC nhận (trả hàng làm hộ) — rà vòng 2 L6
                     }
                     else if (pos.HeldCell != null)
                     {
@@ -764,6 +839,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var cs = cases[rnd.Next(cases.Count)]; req.CaseId = cs.Id;
                         var ch = cs.HeldAt(g, pos.HeldCell);
                         var acts = pos.HeldCell == HandoverCell.Loi ? new[] { HandoverForm.AGiao, HandoverForm.ASua, HandoverForm.AHuy, HandoverForm.AKhach }
+                                 : pos.HeldCell == HandoverCell.LamHo ? new[] { HandoverForm.AGiao, HandoverForm.AGiao, HandoverForm.AGiao, HandoverForm.AHuy }   // [TARO-LAMHO-NC] chỉ trả Gia công (Huỷ phải bị chặn)
                                                                     : new[] { HandoverForm.ASua, HandoverForm.ATraLai, HandoverForm.ASuaXong };
                         req.Action = acts[rnd.Next(acts.Length)];
                         if (req.Action == HandoverForm.ASua)
@@ -775,7 +851,13 @@ for (int po = startPo; po < startPo + poCount; po++)
                         else
                         {
                             req.Qty = Q(ch);
-                            if (req.Action == HandoverForm.AGiao)
+                            if (pos.HeldCell == HandoverCell.LamHo)
+                            {   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ về Gia công (nhóm khác → chặn); Huỷ → chặn
+                                if (req.Action == HandoverForm.AHuy) expErr ??= "";
+                                else if (rnd.NextDouble() < 0.1) { req.ToGroup = others.Where(x => x != "GC").DefaultIfEmpty("KCS").First(); expErr ??= "Gia công"; }
+                                else req.ToGroup = rnd.NextDouble() < 0.5 ? "GC" : null;
+                            }
+                            else if (req.Action == HandoverForm.AGiao)
                             {
                                 var cg = HandoverForm.CaseCauseGroup(cs, g);
                                 req.Purpose = cg != null && rnd.NextDouble() < 0.5 ? HandoverForm.PTra : HandoverForm.PNho;
@@ -853,6 +935,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     }
                     var res = await svc.SaveFormAsync(req);
                     ok = res.Ok;
+                    if (pos.Id is "LAMHO" or "LAMHOLOI") Inc($"lamho.form.{pos.Id}.{(ok ? "ok" : "rej")}");   // [TARO-LAMHO-NC]
                     var after = (await led.GetLedgerForDetailAsync(1))!;
                     if (!ok)
                     {
@@ -1245,8 +1328,14 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         {
             string Tc(KhPlanRouteSnapshotTaro t) => (string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode)!.Trim();
             static bool Eq(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
-            var mainsT = tS.Where(t => !t.IsBackup && !HandoverLedgerService.IsPrepCode(Tc(t))).ToList();
-            var shared = mainsT.GroupBy(Tc, StringComparer.OrdinalIgnoreCase).Where(g => g.Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            // [TARO-LAMHO-NC] NC máy loại trừ GIỮA chuỗi Gia công (sau nó còn NC thường) — đọc chuỗi NC Gia công (thứ tự + cờ máy loại trừ),
+            //   so NC Taro bỏ chữ "NC" / số 0 đầu: mã Taro ở đó là Taro làm hộ → không vào Đã làm của HTSP, OK bộ của nó so riêng với sổ
+            static string Nk(string? x) { var y = (x ?? "").Trim(); if (y.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) y = y[2..]; return y.Replace(" ", "").TrimStart('0').ToUpperInvariant(); }
+            var gcL = row.G("GC").Steps.Where(x => !HandoverLedgerService.IsVao(x.Code)).ToList();
+            var lhNcs = gcL.Select((x, i) => (x, i)).Where(z => z.x.IsExcluded && gcL.Skip(z.i + 1).Any(y => !y.IsExcluded)).Select(z => Nk(z.x.Code)).ToHashSet();
+            var mainsAll = tS.Where(t => !t.IsBackup && !HandoverLedgerService.IsPrepCode(Tc(t))).ToList();
+            var mainsT = mainsAll.Where(t => !lhNcs.Contains(Nk(t.NC))).ToList();
+            var shared = mainsAll.GroupBy(Tc, StringComparer.OrdinalIgnoreCase).Where(g => g.Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
                                .ToDictionary(g => g.Key, g => g.OrderBy(t => t.StepOrder).Select(t => (t.NC ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(), StringComparer.OrdinalIgnoreCase);
             // dòng WTS Taro thuộc dòng quy trình nào (mã + NC; dự phòng gộp về dòng cha cùng NC)
             (decimal ok, decimal ng) Done(KhPlanRouteSnapshotTaro m)
@@ -1286,6 +1375,33 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
                     var bk = (pgB == "BAVIA" ? bS.Where(b => b.IsBackup && Eq(b.ParentNC, m.NC)).Select(b => b.NC) : rS.Where(b => b.IsBackup && Eq(b.ParentNC, m.NC)).Select(b => b.NC)).Append(m.NC).ToList();
                     units.Add(wlH.Where(w => w.ProcessGroup == pgB && bk.Contains((w.WtsCode ?? w.NC ?? "").Trim(), StringComparer.OrdinalIgnoreCase)).Sum(LedgerQtyText.LogOk));
                 }
+            // [TARO-LAMHO-NC] OK bộ Taro làm hộ từng NC loại trừ giữa chuỗi (cùng luật: mã thường / bộ gộp cùng NC) = sổ (LamHoRuns.Done = nhỏ nhất các NC của đoạn)
+            foreach (var nk in lhNcs)
+            {
+                var ms = mainsAll.Where(t => Nk(t.NC) == nk).ToList();
+                if (ms.Count == 0) continue;
+                var u2 = new List<decimal>(); var used2 = new HashSet<KhPlanRouteSnapshotTaro>(ReferenceEqualityComparer.Instance);
+                foreach (var g in ms)
+                {
+                    var pc = gopsS.Where(x => Eq(x.GopCode, Tc(g))).Select(x => x.PartCode.Trim()).ToList();
+                    var parts = pc.Count == 0 ? new() : ms.Where(q => q != g && pc.Contains(Tc(q), StringComparer.OrdinalIgnoreCase)).ToList();
+                    if (parts.Count == 0 || used2.Contains(g) || parts.Any(used2.Contains)) continue;
+                    used2.Add(g); foreach (var q in parts) used2.Add(q);
+                    u2.Add(Done(g).ok + parts.Select(Done).Min(x => x.ok));
+                }
+                foreach (var m in ms.Where(m => !used2.Contains(m))) u2.Add(Done(m).ok);
+                var run = row.LamHoRuns.FirstOrDefault(r => r.Ncs.Any(n => Nk(n) == nk));
+                checks++;
+                if (run == null || !run.HasTaro) { F("TARO-LAMHO-NC thiếu đoạn làm hộ", $"NC Taro {nk} ở máy loại trừ giữa chuỗi mà sổ không có đoạn"); continue; }
+                if (run.Ncs.Count == 1 && run.Done != u2.Min()) F("TARO-LAMHO-NC OK bộ ≠ đáp án độc lập", $"NC {nk}: sổ {run.Done} · tính tay {u2.Min()}");
+                // đã trả hàng tốt về NC sau đoạn (đọc thẳng phiếu) = sổ
+                var retT = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.FromGroupCode == "HTSP" && t.Purpose == HandoverPurpose.HelpReturn
+                                                                && t.FromCell != HandoverCell.Loi && string.Equals(t.ToNC, run.NextNc, StringComparison.OrdinalIgnoreCase)).Sum(t => { var rv = t.Receives.Where(r => !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg); return t.Status == "COMPLETED" ? rv : Math.Max(t.QtyIssued, rv); });   // số giao của phiếu (phiếu đã đủ: số đã nhận)
+                checks++;
+                if (retT != run.Ret) F("TARO-LAMHO-NC đã trả ≠ phiếu", $"đoạn {run.Key}: sổ {run.Ret} · phiếu {retT}");
+                checks++;
+                if (row.ApplyWorkflow && run.Ret > run.Done) F("TARO-LAMHO-NC trả về vượt OK bộ (câu 1)", $"đoạn {run.Key}: đã trả {run.Ret} > OK bộ {run.Done}");
+            }
             checks++;
             var expDaLam = units.Count == 0 ? row.G("HTSP").DaLam : units.Min();   // không có mã thường nào (chỉ mã chuẩn bị) → sổ cộng mọi mã, không xét ở đây
             if (row.G("HTSP").DaLam != expDaLam) F("HTSP Đã làm ≠ đáp án độc lập (TARO-NC-MA / 3T gộp)", $"sổ {row.G("HTSP").DaLam} · tính tay {expDaLam}");
@@ -1339,7 +1455,7 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         checks++;
         if (tr.Problems.Any()) F("Hàng lỗi lệch", string.Join(" | ", tr.Problems.Take(3)) + (tr.Problems.Count > 3 ? $" (+{tr.Problems.Count - 3})" : ""));
         checks++;
-        var held = row.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu);
+        var held = row.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu + row.LamHoNgHeld(g.Code));   // [TARO-LAMHO-NC] + chiếc làm hộ bị lỗi (nằm trong Tồn hàng giao theo NC)
         if (tr.DangGiu != held) F("Hàng lỗi đang giữ ≠ sổ", $"{tr.DangGiu} ≠ {held}");
         checks++;
         foreach (var g in tr.Groups.Where(g => g.Code != "KHACH"))
@@ -1503,6 +1619,16 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
             foreach (var x in input.Txs) dump.Append($"\n      tx#{x.Id} {x.From}->{x.To} {x.Purpose} {x.FromCell}->{x.ToCell} q={x.Issued} fnc={x.FromNC} tnc={x.ToNC} vu={x.NgCaseId} src={x.SourceReceiveId} @{x.At:HH:mm:ss.fff} rec={string.Join(",", x.Receives.Select(y => $"#{y.Id}:{y.Ok}/{y.Ng}@{y.Cell}/vu{y.NgCaseId}"))}");
             foreach (var w in input.Wts) dump.Append($"\n      wts#{w.Id} {w.ProcessGroup} {w.NC}{w.WtsCode} {w.Ok}/{w.Ng} vu={w.NgCaseId}");
             foreach (var b in input.NgReps) dump.Append($"\n      baoloi#{b.Id} {b.Group} {b.Source} {b.NC} {b.Qty} vu={b.NgCaseId}");
+            foreach (var rp in input.Repairs) dump.Append($"\n      kqsua#{rp.Id} {rp.Group} {rp.Cell} vu={rp.NgCaseId} dat={rp.Pass} khong={rp.Fail} nc={rp.ToNC} @{rp.At:HH:mm:ss.fff} xn={string.Join(",", rp.Checks.Select(c => $"#{c.Id}:{c.Ok}/{c.Ng}@{c.At:HH:mm:ss.fff}"))}");   // [H10-KET-WHY 07/11]
+            // [H10-KET-WHY 2026-11-07] ghi sổ chứng từ ra JSON để tái hiện đúng ca (fuzz không tất định theo giờ chạy): dotnet GiaoNhanFuzz.dll whyreplay <file> <lần nhận>
+            try
+            {
+                Directory.CreateDirectory("nang_ketqua");
+                var jf = Path.Combine("nang_ketqua", $"h10_s{seed0}_po{po}_r{r.Id}_{DateTime.Now:HHmmssfff}.json");
+                File.WriteAllText(jf, System.Text.Json.JsonSerializer.Serialize(input, new System.Text.Json.JsonSerializerOptions { IncludeFields = true }));
+                dump.Append("\n      JSON: " + jf);
+            }
+            catch (Exception ex) { dump.Append("\n      (không ghi được JSON: " + ex.Message + ")"); }
             fails.Add($"[H10 kẹt] PO{po} op{opIdx} sau «{desc}»: huỷ lần nhận #{r.Id} (phiếu #{t.Id} {t.From}->{t.To}{(t.SourceReceiveId != null ? " tự lập" : "")}) bị chặn, gợi ý dừng sau {plan.Steps.Count} bước ({string.Join(" → ", plan.Steps.Select(st => st.Kind + "#" + st.Id))})\n      " + dump);
         }
 }

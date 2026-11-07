@@ -221,6 +221,42 @@ namespace MES.Web.Services
             return null;
         }
 
+        /// <summary>
+        /// [WTS-SUA-NC-VU 2026-11-07] Sửa dòng WTS có NG giữ vụ cũ mà đổi NC (Gia công) / mã CV (nhóm khác): NC phát hiện của vụ (DetectNC)
+        /// phải theo dòng mới — K2 (NC làm tiếp khi sửa đạt) đọc cột này. Như đổi loại lỗi: chỉ được khi vụ chưa đi phiếu / chưa có Kết quả sửa.
+        /// Nguồn: rà độc lập toàn hệ thống 07/11 (Trung) — trước: DetectNC chỉ ghi lúc tạo vụ → NG sửa NC02 → NC01 vẫn làm tiếp NC02 không cần lý do.
+        /// Trả lời báo nếu không được đổi; null = được (đã đổi nếu khác). Chỉ vụ sinh từ WTS (vụ khác không lấy NC từ dòng WTS).
+        /// </summary>
+        public static async Task<string?> ChangeCaseDetectNcAsync(AppDbContext db, long caseId, string? newNc)
+        {
+            var cs = await db.NgCases.FirstOrDefaultAsync(x => x.NgCaseId == caseId);
+            if (cs == null || cs.OriginKind != NgOrigin.Wts) return null;
+            var nn = string.IsNullOrWhiteSpace(newNc) ? null : newNc.Trim();
+            if (string.Equals(cs.DetectNC?.Trim(), nn, StringComparison.OrdinalIgnoreCase)) return null;
+            // Chỉ chặn khi đổi THẬT NC làm tiếp (K2): vụ Gia công đổi sang NC CHÍNH khác. Nhóm khác (mã CV — K2 luôn NC cuối, DetectNC chỉ để hiển thị)
+            //   và đổi giữa NC chính ↔ NC máy đồng dạng của nó (K2 gộp về NC chính) → cập nhật luôn. Rà độc lập Gói 7 (Trung): trước chặn mọi đổi.
+            bool real = cs.DetectGroupCode == "GC";
+            if (real)
+            {
+                var bks = await db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(s => s.KhPlanDetailId == cs.KhPlanDetailId && s.IsBackup)
+                    .Select(s => new { s.NC, s.ParentNC }).ToListAsync();
+                string Main(string? nc)
+                {
+                    var n = (nc ?? "").Trim();
+                    var bk = bks.FirstOrDefault(b => string.Equals((b.NC ?? "").Trim(), n, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(b.ParentNC));
+                    return (bk != null ? bk.ParentNC!.Trim() : n).ToUpperInvariant();
+                }
+                real = Main(cs.DetectNC) != Main(nn);
+            }
+            var moved = real && (await db.HandoverTransactions.AsNoTracking().AnyAsync(t => t.NgCaseId == caseId && !t.IsVoided)
+                     || await db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == caseId && !r.IsVoided));
+            if (moved)
+                return $"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — không đổi NC / mã CV của dòng có NG được (huỷ các chứng từ đó trước, hoặc giữ NC cũ).";
+            cs.DetectNC = nn;
+            await db.SaveChangesAsync();
+            return null;
+        }
+
         /// <summary>[VULOI] Chỉ kiểm (không ghi): đổi loại lỗi của vụ có được không. Null = được / không đổi.</summary>
         public static async Task<string?> CategoryChangeBlockedAsync(AppDbContext db, long caseId, int newCategoryId)
         {

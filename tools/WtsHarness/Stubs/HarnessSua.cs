@@ -225,6 +225,26 @@ public static class HarnessSua
         return new { det.KhPlanDetailId };
     }
 
+    // [TARO-DUPHONG][TARO-DOI-CHEO-NC 2026-11-07] drive_g5.py: Part Master PART-ML9 thêm Taro 2T ở NC 3 + NC 5, 4T ở NC 3 (+ mã 2T / 4T / 5T trong WTS tiêu chuẩn) (dữ liệu có sẵn, ghi thẳng bảng)
+    //   + 1 dòng dự phòng Taro CŨ (như Part "sssssssss" trên DB MES 07/11). Chỉ drive_g5 gọi — seed khởi động không đổi.
+    public static async Task<object> SeedG5Async(AppDbContext db)
+    {
+        var pm = db.PartMasters.List.First(p => p.PartNo == "PART-ML9");
+        if (!db.PartTaroSteps.List.Any(t => t.PartId == pm.PartId && t.WtsTaskCode == "2T"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            int o = db.PartTaroSteps.List.Where(t => t.PartId == pm.PartId).Select(t => t.StepOrder).DefaultIfEmpty(0).Max();
+            foreach (var c in new[] { "2T", "4T", "5T" })
+                if (!db.StandardWtsTasks.List.Any(t => t.TaskCode == c))
+                    db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "TARO", CategoryName = "Công việc nhóm Taro", TaskCode = c, TaskName = "Taro " + c, DisplayOrder = 60, IsActive = true, CreatedAt = DateTime.Now, CreatedBy = admin.UserId });
+            foreach (var (nc, code, bk, parent) in new (string, string?, bool, string?)[] { ("3", "2T", false, null), ("3", "4T", false, null), ("5", "2T", false, null), ("3-DP-01", null, true, "3") })
+                db.PartTaroSteps.Add(new PartTaroStep { PartId = pm.PartId, StepOrder = ++o, NC = nc, WtsTaskCode = code, IsBackup = bk, ParentNC = parent, StepName = "Taro " + (code ?? nc),
+                    StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = DateTime.Now.AddDays(-1) });
+            await db.SaveChangesAsync(); db.Fixup();
+        }
+        return new { pm.PartId };
+    }
+
     public static async Task<object> DumpTaroAsync(AppDbContext db, HandoverLedgerService led)
     {
         var det = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-TARO");
@@ -241,6 +261,84 @@ public static class HarnessSua
             lines = row.G("HTSP").Steps.GroupBy(s => s.Code).ToDictionary(g => g.Key, g => g.Select(s => new { s.Ok, s.Ng, s.Waiting, s.GopUnit, s.IsGop }).First()),   // mã chuẩn bị 1T ở 2 NC = 2 dòng cùng mã
             chuaLam = row.G("HTSP").ChuaLam,
             gops = db.StandardWtsTaskGops.List.Select(g => new { g.GopTaskCode, g.PartTaskCode, g.IsActive }).ToList(),
+            balanced = row.Balanced, neg = HandoverLedgerService.NegativeCells(row).Count,
+        };
+    }
+
+    // [TARO-LAMHO-NC] drive_g6.py: KH-LAMHO / PO-LAMHO 10 chiếc — Gia công NC01 → NC02 → NC03 (H01, loại trừ) → NC04 → NC05 (H01, cuối chuỗi)
+    //   như Part 3B-PT1268610 của khách. Taro NC 3: 2T, 3T (gộp ← 3T1), 3T1; NC 5: 2T. Kho → GC 10, WTS NC01 / NC02 10, giao theo NC từ NC02 cho HTSP 10
+    //   (HTSP nhận 10), WTS Taro NC 3 (hàm thật WtsSaveService): 2T OK 8, 3T OK 5 NG 1, 3T1 OK 2 → OK bộ = min(8, 5 + 2) = 7, 1 chiếc làm hộ bị lỗi.
+    public static async Task<object> SeedG6Async(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-LAMHO"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            admin.PIN ??= "1111";
+            var cust = db.Customers.List.First();
+            var t0 = DateTime.Now.AddHours(-3);
+            var plan = new KhPlan { PlanNo = "KH-LAMHO", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = true, CreatedBy = admin.UserId, CreatedAt = t0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-LAMHO", PurchaseOrder = "PO-LAMHO", Quantity = 10, Unit = "EA", STD = t0.AddDays(10), CreatedAt = t0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+            int so = 0;
+            foreach (var (nc, m) in new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H01"), ("NC04", "M4"), ("NC05", "H01") })
+                db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = ++so, NC = nc, MachineRegistered = m, SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            db.KhPlanRouteSnapshotMachineExclude.Add(new KhPlanRouteSnapshotMachineExclude { KhPlanDetailId = d.KhPlanDetailId, SoMay = "H01", SnapshotAt = t0, SnapshotBy = admin.UserId });
+            int o = 0;
+            foreach (var (nc, code) in new[] { ("3", "2T"), ("3", "3T"), ("3", "3T1"), ("5", "2T") })
+                db.KhPlanRouteSnapshotTaro.Add(new KhPlanRouteSnapshotTaro { KhPlanDetailId = d.KhPlanDetailId, StepOrder = ++o, NC = nc, WtsTaskCode = code, StepName = "Taro " + code, StandardTime = 1, SnapshotAt = t0, SnapshotBy = admin.UserId });
+            db.KhPlanRouteSnapshotInspection.Add(new KhPlanRouteSnapshotInspection { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "K1" });
+            db.KhPlanRouteSnapshotWtsGops.Add(new KhPlanRouteSnapshotWtsGop { KhPlanDetailId = d.KhPlanDetailId, GopCode = "3T", PartCode = "3T1", SnapshotAt = t0, SnapshotBy = admin.UserId });
+            foreach (var c in new[] { "2T", "3T", "3T1" })
+                if (!db.StandardWtsTasks.List.Any(t => t.TaskCode == c))
+                    db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "TARO", CategoryName = "Công việc nhóm Taro", TaskCode = c, TaskName = "Taro " + c, DisplayOrder = 50, IsActive = true, CreatedAt = t0, CreatedBy = admin.UserId });
+            db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = d.KhPlanDetailId, IsActive = true, SoLuongThucNhan = 10, SoLuongKeHoach = 10, NgayNhanPhoi = t0, OrderVatLieu = "OVL-LH", ViTriDePhoi = "LH", SoPO = "PO-LAMHO", PartNo = "PART-LAMHO", CreatedAt = t0, CreatedBy = admin.UserId });
+            await db.SaveChangesAsync(); db.Fixup();
+            var svc = new HandoverService(db);
+            async Task Must(Task<(bool Ok, string Error)> t, string what) { var r = await t; if (!r.Ok) throw new Exception("g6-seed " + what + ": " + r.Error); db.Fixup(); }
+            long Last() => db.HandoverTransactions.List.Max(x => x.HandoverTxId);
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 10, admin.UserId, "MOI", false, "MOI", toNC: "NC01"), "giao 10");
+            await Must(svc.ReceiveAsync(Last(), 10, 0, null, admin.UserId), "nhận 10");
+            foreach (var (nc, k) in new[] { ("NC01", 10), ("NC02", 20) })
+                db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "GC", NC = nc, QtyDone = 10, QtyOk = 10, QtyNg = 0,
+                    StartTime = t0.AddMinutes(k), EndTime = t0.AddMinutes(k + 5), WorkerId = admin.UserId, CreatedAt = t0.AddMinutes(k + 5) });
+            await db.SaveChangesAsync(); db.Fixup();
+            await Must(svc.IssueSpecialAsync(d.KhPlanDetailId, "GC", "HTSP", 10, admin.UserId, HandoverPurpose.HelpSend, "NC02", null, "lam ho Taro NC3"), "giao theo NC");
+            await Must(svc.ReceiveAsync(Last(), 10, 0, null, admin.UserId), "HTSP nhận theo NC");
+            var wsvc = new WtsSaveService(db, new HandoverLedgerService(db));
+            var cat = db.NgCategories.List.First().NgCategoryId;
+            int slot = 0;
+            foreach (var (code, ok, ng) in new[] { ("2T", 8m, 0m), ("3T", 5m, 1m), ("3T1", 2m, 0m) })
+            {
+                var end = DateTime.Now.AddMinutes(-30 + (++slot) * 5);
+                var grp = new WtsSaveService.WtsSaveGroup { IsGc = false, IsHtsp = true, HandoverGroupCode = "HTSP", ProductionMode = "serial", HtspSubGroup = "Taro", UserId = admin.UserId, WorkDate = DateTime.Today };
+                grp.Rows.Add(new WtsSaveService.WtsSaveRow { KhPlanDetailId = d.KhPlanDetailId, PO = "PO-LAMHO", StartTime = end.AddMinutes(-4), EndTime = end, NC = code, WtsCode = code,
+                    QtyDone = ok + ng, QtyOk = ok, QtyNg = ng, NgCategoryId = ng > 0 ? cat : null, ActualTimePerPc = 1, ProductionMode = "serial", StepNC = "3" });
+                var r = await wsvc.SaveGroupAsync(grp);
+                if (!r.Ok) throw new Exception("g6-seed WTS Taro " + code + ": " + r.ErrorMsg);
+                db.Fixup();
+            }
+        }
+        var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-LAMHO");
+        return new { det.KhPlanDetailId };
+    }
+
+    public static async Task<object> DumpG6Async(AppDbContext db, HandoverLedgerService led)
+    {
+        var det = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-LAMHO");
+        if (det == null) return new { };
+        var id = det.KhPlanDetailId;
+        var row = (await led.GetLedgerForDetailAsync(id))!;
+        return new
+        {
+            txs = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided)
+                .Select(t => new { t.HandoverTxId, t.Purpose, t.FromGroupCode, t.ToGroupCode, t.FromNC, t.ToNC, t.FromCell, t.ToCell, t.QtyIssued, t.NgCaseId }).ToList(),
+            runs = row.LamHoRuns.Select(r => new { r.Key, r.FromNc, r.NextNc, r.HasTaro, r.In, r.Done, r.Ret }).ToList(),
+            recs = db.HandoverReceives.List.Where(r => !r.IsVoided && r.Transaction.KhPlanDetailId == id).Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.ToCell, r.NgCaseId }).ToList(),
+            gcLoi = row.G("GC").LoiGiu, caseGcLoi = row.Cases.Values.Sum(c => c.HeldAt("GC", HandoverCell.Loi)),
+            lamHoGiu = row.G("HTSP").LamHoGiu, lamHoNg = row.LamHoNgHeld("HTSP"),
+            htsp = new { row.G("HTSP").ChuaLam, row.G("HTSP").DaLam, row.G("HTSP").LoiGiu },
+            lines = row.G("HTSP").Steps.Where(s => !s.IsPrep).Select(s => new { s.Code, s.Waiting, s.LamHoNc }).ToList(),
             balanced = row.Balanced, neg = HandoverLedgerService.NegativeCells(row).Count,
         };
     }

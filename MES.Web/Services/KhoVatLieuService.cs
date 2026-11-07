@@ -402,7 +402,10 @@ public class KhoVatLieuService
     {
         var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
         if (user == null || !user.IsActive) return false;
-        if (user.Group?.GroupCode == "ADMIN") return true;
+        // [KHO-ADMIN-NHOM 2026-11-07] nhóm đã ngưng hoạt động thì không còn quyền (kể cả nhóm ADMIN) — như PermCheck.ReadAsync / UserService.
+        // Nguồn: rà độc lập toàn hệ thống 07/11 (Thấp) — trước: nhóm ADMIN được cho qua trước khi xét nhóm còn hoạt động.
+        if (user.Group == null || !user.Group.IsActive) return false;
+        if (user.Group.GroupCode == "ADMIN") return true;
 
         var perms = await _userSvc.GetAllUserPermissionsAsync(userId);
         if (perms != null && perms.TryGetValue(sectionCode, out var p))

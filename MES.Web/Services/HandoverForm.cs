@@ -130,6 +130,7 @@ namespace MES.Web.Services
         public const string TonLoiText = "Đang ở Tồn hàng lỗi (đã có vụ)";
         public const string TonSuaText = "Đang ở Tồn hàng sửa (nhóm khác gửi nhờ sửa)";
         public const string LamHoText  = "Đang giữ hàng Gia công giao theo NC (làm hộ)";
+        public const string LamHoLoiText = "Hàng làm hộ bị lỗi (Taro làm hộ NG, đã có vụ)";   // [TARO-LAMHO-NC]
 
         static decimal Pos0(decimal v) => Math.Max(0, v);
 
@@ -162,7 +163,18 @@ namespace MES.Web.Services
                 else
                     list.Add(new FormPos { Id = "DA", Label = GroupStageText(group).Da, Have = Pos0(G.ConGiao) });
                 if (group != "GC" && G.LamHoGiu != 0)
-                    list.Add(new FormPos { Id = "LAMHO", Label = LamHoText, Sub = "trả về Gia công, chọn NC nhận vào", Have = Pos0(G.LamHoGiu), LamHo = true });
+                {
+                    // [TARO-LAMHO-NC] số = trần trả hàng tốt (trừ chiếc làm hộ bị lỗi; câu 1: ≤ OK bộ Taro đoạn, NC nhận mặc định = NC sau đoạn)
+                    var taroRuns = row.LamHoRuns.Where(r => r.HasTaro).ToList();
+                    var defNc = group == "HTSP" && taroRuns.Count == 1 ? taroRuns[0].NextNc : null;
+                    // nhiều đoạn Taro: số lớn nhất trả được vào 1 NC thường (mỗi NC có trần riêng — rà vòng 2 L2)
+                    // PO có Taro làm hộ: số lớn nhất trả được vào 1 NC thường (mỗi NC có trần riêng; hàng đoạn khác / không thuộc đoạn — rà vòng 2 L2, vòng 3 T1)
+                    var cap = taroRuns.Count == 0 ? HandoverLedgerService.IssueCap(row, group, HandoverPurpose.HelpReturn, null, null, defNc).Max
+                            : row.G("GC").Steps.Where(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code))
+                                 .Select(s => HandoverLedgerService.IssueCap(row, group, HandoverPurpose.HelpReturn, null, null, s.Code).Max).DefaultIfEmpty(0).Max();
+                    list.Add(new FormPos { Id = "LAMHO", Label = LamHoText, Sub = "trả về Gia công, chọn NC nhận vào" + (defNc != null ? $" (Taro làm hộ xong bộ → {HandoverLedgerService.NcName(defNc)})" : ""),
+                                           Have = Pos0(cap), LamHo = true });
+                }
                 return list;
             }
 
@@ -189,13 +201,17 @@ namespace MES.Web.Services
             }
             list.Add(new FormPos { Id = "TONLOI", Label = TonLoiText, Have = Pos0(G.LoiGiu), HeldCell = HandoverCell.Loi });
             list.Add(new FormPos { Id = "TONSUA", Label = TonSuaText, Have = Pos0(G.SuaGiu), HeldCell = HandoverCell.Sua });
+            // [TARO-LAMHO-NC] chiếc làm hộ bị lỗi (vụ do nhóm làm hộ gây) nằm trong Tồn hàng giao theo NC → trả Gia công vào ô Hàng lỗi
+            var lhNg = row.LamHoNgHeld(group);
+            if (group != "GC" && lhNg != 0)
+                list.Add(new FormPos { Id = "LAMHOLOI", Label = LamHoLoiText, Sub = "nằm trong Tồn hàng giao theo NC — trả về Gia công vào ô Hàng lỗi", Have = Pos0(lhNg), HeldCell = HandoverCell.LamHo });
             return list;
         }
 
         /// <summary>[K3] HTSP: "còn Taro 1T: 2 · Bavia 2V: 3 · Rửa 1R: 5" — chỉ xem (N5: thứ tự tự do, không đếm theo bước).</summary>
         static string HtspSub(LedgerGroup G)
         {
-            var parts = G.Steps.Where(s => !s.IsPrep && !s.IsExcluded && s.Waiting != null)
+            var parts = G.Steps.Where(s => !s.IsPrep && !s.IsExcluded && s.Waiting != null && s.LamHoNc == null)   // [TARO-LAMHO-NC] mã Taro làm hộ không thuộc hàng HTSP
                                .Select(s => $"{s.SubGroup} {s.Code}: {s.Waiting!.Value:0.##}").ToList();
             return parts.Count == 0 ? "" : "còn " + string.Join(" · ", parts);
         }

@@ -1,0 +1,119 @@
+﻿QUÉT SỔ (chỉ đọc) · DB MES · 07/11/2026 17:32:55
+PO: 92 · dòng WTS còn hiệu lực: 860 (dòng cũ chưa có QtyOk: 0)
+PO có vấn đề: 33 · tổng phát hiện: 71
+  CANH_BAO_SO          8 dòng · 4 PO
+  LAMHO_TARO          17 dòng · 16 PO
+  MA_TRUNG            22 dòng · 15 PO
+  O_AM                15 dòng · 10 PO
+  WTS_VUOT_TRAN        9 dòng · 8 PO
+  Vụ lỗi cân (VU_LECH): mọi vụ cân, khớp ô sổ + khung lỗi
+  Huỷ phần chưa nhận từng lần (CLOSE_LECH): bảng HandoverTxCloses khớp mọi phiếu
+  Taro làm hộ (LAMHO_TARO, chỉ để biết): 17 đoạn · 16 PO
+  Số lẻ (SO_LE, B3): không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)
+
+── PO 0003918967 · KH KH-20260818-0001 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 22)
+   [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã - (NC -) · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10006 chụp 28/09 09:40; #2 NC - "Kiểm tra bề mặt" nguồn 10007 chụp 28/09 09:40; #3 NC - "Làm vát đón" nguồn 10008 chụp 28/09 09:40)
+── PO test tự hiển gc · KH KH-20260831-0001 · ssssssss · AMATA · Workflow ON (KhPlanDetailId 1010)
+   [O_AM] Gia công NC 1: chưa làm = -10
+   [O_AM] Gia công NC 2: chưa làm = -5
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 0 − đã ghi WTS OK 10 − đã ghi WTS NG 0 = -10
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 10 − đã ghi WTS OK 15 − đã ghi WTS NG 0 = -5
+   [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã 4 (NC 4) · chưa có WTS mã này (#1 NC 4 "Làm vát đón" nguồn 10002 chụp 31/08 16:59; #2 NC 4 "Kiểm tra lỗ khoan + táp" nguồn 10003 chụp 31/08 16:59; #3 NC 4 "Kiểm tra ren" nguồn 10004 chụp 31/08 16:59)
+── PO tesst kho · KH KH-20260901-0001 · ssssssss · 11111 · Workflow ON (KhPlanDetailId 1011)
+   [O_AM] Gia công: Đã làm chưa giao = -15
+   [O_AM] Gia công NC 2: chưa làm = -95
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 5 − đã ghi WTS OK 100 − đã ghi WTS NG 0 = -95
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-15) — L4
+   [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã 4 (NC 4) · chưa có WTS mã này (#1 NC 4 "Làm vát đón" nguồn 10002 chụp 02/09 14:40; #2 NC 4 "Kiểm tra lỗ khoan + táp" nguồn 10003 chụp 02/09 14:40; #3 NC 4 "Kiểm tra ren" nguồn 10004 chụp 02/09 14:40)
+── PO test luồng chính · KH KH-20260902-0001 · ssssssss · Kostal Vietnam · Workflow ON (KhPlanDetailId 1012)
+   [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã 4 (NC 4) · chưa có WTS mã này (#1 NC 4 "Làm vát đón" nguồn 10002 chụp 02/09 15:33; #2 NC 4 "Kiểm tra lỗ khoan + táp" nguồn 10003 chụp 02/09 15:33; #3 NC 4 "Kiểm tra ren" nguồn 10004 chụp 02/09 15:33)
+── PO KE hoạch mới · KH KH-20260903-0001 · ssssssss · Nissin Vietnam · Workflow ON (KhPlanDetailId 1013)
+   [MA_TRUNG] quy trình PO: Taro có 3 dòng chính cùng mã 4 (NC 4) · chưa có WTS mã này (#1 NC 4 "Làm vát đón" nguồn 10002 chụp 03/09 11:53; #2 NC 4 "Kiểm tra lỗ khoan + táp" nguồn 10003 chụp 03/09 11:53; #3 NC 4 "Kiểm tra ren" nguồn 10004 chụp 03/09 11:53)
+── PO ffffff · KH KH-20260903-0004 · ffffffff · PHương Đông · Workflow ON (KhPlanDetailId 1016)
+   [MA_TRUNG] quy trình PO: Taro có 4 dòng chính cùng mã - (NC -) · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10026 chụp 03/09 21:57; #2 NC - "Kiểm tra bề mặt" nguồn 10027 chụp 03/09 21:57; #3 NC - "Làm vát đón" nguồn 10028 chụp 03/09 21:57; #5 NC - "Kiểm tra ren" nguồn 10030 chụp 03/09 21:57)
+── PO 0003210395 · KH KH-20260904-0001 · 4B-PT1292710 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 1017)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0
+── PO 0003072377 · KH KH-20260905-0001 · 4A-PT9260110 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 1018)
+   [O_AM] Gia công NC 1: chưa làm = -4
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 3 − đã ghi WTS OK 7 − đã ghi WTS NG 0 = -4
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 4 OK 0 NG 0 chờ 0, 4 OK 0 NG 0 chờ 0, 4 OK 0 NG 0 chờ 0, 4 OK 0 NG 0 chờ 0, 4 OK 0 NG 0 chờ 0
+   [LAMHO_TARO] Taro làm hộ NC 6 (NC 5 → NC 7): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 6 OK 0 NG 0 chờ 0, 6 OK 0 NG 0 chờ 0, 6 OK 0 NG 0 chờ 0, 6 OK 0 NG 0 chờ 0, 6 OK 0 NG 0 chờ 0, 6 OK 0 NG 0 chờ 0
+   [MA_TRUNG] quy trình PO: Taro có 5 dòng chính cùng mã 4 (NC 4) · chưa có WTS mã này (#1 NC 4 "Chuẩn bị dao + máy" chuẩn 5 nguồn 10038 chụp 09/09 13:30; #2 NC 4 "Kiểm tra bề mặt" chuẩn 1 nguồn 10039 chụp 09/09 13:30; #3 NC 4 "Kiểm tra lỗ khoan + táp" chuẩn 3 nguồn 10040 chụp 09/09 13:30; #4 NC 4 "Kiểm tra ren" chuẩn 1 nguồn 10041 chụp 09/09 13:30; #10 NC 4 "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 4 nguồn 10047 chụp 09/09 13:30)
+   [MA_TRUNG] quy trình PO: Taro có 6 dòng chính cùng mã 6 (NC 6) · chưa có WTS mã này (#5 NC 6 "Chuẩn bị dao + máy" chuẩn 5 nguồn 10042 chụp 09/09 13:30; #6 NC 6 "Kiểm tra bề mặt" chuẩn 1 nguồn 10043 chụp 09/09 13:30; #7 NC 6 "Làm vát đón" chuẩn 1 nguồn 10044 chụp 09/09 13:30; #8 NC 6 "Kiểm tra lỗ khoan + táp" chuẩn 3 nguồn 10045 chụp 09/09 13:30; #9 NC 6 "Kiểm tra ren" chuẩn 1 nguồn 10046 chụp 09/09 13:30; #11 NC 6 "Làm vát đón, kiểm tra lỗ khoan + Tap, Kiểm tra ren" chuẩn 5 nguồn 10048 chụp 09/09 13:30)
+── PO tttttt · KH KH-20260906-0001 · part mới · AMATA · Workflow ON (KhPlanDetailId 1024)
+   [O_AM] Gia công NC 7: chưa làm = -200
+   [WTS_VUOT_TRAN] Gia công NC 7: nhận vào 0 − đã ghi WTS OK 200 − đã ghi WTS NG 0 = -200
+   [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã - (NC -) · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10049 chụp 08/09 08:17; #2 NC - "Kiểm tra bề mặt" nguồn 10050 chụp 08/09 08:17)
+   [MA_TRUNG] quy trình PO: Bavia có 2 dòng chính cùng mã 2V · chưa có WTS mã này (#1 NC 2V "Kiểm tra Bề mặt" nguồn 10016 chụp 08/09 08:17; #2 NC 2V "Kiểm tra Bề mặt" nguồn 10017 chụp 08/09 08:17)
+   [MA_TRUNG] quy trình PO: Rửa có 2 dòng chính cùng mã 1R · chưa có WTS mã này (#1 NC 1R "Chuẩn bị" nguồn 14 chụp 08/09 08:17; #2 NC 1R "Chuẩn bị" nguồn 15 chụp 08/09 08:17)
+── PO 06-09-2026 · KH KH-20260906-0002 · ffffffff · Kostal Vietnam · Workflow ON (KhPlanDetailId 1025)
+   [O_AM] Gia công NC 2: chưa làm = -100
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 0 − đã ghi WTS OK 100 − đã ghi WTS NG 0 = -100
+   [MA_TRUNG] quy trình PO: Taro có 4 dòng chính cùng mã - (NC -) · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10026 chụp 06/09 22:21; #2 NC - "Kiểm tra bề mặt" nguồn 10027 chụp 06/09 22:21; #3 NC - "Làm vát đón" nguồn 10028 chụp 06/09 22:21; #5 NC - "Kiểm tra ren" nguồn 10030 chụp 06/09 22:21)
+── PO aaa · KH KH-20260907-0001 · part mới · 88811 · Workflow ON (KhPlanDetailId 1026)
+   [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã - (NC -) · chưa có WTS mã này (#1 NC - "Chuẩn bị dao + máy" nguồn 10049 chụp 07/09 22:07; #2 NC - "Kiểm tra bề mặt" nguồn 10050 chụp 07/09 22:07)
+   [MA_TRUNG] quy trình PO: Bavia có 2 dòng chính cùng mã 2V · chưa có WTS mã này (#1 NC 2V "Kiểm tra Bề mặt" nguồn 10016 chụp 07/09 22:07; #2 NC 2V "Kiểm tra Bề mặt" nguồn 10017 chụp 07/09 22:07)
+   [MA_TRUNG] quy trình PO: Rửa có 2 dòng chính cùng mã 1R · chưa có WTS mã này (#1 NC 1R "Chuẩn bị" nguồn 14 chụp 07/09 22:07; #2 NC 1R "Chuẩn bị" nguồn 15 chụp 07/09 22:07)
+── PO wwwwww · KH KH-20260908-0001 · ttttttt · Kostal Vietnam · Workflow ON (KhPlanDetailId 1027)
+   [O_AM] Gia công: Đã làm chưa giao = -50
+   [O_AM] Gia công NC 7: chưa làm = -53
+   [O_AM] HTSP: Đã làm chưa giao = -50
+   [O_AM] KCS: Đã làm chưa giao = -50
+   [WTS_VUOT_TRAN] Gia công NC 7: nhận vào 0 − đã ghi WTS OK 53 − đã ghi WTS NG 0 = -53
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] HTSP: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] KCS: PO chưa có snapshot mã CV — Đã làm đang cộng mọi mã, cần tạo snapshot
+   [CANH_BAO_SO] KCS: giao Hàng mới nhiều hơn số đã làm (-50) — L4
+   [CANH_BAO_SO] Đóng gói: PO chưa có snapshot mã CV — Đã làm đang cộng mọi mã, cần tạo snapshot
+   [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 1T (NC -) · chưa có WTS mã này (#1 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10051 chụp 14/09 19:56; #2 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10052 chụp 14/09 19:56)
+── PO 0003109059 · KH KH-20260915-0001 · 4A-PT7932210 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 1028)
+   [O_AM] Gia công NC 2: chưa làm = -1
+   [WTS_VUOT_TRAN] Gia công NC 2: nhận vào 29 − đã ghi WTS OK 30 − đã ghi WTS NG 0 = -1
+── PO 0004020933 · KH KH-20260916-0001 · 4A-PT7932210 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 1029)
+   [O_AM] Gia công NC 1: chưa làm = -3
+   [WTS_VUOT_TRAN] Gia công NC 1: nhận vào 60 − đã ghi WTS OK 63 − đã ghi WTS NG 0 = -3
+── PO w11111111 · KH KH-20260916-0002 · ttttttt · Nissin Vietnam · Workflow ON (KhPlanDetailId 1030)
+   [O_AM] Gia công: Đã làm chưa giao = -5
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-5) — L4
+   [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 1T (NC -) · chưa có WTS mã này (#1 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10051 chụp 16/09 16:27; #2 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10052 chụp 16/09 16:27)
+── PO w2 · KH KH-20260916-0003 · ttttttt · PHương Đông · Workflow ON (KhPlanDetailId 1031)
+   [MA_TRUNG] quy trình PO: Taro có 2 dòng chính cùng mã 1T (NC -) · chưa có WTS mã này (#1 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10051 chụp 16/09 18:05; #2 NC - mã 1T "Chuẩn bị dao + máy" nguồn 10052 chụp 16/09 18:05)
+── PO 0003655603 · KH KH-20260923-0002 · 4A-PT6664710 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 1035)
+   [O_AM] Gia công: Đã làm chưa giao = -16
+   [CANH_BAO_SO] Gia công: giao Hàng mới nhiều hơn số đã làm (-16) — L4
+── PO test nut workflow · KH KH-20260925-0001 · 3B-PT1268610 · AMATA · Workflow ON (KhPlanDetailId 1036)
+   [MA_TRUNG] quy trình PO: Bavia có 2 dòng chính cùng mã 1V · chưa có WTS mã này (#1 NC 1V "Chuẩn bị" nguồn 10025 chụp 25/09 18:59; #2 NC 1V "Chuẩn bị" nguồn 10026 chụp 25/09 18:59)
+   [MA_TRUNG] quy trình PO: Rửa có 2 dòng chính cùng mã 1R · chưa có WTS mã này (#1 NC 1R "Chuẩn bị" nguồn 23 chụp 25/09 18:59; #2 NC 1R "Chuẩn bị" nguồn 24 chụp 25/09 18:59)
+── PO test live update tg chuan · KH KH-20261016-0001 · 3B-PT1268610 · 88811 · Workflow ON (KhPlanDetailId 1037)
+   [MA_TRUNG] quy trình PO: Bavia có 2 dòng chính cùng mã 1V · chưa có WTS mã này (#1 NC 1V "Chuẩn bị" nguồn 10025 chụp 16/10 17:00; #2 NC 1V "Chuẩn bị" nguồn 10026 chụp 16/10 17:00)
+   [MA_TRUNG] quy trình PO: Rửa có 2 dòng chính cùng mã 1R · chưa có WTS mã này (#1 NC 1R "Chuẩn bị" nguồn 23 chụp 16/10 17:00; #2 NC 1R "Chuẩn bị" nguồn 24 chụp 16/10 17:00)
+── PO 0003203672 · KH KH-20261023-0002 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2041)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO 0003210597 · KH KH-20261023-0002 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2042)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO 0003292261 · KH KH-20261023-0002 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2043)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO 0003803032 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2039)
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003834055 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2038)
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003880465 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2040)
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003566430 · KH KH-20261024-0001 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2044)
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003917198 · KH KH-20261027-0001 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3037)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO 0004569408 · KH KH-20261027-0001 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3038)
+   [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003740183 · KH KH-20261106-0005 · 4S-PN1114510 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3075)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003831941 · KH KH-20261106-0005 · 4S-PN1114510 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3072)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+── PO 0003950283 · KH KH-20261106-0005 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3073)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO 0003961885 · KH KH-20261106-0005 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3074)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
+── PO TEST-0711-TARO · KH KH-20261107-0001 · 3B-PT1268610 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 3086)
+   [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 20 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 20, 3T1 (NC 3) OK 0 NG 0 chờ 20, 3T2 (NC 3) OK 0 NG 0 chờ 20, 3T3 (NC 3) OK 0 NG 0 chờ 20, 3T (NC 3) OK 0 NG 0 chờ 20
+
+── Part Master: 0 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)

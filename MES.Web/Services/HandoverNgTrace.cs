@@ -172,7 +172,7 @@ namespace MES.Web.Services
             return false;
         }
 
-        static decimal Held(LedgerRow r) => r.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu);
+        static decimal Held(LedgerRow r) => r.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu + r.LamHoNgHeld(g.Code));   // [TARO-LAMHO-NC] + hàng làm hộ bị lỗi (nằm trong Tồn hàng giao theo NC)
 
         /// <summary>[VULOI] Tên chặng của 1 vụ (Kind của LedgerCaseHop).</summary>
         public static string HopLabel(LedgerCaseHop h) => h.Kind switch
@@ -382,6 +382,7 @@ namespace MES.Web.Services
                         var purpose = HandoverLedgerService.Classify(t, gcLastNc);
                         bool isAuto = t.SourceReceiveId != null && recvIds.Contains(t.SourceReceiveId.Value);
                         bool isHelp = purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn;
+                        if (HandoverCell.IsLamHoLoi(purpose, t.FromCell)) isHelp = false;   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ = phiếu hàng lỗi (ô Hàng lỗi → ô Hàng lỗi)
                         var doc = $"Phiếu #{t.Id}";
                         if (isAuto)
                         {

@@ -98,8 +98,16 @@ public static class PartStepGuard
             throw new PartStepCodeException($"{label}: dòng chính chưa nhập NC / mã CV — nhập mã hoặc xoá dòng.");
         if (otherMains.Any(o => SameCode(TaroCode(o.WtsTaskCode, o.Nc), code) && SameCode(o.Nc, nc)))
             throw new PartStepCodeException($"{label}: mã CV {code} ở NC {Norm(nc)} đã có ở dòng chính khác của Part này (có thể vừa được người khác lưu) — "
-                + "mỗi NC chỉ 1 dòng mỗi mã CV (cùng mã ở NC khác thì được). Tải lại trang rồi kiểm tra.");
+                + "mỗi NC chỉ 1 dòng mỗi mã CV (cùng mã ở NC khác thì được). "
+                // [TARO-DOI-CHEO-NC 2026-11-07] lời báo khi 2 dòng cùng mã đổi chéo NC trong 1 lần lưu (trang đã chặn trước; còn lọt thì máy chủ nói rõ cách làm)
+                + $"Nếu đang đổi chéo NC giữa 2 dòng cùng mã {code} trong 1 lần lưu: đổi 1 dòng sang NC khác, lưu, rồi đổi tiếp. Tải lại trang rồi kiểm tra.");
     }
+
+    // [TARO-DUPHONG 2026-11-07] Taro KHÔNG dùng dòng dự phòng: dự phòng chỉ nhớ dòng cha bằng NC, mà 1 NC Taro có nhiều mã (1T, 2T, 3T1…) → sổ gộp
+    //   WTS dự phòng nhầm về mã đầu tiên của NC đó, xoá / đổi NC dòng chính kéo theo dự phòng của mã khác. Chặn thêm dòng dự phòng + đổi dòng chính
+    //   thành dự phòng (trang bỏ nút, máy chủ chặn); dòng dự phòng cũ giữ nguyên (sửa tên / giờ chuẩn được, đổi thành dòng chính được).
+    //   Nguồn: HÙNG 07/11 09:11 "bỏ dòng dự phòng taro đi nhé, ko cần nữa" (DB MES 07/11: 1 dòng dự phòng Taro, Part test "sssssssss").
+    public const string TaroNoBackupMsg = "Taro: không dùng dòng dự phòng (mỗi mã CV mỗi NC 1 dòng chính) — thêm dòng chính cho mã / NC đó, hoặc xoá dòng.";
 
     // [B6-DP-MA 2026-11-06] Luật mã dòng dự phòng (T3 PM-NC-DUP-THAP). Nguồn: CLAUDE (rà độc lập 02/11 T3), Hùng 05/11 15:37 chốt làm theo đề xuất.
     //   Trước: dự phòng không bị kiểm mã — trống vẫn lưu (trang chặn, service không), hoặc mang đúng mã 1 dòng chính khác / dự phòng của dòng cha khác
@@ -158,15 +166,28 @@ public static class PartStepGuard
     public const string SaveBusyMsg = "Đang có người khác lưu Part Master của Part này — chờ vài giây rồi bấm lưu lại (chưa lưu gì).";
     public const string SnapBusyMsg = "Part Master của Part này đang được lưu — thử lại sau vài giây (chưa chụp quy trình, không ghi gì).";
 
+    // [S8D-KHOA 2026-11-07] Khoá lượt lưu giữ trên 1 KẾT NỐI RIÊNG KHÔNG QUA POOL (MES.Web gắn SessionLockOpener = PmSaveLockSql.OpenAsync lúc khởi động).
+    //   Vì sao: trước, khoá phiên nằm trên kết nối của DbContext trang. Nếu DbContext bị huỷ giữa lượt lưu (mạch Blazor đóng / trang chết đúng lúc
+    //   lưu) thì lệnh nhả chạy trên context đã huỷ → hỏng, kết nối về pool vẫn giữ khoá tới khi pool dùng lại kết nối đó (SqlDongThoi S8d 06/11
+    //   đo trên SQL thật: "rảnh ngay sau khi huỷ = False") → người khác lưu Part đó bị báo "đang có người lưu" một lúc. Nay khoá không phụ thuộc
+    //   DbContext trang: nhả bằng chính kết nối riêng; kết nối không pool nên đóng là phiên SQL kết thúc, khoá tự nhả (cả khi tiến trình app tắt
+    //   ngang — TCP đóng). null (bộ kiểm DB giả GiaoNhanFuzz / harness) = cách cũ trên kết nối DbContext.
+    //   Nguồn: CLAUDE (rà độc lập gói 2, sổ dòng S8d); Hùng 07/11 07:55 giao Gói 5 sửa.
+    public static Func<AppDbContext, string, Task<IAsyncDisposable?>>? SessionLockOpener;
+
     /// <summary>Khoá lượt lưu đang giữ. DisposeAsync nhả khoá (sp_releaseapplock) rồi đóng kết nối — gọi được nhiều lần.</summary>
     public sealed class SaveLock : IAsyncDisposable
     {
-        private readonly AppDbContext _db; private readonly string _name; private bool _done;
+        private readonly AppDbContext? _db; private readonly string _name; private bool _done;
+        private readonly IAsyncDisposable? _own;   // [S8D-KHOA] khoá trên kết nối riêng (không pool)
         internal SaveLock(AppDbContext db, string name) { _db = db; _name = name; }
+        internal SaveLock(IAsyncDisposable own, string name) { _own = own; _name = name; }   // [S8D-KHOA]
         public async ValueTask DisposeAsync()
         {
             if (_done) return;
             _done = true;
+            if (_own != null) { await _own.DisposeAsync(); return; }   // [S8D-KHOA] nhả + đóng kết nối riêng, không đụng DbContext trang
+            if (_db == null) return;
             try
             {
                 // nhả cả khi còn giao dịch sót (sp_releaseapplock LockOwner = Session chạy được trong giao dịch) — rà độc lập gói 2 T3
@@ -181,6 +202,11 @@ public static class PartStepGuard
     public static async Task<SaveLock?> AcquireSaveLockAsync(AppDbContext db, int partId)
     {
         var name = SaveLockName(partId);
+        if (SessionLockOpener != null)   // [S8D-KHOA] kết nối riêng không pool (null = người khác giữ quá 10 giây)
+        {
+            var own = await SessionLockOpener(db, name);
+            return own == null ? null : new SaveLock(own, name);
+        }
         await db.Database.OpenConnectionAsync();
         try
         {

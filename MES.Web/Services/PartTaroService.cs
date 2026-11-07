@@ -47,12 +47,15 @@ public class PartTaroService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
         PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
+        // [TARO-DUPHONG 2026-11-07] Taro không dùng dòng dự phòng (trước: thêm được — dự phòng trỏ cha theo NC, NC nhiều mã → gộp nhầm mã đầu).
+        //   Nguồn: HÙNG 07/11 09:11.
+        if (newStep.IsBackup) throw new PartStepCodeException(PartStepGuard.TaroNoBackupMsg);
         // [TARO-NC-MA 2026-11-06] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId> (như PM-NC-DUP-SVC các nhóm khác); dòng chính: cặp (mã CV, NC)
         //   không trùng dòng chính khác (đọc DB dưới khoá) — cùng mã ở NC khác được (khách chốt B 02/11)
         return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
         {
-        if (!newStep.IsBackup)
-            PartStepGuard.CheckTaroMain("Taro", newStep.WtsTaskCode, newStep.NC, (await _db.PartTaroSteps.AsNoTracking()
+        // [TARO-DUPHONG] dòng thêm luôn là dòng chính (dự phòng đã chặn ở trên)
+        PartStepGuard.CheckTaroMain("Taro", newStep.WtsTaskCode, newStep.NC, (await _db.PartTaroSteps.AsNoTracking()
                 .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => new { s.WtsTaskCode, s.NC }).ToListAsync())
                 .Select(s => (s.WtsTaskCode, (string?)s.NC)));
 
@@ -101,7 +104,13 @@ public class PartTaroService
         await _db.Entry(existing).ReloadAsync();   // [TARO-NC-MA] đọc lại dưới khoá (DbContext dùng chung cả phiên trang — như PM-NC-DUP-THAP V1)
         if (!existing.IsActive) throw new InvalidOperationException("Không thể sửa dòng đã xóa.");
         // [PM-NC-AT 2026-11-05] chỉ kiểm mã đổi (đọc DB, không dùng bản EF trang đang giữ) — dòng cũ có sẵn "@" vẫn sửa được ô khác
-        var dbCode = await _db.PartTaroSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.WtsTaskCode, s.IsBackup }).FirstAsync();
+        var dbCode = await _db.PartTaroSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.WtsTaskCode, s.IsBackup, s.ParentNC }).FirstAsync();
+        // [TARO-DUPHONG 2026-11-07] Taro không dùng dòng dự phòng: không đổi dòng chính thành dự phòng (chặn); dòng dự phòng CŨ giữ nguyên dòng cha
+        //   trong DB (trang gửi ParentNC khác — vd trang tự đồng bộ cha theo NC chính đổi tên, trang cũ — thì bỏ qua, không báo lỗi: rà độc lập gói 5
+        //   mục 3); dữ liệu cũ vẫn sửa được tên / giờ chuẩn, đổi thành dòng chính được. Nguồn: HÙNG 07/11 09:11 "bỏ dòng dự phòng taro đi".
+        if (updated.IsBackup && !dbCode.IsBackup)
+            throw new PartStepCodeException(PartStepGuard.TaroNoBackupMsg);
+        if (updated.IsBackup && dbCode.IsBackup) updated.ParentNC = dbCode.ParentNC;
         if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
         if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
         if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(dbCode.NC, updated.NC)

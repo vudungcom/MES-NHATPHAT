@@ -6098,6 +6098,18 @@ else
 
                     .Select(s => new WtsItem(s.NC, s.StepName ?? s.NC)).ToList();
 
+            // [WTS-HTSP-DSMA 2026-11-07] HTSP đã chọn nhóm nhỏ TRƯỚC rồi mới gõ PO → nạp danh sách mã CV theo PO dòng đầu của nhóm
+            //   (như lúc chọn nhóm nhỏ — OnGroupHtspSubChanged), không xoá mã đã gõ. Trước: danh sách trống tới khi chọn lại nhóm nhỏ.
+            else if (IsHtspGroup && !string.IsNullOrEmpty(grp.HtspSubGroup)
+                     && grp.SubRows.FirstOrDefault(s => !string.IsNullOrEmpty(s.PO))?.PO == det.PurchaseOrder)
+
+            {
+                grp.WtsItems = HtspItems(fullSnap, grp.HtspSubGroup);
+                // mã gõ TRƯỚC khi có PO: điền tên công việc theo danh sách vừa nạp (không đổi mã, không đổi NC Taro) — rà độc lập gói 5 mục 5
+                foreach (var s in grp.SubRows.Where(s => !string.IsNullOrWhiteSpace(s.WtsCode) && string.IsNullOrEmpty(s.WtsName)))
+                    s.WtsName = grp.WtsItems.FirstOrDefault(i => string.Equals(i.NC, s.WtsCode!.Trim(), StringComparison.OrdinalIgnoreCase))?.Name;
+            }
+
             // HTSP: load theo subgroup sau khi user chọn (OnGroupHtspSubChanged)
 
         }
@@ -6469,24 +6481,23 @@ else
 
         if (!_fullSnapshotCache.TryGetValue(po, out var snap)) { StateHasChanged(); return; }
 
-        grp.WtsItems = subGroup switch
-
-        {
-
-            // [TARO-NC-MA 2026-11-06] mã dùng ở nhiều NC chỉ hiện 1 lần trong danh sách mã CV (chọn NC ở ô NC Taro bên dưới)
-            "Taro"  => snap.Taro   .Select(s => new WtsItem(s.WtsTaskCode ?? s.NC, s.StepName ?? s.NC)).DistinctBy(i => i.NC, StringComparer.OrdinalIgnoreCase).ToList(),
-
-            "Bavia" => snap.Bavia  .Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
-
-            "Rua"   => snap.Washing.Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
-
-            _       => new List<WtsItem>()
-
-        };
+        grp.WtsItems = HtspItems(snap, subGroup);   // [WTS-HTSP-DSMA] tách hàm dùng chung với lúc gõ PO sau
 
         StateHasChanged();
 
     }
+
+    // [WTS-HTSP-DSMA 2026-11-07] Danh sách mã CV của nhóm nhỏ HTSP (Taro / Bavia / Rửa) theo snapshot PO — dùng chung cho lúc chọn nhóm nhỏ
+    //   và lúc gõ PO SAU khi đã chọn nhóm nhỏ (trước: chỉ nạp lúc chọn nhóm nhỏ → chọn nhóm nhỏ trước rồi mới gõ PO thì danh sách trống,
+    //   phải gõ tay mã). Nguồn: CLAUDE (thấy khi viết drive_taro 06/11, sổ dòng WTS-HTSP-DSMA); Hùng 07/11 07:55 giao Gói 5.
+    private static List<WtsItem> HtspItems(RouteSnapshotData snap, string? subGroup) => subGroup switch
+    {
+        // [TARO-NC-MA 2026-11-06] mã dùng ở nhiều NC chỉ hiện 1 lần trong danh sách mã CV (chọn NC ở ô NC Taro bên dưới)
+        "Taro"  => snap.Taro   .Select(s => new WtsItem(s.WtsTaskCode ?? s.NC, s.StepName ?? s.NC)).DistinctBy(i => i.NC, StringComparer.OrdinalIgnoreCase).ToList(),
+        "Bavia" => snap.Bavia  .Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
+        "Rua"   => snap.Washing.Select(s => new WtsItem(s.NC,                  s.StepName ?? s.NC)).ToList(),
+        _       => new List<WtsItem>()
+    };
 
     private void ValidateSubQty(WtsRow sub, WtsGroup? grp = null)
 
@@ -7344,7 +7355,7 @@ else
     private string NcMainLabel(WtsRow r)
     {
         var main = GetWtsCap(r.KhPlanDetailId, PgOfRow(r), RowKey(r))?.Code ?? r.NC;   // [TARO-NC-MA] khoá (mã, NC)
-        return string.Equals(main, RowKey(r), StringComparison.OrdinalIgnoreCase) || string.Equals(main, r.NC, StringComparison.OrdinalIgnoreCase) ? r.NC ?? "" : $"{r.NC} (gộp {main})";
+        return string.Equals(main?.Trim(), RowKey(r)?.Trim(), StringComparison.OrdinalIgnoreCase) || string.Equals(main?.Trim(), r.NC?.Trim(), StringComparison.OrdinalIgnoreCase) ? r.NC ?? "" : $"{r.NC} (gộp {main})";   // [WTS-MA-TRIM] sổ giữ mã đã bỏ khoảng trắng, dòng giữ chữ snapshot
     }
     // [RA-SOCHUNG] ProcessGroup của 1 dòng (nhóm HTSP theo nhóm nhỏ của dòng)
     private string PgOfRow(WtsRow r) => IsGcGroup ? "GC"

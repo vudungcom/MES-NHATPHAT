@@ -570,7 +570,7 @@ else
                                 @if (isExpanded)
                                 {
                                     <div class="px-3 pb-3 pt-2" style="background:#f0f7ff">
-                                        @if (p.ToCell != null && !p.IsAutoReturn)
+                                        @if (p.ToCell != null && !p.IsAutoReturn && !HandoverCell.IsLamHoLoi(p.Purpose, p.FromCell))   @* [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ ô Hàng lỗi (máy chủ chặn đổi ô) *@
                                         {
                                             @* [GN-CELL2] Bên nhận duyệt lại phân loại: mặc định ô bên giao chỉ định, đổi thì bắt buộc lý do *@
                                             <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào ô</label>

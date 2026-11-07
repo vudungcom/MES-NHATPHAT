@@ -18,7 +18,7 @@ namespace MES.Web.Services
             if (row == null || string.IsNullOrEmpty(code)) return null;
             var g = pg switch { "GC" => "GC", "TARO" or "BAVIA" or "WASHING" => "HTSP", "KCS" => "KCS", "PKG" => "PKG", _ => "" };
             if (g == "") return null;
-            return row.G(g).Steps.FirstOrDefault(x => x.Pg == pg && string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase));
+            return row.G(g).Steps.FirstOrDefault(x => x.Pg == pg && string.Equals(x.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));   // [WTS-MA-TRIM] trang gửi chữ snapshot thô, sổ giữ mã đã bỏ khoảng trắng
         }
 
         /// <summary>"OK 15 / vào 16 · NG 1" — mẫu số là số đã nhận vào NC / mã (theo sổ), không phải SL PO.</summary>

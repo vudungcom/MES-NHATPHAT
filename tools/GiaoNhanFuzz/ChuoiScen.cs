@@ -852,6 +852,25 @@ public static class ChuoiScen
             Microsoft.EntityFrameworkCore.DatabaseFacade.AppLockResult = null;
             Ok(sl2 == null && !Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpen && !Microsoft.EntityFrameworkCore.DatabaseFacade.SessionLocks.Contains(lk),
                "Người khác đang giữ lượt lưu quá 10 giây: không lấy được (null → trang báo, không lưu), kết nối đóng lại");
+            // [S8D-KHOA 2026-11-07] MES.Web gắn SessionLockOpener (kết nối riêng không pool): khoá lấy / nhả qua opener, KHÔNG mở / đụng kết nối DbContext trang;
+            //   opener trả null (người khác giữ quá 10 giây) → null. (Phần SQL thật — nhả ngay khi DbContext trang huỷ giữa lượt — SqlDongThoi S8f.)
+            {
+                int opens = 0, disp = 0; string? gotName = null; var conn0 = Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpens;
+                bool noConn; PartStepGuard.SaveLock? sl4;
+                try
+                {
+                    PartStepGuard.SessionLockOpener = (d, n) => { opens++; gotName = n; return Task.FromResult<IAsyncDisposable?>(new FakeHold(() => disp++)); };
+                    var sl3 = await PartStepGuard.AcquireSaveLockAsync(db, pid);
+                    noConn = Microsoft.EntityFrameworkCore.DatabaseFacade.ConnOpens == conn0 && !Microsoft.EntityFrameworkCore.DatabaseFacade.SessionLocks.Contains(lk);
+                    await sl3!.DisposeAsync(); await sl3.DisposeAsync();
+                    PartStepGuard.SessionLockOpener = (d, n) => Task.FromResult<IAsyncDisposable?>(null);
+                    sl4 = await PartStepGuard.AcquireSaveLockAsync(db, pid);
+                }
+                finally { PartStepGuard.SessionLockOpener = null; }   // không để opener giả sót sang kịch bản sau (rà độc lập gói 5 mục 7)
+                Ok(opens == 1 && gotName == lk && noConn && disp == 1 && sl4 == null,
+                   "[S8D-KHOA] có SessionLockOpener: khoá lượt lưu lấy qua kết nối riêng (không mở kết nối DbContext trang), nhả đúng 1 lần dù gọi 2 lần; opener trả null → null",
+                   $"opens={opens} name={gotName} noConn={noConn} disp={disp} sl4={(sl4 == null ? "null" : "có")}");
+            }
             // (e) [B6-DP-THAP] (5) dòng chính PA có dự phòng mã "PX" → đổi PA thành PX được; sau đổi dự phòng trỏ cha PX
             var pkg = new PartPackagingService(db);
             await pkg.AddAsync(pid, new PartPackagingStep { NC = "PA", StepName = "a", StandardTime = 1 }, 1, "them");
@@ -882,4 +901,11 @@ public static class ChuoiScen
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");
         return fails == 0 ? 0 : 1;
     }
+}
+
+// [S8D-KHOA 2026-11-07] khoá giả cho C20: đếm số lần nhả
+sealed class FakeHold : IAsyncDisposable
+{
+    readonly Action _on; public FakeHold(Action on) { _on = on; }
+    public ValueTask DisposeAsync() { _on(); return ValueTask.CompletedTask; }
 }

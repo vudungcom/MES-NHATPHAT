@@ -615,6 +615,47 @@ public static class KhScen
             Ok(c.Ok && !e.Ok && (e.Err ?? "").Contains("âm") && old != null && !old.IsVoided && old.QtyNg == 0 && W() == 1, "Sửa dòng WTS sang NG -1 → chặn, dòng cũ giữ nguyên (không bị huỷ)", $"{e.Err} | voided={old?.IsVoided} ng={old?.QtyNg} W={W()}");
         }
 
+        // [KH-SL-MAY-CHU] [KHO-ADMIN-NHOM] rà độc lập toàn hệ thống 07/11 (Thấp)
+        Console.WriteLine("[A19] KH-SL-MAY-CHU — SL PO ≤ 0 / quá lớn bị máy chủ chặn (tạo / sửa); KHO-ADMIN-NHOM — nhóm ADMIN đã ngưng không sửa được Kho");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
+            int n0 = db.KhPlanDetails.List.Count;
+            var p0 = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; p0.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-0", PartNo = "P", Quantity = 0 });
+            var pBig = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; pBig.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-BIG", PartNo = "P", Quantity = 5_000_000_000m });
+            var e0 = E(() => kh.CreateAsync(p0, 1)); var eBig = E(() => kh.CreateAsync(pBig, 1));
+            Ok(e0 != null && e0.Contains("> 0") && eBig != null && eBig.Contains("quá lớn") && db.KhPlanDetails.List.Count == n0, "Tạo PO SL 0 / SL 5 tỷ → chặn, không thêm dòng", $"{e0} | {eBig}");
+            var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 0;
+            var eEdit = await kh.SaveEditAsync(1, 1, o, n, 1, "sua sl 0");
+            n = EV(db, 1); n.Quantity = 2_000_000_000m;
+            var eEdit2 = await kh.SaveEditAsync(1, 1, EV(db, 1), n, 1, "sua sl lon");
+            Ok(eEdit != null && eEdit.Contains("> 0") && eEdit2 != null && eEdit2.Contains("quá lớn") && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).Quantity == 40, "Sửa SL PO về 0 / 2 tỷ → chặn, SL giữ 40", $"{eEdit} | {eEdit2}");
+            // (tách PO: tổng phải bằng SL gốc nên không thể vượt PoMax — máy chủ vẫn kiểm từng dòng)
+            // Kho: user nhóm ADMIN nhưng nhóm đã ngưng → không sửa được (trước: ADMIN qua trước khi xét nhóm còn hoạt động)
+            var dbK = Seed(); var kho = new KhoVatLieuService(dbK, new UserService(null));
+            var gA = dbK.UserGroups.List.FirstOrDefault(g => g.GroupCode == "ADMIN") ?? dbK.Users.List.First(u => u.UserId == 1).Group!;
+            gA.IsActive = false;
+            var rk = await kho.SaveKhoInputAsync(1, DateTime.Now, 45, "OVL-1", "A1", null, null, null, "nhan them", 1);
+            Ok(!rk.Success && (rk.Error ?? "").Contains("không có quyền"), "Nhóm ADMIN đã ngưng: sửa Kho bị chặn", rk.Error);
+            gA.IsActive = true;
+            var rk2 = await kho.SaveKhoInputAsync(1, DateTime.Now, 45, "OVL-1", "A1", null, null, null, "nhan them", 1);
+            Ok(rk2.Success, "Nhóm ADMIN hoạt động: sửa Kho được như cũ", rk2.Error);
+        }
+
+        // [WTS-MA-TRIM] rà Gói 7 vòng 3 (Trung): K6-NOTRUN so NC phiếu (Gói 7 lưu đã Trim) với NC Part Master (không Trim) → phải so 2 phía đã Trim
+        Console.WriteLine("[A20] WTS-MA-TRIM — làm mới quy trình: phiếu Kho → GC vào 'NC1' + Part Master NC 'NC1 ' → không chặn oan");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 701, PartId = 1, NC = "NC1 ", StepOrder = 1, IsActive = true, IsBackup = false });
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 9701, KhPlanDetailId = 1, FromGroupCode = "KHO", ToGroupCode = "GC", Purpose = HandoverPurpose.New, ToCell = HandoverCell.Moi, ToNC = "NC1", QtyIssued = 1, Status = "PENDING", IssuedAt = DateTime.Now });
+            db.Fixup();
+            var b1 = await kh.RouteRefreshBlockAsync(1, 1);
+            Ok(b1 == null, "Part Master 'NC1 ' + phiếu vào 'NC1': không chặn", b1);
+            db.PartMachiningSteps.List.First(x => x.StepId == 701).NC = "NC9";
+            var b2 = await kh.RouteRefreshBlockAsync(1, 1);
+            Ok(b2 != null && b2.Contains("không còn NC đó"), "Đối chứng: Part Master chỉ còn NC9 → chặn", b2);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

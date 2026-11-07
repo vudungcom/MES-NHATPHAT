@@ -123,36 +123,43 @@
     bool IsSua => Act == HandoverForm.ASua;
     bool HelpFrom => Pos?.HelpFrom != null;
     bool LamHo => IsTot && Pos is { LamHo: true };
+    /// <summary>[TARO-LAMHO-NC] Hàng làm hộ bị lỗi (vụ giữ ô LAMHO): chỉ trả Gia công vào ô Hàng lỗi, cùng vụ.</summary>
+    bool LamHoLoi => IsHeld && Pos!.HeldCell == HandoverCell.LamHo;
 
-    decimal Have => Pos == null ? 0 : IsHeld ? (Case == null ? 0 : Math.Max(0, Case.HeldAt(_group, Pos.HeldCell!))) : Pos.Have;
+    // [TARO-LAMHO-NC] trả hàng làm hộ (hàng tốt): trần theo NC nhận (câu 1 — OK bộ Taro làm hộ của đoạn trước NC đó), cùng hàm máy chủ kiểm
+    decimal Have => Pos == null ? 0 : IsHeld ? (Case == null ? 0 : Math.Max(0, Case.HeldAt(_group, Pos.HeldCell!)))
+                  : LamHo ? HandoverLedgerService.IssueCap(Row, _group, HandoverPurpose.HelpReturn, null, null, string.IsNullOrEmpty(_toNc) ? null : _toNc).Max
+                  : Pos.Have;
 
     /// <summary>Nơi gây lỗi là nhóm khác nhóm mình ((b) Hùng 17:35: chỉ khi đó mới có "Trả nơi gây lỗi").</summary>
     string? CauseGroup => IsFresh ? (_prev && _group != "KHO" && EffCause != "KHACH" && EffCause != _group ? EffCause : null)
                         : Case != null ? HandoverForm.CaseCauseGroup(Case, _group) : null;
     string EffCause => !string.IsNullOrEmpty(_cause) ? _cause : (_group == "KHO" ? "KHACH" : HandoverForm.PrevGroup(_group));
-    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO";
+    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi;   // [TARO-LAMHO-NC]
     string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
 
     string DefaultDest
     {
         get
         {
-            if (LamHo) return "GC";
+            if (LamHo || LamHoLoi) return "GC";   // [TARO-LAMHO-NC]
+            if (IsTot && _group == "GC" && HandoverLedgerService.HtspOnlyLamHo(Row)) return "KCS";   // [TARO-LAMHO-NC] HTSP chỉ làm hộ: giao thẳng KCS
             if (IsTot) return HandoverForm.NextGroup(_group);
             if (Act is HandoverForm.ATraLai or HandoverForm.ASuaXong) return (Case == null ? null : HandoverForm.CaseSender(Case, _group)) ?? "";
             if (EffPurpose == HandoverForm.PTra && CauseGroup != null) return CauseGroup;
             return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group) is var p && p != "" ? p : HandoverForm.NextGroup(_group);
         }
     }
-    string Dest => LamHo ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;
+    string Dest => LamHo || LamHoLoi ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC]
 
     /// <summary>Ô bên nhận theo lựa chọn (có thể đổi ở Tuỳ chọn).</summary>
     string DefaultToCell => IsTot ? HandoverCell.Moi
+        : LamHoLoi ? HandoverCell.Loi   // [TARO-LAMHO-NC]
         : Act == HandoverForm.ATraLai ? HandoverCell.Loi
         : Act == HandoverForm.ASuaXong ? HandoverCell.Xl
         : EffPurpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua;
     string ToCellNow => !string.IsNullOrEmpty(_toCell) ? _toCell : DefaultToCell;
-    bool CanPickCell => (IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao);
+    bool CanPickCell => (IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao && !LamHoLoi);   // [TARO-LAMHO-NC]
     bool GcHasNc => Row.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
     /// <summary>[K2] Hàng của vụ (đã xử lý) giao vào Gia công ô Hàng lỗi đã xử lý / Hàng mới: NC nhận theo vụ, như sửa tại nhóm (rà độc lập V3).</summary>
     bool CaseToGc => !IsTot && IsGiao && Dest == "GC" && GcHasNc && ToCellNow is HandoverCell.Moi or HandoverCell.Xl;
@@ -320,6 +327,8 @@
             list.Add(new(HandoverForm.AHuy, "Huỷ", true));
             list.Add(new(HandoverForm.AKhach, "Trả khách", true));
         }
+        else if (Pos!.HeldCell == HandoverCell.LamHo)   // [TARO-LAMHO-NC] hàng làm hộ bị lỗi
+            list.Add(new(HandoverForm.AGiao, "Trả về Gia công (ô Hàng lỗi, cùng vụ)", false));
         else if (Pos!.HeldCell == HandoverCell.Loi)
         {
             list.Add(new(HandoverForm.AGiao, "Giao cho nhóm khác", false));
@@ -392,9 +401,9 @@
         if (!IsGiao) return;
         <div class="mb-2">
             <label class="form-label form-label-sm mb-1">Giao đến nhóm</label>
-            @if (LamHo)
+            @if (LamHo || LamHoLoi)
             {
-                <div class="p-2 border rounded bg-light small"><strong>Gia công</strong> <span class="text-muted">— trả hàng làm hộ về Gia công</span></div>
+                <div class="p-2 border rounded bg-light small"><strong>Gia công</strong> <span class="text-muted">— @(LamHoLoi ? "trả hàng làm hộ bị lỗi về Gia công, vào ô Hàng lỗi (cùng vụ)" : "trả hàng làm hộ về Gia công")</span></div>
             }
             else
             {
@@ -423,7 +432,9 @@
                 <label class="form-label form-label-sm mb-1">Nhận vào NC @(LamHo ? "*" : "(tuỳ chọn)")</label>
                 <select class="form-select form-select-sm" @onchange="OnToNcChanged">
                     <option value="" selected="@(string.IsNullOrEmpty(_toNc))">@ToNcDefaultLabel</option>
-                    @foreach (var s in Row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)))
+                    @foreach (var s in Row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)
+                                                                    && (!LamHo || !Row.ApplyWorkflow || !Row.LamHoRuns.Any(r => r.HasTaro) || (_group == "HTSP" && Row.LamHoRuns.Any(r => r.NextNc == x.Code))
+                                                                        || HandoverLedgerService.IssueCap(Row, _group, HandoverPurpose.HelpReturn, null, null, x.Code).Max > 0)))   @* [TARO-LAMHO-NC] PO có Taro làm hộ: NC sau đoạn + NC còn trả được (hàng không thuộc đoạn) *@
                     {
                         <option value="@s.Code" selected="@(_toNc == s.Code)">@HandoverLedgerService.NcName(s.Code)@(s.IsLast ? " (cuối)" : "")</option>
                     }
@@ -434,7 +445,7 @@
         {
             @NcSelect("Gia công nhận vào NC (theo vụ)")
         }
-        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo)
+        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi)
         {
             <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow) — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
         }
@@ -531,6 +542,7 @@
             return LamHo ? $"Sẽ ghi: phiếu trả hàng làm hộ về Gia công (chờ Gia công nhận)."
                  : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D} (chờ {D} nhận)."
                  : $"Sẽ ghi: phiếu Hàng mới {G} → {D} (chờ {D} nhận).";
+        if (LamHoLoi) return "Sẽ ghi: phiếu trả hàng làm hộ bị lỗi về Gia công (ô Hàng lỗi, cùng vụ — chờ Gia công nhận).";   // [TARO-LAMHO-NC]
         if (IsHeld)
             return Act switch
             {
@@ -563,6 +575,14 @@
         _prev = false; _cause = "";
         var hc = HeldCases;
         _caseId = hc.Count == 1 ? hc[0].Id : null;
+        // [TARO-LAMHO-NC] trả hàng làm hộ: NC nhận mặc định = NC sau đoạn Taro làm hộ (khi PO chỉ có 1 đoạn như vậy)
+        if (LamHo && Row.LamHoRuns.Any(r => r.HasTaro))
+        {   // NC sau đoạn Taro (HTSP, 1 đoạn) nếu còn trả được; không thì NC đầu còn trả được (rà vòng 3 T1, L1)
+            var ncs = Row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => x.Code).ToList();
+            decimal Cap(string nc) => HandoverLedgerService.IssueCap(Row, _group, HandoverPurpose.HelpReturn, null, null, nc).Max;
+            var tr = Row.LamHoRuns.Where(r => r.HasTaro).ToList();
+            _toNc = _group == "HTSP" && tr.Count == 1 && Cap(tr[0].NextNc) > 0 ? tr[0].NextNc : ncs.FirstOrDefault(n => Cap(n) > 0) ?? "";
+        }
         if (IsTot) _qty = Have;
     }
 

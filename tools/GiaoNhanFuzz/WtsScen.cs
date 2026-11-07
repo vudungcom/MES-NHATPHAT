@@ -639,6 +639,127 @@ public static class WtsScen
             Ok(g4.Ok && dg4[StdTrack.Field.Setup] == 9, "Nhóm NC2 máy 'm3' + dòng đồng dạng M3 của chính NC2: giữ số", g4.ErrorMsg + " · " + string.Join(",", dg4));
         }
 
+        // [WTS-MA-TRIM] rà độc lập toàn hệ thống 07/11 (Cao): mã / NC dư khoảng trắng → trước: OK mất khỏi sổ, NG vẫn trừ
+        Console.WriteLine("[W15] WTS-MA-TRIM — mã CV / NC dư khoảng trắng: lưu bản đã bỏ khoảng trắng, sổ đếm đúng (cả dòng cũ)");
+        {
+            var db = await SeedAsync(); var s = Svc(db); var led = new HandoverLedgerService(db);
+            decimal StepOk(int id, string grp, string code) { var r = led.GetLedgerForDetailAsync(id).GetAwaiter().GetResult()!; return r.G(grp).Steps.First(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)).Ok; }
+            var g = Gc(nc: " NC1 "); var a = Row(1, 5, 0, T, T.AddHours(1)); g.Rows.Add(a);
+            var r = await s.SaveGroupAsync(g);
+            var wa = db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == a.WtsLogId);
+            Ok(r.Ok && wa?.NC == "NC1", "GC NC ' NC1 ': lưu NC = 'NC1'", (r.ErrorMsg ?? "") + " · NC='" + wa?.NC + "'");
+            Ok(StepOk(1, "GC", "NC1") == 5, "  sổ NC1 OK = 5", "OK " + StepOk(1, "GC", "NC1"));
+            g = NonGc("KCS"); var k = Row(2, 3, 0, T.AddHours(1), T.AddHours(2), code: "K1 ", setup: null, mach: null, insp: null, actualPc: 1); g.Rows.Add(k);
+            r = await s.SaveGroupAsync(g);
+            var wk = db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == k.WtsLogId);
+            Ok(r.Ok && wk?.WtsCode == "K1", "KCS mã 'K1 ' (PO Workflow OFF): lưu WtsCode = 'K1'", (r.ErrorMsg ?? "") + " · WtsCode='" + wk?.WtsCode + "'");
+            Ok(StepOk(2, "KCS", "K1") == 3, "  sổ KCS K1 OK = 3 (trước: 0)", "OK " + StepOk(2, "KCS", "K1"));
+            // dòng cũ trong DB lưu trước Gói 7 còn khoảng trắng: sổ bỏ khoảng trắng khi đọc
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 5001, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1 ", WorkerId = 2, QtyDone = 2, QtyOk = 2, QtyNg = 0, StartTime = T.AddHours(3), EndTime = T.AddHours(4), CreatedAt = T.AddHours(4) });
+            Ok(StepOk(1, "GC", "NC1") == 7, "Dòng cũ NC 'NC1 ' OK 2: sổ NC1 OK = 5 + 2 = 7", "OK " + StepOk(1, "GC", "NC1"));
+            // rà độc lập Gói 7 (Cao): quy trình (snapshot) dư khoảng trắng "NC2 " + dòng WTS cũ "NC2 " — 2 phía cùng bỏ khoảng trắng, vẫn đếm
+            db.KhPlanRouteSnapshotMachining.List.First(x => x.SnapshotId == 2).NC = "NC2 ";
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 5002, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC2 ", WorkerId = 2, QtyDone = 3, QtyOk = 3, QtyNg = 0, StartTime = T.AddHours(4), EndTime = T.AddHours(5), CreatedAt = T.AddHours(5) });
+            Ok(StepOk(1, "GC", "NC2") == 3, "Snapshot 'NC2 ' + dòng cũ 'NC2 ' OK 3: sổ NC2 OK = 3 (bản sửa đầu Gói 7: 0)", "OK " + StepOk(1, "GC", "NC2"));
+            g = Gc(nc: "NC2 ", machine: "M2"); var b2 = Row(1, 1, 0, T.AddHours(5), T.AddHours(6)); g.Rows.Add(b2);
+            r = await s.SaveGroupAsync(g);
+            var wb2 = db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == b2.WtsLogId);
+            Ok(r.Ok && StepOk(1, "GC", "NC2") == 4 && wb2?.NC == "NC2 ", "Trang gửi NC 'NC2 ' (chữ snapshot): lưu đúng chữ snapshot 'NC2 ' (trang so thô khi sửa dòng), sổ NC2 OK = 4", (r.ErrorMsg ?? "") + " · OK " + StepOk(1, "GC", "NC2") + " · NC='" + wb2?.NC + "'");
+            g = Gc(nc: "nc2", machine: "M2"); var b3 = Row(1, 1, 0, T.AddHours(6), T.AddHours(7)); g.Rows.Add(b3);
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == b3.WtsLogId)?.NC == "NC2 ", "Gõ 'nc2': lưu theo chữ snapshot 'NC2 '", r.ErrorMsg);
+            Ok(HandoverLedgerService.WtsEditCode("3T ", "NC03") == HandoverLedgerService.WtsEditCode("3T", " NC03"), "Khoá ghép dòng sửa Taro: '3T ' + NC03 = '3T' + NC03");
+            // rà Gói 7 vòng 3: snapshot có 2 dòng "K1" và "K1 " (MA_TRUNG) — trang gửi đúng chữ "K1 " → máy chủ giữ y chữ (không đổi sang dòng kia)
+            db.KhPlanRouteSnapshotInspection.List.Add(new KhPlanRouteSnapshotInspection { SnapshotId = 98, KhPlanDetailId = 2, StepOrder = 3, NC = "K1 ", StandardTime = 3 });
+            g = NonGc("KCS"); var k2 = Row(2, 1, 0, T.AddHours(7), T.AddHours(8), code: "K1 ", setup: null, mach: null, insp: null, actualPc: 1); g.Rows.Add(k2);
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == k2.WtsLogId)?.WtsCode == "K1 ", "Snapshot có 'K1' + 'K1 ', trang gửi 'K1 ': lưu y 'K1 '", r.ErrorMsg + " · '" + db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == k2.WtsLogId)?.WtsCode + "'");
+            var hs = new HandoverService(db);
+            var iss = await hs.IssueByCellAsync(1, "GC", "HTSP", 2, 2, "MOI", false, "MOI", "NC2 ", null);
+            Ok(iss.Ok, "Lập phiếu GC → HTSP từ NC 'NC2 ' (chữ snapshot): được", iss.Error);
+            db.KhoVatLieus.List.First(k => k.PlanDetailId == 1).SoLuongThucNhan = 45;   // thêm 5 phôi
+            var iss2 = await hs.IssueByCellAsync(1, "KHO", "GC", 2, 1, "MOI", false, "MOI", null, "NC1 ");
+            Ok(iss2.Ok, "Kho → Gia công vào NC 'NC1 ' (chữ dư khoảng trắng): được", iss2.Error);
+        }
+
+        // [WTS-PREP-NG] mã chuẩn bị mang số lượng → máy chủ chặn (trước: NG trừ nhóm, ô âm cả khi Workflow ON)
+        Console.WriteLine("[W16] WTS-PREP-NG — mã chuẩn bị (1T) gửi kèm SL / NG: chặn, không ghi dòng, không sinh vụ");
+        {
+            var db = await SeedAsync(); var s = Svc(db); int n0 = WtsCount(db, false); int c0 = db.NgCases.List.Count;
+            var g = NonGc("HTSP", "Taro"); g.Rows.Add(Row(1, 0, 15, T, T.AddHours(1), code: "1T", cat: 1, setup: null, mach: null, insp: null, actualPc: 15));
+            var r = await s.SaveGroupAsync(g);
+            Eq(r.ErrorMsg, "Có hàng mã chuẩn bị mang số lượng — để SL = 0.", "1T NG 15: chặn");
+            Eq(g.Rows[0].ErrorMsg, "Mã chuẩn bị chỉ tính giờ, không nhập số lượng.", "  lời báo dòng");
+            Ok(WtsCount(db, false) == n0 && db.NgCases.List.Count == c0, "  không dòng WTS / vụ nào được ghi");
+            g = NonGc("HTSP", "Taro"); g.Rows.Add(Row(1, 0, 0, T.AddHours(1), T.AddHours(2), code: "1T", setup: null, mach: null, insp: null, actualPc: 15));
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && WtsCount(db, false) == n0 + 1, "1T SL 0 (chỉ giờ): lưu được như cũ", r.ErrorMsg);
+        }
+
+        // [WTS-QUYEN-MAY-CHU] quyền nhập WTS đọc DB lúc lưu / xoá (trước: chỉ trang kiểm lúc mở)
+        Console.WriteLine("[W17] WTS-QUYEN-MAY-CHU — lưu / xoá WTS: máy chủ đọc quyền WTS nhóm từ ma trận DB");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var gK = new UserGroup { GroupId = 71, GroupCode = "KCSONLY", IsActive = true, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsKcs) };
+            var gG = new UserGroup { GroupId = 72, GroupCode = "GCWTS", IsActive = true, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsGc) };
+            var gOff = new UserGroup { GroupId = 73, GroupCode = "NGUNG", IsActive = false, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsGc) };
+            db.UserGroups.List.AddRange(new[] { gK, gG, gOff });
+            db.Users.List.Add(new User { UserId = 6, Username = "u6", FullName = "U6", IsActive = true, Group = gK, GroupId = 71 });
+            db.Users.List.Add(new User { UserId = 7, Username = "u7", FullName = "U7", IsActive = false, Group = gG, GroupId = 72 });
+            db.Users.List.Add(new User { UserId = 8, Username = "u8", FullName = "U8", IsActive = true, Group = gG, GroupId = 72 });
+            db.Users.List.Add(new User { UserId = 10, Username = "u10", FullName = "U10", IsActive = true, Group = gOff, GroupId = 73 });
+            db.Fixup();
+            int n0 = WtsCount(db, false);
+            var g = Gc(); g.UserId = 6; g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1)));
+            var r = await s.SaveGroupAsync(g);
+            Eq(r.ErrorMsg, "Bạn không có quyền nhập WTS nhóm Gia công (ma trận phân quyền) — nhờ Admin cấp quyền rồi tải lại trang.", "Chỉ quyền WTS KCS, lưu WTS Gia công: chặn");
+            g = Gc(); g.UserId = 7; g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1)));
+            r = await s.SaveGroupAsync(g); Eq(r.ErrorMsg, "Tài khoản không hoạt động — đăng nhập lại.", "Tài khoản đã khoá: chặn");
+            g = Gc(); g.UserId = 10; g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1)));
+            r = await s.SaveGroupAsync(g); Eq(r.ErrorMsg, "Tài khoản không hoạt động — đăng nhập lại.", "Nhóm đã ngưng: chặn");
+            Ok(WtsCount(db, false) == n0, "  không dòng nào được ghi");
+            g = Gc(); g.UserId = 8; var a = Row(1, 5, 0, T, T.AddHours(1)); g.Rows.Add(a);
+            r = await s.SaveGroupAsync(g); Ok(r.Ok, "Có quyền WTS Gia công: lưu được", r.ErrorMsg);
+            gG.Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsKcs);   // Admin rút quyền WTS GC khi tab còn mở
+            var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, KhPlanDetailId = 1, UserId = 8 });
+            Ok(!v.Ok && v.ErrorMsg == "Bạn không có quyền nhập WTS nhóm Gia công (ma trận phân quyền) — nhờ Admin cấp quyền rồi tải lại trang.", "Bị rút quyền WTS Gia công: xoá dòng của mình bị chặn", v.ErrorMsg);
+            Ok(db.WtsProductionLogs.List.Any(w => w.WtsLogId == a.WtsLogId && !w.IsVoided), "  dòng còn hiệu lực");
+            g = Gc(); g.UserId = 8; g.Rows.Add(Row(1, 2, 0, T.AddHours(2), T.AddHours(3)));
+            r = await s.SaveGroupAsync(g); Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Bạn không có quyền nhập WTS nhóm Gia công"), "  lưu mới cũng bị chặn", r.ErrorMsg);
+        }
+
+        // [WTS-SUA-NC-VU] sửa dòng WTS có NG đổi NC, giữ vụ → NC phát hiện của vụ theo dòng mới (K2)
+        Console.WriteLine("[W18] WTS-SUA-NC-VU — sửa dòng WTS NG đổi NC giữ vụ: DetectNC theo NC mới; vụ đã có chứng từ thì chặn đổi NC");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var g = Gc(); g.Rows.Add(Row(1, 10, 0, T, T.AddHours(1))); var r0 = await s.SaveGroupAsync(g);   // NC1 OK 10 → chờ NC2 10
+            g = Gc(nc: "NC2", machine: "M2"); var a = Row(1, 0, 1, T.AddHours(1), T.AddHours(2), cat: 1); g.Rows.Add(a);
+            var r = await s.SaveGroupAsync(g);
+            var cs = db.NgCases.List.FirstOrDefault(c => c.NgCaseId == a.NgCaseId);
+            Ok(r0.Ok && r.Ok && cs?.DetectNC == "NC2", "NG 1 ghi ở NC2: vụ DetectNC = NC2", (r0.ErrorMsg ?? "") + (r.ErrorMsg ?? "") + " · " + cs?.DetectNC);
+            g = Gc(nc: "NC1", machine: "M1"); var e = Row(1, 0, 1, T.AddHours(1), T.AddHours(2), cat: 1); e.IsEditing = true; e.WtsLogId = a.WtsLogId; e.NgCaseId = a.NgCaseId; g.Rows.Add(e);
+            r = await s.SaveGroupAsync(g);
+            cs = db.NgCases.List.FirstOrDefault(c => c.NgCaseId == a.NgCaseId);
+            Ok(r.Ok && e.NgCaseId == a.NgCaseId && cs?.DetectNC == "NC1", "Sửa dòng sang NC1 giữ vụ: DetectNC = NC1 (trước: vẫn NC2)", (r.ErrorMsg ?? "") + " · vụ " + e.NgCaseId + " · " + cs?.DetectNC);
+            var led = await new HandoverLedgerService(db).GetLedgerForDetailAsync(1);
+            var nx = led == null ? null : HandoverForm.CaseNextNc(led, a.NgCaseId!.Value, "GC");
+            Ok(nx == "NC1", "  NC làm tiếp mặc định của vụ = NC1", nx);
+            // vụ đã có Kết quả sửa → đổi NC bị chặn (như đổi loại lỗi)
+            db.HandoverRepairResults.List.Add(new HandoverRepairResult { HandoverRepairResultId = 9001, KhPlanDetailId = 1, GroupCode = "GC", SourceCell = "LOI", NgCaseId = a.NgCaseId, QtyPass = 0, QtyFail = 0, IsVoided = false });
+            g = Gc(nc: "NC2", machine: "M2"); var e2 = Row(1, 0, 1, T.AddHours(1), T.AddHours(2), cat: 1); e2.IsEditing = true; e2.WtsLogId = e.WtsLogId; e2.NgCaseId = a.NgCaseId; g.Rows.Add(e2);
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("không đổi NC / mã CV của dòng có NG được"), "Vụ đã có Kết quả sửa: sửa dòng đổi NC bị chặn", r.ErrorMsg);
+            Ok(db.NgCases.List.First(c => c.NgCaseId == a.NgCaseId).DetectNC == "NC1" && db.WtsProductionLogs.List.Any(w => w.WtsLogId == e.WtsLogId && !w.IsVoided), "  vụ giữ NC1, dòng cũ còn hiệu lực");
+            // rà độc lập Gói 7 (Trung): nhóm khác Gia công đổi mã CV khi vụ đã đi → vẫn sửa được (K2 luôn NC cuối, DetectNC chỉ hiển thị)
+            db.KhPlanRouteSnapshotInspection.List.Add(new KhPlanRouteSnapshotInspection { SnapshotId = 99, KhPlanDetailId = 2, StepOrder = 2, NC = "K2", StandardTime = 1 });
+            g = NonGc("KCS"); var kk = Row(2, 0, 1, T.AddHours(3), T.AddHours(4), code: "K1", cat: 1, setup: null, mach: null, insp: null, actualPc: 1); g.Rows.Add(kk);
+            r = await s.SaveGroupAsync(g);
+            db.HandoverRepairResults.List.Add(new HandoverRepairResult { HandoverRepairResultId = 9002, KhPlanDetailId = 2, GroupCode = "KCS", SourceCell = "LOI", NgCaseId = kk.NgCaseId, QtyPass = 0, QtyFail = 0, IsVoided = false });
+            g = NonGc("KCS"); var ke = Row(2, 0, 1, T.AddHours(3), T.AddHours(4), code: "K2", cat: 1, setup: null, mach: null, insp: null, actualPc: 1); ke.IsEditing = true; ke.WtsLogId = kk.WtsLogId; ke.NgCaseId = kk.NgCaseId; g.Rows.Add(ke);
+            var rk = await s.SaveGroupAsync(g);
+            Ok(r.Ok && rk.Ok && db.NgCases.List.First(c => c.NgCaseId == kk.NgCaseId).DetectNC == "K2", "KCS vụ đã có Kết quả sửa, sửa mã K1 → K2: được, DetectNC = K2", (r.ErrorMsg ?? "") + " | " + (rk.ErrorMsg ?? ""));
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

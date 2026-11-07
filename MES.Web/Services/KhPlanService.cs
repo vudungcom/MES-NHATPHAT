@@ -67,9 +67,9 @@ public class KhPlanService
         if (dupDb.Any())
             throw new InvalidOperationException($"Số PO đã có trong hệ thống: {string.Join(", ", dupDb)} — mỗi số PO chỉ 1 dòng.");
         // [B3-SO-NGUYEN 2026-11-06] SL PO chỉ nhận số nguyên (phôi Kho là số nguyên — số lẻ làm sổ lệch phần lẻ). Nguồn: Hùng 05/11 15:37 + QuetSo 06/11.
-        var leKh = plan.Details.FirstOrDefault(d => !QtyRule.IsWhole(d.Quantity));
+        var leKh = plan.Details.FirstOrDefault(d => QtyRule.CheckPoQty(d.Quantity) != null);   // [KH-SL-MAY-CHU] + > 0, ≤ PoMax
         if (leKh != null)
-            throw new InvalidOperationException($"PO {leKh.PurchaseOrder}: {QtyRule.Msg}");
+            throw new InvalidOperationException($"PO {leKh.PurchaseOrder}: {QtyRule.CheckPoQty(leKh.Quantity)}");
         plan.PlanNo = await GenerateNextPlanNoAsync(plan.PlanDate);
         plan.CreatedBy = userId;
         plan.CreatedAt = DateTime.Now;
@@ -338,8 +338,8 @@ public class KhPlanService
                 throw new InvalidOperationException("PO mới không được trống");
             if (r.Quantity <= 0)
                 throw new InvalidOperationException($"SL của PO {r.PurchaseOrder} phải > 0");
-            if (!QtyRule.IsWhole(r.Quantity))   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên
-                throw new InvalidOperationException($"PO {r.PurchaseOrder}: {QtyRule.Msg}");
+            if (QtyRule.CheckPoQty(r.Quantity) is string ePoT)   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên · [KH-SL-MAY-CHU] ≤ PoMax
+                throw new InvalidOperationException($"PO {r.PurchaseOrder}: {ePoT}");
 
             var exists = await _db.KhPlanDetails
                 .AnyAsync(x => x.PurchaseOrder == r.PurchaseOrder && x.KhPlanDetailId != sourceDetailId);
@@ -1001,7 +1001,7 @@ public class KhPlanService
                 OrderVL = d.OrderVL, MaterialCondition = d.MaterialCondition, PartNotes = d.PartNotes
             };
             if (Mine("SL", orig.Quantity, now.Quantity, d.Quantity, x => x.ToString(QtyFormat)))                     nv.Quantity = now.Quantity;
-            if (nv.Quantity != d.Quantity && !QtyRule.IsWhole(nv.Quantity)) { await RollbackOwnAsync(ownTx); return QtyRule.Msg; }   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (SL cũ không đụng)
+            if (nv.Quantity != d.Quantity && QtyRule.CheckPoQty(nv.Quantity) is string ePoE) { await RollbackOwnAsync(ownTx); return ePoE; }   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (SL cũ không đụng) · [KH-SL-MAY-CHU] > 0, ≤ PoMax
             if (Mine("Đơn vị", S(orig.Unit), S(now.Unit), S(d.Unit), x => x))                                         nv.Unit = now.Unit;
             if (Mine("STD", orig.STD.Date, now.STD.Date, d.STD.Date, x => x.ToString("yyyy-MM-dd")))                  nv.STD = now.STD;
             if (Mine("Loại", S(orig.Type), S(now.Type), S(d.Type), x => x))                                           nv.Type = now.Type;
@@ -1112,17 +1112,17 @@ public class KhPlanService
         //   phần còn lại (máy loại trừ, NC đầu mới, số chờ từng NC) kiểm bằng sổ sau khi chép lại (RefreshRouteCoreAsync).
         var mainNcs = (await _db.PartMachiningSteps.AsNoTracking()
                 .Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => s.NC).ToListAsync())
-            .ToHashSet(StringComparer.Ordinal);
+            .Select(n => (n ?? "").Trim()).ToHashSet(StringComparer.Ordinal);   // [WTS-MA-TRIM] so đã bỏ khoảng trắng 2 phía (phiếu Gói 7 lưu NC đã Trim; Part Master không Trim NC) — rà Gói 7 vòng 3
         if (mainNcs.Count == 0)
             return "PO đã cấp phôi cho Gia công mà quy trình Part Master mới không còn NC Gia công nào";
-        var lost = txs.Where(t => !string.IsNullOrEmpty(t.ToNC) && !mainNcs.Contains(t.ToNC!)).ToList();
+        var lost = txs.Where(t => !string.IsNullOrWhiteSpace(t.ToNC) && !mainNcs.Contains(t.ToNC!.Trim())).ToList();   // [WTS-MA-TRIM]
         if (lost.Any())
             return $"phiếu Kho → Gia công #{string.Join(", #", lost.Select(t => t.HandoverTxId))} đã cấp phôi vào NC {string.Join(", ", lost.Select(t => t.ToNC ?? "(trống)").Distinct())} — quy trình Part Master mới không còn NC đó";
         // [NHAN-DOI-O-NC 2026-11-06] lần nhận mang NC riêng (HandoverReceives.ToNC) cũng là hàng đã cấp vào NC đó
         var lostR = await _db.HandoverReceives.AsNoTracking()
             .Where(r => txIds.Contains(r.HandoverTxId) && !r.IsVoided && r.ToNC != null && r.ToNC != "")
             .Select(r => new { r.HandoverTxId, r.ToNC }).ToListAsync();
-        var lostR2 = lostR.Where(r => !mainNcs.Contains(r.ToNC!)).ToList();
+        var lostR2 = lostR.Where(r => !string.IsNullOrWhiteSpace(r.ToNC) && !mainNcs.Contains(r.ToNC!.Trim())).ToList();   // [WTS-MA-TRIM]
         if (lostR2.Any())
             return $"lần nhận của phiếu #{string.Join(", #", lostR2.Select(r => r.HandoverTxId).Distinct())} đã vào NC {string.Join(", ", lostR2.Select(r => r.ToNC).Distinct())} — quy trình Part Master mới không còn NC đó";
         return null;
@@ -1149,7 +1149,7 @@ public class KhPlanService
         // [NHAN-DOI-O-NC 2026-11-06] + NC riêng của lần nhận (đổi ô vào Gia công)
         pinned = pinned.Concat(await _db.HandoverReceives.AsNoTracking()
             .Where(r => !r.IsVoided && r.ToNC != null && r.ToNC != "" && r.Transaction.KhPlanDetailId == khPlanDetailId && !r.Transaction.IsVoided && r.Transaction.ToGroupCode == "GC")
-            .Select(r => r.ToNC!).ToListAsync()).Distinct().ToList();
+            .Select(r => r.ToNC!).ToListAsync()).Select(n => n.Trim()).Where(n => n != "").Distinct().ToList();   // [WTS-MA-TRIM] sổ giữ NC đã bỏ khoảng trắng
         foreach (var nc in pinned)
         {
             var sa = ga.Steps.FirstOrDefault(s => s.Pg == "GC" && s.Code == nc);

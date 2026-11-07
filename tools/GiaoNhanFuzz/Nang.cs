@@ -25,6 +25,8 @@ public static class Nang
         ("chuoi_thuong", "đi đủ chuỗi, lệnh thường",                    new[] { ("CHUOI", "1") }),
         // [TARO-NC-MA][TARO-3T-GOP 2026-11-06] đi đủ chuỗi, Taro mã dùng chung 2 NC + bộ gộp 8G ← 8G1 + 8G2 (75% PO), hàng lỗi
         ("chuoi_taro",  "đi đủ chuỗi + Taro mã chung 2 NC / bộ gộp",   new[] { ("CHUOI", "1"), ("LOI", "1"), ("TARO", "1") }),
+        // [TARO-LAMHO-NC] đi đủ chuỗi, máy loại trừ GIỮA chuỗi Gia công + Taro ở đúng NC đó (HTSP làm hộ), hàng lỗi
+        ("chuoi_lamho", "đi đủ chuỗi + Taro làm hộ ở NC máy loại trừ giữa chuỗi", new[] { ("CHUOI", "1"), ("LOI", "1"), ("EXCL", "1"), ("LAMHO", "1") }),
     };
 
     public static async Task<int> Run(string[] args)
@@ -44,7 +46,7 @@ public static class Nang
         //   KHUC = số PO mỗi khúc (mặc định tự tính để có ≈ 4 khúc / nhân).
         int khuc = int.TryParse(Environment.GetEnvironmentVariable("KHUC"), out var kq) && kq > 0 ? kq
                  : Math.Max(1, (int)Math.Ceiling(po * Configs.Length / (double)(par * 4)));
-        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std", "sua", "form", "taro" };   // [TARO-NC-MA] taro   // [GN-FORM1] form   // [GC-SUA-TAI-CHO] sua   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
+        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std", "sua", "form", "taro", "why" };   // [H10-KET-WHY] why   // [TARO-NC-MA] taro   // [GN-FORM1] form   // [GC-SUA-TAI-CHO] sua   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
         Console.WriteLine($"KIỂM NẶNG: {scens.Length} kịch bản + {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · {Environment.ProcessorCount} nhân · chạy cùng lúc {par} tiến trình · mỗi khúc {khuc} PO");
         Console.WriteLine($"Kết quả từng khúc: {dir}");
         var sw = Stopwatch.StartNew();

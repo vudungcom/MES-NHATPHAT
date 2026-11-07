@@ -592,11 +592,16 @@ namespace MES.Web.Services
             long? ngCaseId = null,     // [VULOI] Hàng lỗi / Hàng sửa đang giữ, Huỷ, Trả khách: vụ lấy hàng
             FormTx? ftx = null)        // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync). null = như cũ
         {
+            fromNC = HandoverLedgerService.TrimCode(fromNC); toNC = HandoverLedgerService.TrimCode(toNC);   // [WTS-MA-TRIM] NC so với quy trình trong sổ (đã bỏ khoảng trắng)
             fromCell ??= HandoverCell.IssueCellOf(purpose, null);
             bool cellPurpose = purpose is HandoverPurpose.New or HandoverPurpose.NgReturn or HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn;
             if (toCell != null && (!cellPurpose || !HandoverCell.IsReceiveCell(toCell)))
                 return (false, "Ô nhận không hợp lệ.");   // [GN-CELL2]
             if (cellPurpose) toCell ??= HandoverCell.ReceiveCellOf(purpose);
+            // [TARO-LAMHO-NC] Trả lỗi hàng làm hộ (Trả về Gia công theo NC từ ô Hàng lỗi, mang vụ): Gia công nhận vào ô Hàng lỗi, không chọn NC.
+            //   Nguồn: HÙNG 07/11 10:18 OK kế hoạch câu 2 (chiếc làm hộ bị lỗi nằm trong Tồn hàng giao theo NC tới khi trả Gia công dạng hàng lỗi).
+            bool lhLoi = HandoverCell.IsLamHoLoi(purpose, fromCell);
+            if (lhLoi) { toCell = HandoverCell.Loi; toNC = null; }
             if (qtyIssued <= 0) return (false, "Số lượng giao phải lớn hơn 0.");
             if (QtyRule.CheckWhole(qtyIssued) is string eWhole) return (false, eWhole);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
@@ -612,7 +617,7 @@ namespace MES.Web.Services
             if (!HandoverPurpose.All.Contains(purpose)) return (false, "Loại phiếu không hợp lệ.");
             var routeErr = HandoverLedgerService.CheckRoute(fromGroupCode, toGroupCode, purpose);
             if (routeErr != null) return (false, routeErr);
-            bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend || isOut;   // [GN-NG-OUT] huỷ / trả khách bắt buộc ghi lỗi
+            bool isNg = purpose is HandoverPurpose.NgReturn or HandoverPurpose.RepairSend || isOut || lhLoi;   // [GN-NG-OUT] huỷ / trả khách bắt buộc ghi lỗi · [TARO-LAMHO-NC] + trả lỗi hàng làm hộ
             // [VULOI 2026-10-28] Lỗi không tự gõ nữa: Hàng lỗi công đoạn trước chọn loại lỗi (DS Lỗi) → sinh vụ;
             //   lấy từ ô Hàng lỗi / Hàng sửa, Huỷ, Trả khách: chọn vụ đang giữ → lỗi theo vụ. (Trước: bắt buộc gõ lỗi cụ thể.)
             bool takesCase = HandoverLedgerService.TakesHeldCase(purpose, fromCell);
@@ -651,9 +656,17 @@ namespace MES.Web.Services
             var row = await ledger.GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
 
+            // [TARO-LAMHO-NC] (rà độc lập gói 6 mục 2, 4) PO có Taro làm hộ (Workflow ON):
+            //   giao theo NC từ NC ngay trước đoạn có Taro → chỉ cho HTSP (nhóm khác nhận thì Taro không bao giờ được làm);
+            //   HTSP chỉ có mã Taro làm hộ (không có công đoạn HTSP của mình) → không giao Hàng mới cho HTSP (hàng vào đó không làm tiếp được).
+            if (row.ApplyWorkflow && purpose == HandoverPurpose.HelpSend && toGroupCode != "HTSP"
+                && row.LamHoRuns.FirstOrDefault(r => r.HasTaro && string.Equals(r.FromNc, fromNC, StringComparison.OrdinalIgnoreCase)) is { } lhR)
+                return (false, $"Đoạn sau {HandoverLedgerService.NcName(fromNC)} ({string.Join(", ", lhR.Ncs.Select(HandoverLedgerService.NcName))}) có Taro làm hộ: giao theo NC cho HTSP.");
+            if (row.ApplyWorkflow && purpose == HandoverPurpose.New && toGroupCode == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(row))
+                return (false, "PO này HTSP chỉ làm Taro làm hộ (giao theo NC), không có công đoạn HTSP của mình — giao Hàng mới cho nhóm sau (KCS / Đóng gói).");
             // K3: hàng làm hộ trả về Gia công phải chọn NC nhận khi PO có snapshot NC
             bool gcHasNc = row.G("GC").Steps.Any();
-            if (toGroupCode == "GC" && gcHasNc && string.IsNullOrEmpty(toNC) && purpose == HandoverPurpose.HelpReturn)
+            if (toGroupCode == "GC" && gcHasNc && string.IsNullOrEmpty(toNC) && purpose == HandoverPurpose.HelpReturn && !lhLoi)   // [TARO-LAMHO-NC] trả lỗi: vào ô Hàng lỗi, không NC
                 return (false, "Trả về Gia công: bắt buộc chọn NC nhận vào (K3).");
             // [N3-TONC 2026-10-30] NC nhận vào phải là NC thường có trong snapshot của PO (trang chỉ cho chọn các NC này; máy chủ kiểm lại).
             //   Trước: NC máy loại trừ / NC không có trong quy trình vẫn lưu được → sổ dồn số đó vào NC đầu, không vào NC đã ghi trên phiếu (lệch truy vết).
@@ -676,7 +689,7 @@ namespace MES.Web.Services
             // [VULOI] Vụ lấy hàng phải thuộc PO này và đang có hàng ở ô bên giao; không chọn vụ = hàng lỗi cũ chưa có mã (chỉ khi còn)
             if (takesCase)
             {
-                var cellTake = fromCell ?? HandoverCell.IssueCellOf(purpose, null)!;
+                var cellTake = HandoverLedgerService.HeldCellOf(purpose, fromCell);   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ: vụ giữ ô LAMHO
                 if (ngCaseId != null)
                 {
                     if (!row.Cases.TryGetValue(ngCaseId.Value, out var csSel) || ngCaseId.Value <= 0)
@@ -690,7 +703,10 @@ namespace MES.Web.Services
                     reason = "Hàng lỗi cũ (chưa có mã vụ)";
                 }
             }
-            var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ
+            // [TARO-LAMHO-NC] (rà vòng 3 T2) vụ hàng Taro làm hộ bị lỗi: chiếc của chuỗi Gia công — chỉ vào ô hàng đạt (Hàng mới / Hàng lỗi đã xử lý) ở Gia công
+            if (takesCase && ngCaseId is long lhId && row.Cases.TryGetValue(lhId, out var lhCase) && lhCase.IsLamHo && toGroupCode != "GC" && toCell is HandoverCell.Xl or HandoverCell.Moi)
+                return (false, $"{NgCaseNo.Format(lhId)} là hàng Taro làm hộ bị lỗi: sửa xong trả về Gia công (làm tiếp theo NC của vụ), không giao vào ô hàng đạt của {HandoverLedgerService.GroupLabel(toGroupCode)}.");
+            var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId, toNC);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ; [TARO-LAMHO-NC] + NC nhận (câu 1)
             if (qtyIssued > max)
                 return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể giao {qtyIssued:0.##}.");
             // [VULOI] Hàng lỗi công đoạn trước: vụ sinh ra cùng phiếu (nơi phát hiện = bên giao, nơi gây lỗi = bên nhận)
@@ -807,6 +823,7 @@ namespace MES.Web.Services
             string? toNc = null,            // [NHAN-DOI-O-NC] NC nhận (xem ReceiveNcAsync)
             string? toNcReason = null)      // [NHAN-DOI-O-NC] lý do khi lùi về NC trước NC của vụ
         {
+            toNc = HandoverLedgerService.TrimCode(toNc);   // [WTS-MA-TRIM]
 
             if (qtyOk < 0 || qtyNg < 0)
 
@@ -820,7 +837,7 @@ namespace MES.Web.Services
             // [GN-RECV-NG2] Kiểm lý do NG dời xuống sau khi đọc phiếu: phiếu Hàng lỗi công đoạn trước lấy lỗi theo phiếu
 
             var txHead = await _db.HandoverTransactions.AsNoTracking()
-                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId, t.NgCaseId, t.ToGroupCode }).FirstOrDefaultAsync();   // [RS-C2] + nhóm nhận   // [VULOI] + vụ // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
+                .Where(t => t.HandoverTxId == handoverTxId).Select(t => new { t.KhPlanDetailId, t.Purpose, t.IsReturnNg, t.NgReason, t.ToCell, t.SourceReceiveId, t.NgCaseId, t.ToGroupCode, t.FromCell }).FirstOrDefaultAsync();   // [TARO-LAMHO-NC] + FromCell   // [RS-C2] + nhóm nhận   // [VULOI] + vụ // [GN-RECV-NG2] + loại phiếu, lỗi; [GN-CELL2] + ô chỉ định
             if (txHead == null)
                 return (false, "Phiếu giao không tồn tại hoặc đã bị huỷ.");
             // [RS-C2 2026-10-29] Máy chủ kiểm người bấm Nhận có quyền SỬA nhóm nhận (ma trận HANDOVER_*, Admin = mọi nhóm).
@@ -843,6 +860,8 @@ namespace MES.Web.Services
                     return (false, "Phiếu này không chọn ô nhận được.");
                 if (txHead.SourceReceiveId != null && toCell != HandoverCell.Loi)
                     return (false, "Phiếu trả hàng lỗi do phần mềm tự lập: chỉ nhận vào ô Hàng lỗi.");
+                if (HandoverCell.IsLamHoLoi(txHead.Purpose, txHead.FromCell) && toCell != HandoverCell.Loi)   // [TARO-LAMHO-NC]
+                    return (false, "Hàng làm hộ bị lỗi trả về: chỉ nhận vào ô Hàng lỗi (cùng vụ).");
                 if (toCell != desigCell && string.IsNullOrWhiteSpace(toCellReason))
                     return (false, $"Đổi phân loại khác bên giao chỉ định ({HandoverCell.Label(desigCell)} → {HandoverCell.Label(toCell)}): bắt buộc ghi lý do.");
             }
@@ -894,9 +913,17 @@ namespace MES.Web.Services
             // [VULOI 2026-10-28] Vụ lỗi của lần nhận (đúng cách sổ tính — HandoverLedgerService.Compute):
             //   - Phiếu trả tự lập / phiếu lấy từ ô Hàng lỗi, Hàng sửa (mang vụ): vụ đi theo phiếu, bên nhận KHÔNG chọn; NG đếm lúc nhận vẫn là vụ đó.
             //   - Phiếu không mang vụ: nhận vào ô Hàng lỗi / Hàng sửa, hoặc có NG đếm lúc nhận → vụ MỚI, bắt buộc chọn loại lỗi (DS Lỗi).
+            // [TARO-LAMHO-NC] (rà vòng 2 L1) HTSP chỉ làm Taro làm hộ: không nhận hàng vào ô Hàng mới / Hàng lỗi đã xử lý (vào đó không làm tiếp được)
+            if (before != null && before.ApplyWorkflow && tx.ToGroupCode == "HTSP" && effCell is HandoverCell.Moi or HandoverCell.Xl
+                && tx.Purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn) && HandoverLedgerService.HtspOnlyLamHo(before))
+                return (false, "PO này HTSP chỉ làm Taro làm hộ (giao theo NC), không có công đoạn HTSP của mình — không nhận vào ô Hàng mới / Hàng lỗi đã xử lý.");
             var txFromCell = before != null && before.TxFromCell.TryGetValue(handoverTxId, out var tfc) ? tfc : null;
             bool autoTx  = txHead.SourceReceiveId != null;
             bool carryTx = !autoTx && txFromCell is HandoverCell.Loi or HandoverCell.Sua;
+            // [TARO-LAMHO-NC] (rà vòng 3 T2) vụ hàng Taro làm hộ bị lỗi chỉ vào ô hàng đạt ở Gia công
+            if (before != null && carryTx && tx.ToGroupCode != "GC" && effCell is HandoverCell.Moi or HandoverCell.Xl
+                && tx.NgCaseId is long rlh && before.Cases.TryGetValue(rlh, out var rlhC) && rlhC.IsLamHo)
+                return (false, $"{NgCaseNo.Format(rlh)} là hàng Taro làm hộ bị lỗi: chỉ nhận vào ô Hàng lỗi / Hàng sửa ở {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} — sửa xong trả về Gia công.");
             bool newCase = !autoTx && !carryTx && (effCell is HandoverCell.Loi or HandoverCell.Sua || qtyNg > 0);
             long? rcvCaseId = autoTx || carryTx ? tx.NgCaseId : null;
             NgCategory? rcvCat = null;
@@ -1351,6 +1378,7 @@ namespace MES.Web.Services
             int? ngCategoryId = null,   // [VULOI] loại lỗi (DS Lỗi) — bắt buộc; ngReason giữ tham số cũ, không còn dùng chữ gõ tay
             FormTx? ftx = null)         // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync)
         {
+            nc = HandoverLedgerService.TrimCode(nc);   // [WTS-MA-TRIM]
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
             if (!validGroups.Contains(groupCode)) return (false, "Mã nhóm không hợp lệ.");
             // [VOID-PERM 2026-10-31] Quyền nhóm đọc ma trận từ DB (như lập phiếu / nhận [RS-C2]), không tin editGroups trang gửi lên (tham số giữ cho trang cũ biên dịch, không dùng)

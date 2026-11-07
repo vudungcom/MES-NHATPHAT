@@ -443,7 +443,9 @@ public static class Core
                 bool freeAfter = await Free();
                 Ok(la != null && eAdd == null && heldWhile && freeAfter, "S8e đang giữ khoá lượt lưu, service Part Master trên cùng kết nối thêm dòng được (giao dịch + khoá dòng); nhả xong khoá rảnh",
                    $"thêm: {eAdd ?? "được"} · đang giữ={heldWhile} · rảnh sau nhả={freeAfter}");
+                var opE = PartStepGuard.SessionLockOpener; PartStepGuard.SessionLockOpener = null;   // [S8D-KHOA 07/11] bài đo này là CÙNG phiên → cách cũ (kết nối DbContext)
                 var la2 = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                PartStepGuard.SessionLockOpener = opE;
                 var sw = Stopwatch.StartNew(); string? eSelf = null;
                 await using (var tx = await a.Db.Database.BeginTransactionAsync())
                 {
@@ -453,10 +455,28 @@ public static class Core
                 if (la2 != null) await la2.DisposeAsync();
                 Log($"  ĐO   S8e cùng phiên giữ khoá lượt lưu (Session Exclusive) rồi xin khoá đọc (Shared / Transaction): {(eSelf == null ? "ĐƯỢC NGAY" : "BỊ CHẶN: " + Short(eSelf))} sau {sw.ElapsedMilliseconds} ms (trang luôn nhả trước bước tự cập nhật PO nên không gặp)");
             }
-            // (d) bỏ dở: DbContext huỷ khi khoá phiên còn giữ (không gọi nhả)
+            // (f) [S8D-KHOA 07/11] khoá lượt lưu trên kết nối RIÊNG không pool (MES.Web gắn PartStepGuard.SessionLockOpener = PmSaveLockSql.OpenAsync):
+            //   DbContext trang bị huỷ giữa lượt lưu → khoá vẫn giữ tới khi lượt lưu chạy hết (await using) → nhả bằng kết nối riêng → rảnh NGAY,
+            //   không chờ pool dùng lại kết nối (trước: "rảnh ngay sau khi huỷ = False").
+            if (PartStepGuard.SessionLockOpener != null)
             {
                 var a = new Who();
                 var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                await a.DisposeAsync();   // DbContext trang huỷ giữa lượt lưu
+                bool heldMid = !await Free();
+                if (la != null) await la.DisposeAsync();   // lượt lưu chạy hết (await using) → nhả
+                bool freeNow = await Free();
+                var rb = await CreateKh();
+                Ok(la != null && heldMid && freeNow && rb.Ok, "S8f [S8D-KHOA] DbContext trang huỷ giữa lượt lưu: khoá giữ tới hết lượt rồi nhả NGAY (kết nối riêng, không chờ pool); tạo KH sau đó lưu được",
+                   $"lấy={la != null} · còn giữ giữa lượt={heldMid} · rảnh ngay sau khi nhả={freeNow} · tạo KH: {(rb.Ok ? "lưu được" : Short(rb.Err ?? ""))} sau {rb.Ms} ms");
+                Host.ClearPools();
+            }
+            // (d) bỏ dở: DbContext huỷ khi khoá phiên còn giữ (không gọi nhả) — đo CÁCH CŨ (khoá trên kết nối DbContext), tạm tắt SessionLockOpener
+            {
+                var opener = PartStepGuard.SessionLockOpener; PartStepGuard.SessionLockOpener = null;   // [S8D-KHOA 07/11]
+                var a = new Who();
+                var la = await PartStepGuard.AcquireSaveLockAsync(a.Db, pid8);
+                PartStepGuard.SessionLockOpener = opener;   // [S8D-KHOA]
                 await a.DisposeAsync();   // kết nối trả về pool, KHÔNG sp_releaseapplock
                 bool freeNow = await Free();
                 var reuse = new List<Who>();

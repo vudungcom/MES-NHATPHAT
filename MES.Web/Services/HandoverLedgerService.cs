@@ -99,12 +99,15 @@ namespace MES.Web.Services
         public const string Loi = "LOI";   // Hàng lỗi
         public const string Sua = "SUA";   // Hàng sửa
         public const string Xl  = "XL";    // Hàng lỗi đã xử lý (chỉ là ô NHẬN — không giao từ ô này)
+        /// <summary>[TARO-LAMHO-NC] Ô giữ của VỤ LỖI (chỉ trong sổ, không ghi DB): hàng làm hộ bị lỗi (WTS Taro làm hộ NG) vẫn nằm trong
+        ///   Tồn hàng giao theo NC của nhóm làm hộ tới khi trả Gia công vào ô Hàng lỗi (phiếu Trả về Gia công theo NC, FromCell = LOI, mang vụ).</summary>
+        public const string LamHo = "LAMHO";
 
         public static readonly string[] IssueCells = { Moi, Loi, Sua };
 
         public static string Label(string? c) => c switch
         {
-            Moi => "Hàng mới", Loi => "Hàng lỗi", Sua => "Hàng sửa", Xl => "Hàng lỗi đã xử lý", _ => c ?? ""
+            Moi => "Hàng mới", Loi => "Hàng lỗi", Sua => "Hàng sửa", Xl => "Hàng lỗi đã xử lý", LamHo => "Tồn hàng giao theo NC (làm hộ bị lỗi)", _ => c ?? ""   // [TARO-LAMHO-NC]
         };
 
         /// <summary>Ô GIAO của bên giao theo loại phiếu (phiếu cũ không có FromCell). Làm hộ / Huỷ / Trả khách: không nằm trong 4 ô Excel → null.</summary>
@@ -116,8 +119,12 @@ namespace MES.Web.Services
             HandoverPurpose.RepairReturn => fromCell == Loi ? Loi : Sua,   // TH2: nơi gây lỗi tự sửa xong → giao từ ô Hàng lỗi
             HandoverPurpose.Scrap        => Loi,
             HandoverPurpose.CustReturn   => Loi,
+            HandoverPurpose.HelpReturn   => fromCell == Loi ? Loi : null,   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ (mang vụ) về Gia công ô Hàng lỗi
             _ => null
         };
+
+        /// <summary>[TARO-LAMHO-NC] Phiếu Trả về Gia công theo NC lấy từ hàng làm hộ bị lỗi (FromCell = LOI): mang vụ, Gia công nhận vào ô Hàng lỗi.</summary>
+        public static bool IsLamHoLoi(string? purpose, string? fromCell) => purpose == HandoverPurpose.HelpReturn && fromCell == Loi;
 
         /// <summary>Ô NHẬN của bên nhận theo loại phiếu (Excel: B1 Hàng lỗi, B2 Hàng sửa, B3 Hàng lỗi đã xử lý).</summary>
         public static string? ReceiveCellOf(string purpose) => purpose switch
@@ -259,6 +266,34 @@ namespace MES.Web.Services
         public string? GopUnit   { get; set; }
         /// <summary>[TARO-3T-GOP] true = dòng là mã gộp (vd 3T); false = mã thành phần (vd 3T1). Chỉ có nghĩa khi GopUnit khác null.</summary>
         public bool    IsGop     { get; set; }
+        /// <summary>[TARO-LAMHO-NC] Mã Taro ở NC máy loại trừ GIỮA chuỗi Gia công (HTSP làm hộ): NC đó. null = mã thường.
+        ///   Vào = hàng Gia công giao theo NC cho HTSP làm NC này; không tính vào OK nhỏ nhất / Chưa làm / NG của HTSP.</summary>
+        public string? LamHoNc   { get; set; }
+    }
+
+    /// <summary>[TARO-LAMHO-NC] 1 đoạn NC máy loại trừ liền nhau GIỮA chuỗi Gia công (sau nó còn NC thường) — hàng giao theo NC
+    ///   từ NC thường ngay trước (FromNc, hoặc @VAO khi đoạn ở đầu chuỗi), làm xong trả về NC thường ngay sau (NextNc).
+    ///   Chỉ đoạn có mã Taro (HasTaro) mới tính "Taro làm hộ". Nguồn: KHÁCH 07/11 (qua Hùng 10:03) trả lời (a): Part 3B-PT1268610
+    ///   làm xong NC 2 → gửi Taro (NC 3 = H01) → về làm NC 4 → lại gửi Taro (NC 5 = H01, cuối chuỗi); HÙNG 07/11 10:18 OK kế hoạch.</summary>
+    public class LedgerLamHoRun
+    {
+        public string       Key    { get; set; } = "";   // NC loại trừ đầu của đoạn
+        public List<string> Ncs    { get; set; } = new();
+        public string?      FromNc { get; set; }
+        public string       NextNc { get; set; } = "";
+        public bool         HasTaro { get; set; }
+        /// <summary>HTSP đã nhận (phần OK lúc nhận) hàng Gia công giao theo NC cho đoạn này.</summary>
+        public decimal      In     { get; set; }
+        /// <summary>OK bộ Taro nhỏ nhất giữa các NC của đoạn (OK nhỏ nhất các mã Taro chính cùng NC, bộ gộp = OK gộp + min thành phần).</summary>
+        public decimal      Done   { get; set; }
+        /// <summary>HTSP đã trả về Gia công (hàng tốt) vào NextNc.</summary>
+        public decimal      Ret    { get; set; }
+        /// <summary>NG trên WTS Taro làm hộ ở các NC của đoạn (chiếc hỏng — đang giữ hoặc đã trả lỗi về Gia công).</summary>
+        public decimal      Ng     { get; set; }
+        /// <summary>Hàng làm hộ của đoạn HTSP còn giữ, còn tốt = nhận vào − đã trả về (hàng tốt) − chiếc hỏng (rà độc lập gói 6 mục 1).</summary>
+        public decimal      Held   => In - Ret - Ng;
+        public List<LedgerDoc> DoneDocs { get; set; } = new();
+        public List<LedgerDoc> RetDocs  { get; set; } = new();
     }
 
     /// <summary>[GN-LEDGER] Số của 1 nhóm trên 1 PO — đúng cột Excel xưởng.</summary>
@@ -387,6 +422,14 @@ namespace MES.Web.Services
         /// <summary>[VULOI] Các vụ đang giữ ở 1 nhóm · 1 ô (số &gt; 0), vụ có mã trước, hàng cũ chưa có mã sau.</summary>
         public List<LedgerCase> CasesHeldAt(string group, string cell)
             => Cases.Values.Where(x => x.HeldAt(group, cell) > 0).OrderBy(x => x.Id == 0 ? 1 : 0).ThenBy(x => x.Id).ToList();
+
+        /// <summary>[TARO-LAMHO-NC] Các đoạn NC máy loại trừ giữa chuỗi Gia công (thứ tự chuỗi) + số Taro làm hộ của từng đoạn.</summary>
+        public List<LedgerLamHoRun> LamHoRuns { get; set; } = new();
+        /// <summary>[TARO-LAMHO-NC] Đoạn nhận hàng trả về vào NC <paramref name="toNc"/> (NC thường ngay sau đoạn). null = không có.</summary>
+        public LedgerLamHoRun? LamHoRunTo(string? toNc)
+            => string.IsNullOrWhiteSpace(toNc) ? null : LamHoRuns.FirstOrDefault(r => string.Equals(r.NextNc, toNc.Trim(), StringComparison.OrdinalIgnoreCase));
+        /// <summary>[TARO-LAMHO-NC] Hàng làm hộ bị lỗi (WTS Taro làm hộ NG, đã có vụ) <paramref name="group"/> đang giữ — nằm trong Tồn hàng giao theo NC.</summary>
+        public decimal LamHoNgHeld(string group) => Cases.Values.Sum(x => x.HeldAt(group, HandoverCell.LamHo));
     }
 
     /// <summary>[GN-CELL] Một dòng "Bước" của PO — đúng kiểu Excel xưởng (B1, B2, B3…): trạng thái sổ SAU một chứng từ.</summary>
@@ -421,6 +464,9 @@ namespace MES.Web.Services
         /// <summary>[GN-FORM1 2026-11-05] Vụ sinh lúc nhận hàng Gia công giao theo NC (làm hộ): NC nguồn của phiếu đó — chỉ để tính NC làm tiếp
         ///   khi hàng sửa đạt về Gia công (HandoverForm.CaseNextNc). Không dùng tính số nào.</summary>
         public string? HelpFromNc { get; set; }
+        /// <summary>[TARO-LAMHO-NC] Vụ sinh từ WTS Taro làm hộ NG (chặng phát sinh ở ô LAMHO): chiếc thuộc chuỗi Gia công — chỉ sửa / làm tiếp ở Gia công
+        ///   (rà độc lập gói 6 vòng 3 T2: vụ đi vòng về HTSP rồi sửa tại chỗ → vào hàng sản xuất HTSP, bỏ qua NC sau).</summary>
+        public bool IsLamHo => Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo);
         public DateTime? At      { get; set; }
         public string? Who       { get; set; }
 
@@ -892,7 +938,7 @@ namespace MES.Web.Services
                 string? TaroParentCode(string? parentNc)
                 {
                     if (string.IsNullOrWhiteSpace(parentNc)) return parentNc;
-                    var p = taroOf.FirstOrDefault(x => !x.IsBackup && string.Equals(x.NC, parentNc, StringComparison.OrdinalIgnoreCase));
+                    var p = taroOf.FirstOrDefault(x => !x.IsBackup && string.Equals((x.NC ?? "").Trim(), parentNc.Trim(), StringComparison.OrdinalIgnoreCase));   // [WTS-MA-TRIM] rà Gói 7 vòng 2: so đã bỏ khoảng trắng (Part Master SameCode cũng Trim)
                     return p == null ? parentNc : TaroCode(p.WtsTaskCode, p.NC);
                 }
                 // [TARO-NC-MA 2026-11-06] + NC của dòng (dự phòng: NC dòng cha) — Compute đổi mã dùng ở nhiều NC sang khoá (mã, NC) (TaroKeyed)
@@ -903,6 +949,7 @@ namespace MES.Web.Services
                 inp.CodeSteps.AddRange(washing.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("WASHING", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
                 inp.CodeSteps.AddRange(kcs.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("KCS", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
                 inp.CodeSteps.AddRange(pkg.Where(s => s.KhPlanDetailId == id).Select(s => new InCodeStep("PKG", s.StepOrder, s.NC, s.IsBackup, s.ParentNC, s.StepName)));
+                TrimInputCodes(inp);   // [WTS-MA-TRIM]
                 result.Add(inp);
             }
             return result;
@@ -1031,7 +1078,7 @@ namespace MES.Web.Services
         public const string WtsEditVoidReason = "Sửa lại";   // chữ VoidReason WtsSaveService ghi khi sửa dòng
         /// <summary>[TARO-NC-MA 2026-11-06] Khoá mã của dòng WTS khi ghép dòng sửa: mã CV + NC Taro (nếu có) — đổi NC Taro lúc sửa = đổi khoá.</summary>
         public static string? WtsEditCode(string? wtsCode, string? stepNc)
-            => string.IsNullOrWhiteSpace(stepNc) ? wtsCode : (wtsCode ?? "") + "@" + stepNc.Trim();
+            => string.IsNullOrWhiteSpace(stepNc) ? wtsCode : (wtsCode ?? "").Trim() + "@" + stepNc.Trim();   // [WTS-MA-TRIM] mã dòng cũ "3T " + NC03 ghép được với dòng sửa "3T"
         public record WtsEditNode(long Id, int Det, int Worker, string Pg, string? Nc, string? Code, DateTime Created, DateTime? VoidedAt,
                                   decimal Ok = 0, decimal Ng = 0);   // [WTS-SUA-PHAN] số OK / NG của dòng (để tính phần có từ giờ gốc)
         /// <summary>[WTS-SUA-PHAN] Dòng sửa: giờ lưu gốc + các bản của cả chuỗi sửa (cũ → mới, bản cuối = chính dòng này).</summary>
@@ -1234,6 +1281,77 @@ namespace MES.Web.Services
 
         static bool SameNc(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
 
+        // =====================================================================
+        // [TARO-LAMHO-NC 2026-11-07] TARO LÀM HỘ Ở NC MÁY LOẠI TRỪ GIỮA CHUỖI GIA CÔNG
+        //   Nguồn: CLAUDE (thử live 07/11, PO TEST-0711-TARO) + KHÁCH (qua Hùng 07/11 10:03, trả lời (a)) + HÙNG 07/11 10:18 "ok, theo đề xuất đi".
+        //   Lỗi (thử live 07/11, PO TEST-0711-TARO, Part 3B-PT1268610): Taro NC 3 làm trên máy H01 (loại trừ) giữa NC 2 và NC 4 → Gia công giao
+        //   theo NC cho HTSP, HTSP làm Taro rồi trả về NC 4. Hàng làm hộ không vào 4 số HTSP → mã Taro NC 3 "vào 0", WTS Taro NC 3 bị chặn;
+        //   sau NC 4 Gia công giao Hàng mới cho HTSP (Taro NC 5 = H01 cuối chuỗi) thì sổ bắt nhập lại Taro NC 3 (đếm 2 lần).
+        //   Luật mới (Hùng 07/11 10:18 "ok, theo đề xuất đi"; khách xác nhận (a)):
+        //     - Mã Taro ở NC loại trừ mà phía sau còn NC Gia công thường = "Taro làm hộ": vào = HTSP nhận hàng Gia công giao theo NC từ NC
+        //       thường ngay trước (phần OK lúc nhận); WTS Taro (mã, NC đó) trừ vào đó (có bộ gộp 3T); KHÔNG tính vào OK nhỏ nhất / Chưa làm / NG
+        //       của HTSP (4 số HTSP chỉ là hàng HTSP nhận để làm phần của mình).
+        //     - Câu 1: trả hàng làm hộ (hàng tốt) về NC sau đoạn không vượt OK bộ Taro đoạn đó (Workflow ON — ô K5 "HTSP|LamHoTaro|<NC>").
+        //     - Câu 2: WTS Taro làm hộ NG → vụ lỗi do HTSP gây; chiếc hỏng vẫn nằm trong Tồn hàng giao theo NC (vụ giữ ô LAMHO) tới khi trả
+        //       Gia công vào ô Hàng lỗi (phiếu Trả về Gia công theo NC, FromCell = LOI, mang vụ — sổ ghi "Lỗi trả lại" glLamHo).
+        //     - NC loại trừ CUỐI chuỗi (sau nó không còn NC thường): như cũ — Gia công giao Hàng mới, HTSP làm như mã thường.
+        //   Không SQL (dùng cột có sẵn). Nguồn: CLAUDE (thử live 07/11) + KHÁCH (qua Hùng 07/11 10:03) + HÙNG 07/11 10:18.
+        // =====================================================================
+        /// <summary>[TARO-LAMHO-NC] HTSP chỉ có mã Taro làm hộ (không mã chính nào của HTSP) — rà độc lập gói 6 mục 4.</summary>
+        public static bool HtspOnlyLamHo(LedgerRow row)
+        {
+            var m = row.G("HTSP").Steps.Where(s => !s.IsPrep).ToList();
+            return m.Count > 0 && m.All(s => s.LamHoNc != null);
+        }
+
+        /// <summary>[TARO-LAMHO-NC] So NC giữa bảng Gia công và bảng Taro (nhập tay ở Part Master): bỏ chữ "NC", khoảng trắng, số 0 đầu.</summary>
+        public static string NcKey(string? nc)
+        {
+            var s = (nc ?? "").Trim();
+            if (s.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) s = s[2..];
+            s = s.Replace(" ", "").TrimStart('0');
+            return s.ToUpperInvariant();
+        }
+
+        /// <summary>[TARO-LAMHO-NC] Các đoạn NC máy loại trừ liền nhau mà sau đó còn NC thường (đoạn đầu chuỗi: NC nguồn = @VAO).</summary>
+        public static List<LedgerLamHoRun> LamHoRunsOf(LedgerInput inp)
+        {
+            var all = inp.GcSteps.Where(s => !s.IsBackup && !string.IsNullOrWhiteSpace(s.NC)).OrderBy(s => s.StepOrder).ToList();
+            var res = new List<LedgerLamHoRun>();
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (!all[i].IsExcluded) continue;
+                int j = i;
+                while (j + 1 < all.Count && all[j + 1].IsExcluded) j++;
+                if (j + 1 < all.Count)
+                {
+                    var ncs = all.Skip(i).Take(j - i + 1).Select(s => s.NC.Trim()).ToList();
+                    res.Add(new LedgerLamHoRun { Key = ncs[0], Ncs = ncs, FromNc = i == 0 ? VaoCode : all[i - 1].NC.Trim(), NextNc = all[j + 1].NC.Trim() });
+                }
+                i = j;
+            }
+            // chỉ mã Taro CHÍNH (không mã chuẩn bị, không dự phòng) — đoạn chỉ có 1T không có OK bộ, câu 1 sẽ kẹt (rà độc lập gói 6 mục 3)
+            var taroNcs = inp.CodeSteps.Where(s => s.Pg == "TARO" && !s.IsBackup && !IsPrepCode(s.RawCode ?? s.Code) && !string.IsNullOrWhiteSpace(s.StepNc)).Select(s => NcKey(s.StepNc)).ToHashSet();
+            foreach (var r in res) r.HasTaro = r.Ncs.Any(n => taroNcs.Contains(NcKey(n)));
+            return res;
+        }
+
+        /// <summary>[TARO-LAMHO-NC] Mã Taro (khoá sổ, gồm dòng dự phòng cũ) ở NC của 1 đoạn làm hộ → NC đó (đúng chữ NC Gia công).</summary>
+        static Dictionary<string, string> LamHoCodes(LedgerInput inp, List<LedgerLamHoRun> runs)
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (runs.Count == 0) return d;
+            var ncOf = runs.SelectMany(r => r.Ncs).GroupBy(NcKey).ToDictionary(g => g.Key, g => g.First());
+            foreach (var s in inp.CodeSteps.Where(s => s.Pg == "TARO" && !string.IsNullOrWhiteSpace(s.Code) && !string.IsNullOrWhiteSpace(s.StepNc)))
+                if (ncOf.TryGetValue(NcKey(s.StepNc), out var nc)) d[s.Code.Trim()] = nc;
+            return d;
+        }
+
+        /// <summary>[TARO-LAMHO-NC] Đoạn làm hộ của phiếu Gia công giao theo NC từ <paramref name="fromNc"/> (phiếu cũ không ghi NC nguồn: đoạn duy nhất nếu có).</summary>
+        static LedgerLamHoRun? LamHoRunFrom(List<LedgerLamHoRun> runs, string? fromNc)
+            => string.IsNullOrWhiteSpace(fromNc) ? (runs.Count == 1 ? runs[0] : null)   // phiếu cũ không NC nguồn: chỉ gán khi PO có đúng 1 đoạn (rà vòng 2 L4)
+               : runs.FirstOrDefault(r => string.Equals(r.FromNc, fromNc.Trim(), StringComparison.OrdinalIgnoreCase));
+
         /// <summary>[TARO-NC-MA] Mã CV Taro dùng ở nhiều NC của PO → danh sách NC (thứ tự quy trình). Không gồm mã chuẩn bị.</summary>
         public static Dictionary<string, List<string>> TaroSharedNcs(IEnumerable<InCodeStep> codeSteps, bool prep = false)   // [TARO-NC-MA] prep = true: chỉ mã chuẩn bị
             => codeSteps.Where(x => x.Pg == "TARO" && !x.IsBackup && IsPrepCode(x.RawCode ?? x.Code) == prep && !string.IsNullOrWhiteSpace(x.RawCode ?? x.Code))
@@ -1300,8 +1418,39 @@ namespace MES.Web.Services
             => TaroNcsOf(row, pg, code)
                ?? (row != null && pg == "TARO" && !string.IsNullOrWhiteSpace(code) && row.TaroPrepNcs.TryGetValue(code.Trim(), out var pn) ? pn : null);
 
+        static bool NeedTrim(string? s) => s != null && (s.Length == 0 || char.IsWhiteSpace(s[0]) || char.IsWhiteSpace(s[^1]));
+        static string? TrimOrNull(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+        /// <summary>[WTS-MA-TRIM] Mã / NC từ trang: bỏ khoảng trắng đầu cuối (trống → null) — như sổ khi đọc DB.</summary>
+        public static string? TrimCode(string? s) => TrimOrNull(s);
+
+        /// <summary>[WTS-MA-TRIM] Mọi mã / NC đọc từ DB vào sổ bỏ khoảng trắng đầu cuối — CẢ HAI PHÍA của phép ghép: quy trình (snapshot NC, mã CV,
+        /// dòng cha, NC Taro), phiếu (NC giao / nhận, NC lần nhận), báo lỗi, Kết quả sửa, NC phát hiện của vụ. Rà độc lập Gói 7 (Cao): chỉ Trim dòng WTS
+        /// thì snapshot "NC2 " (Part Master không Trim NC) + dòng WTS cũ "NC2 " (trước khớp thô) nay lệch → OK rơi khỏi sổ. Mã chỉ còn chữ thật nên
+        /// mọi so sánh (đã không phân biệt hoa thường) khớp như WtsCap / kiểm mã của máy chủ (vốn so bản đã Trim).</summary>
+        public static void TrimInputCodes(LedgerInput inp)
+        {
+            if (inp.GcSteps.Any(s => NeedTrim(s.NC) || NeedTrim(s.ParentNC)))
+                inp.GcSteps = inp.GcSteps.Select(s => s with { NC = s.NC.Trim(), ParentNC = TrimOrNull(s.ParentNC) }).ToList();
+            if (inp.CodeSteps.Any(s => NeedTrim(s.Code) || NeedTrim(s.ParentCode) || NeedTrim(s.StepNc) || NeedTrim(s.RawCode)))
+                inp.CodeSteps = inp.CodeSteps.Select(s => s with { Code = s.Code.Trim(), ParentCode = TrimOrNull(s.ParentCode), StepNc = TrimOrNull(s.StepNc), RawCode = TrimOrNull(s.RawCode) }).ToList();
+            foreach (var t in inp.Txs)
+            {
+                if (NeedTrim(t.FromNC)) t.FromNC = TrimOrNull(t.FromNC);
+                if (NeedTrim(t.ToNC)) t.ToNC = TrimOrNull(t.ToNC);
+                if (t.Receives.Any(r => NeedTrim(r.ToNC))) t.Receives = t.Receives.Select(r => r with { ToNC = TrimOrNull(r.ToNC) }).ToList();
+            }
+            if (inp.NgReps.Any(b => NeedTrim(b.NC))) inp.NgReps = inp.NgReps.Select(b => b with { NC = TrimOrNull(b.NC) }).ToList();
+            foreach (var x in inp.Repairs) if (NeedTrim(x.ToNC)) x.ToNC = TrimOrNull(x.ToNC);
+            foreach (var k in inp.CaseInfo.Where(kv => NeedTrim(kv.Value.DetectNc)).Select(kv => kv.Key).ToList())
+                inp.CaseInfo[k] = inp.CaseInfo[k] with { DetectNc = TrimOrNull(inp.CaseInfo[k].DetectNc) };
+        }
+
         public static LedgerRow Compute(LedgerInput inp)
         {
+            // [WTS-MA-TRIM] mã CV / NC / NC Taro của dòng WTS bỏ khoảng trắng đầu cuối trước khi ghép với quy trình
+            //   (dòng cũ lưu "K1 " trước khi WtsSaveService chuẩn hoá) — WtsCap / kiểm mã cũng so bản đã Trim.
+            if (inp.Wts.Any(w => NeedTrim(w.NC) || NeedTrim(w.WtsCode) || NeedTrim(w.StepNC)))
+                inp.Wts = inp.Wts.Select(w => w with { NC = TrimOrNull(w.NC), WtsCode = TrimOrNull(w.WtsCode), StepNC = TrimOrNull(w.StepNC) }).ToList();
             var row = new LedgerRow
             {
                 KhPlanDetailId = inp.KhPlanDetailId, PlanNo = inp.PlanNo, PurchaseOrder = inp.PurchaseOrder,
@@ -1319,6 +1468,10 @@ namespace MES.Web.Services
             // ── Chuỗi NC gia công (N1, N2, N3) ─────────────────────────
             var gcChain = inp.GcSteps.Where(s => !s.IsBackup && !s.IsExcluded).OrderBy(s => s.StepOrder).ToList();
             var gcLastNc = gcChain.LastOrDefault()?.NC;
+
+            // [TARO-LAMHO-NC] Đoạn NC máy loại trừ giữa chuỗi + mã Taro làm hộ ở đó (khoá sổ mã → NC đoạn)
+            row.LamHoRuns = LamHoRunsOf(inp);
+            var lamHoCode = LamHoCodes(inp, row.LamHoRuns);
 
             // [GN-WTS-CAP] Bảng mã WTS → mã chính (N2). Mã chính trỏ về chính nó.
             foreach (var s in inp.GcSteps.Where(s => !string.IsNullOrWhiteSpace(s.NC)))
@@ -1500,12 +1653,14 @@ namespace MES.Web.Services
                 // ── [GN-CELL2] Ô hai đầu của phiếu: bên giao lấy từ ô nào (FromCell) và chỉ định bên nhận vào ô nào (ToCell).
                 //    Phiếu cũ (cột NULL): suy từ loại phiếu như trước. Phiếu theo NC (làm hộ) nằm ngoài 8 ô Excel → không có ô.
                 bool isHelp = purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn;
+                bool lhLoi  = HandoverCell.IsLamHoLoi(purpose, t.FromCell);   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ (mang vụ) về Gia công ô Hàng lỗi
+                LedgerCase? csL = lhLoi ? Cs(t.NgCaseId) : null;
                 string? fromCell = isHelp ? null
                     : t.FromCell ?? (purpose == HandoverPurpose.RepairReturn
                         ? (suaRunning[t.From] >= giao && giao > 0 ? HandoverCell.Sua : HandoverCell.Loi)   // [GN-CELL] phiếu Trả hàng đã sửa cũ
                         : HandoverCell.IssueCellOf(purpose, null));
                 bool prevNg = purpose == HandoverPurpose.NgReturn;
-                row.TxFromCell[t.Id] = fromCell;   // [GN-NG-TRACE] chỉ ghi lại ô đã dùng, không đổi phép tính
+                row.TxFromCell[t.Id] = lhLoi ? HandoverCell.Loi : fromCell;   // [GN-NG-TRACE] chỉ ghi lại ô đã dùng, không đổi phép tính · [TARO-LAMHO-NC] trả lỗi hàng làm hộ = hàng lỗi
                 string? desig = isHelp ? null : DesigCellOf(t, purpose);
                 // Thành phẩm: Đóng gói → Kho hàng mới — không vào phôi Kho. [GN-CELL2] chỉ phần Kho nhận vào ô Hàng mới mới là thành phẩm.
                 bool isTpTx = t.From == "PKG" && t.To == "KHO" && fromCell == HandoverCell.Moi;
@@ -1534,7 +1689,18 @@ namespace MES.Web.Services
                         if (t.From == "GC" && !string.IsNullOrEmpty(t.FromNC))
                             Add("GC", "helpOut:" + t.FromNC, IsVao(t.FromNC) ? "Giao theo NC từ " + VaoLabel : "Giao theo NC " + t.FromNC, giao, txDoc);   // [N3-FIRST] chữ @VAO (NC thường giữ chữ cũ)
                     }
-                    else Add(t.From, "ghRet", "Trả về Gia công theo NC", giao, txDoc);
+                    else if (lhLoi)
+                    {   // [TARO-LAMHO-NC] chiếc làm hộ bị lỗi (vụ đang giữ ô LAMHO) rời Tồn hàng giao theo NC → đang chuyển về Gia công
+                        Add(t.From, "glLamHo", "Giao Hàng lỗi (trả lỗi hàng làm hộ về Gia công)", giao, txDoc);
+                        CHold(csL!, t.From, HandoverCell.LamHo, -giao, t.At); csL!.Transit += giao;
+                        CHop(csL, "GIAO", t.From, t.To, HandoverCell.LamHo, giao, txDocName, t.Id, t.At);
+                    }
+                    else
+                    {
+                        Add(t.From, "ghRet", "Trả về Gia công theo NC", giao, txDoc);
+                        // [TARO-LAMHO-NC] HTSP trả hàng làm hộ (hàng tốt) vào NC thường ngay sau đoạn máy loại trừ → câu 1 (đã trả ≤ OK bộ Taro đoạn)
+                        if (t.From == "HTSP" && row.LamHoRunTo(t.ToNC) is { } rr) { rr.Ret += giao; rr.RetDocs.Add(txDoc); }   // mọi đoạn (kể cả không Taro) — số dư từng đoạn
+                    }
                 }
                 else switch (fromCell)
                 {
@@ -1573,11 +1739,27 @@ namespace MES.Web.Services
                 }
 
                 // ---- Bên nhận ---- [GN-CELL2] từng lần nhận, vào ô bên nhận THỰC CHỌN (mặc định ô bên giao chỉ định)
-                if (isHelp)
+                if (lhLoi)
+                {   // [TARO-LAMHO-NC] Gia công nhận chiếc làm hộ bị lỗi vào ô Hàng lỗi (cả số nhận — hàng đã là hàng lỗi, không đếm NG lúc nhận)
+                    if (rec > 0) Add(t.To, "nl", "Nhận Hàng lỗi (hàng làm hộ bị lỗi trả về)", rec, RecDoc(""));
+                    foreach (var r in t.Receives.OrderBy(x => x.At))
+                    {
+                        var q = r.Ok + r.Ng;
+                        if (q == 0) continue;
+                        csL!.Transit -= q; CHold(csL, t.To, HandoverCell.Loi, q, r.At); CAdd(csL.NhanLoi, t.To, q);
+                        CHop(csL, "NHAN", t.To, t.From, HandoverCell.Loi, q, txDocName, t.Id, r.At);
+                    }
+                }
+                else if (isHelp)
                 {
                     if (rec > 0)
                     {
-                        if (purpose == HandoverPurpose.HelpSend) Add(t.To, "nhSend", "Nhận hàng Gia công giao theo NC", rec, RecDoc(""));
+                        if (purpose == HandoverPurpose.HelpSend)
+                        {
+                            Add(t.To, "nhSend", "Nhận hàng Gia công giao theo NC", rec, RecDoc(""));
+                            // [TARO-LAMHO-NC] vào của mã Taro làm hộ = phần OK lúc nhận (NG đếm lúc nhận trả ngay Gia công)
+                            if (t.To == "HTSP" && LamHoRunFrom(row.LamHoRuns, t.FromNC) is { } rin) rin.In += recOk;
+                        }
                         else
                         {
                             Add(t.To, "nhRet", "Nhận vào NC (hàng trả về)", rec, RecDoc(""));
@@ -1651,6 +1833,17 @@ namespace MES.Web.Services
             {
                 var g = Pg2Group(w.ProcessGroup);
                 if (g == "") continue;
+                // [TARO-LAMHO-NC] WTS Taro làm hộ NG: vụ do HTSP gây, chiếc hỏng vẫn nằm trong Tồn hàng giao theo NC (ô vụ LAMHO) — không vào NG / Tồn hàng lỗi HTSP
+                if (w.Ng != 0 && w.ProcessGroup == "TARO" && lamHoCode.ContainsKey((w.WtsCode ?? w.NC ?? "").Trim()))
+                {
+                    Add(g, "lhNg", "NG (WTS Taro làm hộ)", w.Ng, new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w) });
+                    var csWl = Cs(w.NgCaseId);
+                    var runW = row.LamHoRuns.FirstOrDefault(r => r.Ncs.Contains(lamHoCode[(w.WtsCode ?? w.NC ?? "").Trim()], StringComparer.OrdinalIgnoreCase));
+                    if (runW != null) { runW.Ng += w.Ng; csWl.HelpFromNc ??= runW.FromNc; }   // NC làm tiếp khi sửa đạt về Gia công = như NG lúc nhận hàng giao theo NC (rà độc lập gói 6 mục 6)
+                    csWl.SinhRa += w.Ng; CHold(csWl, g, HandoverCell.LamHo, w.Ng, WtsCaseAt(w));
+                    CHop(csWl, "PS", g, null, HandoverCell.LamHo, w.Ng, $"WTS #{w.Id}", w.Id, w.At);
+                    continue;
+                }
                 if (w.Ng != 0)
                 {
                     Add(g, "ngc", "NG (WTS)", w.Ng, new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w) });
@@ -1973,6 +2166,25 @@ namespace MES.Web.Services
                     lh.Terms.Add(Tm("nhSend", "Nhận theo NC", 1)); lh.Terms.Add(Tm("ghRet", "Trả về Gia công theo NC", -1)); lh.Terms.Add(Tm("glLamHo", "Lỗi trả lại", -1));
                     lh.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Nhận theo NC");
                     G.Explains["LamHoGiu"] = lh;
+                    // [TARO-LAMHO-NC] Hàng làm hộ bị lỗi (WTS Taro làm hộ NG, đã có vụ) nằm trong Tồn hàng giao theo NC, chỉ trả Gia công ô Hàng lỗi
+                    var lhNgHeld = row.LamHoNgHeld(code);
+                    if (lhNgHeld != 0 || V("lhNg") != 0)
+                    {
+                        lh.Note += $" Trong đó {lhNgHeld:0.##} chiếc làm hộ bị lỗi (WTS Taro làm hộ NG, đã có vụ) — chỉ trả Gia công vào ô Hàng lỗi; trả hàng tốt tối đa {G.LamHoGiu - lhNgHeld:0.##}.";
+                        if (lhNgHeld > G.LamHoGiu) G.Warnings.Add($"{G.Label}: hàng làm hộ bị lỗi đang giữ ({lhNgHeld:0.##}) nhiều hơn Tồn hàng giao theo NC ({G.LamHoGiu:0.##}) — K4");
+                    }
+                    if (code == "HTSP")
+                        foreach (var r in row.LamHoRuns.Where(r => r.HasTaro))
+                        {
+                            var ex = new LedgerExplain { Title = $"HTSP · Taro làm hộ {string.Join(", ", r.Ncs.Select(NcName))} · trả về {NcName(r.NextNc)}", Rule = "N3, K4",
+                                Formula = "OK bộ Taro (nhỏ nhất các mã Taro chính của NC, bộ gộp = OK mã gộp + min mã thành phần) − đã trả về Gia công (hàng tốt)",
+                                Note = $"Hàng Gia công giao theo NC từ {NcName(r.FromNc)} cho HTSP làm Taro; chỉ trả về {NcName(r.NextNc)} số đã xong bộ Taro (Workflow ON). Nhận vào {r.In:0.##}.",
+                                Result = r.Done - r.Ret };
+                            ex.Terms.Add(new LedgerTerm { Label = "OK bộ Taro làm hộ", Value = r.Done, Sign = 1, Docs = r.DoneDocs });
+                            ex.Terms.Add(new LedgerTerm { Label = $"Đã trả về {NcName(r.NextNc)} (hàng tốt)", Value = r.Ret, Sign = -1, Docs = r.RetDocs });
+                            G.Explains["LamHoTaro:" + r.Key] = ex;
+                            if (r.Done - r.Ret < 0) G.Warnings.Add($"HTSP: trả hàng làm hộ Taro {string.Join(", ", r.Ncs.Select(NcName))} về {NcName(r.NextNc)} nhiều hơn số đã xong bộ Taro ({r.Done - r.Ret:0.##}) — K4");
+                        }
 
                     if (G.ChuaLam < 0)  G.Warnings.Add($"{G.Label}: Chưa làm âm ({G.ChuaLam:0.##}) — WTS / trả lỗi nhiều hơn hàng nhận vào (L3)");
                     if (G.ConGiao < 0)  G.Warnings.Add($"{G.Label}: giao Hàng mới nhiều hơn số đã làm ({G.ConGiao:0.##}) — L4");
@@ -2388,6 +2600,7 @@ namespace MES.Web.Services
             //   Mỗi chiếc đi 1 trong 2 cách → OK của bộ = OK mã gộp + min OK các mã thành phần (thay cho OK từng mã khi lấy OK nhỏ nhất).
             //   Nguồn: KHÁCH 02/11 09:14 (3T thay bộ 3T1–3T3); HÙNG 05/11 15:37 OK "3T = min(3T1..3T3)" (cách tính gửi 03/11).
             var units = group == "HTSP" ? TaroGopUnits(inp, mains, G) : new List<(InCodeStep Gop, List<InCodeStep> Parts)>();
+            var lamHo = group == "HTSP" ? LamHoCodes(inp, row.LamHoRuns) : new Dictionary<string, string>();   // [TARO-LAMHO-NC]
             var info = new Dictionary<InCodeStep, (decimal ok, List<InWts> rows, LedgerStepLine line)>(ReferenceEqualityComparer.Instance);
             foreach (var m in steps.OrderBy(s => Array.IndexOf(pgs, s.Pg)).ThenBy(s => s.StepOrder))
             {
@@ -2407,7 +2620,10 @@ namespace MES.Web.Services
                     SubGroup = SubLabel(m.Pg), Code = m.Code, StepOrder = m.StepOrder, Ok = ok, Ng = ng, IsPrep = prep,
                     Note = prep ? "mã chuẩn bị — không tính số lượng" : m.StepName,
                     GopUnit = unit.Gop?.Code, IsGop = unit.Gop != null && ReferenceEquals(unit.Gop, m),   // [TARO-3T-GOP]
+                    LamHoNc = m.Pg == "TARO" && lamHo.TryGetValue(m.Code.Trim(), out var lhNc) ? lhNc : null,   // [TARO-LAMHO-NC]
                 };
+                if (line.LamHoNc != null)
+                    line.Note = (line.Note == null ? "" : line.Note + " · ") + $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công) — không tính vào Đã làm của HTSP";
                 if (unit.Gop != null)
                     line.Note = (line.Note == null ? "" : line.Note + " · ") + (line.IsGop
                         ? $"mã gộp — làm thay {string.Join(" + ", unit.Parts.Select(p => p.Code))}"
@@ -2418,6 +2634,9 @@ namespace MES.Web.Services
             // OK nhỏ nhất: mã thường = OK mã; bộ gộp = OK mã gộp + min OK mã thành phần (xét ở vị trí mã đầu tiên của bộ, cùng thứ tự như cũ)
             (decimal ok, List<InWts> rows, List<LedgerStepLine> marks, string label)? min = null;
             var unitDone = new HashSet<InCodeStep>(ReferenceEqualityComparer.Instance);
+            // [TARO-LAMHO-NC] OK nhỏ nhất riêng từng NC Taro làm hộ (cùng cách tính, không vào Đã làm của HTSP)
+            var lhMin = new Dictionary<string, (decimal ok, List<InWts> rows)>(StringComparer.OrdinalIgnoreCase);
+            void LhTake(string nc, decimal ok, List<InWts> rows) { if (!lhMin.TryGetValue(nc, out var cur) || ok < cur.ok) lhMin[nc] = (ok, rows); }
             foreach (var m in steps.OrderBy(s => Array.IndexOf(pgs, s.Pg)).ThenBy(s => s.StepOrder))
             {
                 if (m.IsBackup || IsPrepCode(m.Code)) continue;
@@ -2425,6 +2644,7 @@ namespace MES.Web.Services
                 if (unit.Gop == null)
                 {
                     var x = info[m];
+                    if (x.line.LamHoNc != null) { LhTake(x.line.LamHoNc, x.ok, x.rows); continue; }   // [TARO-LAMHO-NC]
                     if (min == null || x.ok < min.Value.ok) min = (x.ok, x.rows, new List<LedgerStepLine> { x.line }, $"{SubLabel(m.Pg)} {m.Code}");
                     continue;
                 }
@@ -2432,11 +2652,25 @@ namespace MES.Web.Services
                 var g = info[unit.Gop];
                 var pMin = unit.Parts.Select(p => info[p]).OrderBy(p => p.ok).ThenBy(p => p.line.StepOrder).First();
                 var uOk = g.ok + pMin.ok;
+                if (g.line.LamHoNc != null) { LhTake(g.line.LamHoNc, uOk, g.rows.Concat(pMin.rows).ToList()); continue; }   // [TARO-LAMHO-NC] bộ gộp cùng NC
                 if (min == null || uOk < min.Value.ok)
                     min = (uOk, g.rows.Concat(pMin.rows).ToList(), new List<LedgerStepLine> { g.line, pMin.line },
                            $"{SubLabel(m.Pg)} {unit.Gop.Code} + {pMin.line.Code} (gộp)");
             }
-            var t = T(group, "ok", $"OK nhỏ nhất: {min!.Value.label}");
+            // [TARO-LAMHO-NC] OK bộ Taro của đoạn làm hộ = nhỏ nhất giữa các NC của đoạn có mã Taro
+            foreach (var r in row.LamHoRuns)
+            {
+                var have = r.Ncs.Where(n => lhMin.ContainsKey(n)).Select(n => lhMin[n]).OrderBy(v => v.ok).ToList();
+                if (have.Count == 0) continue;
+                r.Done = have[0].ok;
+                r.DoneDocs = have[0].rows.Where(w => w.Ok != 0).Select(w => new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w), Qty = w.Ok }).ToList();
+            }
+            if (min == null)
+            {   // [TARO-LAMHO-NC] nhóm chỉ có mã Taro làm hộ: HTSP không có phần việc của mình trên PO này → Đã làm = 0
+                T(group, "ok", "OK nhỏ nhất: (không có mã CV chính ngoài Taro làm hộ)");
+                return;
+            }
+            var t = T(group, "ok", $"OK nhỏ nhất: {min.Value.label}");
             t.Value = min.Value.ok;
             foreach (var w in min.Value.rows.Where(w => w.Ok != 0))
                 t.Docs.Add(new LedgerDoc { Kind = "WTS", RefId = w.Id, At = w.At, Text = WtsText(w), Qty = w.Ok });
@@ -2458,7 +2692,7 @@ namespace MES.Web.Services
                 var raw = (g.RawCode ?? g.Code).Trim();
                 var partCodes = inp.TaroGops.Where(x => string.Equals(x.Gop, raw, StringComparison.OrdinalIgnoreCase)).Select(x => x.Part).ToList();
                 if (partCodes.Count == 0) continue;
-                var parts = taro.Where(p => !ReferenceEquals(p, g) && SameNc(p.StepNc, g.StepNc)
+                var parts = taro.Where(p => !ReferenceEquals(p, g) && NcKey(p.StepNc) == NcKey(g.StepNc)   // [TARO-LAMHO-NC] so NC như đoạn làm hộ ("3" = "NC03") — rà độc lập gói 6 mục 10
                                             && partCodes.Contains((p.RawCode ?? p.Code).Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
                 if (parts.Count == 0) continue;
                 if (used.Contains(g) || parts.Any(used.Contains))
@@ -2609,10 +2843,18 @@ namespace MES.Web.Services
         {
             var G = row.G(group);
             decimal V(string k) => acc.TryGetValue((group, k), out var t) ? t.Value : 0m;
-            var mains = G.Steps.Where(s => !s.IsPrep).ToList();
+            // [TARO-LAMHO-NC] mã Taro làm hộ: vào = hàng giao theo NC của đoạn (không dùng hàng nhận của nhóm) — tính riêng, cùng công thức
+            FillLamHoWaiting(row, G);
+            var mains = G.Steps.Where(s => !s.IsPrep && s.LamHoNc == null).ToList();
             if (!mains.Any()) return;
             var gnet  = G.NhanMoi + G.NhanLoiXl + V("nhRet") - recvNg - V("ghSend");
             var rr    = V("glTra") - recvNg + V("blChua");   // [GN-NG-AFTER] báo lỗi lấy từ hàng chưa làm = chiếc đã rời Chưa làm (như trả hàng lỗi)
+            FillWaitLines(G, mains, gnet, rr, G.ChuaLam, "");
+        }
+
+        /// <summary>Còn chờ làm từng mã (N5) — dùng chung cho mã thường của nhóm và mã Taro làm hộ của 1 NC ([TARO-LAMHO-NC]).</summary>
+        static void FillWaitLines(LedgerGroup G, List<LedgerStepLine> mains, decimal gnet, decimal rr, decimal chuaLam, string where)
+        {
             var ngAll = mains.Sum(s => s.Ng);
             foreach (var s in mains)
             {
@@ -2637,11 +2879,41 @@ namespace MES.Web.Services
                             : gnet - doneG - (s.Ok + s.Ng) - Math.Max(0, goneU - (gL.Ok + s.Ok));
                     }
                 }
-                var w    = Math.Min(perm, G.ChuaLam);
+                var w    = Math.Min(perm, chuaLam);
                 s.Waiting = w;
                 s.In      = w + s.Ok + s.Ng;
                 if (perm < 0)
-                    G.Warnings.Add($"{G.Label} {s.SubGroup} {s.Code}: OK + NG ({s.Ok + s.Ng:0.##}) nhiều hơn số nhận vào mã — WTS nhập vượt (L3, N5)");
+                    G.Warnings.Add($"{G.Label} {s.SubGroup} {s.Code}: OK + NG ({s.Ok + s.Ng:0.##}) nhiều hơn số nhận vào mã{where} — WTS nhập vượt (L3, N5)");
+            }
+        }
+
+        /// <summary>[TARO-LAMHO-NC] OK bộ của các dòng mã (cùng 1 NC): mã thường = OK, bộ gộp = OK mã gộp + min OK mã thành phần; lấy nhỏ nhất.</summary>
+        static decimal LinesOkMin(List<LedgerStepLine> lines)
+        {
+            decimal? min = null;
+            foreach (var s in lines.Where(x => x.GopUnit == null)) min = min == null ? s.Ok : Math.Min(min.Value, s.Ok);
+            foreach (var u in lines.Where(x => x.GopUnit != null).GroupBy(x => x.GopUnit))
+            {
+                var gL = u.FirstOrDefault(x => x.IsGop);
+                var pL = u.Where(x => !x.IsGop).ToList();
+                var ok = (gL?.Ok ?? 0) + (pL.Count > 0 ? pL.Min(p => p.Ok) : 0);
+                min = min == null ? ok : Math.Min(min.Value, ok);
+            }
+            return min ?? 0;
+        }
+
+        /// <summary>[TARO-LAMHO-NC] Còn chờ làm của mã Taro làm hộ từng NC: vào = HTSP nhận hàng giao theo NC của đoạn (phần OK lúc nhận);
+        ///   "chưa làm" của NC = vào − OK bộ Taro NC đó − NG các mã NC đó (chiếc đã trả về Gia công là chiếc đã xong bộ — câu 1 chặn trả quá OK bộ).</summary>
+        static void FillLamHoWaiting(LedgerRow row, LedgerGroup G)
+        {
+            // cả ĐOẠN (1 hoặc nhiều NC máy loại trừ liền nhau) là 1 nhóm: NG ở NC này cũng là chiếc đã rời với mã NC kia (rà vòng 2 T1)
+            foreach (var run in row.LamHoRuns)
+            {
+                var lines = G.Steps.Where(s => !s.IsPrep && s.LamHoNc != null && run.Ncs.Contains(s.LamHoNc, StringComparer.OrdinalIgnoreCase)).ToList();
+                if (lines.Count == 0) continue;
+                var okMin = lines.GroupBy(x => x.LamHoNc!, StringComparer.OrdinalIgnoreCase).Min(g => LinesOkMin(g.ToList()));
+                var chua = run.In - okMin - lines.Sum(x => x.Ng);
+                FillWaitLines(G, lines, run.In, 0, chua, $" (Taro làm hộ {string.Join(", ", run.Ncs.Select(NcName))})");
             }
         }
 
@@ -2716,6 +2988,8 @@ namespace MES.Web.Services
                 Formula = "Nhận vào − đã ghi WTS OK − đã ghi WTS NG",   // [WTS-CAP-TEXT]
                 Note = pg == "GC"
                     ? $"Nhận vào NC: {line.Note}. Máy đồng dạng gộp chung số với NC chính."
+                    : line.LamHoNc != null   // [TARO-LAMHO-NC]
+                    ? $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công): nhận vào mã = hàng Gia công giao theo NC cho HTSP làm NC này (phần OK lúc nhận) − chiếc đã NG ở mã khác cùng NC mà mã này chưa làm. Không tính vào Chưa làm / Đã làm của HTSP."
                     : "Nhận vào mã = hàng nhận vào sản xuất của nhóm − chiếc đã rời nhóm (NG ở mã khác, trả hàng lỗi) mà mã này chưa làm; không vượt Chưa làm của cả nhóm.",
                 Result = line.Waiting ?? 0
             };
@@ -2912,6 +3186,14 @@ namespace MES.Web.Services
                 Put(G.Code + "|SuaGiu",   G.SuaGiu,   $"{G.Label}: tồn hàng sửa");   // [GN-CELL]
                 Put(G.Code + "|LamHoGiu", G.LamHoGiu, $"{G.Label}: Tồn hàng giao theo NC");
                 Put(G.Code + "|ChoKcs", G.ChoKcs, $"{G.Label}: hàng sửa chờ KCS");   // [GC-SUA-TAI-CHO]
+                // [TARO-LAMHO-NC] hàng làm hộ còn tốt (Tồn hàng giao theo NC − chiếc làm hộ bị lỗi đang giữ) + câu 1: trả về ≤ OK bộ Taro đoạn
+                Put(G.Code + "|LamHoTot", G.LamHoGiu - r.LamHoNgHeld(G.Code), $"{G.Label}: hàng giao theo NC còn tốt (trừ chiếc làm hộ bị lỗi)");
+                if (G.Code == "HTSP" && r.LamHoRuns.Any(x => x.HasTaro))
+                    foreach (var lr in r.LamHoRuns)
+                        Put("HTSP|LamHoRun|" + lr.Key, lr.Held, $"HTSP: hàng giao theo NC của đoạn {string.Join(", ", lr.Ncs.Select(NcName))} còn giữ (nhận − trả về − chiếc hỏng)");   // rà độc lập gói 6 mục 1
+                if (G.Code == "HTSP")
+                    foreach (var lr in r.LamHoRuns.Where(x => x.HasTaro))
+                        Put("HTSP|LamHoTaro|" + lr.Key, lr.Done - lr.Ret, $"HTSP: Taro làm hộ {string.Join(", ", lr.Ncs.Select(NcName))} — đã trả về {NcName(lr.NextNc)} nhiều hơn OK bộ Taro");
                 // Ô theo NC (GC) là ô bảo toàn thật (N1).
                 foreach (var s in G.Steps.Where(s => s.Pg == "GC" && s.Waiting.HasValue && !s.IsExcluded && !s.IsPrep))
                     Put($"{G.Code}|{s.Pg}|{s.Code}", s.Waiting!.Value, IsVao(s.Code)
@@ -2945,7 +3227,7 @@ namespace MES.Web.Services
                     var hp = hkey.Split('|');
                     var fin = cs.Held.TryGetValue(hkey, out var hv) ? hv : 0m;
                     var low = cs.MinHeld.TryGetValue(hkey, out var mv) ? Math.Min(mv, fin) : fin;
-                    Put($"VU|{cs.Id}|{hkey}", low, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : "tồn hàng lỗi")}"
+                    Put($"VU|{cs.Id}|{hkey}", low, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : hp[1] == HandoverCell.LamHo ? "hàng làm hộ bị lỗi (Tồn hàng giao theo NC)" : "tồn hàng lỗi")}"
                         + (low < fin ? " (theo thứ tự thời gian: hàng của vụ đã giao đi trước khi có chứng từ nguồn)" : ""));
                 }
                 Put($"VU|{cs.Id}|CHUYEN", cs.Transit, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)}: đang chuyển");
@@ -2998,7 +3280,7 @@ namespace MES.Web.Services
         /// [GN-LEDGER] Trần số lượng được lập cho 1 loại phiếu + diễn giải.
         /// [GN-CELL] fromCell = ô bên giao chọn (MOI/LOI/SUA): Trả hàng đã sửa từ ô Hàng lỗi (tự sửa) lấy trần ô Hàng lỗi, từ ô Hàng sửa lấy trần ô Hàng sửa.
         /// </summary>
-        public static (decimal Max, LedgerExplain Explain) IssueCap(LedgerRow row, string from, string purpose, string? fromNC, string? fromCell = null)
+        public static (decimal Max, LedgerExplain Explain) IssueCap(LedgerRow row, string from, string purpose, string? fromNC, string? fromCell = null, string? toNC = null)   // [TARO-LAMHO-NC] + toNC (trả hàng làm hộ)
         {
             var G = row.G(from);
             LedgerExplain Pick(string key) => G.Explains.TryGetValue(key, out var e) ? e : new LedgerExplain();
@@ -3032,7 +3314,47 @@ namespace MES.Web.Services
                         ? (Math.Max(0, G.LoiGiu), Pick("LoiGiu"))
                         : (Math.Max(0, G.SuaGiu), Pick("SuaGiu"));
                 case HandoverPurpose.HelpReturn:
-                    return (Math.Max(0, G.LamHoGiu), Pick("LamHoGiu"));
+                {
+                    // [TARO-LAMHO-NC] trả lỗi hàng làm hộ (mang vụ) = chiếc làm hộ bị lỗi đang giữ; hàng tốt = Tồn hàng giao theo NC − chiếc bị lỗi,
+                    //   và (Workflow ON, HTSP, NC nhận là NC sau đoạn có Taro làm hộ) không vượt OK bộ Taro đoạn − đã trả (câu 1)
+                    var ngHeld = row.LamHoNgHeld(from);
+                    if (fromCell == HandoverCell.Loi)
+                        return (Math.Max(0, ngHeld), new LedgerExplain { Title = $"{G.Label} · hàng làm hộ bị lỗi đang giữ", Rule = "N3, K4", Result = ngHeld,
+                            Note = "Chiếc làm hộ bị lỗi (WTS Taro làm hộ NG, đã có vụ) nằm trong Tồn hàng giao theo NC — trả Gia công vào ô Hàng lỗi, cùng vụ." });
+                    var good = G.LamHoGiu - ngHeld;
+                    LedgerExplain GoodEx()
+                    {
+                        if (ngHeld == 0) return Pick("LamHoGiu");
+                        var e0 = new LedgerExplain { Title = $"{G.Label} · hàng giao theo NC còn tốt", Rule = "N3, K4", Result = good,
+                            Formula = "Tồn hàng giao theo NC − chiếc làm hộ bị lỗi (trả lỗi riêng)" };   // rà độc lập gói 6 vòng 2 L3
+                        e0.Terms.Add(new LedgerTerm { Label = "Tồn hàng giao theo NC", Value = G.LamHoGiu, Sign = 1 });
+                        e0.Terms.Add(new LedgerTerm { Label = "chiếc làm hộ bị lỗi", Value = ngHeld, Sign = -1 });
+                        return e0;
+                    }
+                    if (row.ApplyWorkflow && row.LamHoRuns.Any(x => x.HasTaro))
+                    {
+                        var lr = row.LamHoRunTo(toNC);
+                        // nhóm khác HTSP (vd hàng giao lúc Workflow OFF) không trả hàng đoạn có Taro vào NC sau đoạn: Taro chưa làm (rà vòng 2 T2-R3)
+                        if (from != "HTSP")
+                            return lr is { HasTaro: true }
+                                ? (0, new LedgerExplain { Title = $"{G.Label} · không trả vào {NcName(toNC)}: đoạn {string.Join(", ", lr.Ncs.Select(NcName))} có Taro làm hộ (HTSP làm)", Rule = "N3, K4", Result = 0 })
+                                : (Math.Max(0, good), GoodEx());
+                        // HTSP: hàng của đoạn chỉ trả về NC sau chính đoạn đó (số dư đoạn = nhận − đã trả − chiếc hỏng; đoạn Taro: ≤ OK bộ − đã trả — câu 1).
+                        //   Hàng giao theo NC không thuộc đoạn nào (giao lúc Workflow OFF / dữ liệu cũ) = phần còn lại → trả vào NC khác NC sau đoạn (rà vòng 2 T2-R2, L4)
+                        var orphan = good - row.LamHoRuns.Sum(x => Math.Max(0, x.Held));
+                        if (lr == null)
+                            return (Math.Max(0, Math.Min(good, orphan)), new LedgerExplain { Title = $"HTSP · hàng làm hộ Taro chỉ trả về {string.Join(" / ", row.LamHoRuns.Select(x => NcName(x.NextNc)).Distinct())}; vào {NcName(toNC)} chỉ hàng giao theo NC không thuộc đoạn nào", Rule = "N3, K4",
+                                Result = Math.Max(0, Math.Min(good, orphan)),
+                                Note = "PO có Taro làm hộ ở NC máy loại trừ giữa chuỗi: hàng của đoạn trả về NC thường ngay sau đoạn đó." });
+                        var cap = Math.Min(good, lr.Held);
+                        if (lr.HasTaro && lr.Done - lr.Ret < cap)
+                            return (Math.Max(0, lr.Done - lr.Ret), Pick("LamHoTaro:" + lr.Key));
+                        if (lr.Held < good)
+                            return (Math.Max(0, cap), new LedgerExplain { Title = $"HTSP · hàng giao theo NC của đoạn {string.Join(", ", lr.Ncs.Select(NcName))} còn giữ", Rule = "N3, K4", Result = cap,
+                                Formula = "nhận theo NC của đoạn − đã trả về − chiếc hỏng (Taro làm hộ NG)" });
+                    }
+                    return (Math.Max(0, good), GoodEx());
+                }
                 case HandoverPurpose.HelpSend:
                 {
                     if (from != "GC" || string.IsNullOrEmpty(fromNC))
@@ -3055,6 +3377,11 @@ namespace MES.Web.Services
                         return (Math.Max(0, Math.Min(ev.Result, G.ChuaLam)), ev);
                     }
                     var next = G.Steps.SkipWhile(s => s.Code != fromNC).Skip(1).FirstOrDefault();
+                    // [TARO-LAMHO-NC] PO có Taro làm hộ: giao theo NC chỉ từ NC ngay trước đoạn máy loại trừ (hàng giao từ NC khác không thuộc đoạn nào → kẹt ở nhóm làm hộ)
+                    //   (rà độc lập gói 6 mục 5)
+                    if (row.ApplyWorkflow && row.LamHoRuns.Any(x => x.HasTaro) && next != null && !next.IsExcluded)
+                        return (0, new LedgerExplain { Title = $"Giao theo NC chỉ từ {string.Join(" / ", row.LamHoRuns.Select(x => NcName(x.FromNc)).Distinct())}", Rule = "N3, N4",
+                            Note = $"PO có Taro làm hộ ở NC máy loại trừ giữa chuỗi: giao theo NC từ NC ngay trước máy loại trừ; {NcName(fromNC)} có NC sau là NC thường ({NcName(next.Code)})." });
                     // [GN-HELP-LAST] NC cuối không giao theo NC: OK của NC cuối đã là "Đã làm chưa giao" của Gia công → giao bằng Hàng mới.
                     //   Trước: giao theo NC từ NC cuối trừ Chưa GC nhưng không trừ NC nào → Σ chờ các NC > Chưa GC → WTS nhập vượt, Chưa GC âm.
                     //   (Bản sửa 24/10 commit cục bộ 3823d97 chưa lên master 11e8f78 — đưa lại.)
@@ -3087,18 +3414,23 @@ namespace MES.Web.Services
 
         /// <summary>[VULOI] Phiếu này lấy hàng từ ô Hàng lỗi / Hàng sửa đang giữ (phải chọn vụ)? Hàng lỗi công đoạn trước: không (vụ sinh mới).</summary>
         public static bool TakesHeldCase(string purpose, string? fromCell)
-            => purpose is HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn or HandoverPurpose.Scrap or HandoverPurpose.CustReturn
-               && (fromCell ?? HandoverCell.IssueCellOf(purpose, null)) is HandoverCell.Loi or HandoverCell.Sua;
+            => (purpose is HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn or HandoverPurpose.Scrap or HandoverPurpose.CustReturn
+                && (fromCell ?? HandoverCell.IssueCellOf(purpose, null)) is HandoverCell.Loi or HandoverCell.Sua)
+               || HandoverCell.IsLamHoLoi(purpose, fromCell);   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ: vụ đang giữ ô LAMHO
+
+        /// <summary>[VULOI] Ô giữ của vụ mà phiếu lấy hàng ([TARO-LAMHO-NC] trả lỗi hàng làm hộ: ô LAMHO — chỉ trong sổ).</summary>
+        public static string HeldCellOf(string purpose, string? fromCell)
+            => HandoverCell.IsLamHoLoi(purpose, fromCell) ? HandoverCell.LamHo : (fromCell ?? HandoverCell.IssueCellOf(purpose, null)!);
 
         /// <summary>
         /// [VULOI 2026-10-28] Trần lập phiếu có tính vụ lỗi: phiếu lấy từ ô Hàng lỗi / Hàng sửa thì không vượt số vụ đó đang giữ ở nhóm giao
         /// (ngCaseId null = hàng lỗi cũ chưa có mã). Phiếu khác: như IssueCap.
         /// </summary>
-        public static (decimal Max, LedgerExplain Explain) IssueCapCase(LedgerRow row, string from, string purpose, string? fromNC, string? fromCell, long? ngCaseId)
+        public static (decimal Max, LedgerExplain Explain) IssueCapCase(LedgerRow row, string from, string purpose, string? fromNC, string? fromCell, long? ngCaseId, string? toNC = null)
         {
-            var (max, ex) = IssueCap(row, from, purpose, fromNC, fromCell);
+            var (max, ex) = IssueCap(row, from, purpose, fromNC, fromCell, toNC);
             if (!TakesHeldCase(purpose, fromCell)) return (max, ex);
-            var cell = fromCell ?? HandoverCell.IssueCellOf(purpose, null)!;
+            var cell = HeldCellOf(purpose, fromCell);   // [TARO-LAMHO-NC]
             var held = row.CaseHeld(ngCaseId ?? 0, from, cell);
             if (held >= max) return (max, ex);
             var cs = row.Cases.TryGetValue(ngCaseId ?? 0, out var x) ? x : null;

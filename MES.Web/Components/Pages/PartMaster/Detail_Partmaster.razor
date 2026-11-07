@@ -657,10 +657,7 @@ else
                                                         <i class="bi bi-pencil"></i>
                                                     </button>
                                                 }
-                                                <button class="btn btn-sm btn-outline-warning p-0 px-1 me-1" title="Tạo mã CV dự phòng cho dòng này"
-                                                        @onclick="() => AddBackupRow(_taroEdits, edit, (nc, parent) => new TaroEdit { State = EditState.New, NC = nc, ParentNC = parent, IsBackup = true, StepName = edit.StepName, StandardTime = edit.StandardTime })">
-                                                    <i class="bi bi-diagram-3"></i>
-                                                </button>
+                                                @* [TARO-DUPHONG 2026-11-07] bỏ nút "Tạo mã CV dự phòng" ở Taro (Hùng 07/11 09:11) — máy chủ cũng chặn (PartTaroService) *@
                                                 @RowActionButton(edit, () => ToggleDelete(edit, _taroEdits))
                                             }
                                         </td>
@@ -3687,7 +3684,7 @@ else
         // [B6-NC-DUP 29/10] Taro: sổ giao nhận / WTS tính theo mã CV (WtsTaskCode, trống thì NC) → kiểm trùng / trống theo đúng mã đó
         // [TARO-NC-MA 2026-11-06] Taro trùng theo CẶP (mã CV, NC): cùng mã CV ở NC khác là hợp lệ (khách chốt B 02/11 09:14 — giữ mã chung nhiều NC,
         //   sổ + form WTS đếm theo cặp); trước: chặn mọi dòng trùng mã CV → khách không khai được Taro 2 lần (NC 3 / NC 5). Máy chủ cũng kiểm cặp.
-        if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode, t => t.NC); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }
+        if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode, t => t.NC); CheckTaroSwap(_taroEdits, validationErrors); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }   // [TARO-DOI-CHEO-NC] + đổi chéo theo (mã, NC)
         if (_canEditD) CheckNcList(_inspectionEdits, "KCS", validationErrors);
         if (_canEditE) CheckNcList(_packagingEdits, "Đóng gói", validationErrors);
         if (validationErrors.Count > 0)
@@ -3930,8 +3927,8 @@ else
                     e => TaroSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
                     (id, e) => TaroSvc.UpdateAsync(id, e.ToEntity(), _currentUserId, reason),
                     id => TaroSvc.SoftDeleteAsync(id, _currentUserId, reason),
-                    id => Task.CompletedTask, 
-                    "Taro", log, errors);
+                    id => Task.CompletedTask,
+                    "Taro", log, errors, TaroKeyNew, TaroKeyOld);   // [TARO-DOI-CHEO-NC] thứ tự ghi theo khoá (mã CV, NC)
 
                 await SaveStepListAsync(_baviaEdits,
                     e => BaviaSvc.AddAsync(_part!.PartId, e.ToEntity(), _currentUserId, reason),
@@ -4191,10 +4188,48 @@ else
         }
     }
 
+    // [TARO-DOI-CHEO-NC 2026-11-07] Khoá trùng Taro = cặp (mã CV, NC) — mới (trên form) / cũ (lúc nạp từ DB). Máy chủ ghi từng dòng, chặn cặp trùng
+    //   dòng chính khác ĐANG có trong DB → 2 dòng cùng mã đổi chéo NC (2T NC 3 ↔ 2T NC 5), hay vòng đổi mã / NC trong 1 lần lưu, thì dòng ghi trước
+    //   luôn trùng dòng kia → trước: trang cho qua, máy chủ chặn dòng đầu với lời báo "có thể vừa được người khác lưu" (khó hiểu); nay trang chặn
+    //   trước khi lưu, báo cách làm. Chuỗi không vòng (2T NC 3 → 5, 2T NC 5 → 7) trang tự ghi đúng thứ tự (OrderRenames theo khoá).
+    //   Nguồn: CLAUDE (rà độc lập gói 4 mục 6, sổ dòng TARO-DOI-CHEO-NC); Hùng 07/11 07:55 giao Gói 5.
+    private static string TaroKeyNew(TaroEdit t) => PartStepGuard.TaroCode(t.WtsTaskCode, t.NC) + " · NC " + PartStepGuard.Norm(t.NC);
+    private static string TaroKeyOld(TaroEdit t) => PartStepGuard.TaroCode(t.OriginalWtsTaskCode, t.OriginalNC) + " · NC " + PartStepGuard.Norm(t.OriginalNC);
+
+    private static void CheckTaroSwap(List<TaroEdit> list, List<string> errs)
+    {
+        var moved = list.Where(x => x.State == EditState.Modified && x.StepId > 0 && !x.IsBackup
+                                    && !string.Equals(TaroKeyNew(x), TaroKeyOld(x), StringComparison.OrdinalIgnoreCase)).ToList();
+        var seen = new HashSet<TaroEdit>();
+        foreach (var r in moved)
+        {
+            if (seen.Contains(r)) continue;
+            var chain = new List<TaroEdit> { r };
+            var cur = r;
+            while (true)
+            {
+                var nxt = moved.FirstOrDefault(o => !chain.Contains(o) && string.Equals(TaroKeyOld(o), TaroKeyNew(cur), StringComparison.OrdinalIgnoreCase));
+                if (nxt == null) break;
+                chain.Add(nxt); cur = nxt;
+            }
+            if (chain.Count > 1 && string.Equals(TaroKeyNew(cur), TaroKeyOld(r), StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var c in chain) seen.Add(c);
+                errs.Add($"Taro: đổi chéo {string.Join(", ", chain.Select(c => $"{TaroKeyOld(c)} → {TaroKeyNew(c)}"))} trong 1 lần lưu — mỗi lần lưu, cặp mã CV + NC phải luôn khác nhau giữa các dòng: "
+                         + "đổi 1 dòng sang NC khác (vd NC chưa dùng), lưu, rồi đổi tiếp.");
+            }
+        }
+    }
+
     /// <summary>[PM-NC-DUP-SVC 02/11] Thứ tự ghi các dòng sửa: dòng R chờ khi còn dòng O (chưa ghi) đang giữ trong DB đúng mã R muốn đổi sang
     /// và O cũng đổi mã. Vòng (đổi chéo) đã bị CheckNcList chặn trước khi lưu; còn sót thì giữ thứ tự form (máy chủ chặn).</summary>
-    private static List<T> OrderRenames<T>(List<T> mods) where T : StepEditBase
+    // [TARO-DOI-CHEO-NC 2026-11-07] keyNew / keyOld (chỉ Taro): khoá trùng của dòng chính là cặp (mã CV, NC) — dòng chính R chờ khi còn dòng O
+    //   (chưa ghi, đổi khoá) đang giữ trong DB đúng khoá R muốn sang (trước: Taro xét theo NC như nhóm khác → đổi mã CV nối chuỗi 2T→3T, 3T→4T
+    //   cùng NC ghi sai thứ tự, máy chủ chặn dòng đầu). Nguồn: CLAUDE (rà độc lập gói 4 mục 6, sổ dòng TARO-DOI-CHEO-NC).
+    private static List<T> OrderRenames<T>(List<T> mods, Func<T, string>? keyNew = null, Func<T, string>? keyOld = null) where T : StepEditBase
     {
+        bool KeyMoved(T x) => keyNew != null && keyOld != null && !x.IsBackup && x.State == EditState.Modified && x.StepId > 0
+                              && !string.Equals(keyNew(x), keyOld(x), StringComparison.OrdinalIgnoreCase);   // [TARO-DOI-CHEO-NC]
         bool Renamed(T x) => !x.IsBackup && !string.IsNullOrWhiteSpace(x.OriginalNC) && !PartStepGuard.SameCode(x.OriginalNC, x.NC);
         bool RenamedBk(T x) => x.IsBackup && !string.IsNullOrWhiteSpace(x.OriginalNC) && !PartStepGuard.SameCode(x.OriginalNC, x.NC);   // [B6-DP-THAP] T7
         var rest = mods.ToList();
@@ -4207,6 +4242,8 @@ else
             //   Hùng 06/11 10:54 OK làm cùng A1.
             var next = rest.FirstOrDefault(r => r.IsBackup
                 ? !rest.Any(o => !ReferenceEquals(o, r) && Renamed(o) && (PartStepGuard.SameCode(o.NC, r.ParentNC) || PartStepGuard.SameCode(o.OriginalNC, r.NC)))
+                : keyNew != null && keyOld != null
+                ? !rest.Any(o => !ReferenceEquals(o, r) && KeyMoved(o) && string.Equals(keyOld(o), keyNew(r), StringComparison.OrdinalIgnoreCase))   // [TARO-DOI-CHEO-NC]
                 : !rest.Any(o => !ReferenceEquals(o, r) && (Renamed(o) || (RenamedBk(o) && !PartStepGuard.SameCode(o.ParentNC, r.NC) && !PartStepGuard.SameCode(o.ParentNC, r.OriginalNC)))
                                  && PartStepGuard.SameCode(o.OriginalNC, r.NC)));
             //   (dòng chính KHÔNG chờ dự phòng của CHÍNH NÓ — P1 → Q khi dự phòng Q của P1 đổi sang Q2: dự phòng đang chờ cha, chờ nhau thì rơi về thứ tự
@@ -4220,7 +4257,8 @@ else
         return outp;
     }
 
-    private async Task SaveStepListAsync<T>(List<T> edits, Func<T, Task<long>> addFn, Func<long, T, Task> updateFn, Func<long, Task> deleteFn, Func<long, Task> restoreFn, string label, List<string> log, List<string> errors) where T : StepEditBase
+    private async Task SaveStepListAsync<T>(List<T> edits, Func<T, Task<long>> addFn, Func<long, T, Task> updateFn, Func<long, Task> deleteFn, Func<long, Task> restoreFn, string label, List<string> log, List<string> errors,
+                                            Func<T, string>? keyNew = null, Func<T, string>? keyOld = null) where T : StepEditBase   // [TARO-DOI-CHEO-NC] khoá (mã CV, NC) — chỉ Taro
     {
         // [PM-PARENT 2026-10-29] NC chính đổi tên trong lượt lưu này → dòng dự phòng trên form trỏ theo tên MỚI trước khi lưu.
         //   Service đã tự sửa ParentNC trong DB cho các con, nhưng dòng con Modified / New lưu SAU sẽ mang ParentNC cũ từ form
@@ -4240,7 +4278,7 @@ else
         //   Trong nhóm Sửa: dòng đang giữ mã mà dòng khác đổi sang thì ghi trước (đổi tên nối chuỗi P1→P2, P2→P3 — rà độc lập 02/11 V1).
         _saveFailedSteps.Clear();   // [RA-CASCADE-PM] T5: dòng lưu lỗi của danh sách đang lưu (GC đọc ngay sau, trước danh sách kế)
         var order = edits.Where(x => x.State == EditState.Deleted)
-            .Concat(OrderRenames(edits.Where(x => x.State is EditState.Modified or EditState.Restored).ToList()))
+            .Concat(OrderRenames(edits.Where(x => x.State is EditState.Modified or EditState.Restored).ToList(), keyNew, keyOld))   // [TARO-DOI-CHEO-NC]
             .Concat(edits.Where(x => x.State == EditState.New))
             .ToList();
         foreach (var e in order)
@@ -4645,6 +4683,7 @@ else
     public class TaroEdit : SimpleStepEditBase
     {
         public string? WtsTaskCode { get; set; }
+        public string? OriginalWtsTaskCode { get; set; }   // [TARO-DOI-CHEO-NC 2026-11-07] mã CV lúc nạp từ DB — khoá cũ (mã, NC) để xét đổi chéo / thứ tự ghi
 
         public static TaroEdit FromEntity(PartTaroStep s) => new TaroEdit
         {
@@ -4652,6 +4691,7 @@ else
             NC = s.NC,
             OriginalNC = s.NC,   // [PM-PARENT]
             WtsTaskCode = s.WtsTaskCode,
+            OriginalWtsTaskCode = s.WtsTaskCode,   // [TARO-DOI-CHEO-NC]
             StepName = s.StepName,
             StandardTime = s.StandardTime,
             IsBackup = s.IsBackup,

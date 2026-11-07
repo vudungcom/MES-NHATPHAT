@@ -101,6 +101,9 @@ builder.Services.AddScoped<CaLamViecService>();
 
 var app = builder.Build();
 
+// [S8D-KHOA 2026-11-07] Khoá lượt lưu Part Master giữ trên kết nối riêng không pool (xem PmSaveLockSql) — trang chết giữa lượt lưu không để khoá treo.
+PartStepGuard.SessionLockOpener = PmSaveLockSql.OpenAsync;
+
 // ==== Auto-create DB + seed (prototype only) ====
 using (var scope = app.Services.CreateScope())
 {

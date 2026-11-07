@@ -23,4 +23,9 @@ public static class QtyRule
     //   Nguồn: rà độc lập gói 1 06/11 (mục 3, ca P9 chạy thật trên harness).
     public const string MsgAm = "Số lượng không được âm.";
     public static string? CheckNonNegative(params decimal[] values) => values.All(v => v >= 0) ? null : MsgAm;
+
+    // [KH-SL-MAY-CHU 2026-11-07] SL PO ở máy chủ: số nguyên từ 1 tới PoMax (phôi Kho là cột int; Workflow OFF dùng SL PO làm trần WTS).
+    //   Nguồn: rà độc lập toàn hệ thống 07/11 (Thấp) — trước: tạo / sửa KH chỉ kiểm số nguyên, ô SL > 0 chỉ có ở trang (Edit_Khplan).
+    public const decimal PoMax = 1_000_000_000m;
+    public static string? CheckPoQty(decimal v) => !IsWhole(v) ? Msg : v <= 0 ? "SL PO phải > 0." : v > PoMax ? "SL PO quá lớn (tối đa 1.000.000.000)." : null;
 }

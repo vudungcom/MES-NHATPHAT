@@ -146,6 +146,13 @@ namespace MES.Web.Services
                 if (r.CaseId < 0 || (r.CaseId > 0 && !before.Cases.ContainsKey(r.CaseId.Value)))
                     return (false, $"{NgCaseNo.TermCap} đã chọn không thuộc PO này — chọn lại {NgCaseNo.Term} ở bước 2.");
                 long? cs = r.CaseId == 0 ? null : r.CaseId;
+                if (pos.HeldCell == HandoverCell.LamHo)   // [TARO-LAMHO-NC] hàng làm hộ bị lỗi → trả Gia công ô Hàng lỗi, cùng vụ
+                {
+                    if (act != HandoverForm.AGiao) return (false, BadAct);
+                    if (r.Qty <= 0) return (false, "Số lượng phải lớn hơn 0.");
+                    if (to != null && to != "GC") return (false, "Hàng làm hộ bị lỗi chỉ trả về Gia công.");
+                    return await IssueWithPurposeOnceAsync(id, g, "GC", r.Qty, uid, HandoverPurpose.HelpReturn, null, null, notes, null, HandoverCell.Loi, null, null, cs, ftx);
+                }
                 if (pos.HeldCell == HandoverCell.Loi)
                 {
                     switch (act)

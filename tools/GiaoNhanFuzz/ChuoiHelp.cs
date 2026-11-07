@@ -37,6 +37,8 @@ public static class ChuoiHelp
         public bool HtspDuPhong = false;   // dòng dự phòng ở Taro
         public bool TaroNc2 = false;       // [TARO-NC-MA 2026-11-06] Taro làm 2 lần: mọi mã CV Taro lặp lại ở NC "T9" (mã dùng chung nhiều NC — khách chốt B 02/11)
         public bool TaroGop = false;       // [TARO-3T-GOP 2026-11-06] thêm bộ gộp 8G ← 8G1 + 8G2 (khai WTS tiêu chuẩn) ở NC T1 (+ T9 nếu TaroNc2)
+        public int ExclAt2 = -1;           // [TARO-LAMHO-NC] NC thứ 2 máy loại trừ (liền NC thứ nhất = đoạn 2 NC; cách 1 NC = 2 đoạn) — chỉ lượt LAMHO=1
+        public bool TaroLamHo = false;     // [TARO-LAMHO-NC] Taro dòng đầu (và bộ gộp) ở đúng NC máy loại trừ GIỮA chuỗi Gia công (ghi số "2" cho NC02 — so NC bỏ chữ / số 0)
 
         public static Shape Random(Random rnd, bool allowExcl)
         {
@@ -50,6 +52,20 @@ public static class ChuoiHelp
             if (Environment.GetEnvironmentVariable("TARO") == "1") { s.TaroTaskCode = true; if (s.Taro == 0) s.Taro = 1; s.Kcs = Math.Max(s.Kcs, 1); s.ExclAt = -1; }   // [TARO-NC-MA] lượt nang chuoi_taro: luôn có Taro mã CV
             var pTaro = Environment.GetEnvironmentVariable("TARO") == "1" ? 0.75 : 0.35;
             s.TaroNc2 = s.TaroTaskCode && s.Taro > 0 && rnd.NextDouble() < pTaro; s.TaroGop = s.TaroTaskCode && s.Taro > 0 && rnd.NextDouble() < pTaro;   // [TARO-NC-MA][TARO-3T-GOP]
+            // [TARO-LAMHO-NC] lượt nang chuoi_lamho (LAMHO=1): luôn có máy loại trừ GIỮA chuỗi + Taro ở đúng NC đó (HTSP làm hộ).
+            //   Chỉ rút số ngẫu nhiên khi LAMHO=1 → các lượt khác giữ nguyên chuỗi thao tác cũ.
+            if (Environment.GetEnvironmentVariable("LAMHO") == "1")
+            {
+                if (s.Gc < 3) s.Gc = 3;
+                s.ExclAt = 1 + rnd.Next(s.Gc - 2);
+                s.Taro = Math.Max(1, s.Taro); s.TaroTaskCode = true; s.Kcs = Math.Max(s.Kcs, 1); s.TaroLamHo = true;
+                s.TaroGop = rnd.NextDouble() < 0.5;
+                // rà độc lập gói 6 vòng 2 L5: 1/3 PO đoạn 2 NC liền nhau, 1/3 PO 2 đoạn — Taro lần 2 (TaroNc2) ở NC loại trừ thứ 2
+                var k = rnd.Next(3);
+                if (k == 1 && s.ExclAt + 2 < s.Gc) s.ExclAt2 = s.ExclAt + 1;
+                if (k == 2) { if (s.Gc < 5) s.Gc = 5; if (s.ExclAt + 3 < s.Gc) s.ExclAt2 = s.ExclAt + 2; }
+                if (s.ExclAt2 >= 0) s.TaroNc2 = true;
+            }
             return s;
         }
         static T Pick<T>(Random r, params (T v, int w)[] xs)
@@ -68,18 +84,26 @@ public static class ChuoiHelp
         for (int i = 0; i < s.Gc; i++)
         {
             var nc = $"NC{i + 1:00}";
-            var mach = i == s.ExclAt ? "H04" : $"M{i + 1}";
+            var mach = i == s.ExclAt || i == s.ExclAt2 ? "H04" : $"M{i + 1}";
             var stepId = await gc.AddAsync(pm.PartId, new PartMachiningStep { NC = nc, MachineRegistered = mach, Drawing = "DWG-" + nc, FixtureType = "VJ" + (i + 1), ToolType = "D10", TimingMachine = mach, SetupTime = 10 + i, MachiningTime = 5 + i, InspectionTime = 1, PreparationTime = 2, TrialRunTime = 3 }, Admin, Reason);
-            if (s.DongDang && i != s.ExclAt && (i % 2 == 0))
+            if (s.DongDang && i != s.ExclAt && i != s.ExclAt2 && (i % 2 == 0))
                 for (int k = 1; k <= 1 + i % 2; k++) await AddTimingLikePage(db, stepId, $"M{i + 1}{(char)('a' + k)}", k);
             if (s.DuPhong && i == 0)
                 await gc.AddAsync(pm.PartId, new PartMachiningStep { NC = nc + "-DP-01", MachineRegistered = "D1", IsBackup = true, ParentNC = nc, SetupTime = 12, MachiningTime = 6 }, Admin, Reason);
         }
         var taro = new PartTaroService(db);
+        var t1 = s.TaroLamHo && s.ExclAt > 0 && s.ExclAt < s.Gc - 1 ? $"{s.ExclAt + 1}" : "T1";   // [TARO-LAMHO-NC] NC Taro = NC máy loại trừ giữa chuỗi
         for (int i = 0; i < s.Taro; i++)
-            await taro.AddAsync(pm.PartId, new PartTaroStep { NC = $"T{i + 1}", WtsTaskCode = s.TaroTaskCode ? $"{3 + i}T" : null, StepName = "Taro " + (i + 1), StandardTime = 1.5m }, Admin, Reason);
+            await taro.AddAsync(pm.PartId, new PartTaroStep { NC = i == 0 ? t1 : $"T{i + 1}", WtsTaskCode = s.TaroTaskCode ? $"{3 + i}T" : null, StepName = "Taro " + (i + 1), StandardTime = 1.5m }, Admin, Reason);
+        // [TARO-DUPHONG 2026-11-07] Taro không cho thêm dòng dự phòng nữa (máy chủ chặn) → dòng dự phòng Taro chỉ còn là DỮ LIỆU CŨ: ghi thẳng vào
+        //   bảng như dữ liệu có sẵn (bỏ qua service) để sổ / snapshot / xoá kèm vẫn được kiểm với dữ liệu cũ. Trước: thêm qua PartTaroService.AddAsync.
         if (s.HtspDuPhong && s.Taro > 0)
-            await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T1-DP", WtsTaskCode = s.TaroTaskCode ? "3T-DP" : null, IsBackup = true, ParentNC = "T1", StepName = "Taro DP", StandardTime = 2 }, Admin, Reason);
+        {
+            db.PartTaroSteps.Add(new PartTaroStep { PartId = pm.PartId, StepOrder = (db.PartTaroSteps.List.Where(x => x.PartId == pm.PartId).Max(x => (int?)x.StepOrder) ?? 0) + 1,
+                NC = "T1-DP", WtsTaskCode = s.TaroTaskCode ? "3T-DP" : null, IsBackup = true, ParentNC = t1,   // [TARO-LAMHO-NC] cha = dòng Taro đầu
+                StepName = "Taro DP", StandardTime = 2, IsActive = true, CreatedBy = Admin, CreatedAt = DateTime.Now });
+            await db.SaveChangesAsync();
+        }
         if (s.Prep && s.Taro > 0) await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "1T", WtsTaskCode = "1T", StepName = "Chuẩn bị taro", StandardTime = 5 }, Admin, Reason);
         // [TARO-3T-GOP 2026-11-06] bộ gộp 8G ← 8G1, 8G2 ở NC T1 (khai báo gộp là danh mục chung — thêm 1 lần cho DB)
         if (s.TaroGop)
@@ -91,12 +115,13 @@ public static class ChuoiHelp
                 db.Fixup();
             }
             foreach (var c in new[] { "8G", "8G1", "8G2" })
-                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T1", WtsTaskCode = c, StepName = "Taro " + c, StandardTime = c == "8G" ? 2 : 1 }, Admin, Reason);
+                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = t1, WtsTaskCode = c, StepName = "Taro " + c, StandardTime = c == "8G" ? 2 : 1 }, Admin, Reason);   // [TARO-LAMHO-NC] cùng NC dòng Taro đầu
         }
         // [TARO-NC-MA 2026-11-06] Taro làm 2 lần: mọi mã CV Taro dòng chính (trừ chuẩn bị) lặp lại ở NC "T9", T.Chuẩn khác
         if (s.TaroNc2)
             foreach (var t in db.PartTaroSteps.List.Where(x => x.PartId == pm.PartId && x.IsActive && !x.IsBackup && !string.IsNullOrWhiteSpace(x.WtsTaskCode) && x.WtsTaskCode != "1T").ToList())
-                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = "T9", WtsTaskCode = t.WtsTaskCode, StepName = t.StepName + " (lần 2)", StandardTime = (t.StandardTime ?? 1) / 2 }, Admin, Reason);
+                // [TARO-LAMHO-NC] lượt LAMHO có máy loại trừ thứ 2: Taro lần 2 ở đúng NC đó
+                await taro.AddAsync(pm.PartId, new PartTaroStep { NC = s.TaroLamHo && s.ExclAt2 >= 0 ? $"{s.ExclAt2 + 1}" : "T9", WtsTaskCode = t.WtsTaskCode, StepName = t.StepName + " (lần 2)", StandardTime = (t.StandardTime ?? 1) / 2 }, Admin, Reason);
         var bavia = new PartBaviaService(db);
         for (int i = 0; i < s.Bavia; i++) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = $"B{i + 1}", StepName = "Bavia " + (i + 1), StandardTime = 1 }, Admin, Reason);
         if (s.Prep && s.Bavia > 0) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = "1V", StepName = "Chuẩn bị bavia", StandardTime = 4 }, Admin, Reason);

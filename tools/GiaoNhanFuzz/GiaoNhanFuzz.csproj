@@ -56,6 +56,7 @@
     <Compile Include="../../MES.Web/Services/PartStepStdTimeConfirmService.cs" />
     <Compile Include="../../MES.Web/Constants/*.cs" />
     <Compile Include="*.cs" />
+    <None Include="why_ca/*.json" CopyToOutputDirectory="PreserveNewest" />   <!-- [H10-KET-WHY 07/11] sổ chứng từ các ca kẹt WHYALL — kịch bản why -->
     <!-- [C6-PIN] UserService THẬT (thay UserSvcStub.cs cũ): kịch bản auth U4 dựng IServiceScopeFactory trỏ DbContext giả. Chỗ khác vẫn "new UserService(null)":
          chỉ KhoVatLieuService.HasPermissionAsync gọi tới, mà mọi ca dùng user 1 (ADMIN) nên trả true trước khi chạm UserService — hành vi y cũ. -->
     <Compile Include="../../MES.Web/Services/UserService.cs" />
