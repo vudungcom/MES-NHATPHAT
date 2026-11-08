@@ -62,12 +62,16 @@ public static class WhyScen
     {
         var dir = Path.Combine(AppContext.BaseDirectory, "why_ca");
         if (!Directory.Exists(dir)) dir = "why_ca";
-        // các ca (mã in ở đầu ca — DanhMucKiem trỏ tới): [Y1] [Y2] [Y3] (+ [Y4] cuối file). y2 / y3 cùng 1 sổ (PO 25), khác lần nhận đem huỷ
+        // các ca (mã in ở đầu ca — DanhMucKiem trỏ tới): [Y1] [Y2] [Y3] [Y5] (+ [Y4] cuối file). y2 / y3 cùng 1 sổ (PO 25), khác lần nhận đem huỷ
         var cases = new (string Code, string File, long Rid, string What)[]
         {
             ("Y1", "y1_s44_po54_r3.json", 3, "huỷ lần Gia công nhận hàng Kho sửa xong trả về (đã ghi WTS NC 1–3) — đường đúng là xoá WTS NC 3 → 2 → 1, không huỷ lần Kho nhận phiếu trả NG"),
             ("Y2", "y2_s44_po25_r5.json", 5, "huỷ lần KCS nhận (ô Hàng lỗi vụ 5) — chuỗi phiếu Gia công ↔ Kho ↔ KCS"),
             ("Y3", "y3_s44_po25_r8.json", 8, "huỷ lần Kho nhận phiếu KCS trả (Kho phôi còn giao âm)"),
+            // [H10-KET-WHY-2 2026-11-07] ca fuzz WHYALL chuoi_lamho seed 741 PO 34 (trước ở why_mo/h10_s741_po34_r5.json): huỷ lần Gia công nhận phôi #5
+            //   sau "sửa WTS NC 1 NG 4 → 2 giữ vụ" — đường đúng phải huỷ lần GC nhận #10 / phiếu #9 / lần HTSP nhận #8 / phiếu #8 / WTS #13 TRƯỚC khi xoá
+            //   WTS #11 NC 2 (NC 3 còn chỗ). Bản becb81e: gợi ý dừng sau 7 bước. Nguồn: CLAUDE (sổ dòng H10-KET-WHY-2); Hùng 07/11 22:38 giao Gói 8.
+            ("Y5", "y5_s741_po34_r5.json", 5, "huỷ lần Gia công nhận phôi (đã ghi WTS NC 1–3, hàng sửa đi Kho ↔ GC ↔ HTSP) — phải gỡ nhánh NC 3 trước khi xoá WTS NC 2"),
         };
         foreach (var (code, file, rid, what) in cases)
         {

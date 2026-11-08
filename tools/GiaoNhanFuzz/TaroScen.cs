@@ -391,6 +391,9 @@ public static class TaroScen
 
         await LamHo();
         await LamHoRv();
+        await LamHoSuaMaVu();   // [T19] [LAMHO-SUA-MA-VU]
+        await LamHoKcsCause();  // [T20] [LAMHO-L2-KCS]
+        await LamHoTrang();     // [T21] [LAMHO-WTS-DSPO] [LAMHO-B-CHU]
 
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
@@ -555,16 +558,17 @@ public static class TaroScen
     }
 
     // [T18] [TARO-LAMHO-NC] Ca từ rà độc lập Gói 6 (vòng 1): 1 Cao + các Trung — bản trước vòng sửa: T18a / T18b / T18c / T18d / T18e / T18f SAI
-    static async Task<(AppDbContext db, int det)> LhStart(string partNo, (string nc, string m)[] gcs, (string nc, string code)[] taros, decimal q, string[] gcDone)
+    static async Task<(AppDbContext db, int det)> LhStart(string partNo, (string nc, string m)[] gcs, (string nc, string code)[] taros, decimal q, string[] gcDone, int bavia = 0, bool wfOff = false)
     {
         var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
-        var pid = await ChuoiHelp.BuildPartAsync(db, partNo, new ChuoiHelp.Shape { Gc = 0, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
+        var pid = await ChuoiHelp.BuildPartAsync(db, partNo, new ChuoiHelp.Shape { Gc = 0, DongDang = false, DuPhong = false, Taro = 0, Bavia = bavia, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
         var gc = new PartMachiningService(db);
         foreach (var (nc, m) in gcs)
             await gc.AddAsync(pid, new PartMachiningStep { NC = nc, MachineRegistered = m, TimingMachine = m, SetupTime = 10, MachiningTime = 5, InspectionTime = 1, PreparationTime = 2, TrialRunTime = 3 }, U, "lamho");
         var t = new PartTaroService(db);
         foreach (var (nc, c) in taros) await t.AddAsync(pid, new PartTaroStep { NC = nc, WtsTaskCode = c, StepName = "Taro " + c, StandardTime = 1 }, U, "taro");
         var det = (await ChuoiHelp.CreateKhAsync(db, pid, partNo, new decimal[] { q }, "PO-" + partNo))[0];
+        if (wfOff) { db.KhPlans.List.First(p => db.KhPlanDetails.List.Any(d => d.KhPlanDetailId == det && d.KhPlanId == p.KhPlanId)).ApplyWorkflow = false; db.Fixup(); }   // [T19d]
         var svc = new HandoverService(db);
         await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(det, DateTime.Now, (int)q, "OVL", "A1", null, null, null, "phoi", U);
         await svc.IssueByCellAsync(det, "KHO", "GC", q, U, "MOI", false, "MOI");
@@ -707,5 +711,124 @@ public static class TaroScen
             var sv = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Tot, Pos = "LAMHO", Action = HandoverForm.AGiao, ToGroup = "GC", ToNC = "NC06", Qty = 5 });
             Ok(pos.Have == 5 && sv.Ok, "T18l hàng đoạn NC05 (không Taro) ở HTSP: dòng LAMHO có 5, trả NC06 qua form được (vòng 3 T1 — trước: dòng có 0, khoá)", $"{pos.Have} | {sv.Error}");
         }
+    }
+
+    // [T19] [LAMHO-SUA-MA-VU 2026-11-07] Sửa dòng WTS Taro NG làm hộ đổi mã / NC sang ĐOẠN máy loại trừ khác: NC Gia công làm tiếp của vụ (K2, sổ tính
+    //   HelpFromNc theo đoạn của mã) đổi theo → vụ đã đi phiếu thì chặn; chưa đi thì cho (sổ tự theo). PO NC01 → NC02 → NC03 (H04) → NC04 → NC05 (H04) → NC06:
+    //   Taro 2T ở NC 3 (đoạn NC03, làm tiếp NC02), 5T ở NC 5 (đoạn NC05, làm tiếp NC04). Bản becb81e: T19a SAI (lưu được, NC làm tiếp nhảy NC02 → NC04).
+    //   Nguồn: CLAUDE (rà Gói 7 vòng 2, sổ dòng LAMHO-SUA-MA-VU); Hùng 07/11 22:38 giao Gói 8.
+    static async Task LamHoSuaMaVu()
+    {
+        Console.WriteLine("[T19] [LAMHO-SUA-MA-VU] sửa dòng WTS Taro NG làm hộ sang đoạn khác: vụ đã đi → chặn; chưa đi → được, NC làm tiếp theo đoạn mới");
+        var G6 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4"), ("NC05", "H04"), ("NC06", "M6") };
+        async Task<(AppDbContext db, int det, long ngLog, long cs)> Setup(string partNo)
+        {
+            var (db, det) = await LhStart(partNo, G6, new[] { ("3", "2T"), ("5", "5T") }, 5, new[] { "NC01", "NC02" });
+            var svc = new HandoverService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho NC03");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await Taro(db, det, "2T", "3", 4);
+            var ng = await Taro(db, det, "2T", "3", 0, 1);                     // dòng riêng: NG 1 → vụ Taro làm hộ đoạn NC03
+            await svc.IssueSpecialAsync(det, "HTSP", "GC", 4, U, HandoverPurpose.HelpReturn, null, "NC04", "tra NC4");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 0, null, U);
+            await WtsSvcHelp.SaveAsync(db, det, "GC", "NC04", null, 4, 0, U);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 4, U, HandoverPurpose.HelpSend, "NC04", null, "lam ho NC05");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 0, null, U);
+            return (db, det, ng.LogId!.Value, db.WtsProductionLogs.List.Single(w => w.WtsLogId == ng.LogId).NgCaseId!.Value);
+        }
+        {   // vụ đã trả về Gia công (đi phiếu) → đổi dòng NG sang 5T NC 5 bị chặn, sổ giữ NC làm tiếp NC02
+            var (db, det, lid, cs) = await Setup("P-LHS1");
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 1 });
+            var e = await WtsSvcHelp.SaveAsync(db, det, "TARO", null, "5T", 0, 1, U, 1, keepCase: cs, editLogId: lid, stepNc: "5");
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(f.Ok && !e.Ok && (e.Err ?? "").Contains("NC Gia công làm tiếp") && HandoverForm.CaseNextNc(row, cs, "GC") == "NC02"
+               && !db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).IsVoided,
+               "T19a vụ Taro làm hộ đã trả về Gia công: sửa dòng NG 2T NC 3 → 5T NC 5 bị chặn, dòng cũ giữ, NC làm tiếp vẫn NC02", $"{f.Error} | {e.Err}");
+            var e2 = await WtsSvcHelp.SaveAsync(db, det, "TARO", null, "2T", 0, 1, U, 1, keepCase: cs, editLogId: lid, stepNc: "3");
+            Ok(e2.Ok, "T19b cùng vụ, sửa dòng giữ mã / NC (cùng đoạn) → được", e2.Err);
+        }
+        {   // vụ chưa đi phiếu → đổi được, sổ tính NC làm tiếp theo đoạn mới (NC04)
+            var (db, det, lid, cs) = await Setup("P-LHS2");
+            var led = new HandoverLedgerService(db);
+            var e = await WtsSvcHelp.SaveAsync(db, det, "TARO", null, "5T", 0, 1, U, 1, keepCase: cs, editLogId: lid, stepNc: "5");
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(e.Ok && HandoverForm.CaseNextNc(row, cs, "GC") == "NC04", "T19c vụ chưa đi phiếu: sửa dòng NG 2T NC 3 → 5T NC 5 được, NC làm tiếp theo đoạn mới = NC04", $"{e.Err} | {HandoverForm.CaseNextNc(row, cs, "GC")}");
+        }
+        {   // rà độc lập Gói 8 (Trung-1): Workflow OFF, vụ Taro làm hộ đã trả về Gia công → sửa dòng NG sang Bavia (mất đoạn làm hộ) → chặn (K5 không chặn khi OFF)
+            var (db, det) = await LhStart("P-LHS3", G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1, wfOff: true);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho NC03");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            var ng = await Taro(db, det, "2T", "3", 0, 1);
+            var lid = ng.LogId!.Value; var cs = db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).NgCaseId!.Value;
+            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 1 });
+            var e = await WtsSvcHelp.SaveAsync(db, det, "BAVIA", null, "B1", 0, 1, U, 1, keepCase: cs, editLogId: lid);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(f.Ok && !e.Ok && (e.Err ?? "").Contains("NC Gia công làm tiếp") && HandoverForm.CaseNextNc(row, cs, "GC") == "NC02",
+               "T19d Workflow OFF: sửa dòng NG Taro làm hộ (vụ đã trả về Gia công) sang Bavia B1 → chặn, NC làm tiếp vẫn NC02 (rà độc lập Gói 8 Trung-1)", $"{f.Error} | {e.Err}");
+        }
+    }
+
+    // [T20] [LAMHO-L2-KCS 2026-11-07] PO mà HTSP chỉ có Taro làm hộ: Gia công giao thẳng KCS; KCS tích "Lỗi công đoạn trước" bỏ trống nơi gây lỗi → nơi gây lỗi
+    //   = Gia công (máy chủ HandoverService.GiaoXuLy + trang GiaoXuLyModal dùng HandoverForm.PrevGroup(nhóm, sổ)). PO thường: vẫn HTSP.
+    //   Bản becb81e: T20a / T20b SAI (vụ ghi HTSP gây, phiếu không phải Hàng lỗi công đoạn trước về Gia công). Nguồn: CLAUDE (rà độc lập Gói 6 L2).
+    static async Task LamHoKcsCause()
+    {
+        Console.WriteLine("[T20] [LAMHO-L2-KCS] HTSP chỉ Taro làm hộ: KCS báo lỗi công đoạn trước, bỏ trống nơi gây lỗi → Gia công");
+        var G4 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4") };
+        var (db, det) = await LhStart("P-LHK1", G4, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" });
+        var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+        await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+        await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+        await Taro(db, det, "2T", "3", 5);
+        await svc.IssueSpecialAsync(det, "HTSP", "GC", 5, U, HandoverPurpose.HelpReturn, null, "NC04", "tra NC4");
+        await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+        await WtsSvcHelp.SaveAsync(db, det, "GC", "NC04", null, 5, 0, U);
+        await svc.IssueByCellAsync(det, "GC", "KCS", 5, U, "MOI", false, "MOI");
+        await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+        var row = (await led.GetLedgerForDetailAsync(det))!;
+        Ok(HandoverForm.PrevGroup("KCS", row) == "GC" && HandoverForm.PrevGroup("HTSP", row) == "GC" && HandoverForm.PrevGroup("PKG", row) == "KCS",
+           "T20a nhóm trước theo PO: KCS ← Gia công (HTSP chỉ làm hộ); HTSP ← Gia công, Đóng gói ← KCS giữ nguyên", HandoverForm.PrevGroup("KCS", row));
+        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+                                                               CatId = 1, Action = HandoverForm.AGiao, Purpose = HandoverForm.PTra, ToGroup = "GC", Qty = 1 });
+        var tx = db.HandoverTransactions.List.Last();
+        var cs = tx.NgCaseId == null ? null : db.NgCases.List.FirstOrDefault(c => c.NgCaseId == tx.NgCaseId);
+        Ok(f.Ok && tx.Purpose == HandoverPurpose.NgReturn && tx.ToGroupCode == "GC" && cs?.CauseGroupCode == "GC",
+           "T20b KCS lỗi công đoạn trước, bỏ trống nơi gây lỗi, trả Gia công → phiếu Hàng lỗi công đoạn trước về Gia công, vụ ghi Gia công gây (trước: HTSP)",
+           $"{f.Error} | {tx.Purpose} → {tx.ToGroupCode} · do {cs?.CauseGroupCode}");
+        {   // PO thường (HTSP có mã chính không làm hộ): KCS ← HTSP như cũ
+            var (db2, det2) = await LhStart("P-LHK2", G4, new[] { ("3", "2T"), ("T9", "9T") }, 5, new[] { "NC01" });
+            var row2 = (await new HandoverLedgerService(db2).GetLedgerForDetailAsync(det2))!;
+            Ok(HandoverForm.PrevGroup("KCS", row2) == "HTSP", "T20c PO HTSP có mã thường (không chỉ làm hộ): nhóm trước của KCS vẫn HTSP", HandoverForm.PrevGroup("KCS", row2));
+        }
+    }
+
+    // [T21] [LAMHO-WTS-DSPO][LAMHO-B-CHU 2026-11-07] Thử live PO TEST-0711-TARO: (a) HTSP chỉ nhận hàng giao theo NC cho Taro làm hộ → trang WTS phải hiện PO
+    //   (HandoverLedgerService.HasWtsInput — trước lọc theo Nhận sản xuất = 0 nên ẩn); (b) dòng B lần trả / nhận hàng làm hộ bị lỗi không ghi "NG … trả ngay".
+    //   Bản becb81e: T21b SAI (chữ cũ); T21a không có hàm (phần trang kiểm ở harness drive_g8.py). Nguồn: CLAUDE (thử live 07/11 22:4x).
+    static async Task LamHoTrang()
+    {
+        Console.WriteLine("[T21] [LAMHO-WTS-DSPO][LAMHO-B-CHU] HTSP chỉ có hàng làm hộ: PO có hàng vào để ghi WTS; dòng B trả / nhận hàng làm hộ bị lỗi đúng chữ");
+        var G4 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4") };
+        var (db, det) = await LhStart("P-LHT1", G4, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" });
+        var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+        var row0 = (await led.GetLedgerForDetailAsync(det))!;
+        await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+        await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+        var row = (await led.GetLedgerForDetailAsync(det))!;
+        Ok(!HandoverLedgerService.HasWtsInput(row0, "HTSP") && row.G("HTSP").NhanSanXuat == 0 && HandoverLedgerService.HasWtsInput(row, "HTSP") && HandoverLedgerService.HasWtsInput(row, "GC"),
+           "T21a HTSP nhận 5 giao theo NC (Taro làm hộ), Nhận sản xuất 0 → vẫn có hàng vào ghi WTS (trước khi nhận: chưa)", $"{row.G("HTSP").NhanSanXuat}");
+        await Taro(db, det, "2T", "3", 3, 2);
+        var cs = db.WtsProductionLogs.List.Last().NgCaseId!.Value;
+        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 2 });
+        var tid = db.HandoverTransactions.List.Last().HandoverTxId;
+        await svc.ReceiveAsync(tid, 0, 2, null, U);
+        var steps = HandoverLedgerService.ComputeSteps((await led.GetInputForDetailAsync(det))!);
+        var nhan = steps.LastOrDefault(x => x.Kind == "NHAN" && x.Text.Contains("phiếu #" + tid))?.Text ?? "";
+        Ok(f.Ok && nhan.Contains("hàng làm hộ bị lỗi") && nhan.Contains("ô Hàng lỗi") && !nhan.Contains("trả ngay"),
+           "T21b dòng B Gia công nhận hàng làm hộ bị lỗi: \"nhận 2 hàng làm hộ bị lỗi · ô Hàng lỗi (cùng vụ)\", không ghi \"NG 2 trả ngay\"", nhan);
+        Ok(steps.Any(x => x.Text.Contains("trả hàng làm hộ bị lỗi 2")), "T21c dòng B HTSP lập phiếu: \"trả hàng làm hộ bị lỗi 2 → Gia công ô Hàng lỗi (cùng vụ)\"",
+           string.Join(" | ", steps.Where(x => x.Text.Contains("HTSP tr")).Select(x => x.Text)));
     }
 }

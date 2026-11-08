@@ -215,6 +215,79 @@ namespace MES.Web.Services
             }
 
             plan.Complete = Clear(op, new HashSet<string>(opDocs), 0, loopOp);
+
+            // [H10-KET-WHY-2 2026-11-07] Lượt tìm trên không ra đường → BÓC DẦN.
+            //   Nguồn: CLAUDE (sổ dòng H10-KET-WHY-2, whyreplay); Hùng 07/11 22:38 giao Gói 8.
+            //   Gom tập chứng từ liên quan (mọi chứng từ đang trừ vào ô sắp âm
+            //   của thao tác, và đệ quy của từng chứng từ đó khi gỡ trọn), rồi mỗi lượt gỡ chứng từ MỚI NHẤT trong tập mà gỡ ngay được
+            //   (không tạo ô âm mới, kể cả theo thời gian hàng sửa), tới khi thao tác gốc lưu được. Lượt trên đi sâu từng nhánh rồi chốt nên có thể
+            //   gỡ mất chỗ trống mà nhánh sau cần (ca fuzz WHYALL chuoi_lamho seed 741 PO 34, why_ca/y5_s741_po34_r5.json: nhánh WTS #14 xoá WTS #11
+            //   NC 2 trước → NC 3 hết chỗ để huỷ lần GC nhận #10 → vòng WTS #13 ↔ lần nhận #8 ↔ lần nhận #10 → "chưa lần ra" dù có đường).
+            //   Lượt trên ra đường thì kết quả y như trước; bóc cũng không ra thì giữ gợi ý dở của lượt trên. Bước thừa bỏ ở đoạn "bỏ bước thừa" dưới.
+            if (!plan.Complete && !Over())
+            {
+                var firstTry = plan.Steps.ToList();
+                plan.Steps.Clear(); S = Clone(current); sRow = null; sTl = null;
+                if (Peel()) plan.Complete = true;
+                else { plan.Steps.Clear(); plan.Steps.AddRange(firstTry); }
+            }
+            bool Peel()
+            {
+                bool Busy(string u) => u[0] switch   // đơn vị trùng chứng từ của chính thao tác → không gỡ
+                {
+                    // phiếu có lần nhận của chính thao tác vẫn vào tập (rà độc lập Gói 8 Trung-2): bước gỡ của nó chỉ là lần nhận KHÁC (lọc khoá bước bên dưới)
+                    'T' => opDocs.Contains(u),
+                    'A' => opDocs.Contains("T:" + u[2..]),
+                    'W' => opDocs.Contains(u), 'B' => opDocs.Contains(u), _ => opDocs.Contains(u),
+                };
+                int peelStart = plan.Computes;   // [H10-KET-WHY-2] trần riêng của bóc (rà độc lập Gói 8 Trung-3: ca không có đường không chạy tới trần chung)
+                bool POver() => Over() || plan.Computes - peelStart >= PeelMaxComputes;
+                var row0 = SRow();
+                var tl0 = HandoverLedgerService.LoopTimeline(S);
+                List<string> UnitBad(string u)
+                {
+                    var a = Clone(S); UnitOp(u)(a);
+                    var bad = HandoverLedgerService.NewNegativeKeys(row0, Calc(a));
+                    if (u[0] != 'B' && HandoverLedgerService.RepairedReturnTimes(a).Count > 0)
+                        bad.AddRange(HandoverLedgerService.NewLoopKeys(S, row0, a, tl0).Select(x => x.Key));
+                    return bad;
+                }
+                var units = new List<string>();
+                var seen = new HashSet<string>();
+                var queue = new Queue<List<string>>();
+                queue.Enqueue(Bad(op, loopOp));
+                while (queue.Count > 0 && units.Count < PeelMaxUnits)
+                {
+                    if (POver()) return false;
+                    var found = new HashSet<string>();
+                    Candidates(S, row0, queue.Dequeue(), found);
+                    foreach (var u in found)
+                    {
+                        if (!seen.Add(u) || Busy(u)) continue;
+                        units.Add(u);
+                        if (units.Count >= PeelMaxUnits || POver()) break;
+                        var ub = UnitBad(u);
+                        if (ub.Count > 0) queue.Enqueue(ub);
+                    }
+                }
+                for (int round = 0; round < 4 * PeelMaxUnits; round++)
+                {
+                    if (POver()) return false;
+                    if (Bad(op, loopOp).Count == 0) return true;
+                    WhyStep? pick = null;
+                    foreach (var a in units.Select(u => AtomOf(S, u)).Where(a => a != null && !opDocs.Contains(Key(a!)))
+                                           .GroupBy(a => Key(a!)).Select(g => g.First()!)
+                                           .OrderByDescending(a => a.At ?? DateTime.MinValue).ThenByDescending(a => a.Id))
+                    {
+                        if (POver()) return false;
+                        if (Bad(StepOp(a), a.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS").Count == 0) { pick = a; break; }
+                    }
+                    if (pick == null) return false;
+                    StepOp(pick)(S); sRow = null; sTl = null;
+                    plan.Steps.Add(pick);
+                }
+                return false;
+            }
             // [H10-KET-WHY 2026-11-07] Bỏ bước thừa: thử lùi có thể để lại bước đã làm mà không giúp gỡ (vd huỷ lần Kho nhận phiếu trả NG trước khi
             //   tìm ra đường đúng) → người dùng huỷ chứng từ đúng một cách vô ích. Sau khi có đường đủ, thử bỏ từng bước (từ đầu): làm theo các bước
             //   còn lại vẫn không bị K5 chặn và thao tác gốc lưu được thì bỏ hẳn. Hết trần tính thì giữ đường hiện có (vẫn đúng, chỉ chưa gọn).
@@ -278,6 +351,8 @@ namespace MES.Web.Services
         const int LuiTongMax = 12;       // cả lượt tìm lùi tối đa 12 lần
         const int GonMaxSteps = 16;      // đường dài hơn thì giữ nguyên (vẫn đúng, chỉ chưa gọn)
         const int GonMaxComputes = 150;  // lần tính dành riêng cho phần bỏ bước thừa
+        const int PeelMaxUnits = 40;     // [H10-KET-WHY-2] tập chứng từ liên quan tối đa 40 đơn vị
+        const int PeelMaxComputes = 200; // [H10-KET-WHY-2] lần tính dành riêng cho bóc (để lại phần cho bỏ bước thừa)
 
         /// <summary>[H10-KET-WHY] Thao tác gỡ của 1 bước gợi ý (dùng chung lúc tìm đường + bỏ bước thừa).</summary>
         static Action<LedgerInput> StepOp(WhyStep d) => d.Kind switch
@@ -306,6 +381,14 @@ namespace MES.Web.Services
 
         /// <summary>Chứng từ mới nhất đang trừ vào một trong các ô sắp âm (đã quy về việc làm được ngay: phiếu có lần nhận → lần nhận mới nhất trước).</summary>
         static WhyStep? NextCandidate(LedgerInput s, LedgerRow row, List<string> badKeys, HashSet<string> skip)
+            => Candidates(s, row, badKeys, null).Where(x => !skip.Contains(Key(x)))
+                    .GroupBy(Key).Select(x => x.First())
+                    .OrderByDescending(x => x.At ?? DateTime.MinValue).ThenByDescending(x => x.Id)
+                    .FirstOrDefault();
+
+        /// <summary>[H10-KET-WHY-2] Mọi chứng từ đang trừ vào các ô sắp âm (chưa lọc / chưa xếp). units != null: ghi thêm "đơn vị chứng từ" của từng
+        ///   ứng viên — T:&lt;phiếu&gt; (huỷ cả phiếu), A:&lt;phiếu trả tự lập&gt; (huỷ các lần nhận của nó), W / B / K (dòng WTS / báo lỗi / Kết quả sửa).</summary>
+        static List<WhyStep> Candidates(LedgerInput s, LedgerRow row, List<string> badKeys, HashSet<string>? units)
         {
             var c = new List<WhyStep>();
             string Main(string pg, string? code)
@@ -320,39 +403,25 @@ namespace MES.Web.Services
             void AddWts(Func<InWts, bool> f)
             {
                 foreach (var w in s.Wts.Where(w => w.Id > 0 && f(w)))
-                    c.Add(new WhyStep { Kind = "WTS", Id = w.Id, At = w.At,
-                        Text = $"WTS #{w.Id} · {WtsWhere(w)} · OK {w.Ok:0.##}"
-                             + (w.Ng > 0 ? $" NG {w.Ng:0.##}" : "") + (string.IsNullOrEmpty(w.Worker) ? "" : $" · {w.Worker}") + $" · {w.At:dd/MM HH:mm}" });
+                { c.Add(StepWts(w)); units?.Add("W:" + w.Id); }   // [H10-KET-WHY-2] chữ bước tách ra StepWts (dùng chung lúc bóc)
             }
             void AddRep(Func<InNgRep, bool> f)   // [GN-NG-AFTER]
             {
                 foreach (var b in s.NgReps.Where(b => b.Id > 0 && f(b)))
-                    c.Add(new WhyStep { Kind = "BAOLOI", Id = b.Id, At = b.At,
-                        Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
-                             + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" });
+                { c.Add(StepRep(b)); units?.Add("B:" + b.Id); }
             }
             // [GC-SUA-TAI-CHO] Kết quả sửa đang lấy hàng từ ô Hàng sửa / Hàng lỗi: có lần KCS xác nhận → huỷ lần mới nhất trước
             void AddRepair(Func<InRepair, bool> f)
             {
                 foreach (var r in s.Repairs.Where(r => r.Id > 0 && f(r)))
-                {
-                    var c0 = r.Checks.Where(x => x.Id > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
-                    if (c0 != null)
-                        c.Add(new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
-                            Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
-                                 + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" });
-                    else
-                        c.Add(new WhyStep { Kind = "KQSUA", Id = r.Id, TxId = r.Id, At = r.At,
-                            Text = $"Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · ô {HandoverCell.Label(r.Cell)} · đạt {r.Pass:0.##}"
-                                 + (r.Fail > 0 ? $" không đạt {r.Fail:0.##}" : "") + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · {r.At:dd/MM HH:mm}" });
-                }
+                { c.Add(StepRepair(r)); units?.Add("K:" + r.Id); }
             }
             void AddTx(Func<InTx, bool> f)
             {
                 foreach (var t in s.Txs.Where(f))
                 {
                     var a = Actionable(s, t);
-                    if (a != null) c.Add(a);
+                    if (a != null) { c.Add(a); units?.Add((t.SourceReceiveId == null ? "T:" : "A:") + t.Id); }
                 }
             }
             foreach (var k0 in badKeys)
@@ -369,9 +438,12 @@ namespace MES.Web.Services
                     {
                         var c0 = r.Checks.Where(x => x.Id > 0 && x.Ok > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
                         if (c0 != null)
+                        {
                             c.Add(new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
                                 Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
                                      + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" });
+                            units?.Add("K:" + r.Id);   // [H10-KET-WHY-2]
+                        }
                     }
                     if (g == "KHO" && p.Length == 2 && p[1] == "ConGiao")   // Kho: phiếu giao từ ô Hàng mới / báo lỗi lấy phôi trừ vào phôi còn giao
                     {
@@ -469,10 +541,55 @@ namespace MES.Web.Services
                     }
                 }
             }
-            return c.Where(x => !skip.Contains(Key(x)))
-                    .GroupBy(Key).Select(x => x.First())
-                    .OrderByDescending(x => x.At ?? DateTime.MinValue).ThenByDescending(x => x.Id)
-                    .FirstOrDefault();
+            return c;
+        }
+
+        // [H10-KET-WHY-2] Chữ từng loại bước (trước viết thẳng trong NextCandidate — giữ nguyên chữ).
+        static WhyStep StepWts(InWts w) => new() { Kind = "WTS", Id = w.Id, At = w.At,
+            Text = $"WTS #{w.Id} · {WtsWhere(w)} · OK {w.Ok:0.##}"
+                 + (w.Ng > 0 ? $" NG {w.Ng:0.##}" : "") + (string.IsNullOrEmpty(w.Worker) ? "" : $" · {w.Worker}") + $" · {w.At:dd/MM HH:mm}" };
+        static WhyStep StepRep(InNgRep b) => new() { Kind = "BAOLOI", Id = b.Id, At = b.At,
+            Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
+                 + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" };
+        static WhyStep StepRepair(InRepair r)
+        {
+            var c0 = r.Checks.Where(x => x.Id > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
+            if (c0 != null)
+                return new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
+                    Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
+                         + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" };
+            return new WhyStep { Kind = "KQSUA", Id = r.Id, TxId = r.Id, At = r.At,
+                Text = $"Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · ô {HandoverCell.Label(r.Cell)} · đạt {r.Pass:0.##}"
+                     + (r.Fail > 0 ? $" không đạt {r.Fail:0.##}" : "") + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · {r.At:dd/MM HH:mm}" };
+        }
+
+        /// <summary>[H10-KET-WHY-2] Bước làm được ngay của 1 đơn vị chứng từ (null = đơn vị đã gỡ hết).</summary>
+        static WhyStep? AtomOf(LedgerInput s, string unit)
+        {
+            var id = long.Parse(unit[2..]);
+            switch (unit[0])
+            {
+                case 'T': { var t = s.Txs.FirstOrDefault(x => x.Id == id); return t == null ? null : Actionable(s, t); }
+                case 'A': { var t = s.Txs.FirstOrDefault(x => x.Id == id); return t == null || !t.Receives.Any() ? null : Actionable(s, t); }
+                case 'W': { var w = s.Wts.FirstOrDefault(x => x.Id == id); return w == null ? null : StepWts(w); }
+                case 'B': { var b = s.NgReps.FirstOrDefault(x => x.Id == id); return b == null ? null : StepRep(b); }
+                case 'K': { var r = s.Repairs.FirstOrDefault(x => x.Id == id); return r == null ? null : StepRepair(r); }
+            }
+            return null;
+        }
+
+        /// <summary>[H10-KET-WHY-2] Gỡ trọn 1 đơn vị chứng từ (dùng để gom tập chứng từ liên quan).</summary>
+        static Action<LedgerInput> UnitOp(string unit)
+        {
+            var id = long.Parse(unit[2..]);
+            return unit[0] switch
+            {
+                'T' => OpVoidIssue(id),
+                'A' => s => { var t = s.Txs.FirstOrDefault(x => x.Id == id); if (t != null) foreach (var r in t.Receives.Select(r => r.Id).ToList()) RemoveReceive(s, r); },
+                'W' => OpWts(new[] { id }),
+                'B' => OpVoidNgRep(id),
+                _   => OpVoidRepair(id),
+            };
         }
 
         /// <summary>Phiếu đã có lần nhận → việc làm được trước là huỷ lần nhận mới nhất (lần nhận có phiếu trả tự lập đã được nhận lại → huỷ lần nhận phiếu trả trước).</summary>

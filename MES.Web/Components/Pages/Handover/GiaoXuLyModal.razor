@@ -134,7 +134,7 @@
     /// <summary>Nơi gây lỗi là nhóm khác nhóm mình ((b) Hùng 17:35: chỉ khi đó mới có "Trả nơi gây lỗi").</summary>
     string? CauseGroup => IsFresh ? (_prev && _group != "KHO" && EffCause != "KHACH" && EffCause != _group ? EffCause : null)
                         : Case != null ? HandoverForm.CaseCauseGroup(Case, _group) : null;
-    string EffCause => !string.IsNullOrEmpty(_cause) ? _cause : (_group == "KHO" ? "KHACH" : HandoverForm.PrevGroup(_group));
+    string EffCause => !string.IsNullOrEmpty(_cause) ? _cause : (_group == "KHO" ? "KHACH" : HandoverForm.PrevGroup(_group, Row));   // [LAMHO-L2-KCS] nhóm trước theo PO (HTSP chỉ làm hộ: KCS ← Gia công)
     bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi;   // [TARO-LAMHO-NC]
     string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
 
@@ -147,7 +147,7 @@
             if (IsTot) return HandoverForm.NextGroup(_group);
             if (Act is HandoverForm.ATraLai or HandoverForm.ASuaXong) return (Case == null ? null : HandoverForm.CaseSender(Case, _group)) ?? "";
             if (EffPurpose == HandoverForm.PTra && CauseGroup != null) return CauseGroup;
-            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group) is var p && p != "" ? p : HandoverForm.NextGroup(_group);
+            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group, Row) is var p && p != "" ? p : HandoverForm.NextGroup(_group);   // [LAMHO-L2-KCS]
         }
     }
     string Dest => LamHo || LamHoLoi ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC]

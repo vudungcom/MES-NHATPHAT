@@ -661,6 +661,46 @@ namespace MES.Web.Services
                         }
                 }
 
+                // [LAMHO-SUA-MA-VU 2026-11-07] Nguồn: CLAUDE (rà Gói 7 vòng 2, sổ dòng LAMHO-SUA-MA-VU); Hùng 07/11 22:38 giao Gói 8.
+                //   Sửa dòng WTS Taro có NG giữ vụ mà đổi mã / NC Taro: vụ Taro làm hộ lấy NC Gia công làm tiếp (K2) từ ĐOẠN
+                //   máy loại trừ của mã (sổ tính LedgerCase.HelpFromNc khi đọc, không lưu ở vụ) → đổi sang mã của đoạn khác / sang Taro thường (hoặc ngược lại)
+                //   thì NC làm tiếp của vụ đổi theo. Như WTS-SUA-NC-VU (Gia công): chỉ chặn khi vụ đã đi phiếu / có Kết quả sửa (chưa đi thì cứ đổi — sổ tự theo).
+                //   So đúng giá trị sổ dùng (HelpFromNc trước / sau khi lưu thử), cả Workflow OFF (K2 không phải luật số lượng).
+                //   Rà độc lập Gói 8 (Trung-1): xét cả dòng CŨ là Taro mà sửa sang Bavia / Rửa (pg là nhóm nhỏ mới); (Thấp-3) chỉ tính sổ thử khi
+                //   dòng sửa đổi nhóm nhỏ / mã / NC Taro so với dòng cũ (không đổi thì HelpFromNc không đổi).
+                if (!grp.IsGc && before != null && basis != null && editIds.Any())
+                {
+                    static string KeyN(string? x) => (x ?? "").Trim().ToUpperInvariant();
+                    var oldLh = await _db.WtsProductionLogs.AsNoTracking().Where(l => editIds.Contains(l.WtsLogId))
+                        .Select(l => new { l.WtsLogId, l.ProcessGroup, l.WtsCode, l.StepNC }).ToListAsync();
+                    var chgLh = subs.Where(s => s.IsEditing && s.NgCaseId != null && s.QtyNg > 0
+                                                && oldLh.FirstOrDefault(o => o.WtsLogId == s.WtsLogId) is { } ow
+                                                && (pg == "TARO" || ow.ProcessGroup == "TARO")
+                                                && (KeyN(ow.ProcessGroup) != KeyN(pg) || KeyN(ow.WtsCode) != KeyN(CodeOf(s))
+                                                    || KeyN(ow.StepNC) != KeyN(pg == "TARO" ? s.StepNC : null))).ToList();
+                    if (chgLh.Count > 0)
+                    {
+                        var extraLh = subs.Select(s => new InWts(-1, DateTime.Now, pg, null, CodeOf(s), s.QtyOk, s.QtyNg, null,
+                                                                 s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null, StepNC: pg == "TARO" ? s.StepNC : null)).ToList();
+                        var afterLh = await _ledger.GetLedgerForDetailAsync(id, editIds, extraLh);
+                        foreach (var s in chgLh)
+                        {
+                            var cid = s.NgCaseId!.Value;
+                            string? HelpNc(LedgerRow? r) => r != null && r.Cases.TryGetValue(cid, out var c) && !string.IsNullOrWhiteSpace(c.HelpFromNc) ? c.HelpFromNc.Trim() : null;
+                            var o = HelpNc(before); var n = HelpNc(afterLh);
+                            if (string.Equals(o, n, StringComparison.OrdinalIgnoreCase)) continue;
+                            var moved = await _db.HandoverTransactions.AsNoTracking().AnyAsync(t => t.NgCaseId == cid && !t.IsVoided)
+                                     || await _db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == cid && !r.IsVoided);
+                            if (!moved) continue;
+                            string Nc(string? x) => x == null ? "không có (Taro thường)" : HandoverLedgerService.NcName(x);
+                            var msg = $"PO {po} · {NgCaseNo.Format(cid)} (Taro làm hộ) đã giao / huỷ / trả khách / có Kết quả sửa — đổi mã / NC Taro của dòng có NG "
+                                    + $"sẽ đổi NC Gia công làm tiếp của vụ ({Nc(o)} → {Nc(n)}). Huỷ các chứng từ đó trước, hoặc giữ mã / NC Taro cũ.";
+                            s.ErrorMsg = msg;
+                            return msg;
+                        }
+                    }
+                }
+
                 if (det?.ApplyWorkflow != true)
                 {
                     var over = subs.FirstOrDefault(s => det != null && s.QtyDone > det.Quantity);

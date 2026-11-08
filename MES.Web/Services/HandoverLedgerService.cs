@@ -1297,6 +1297,13 @@ namespace MES.Web.Services
         //     - NC loại trừ CUỐI chuỗi (sau nó không còn NC thường): như cũ — Gia công giao Hàng mới, HTSP làm như mã thường.
         //   Không SQL (dùng cột có sẵn). Nguồn: CLAUDE (thử live 07/11) + KHÁCH (qua Hùng 07/11 10:03) + HÙNG 07/11 10:18.
         // =====================================================================
+        /// <summary>[LAMHO-WTS-DSPO 2026-11-07] Nhóm đã có hàng vào để ghi WTS sản xuất: Nhận sản xuất (Hàng mới + Hàng lỗi đã xử lý + Làm hộ trả về)
+        ///   hoặc — HTSP — hàng Gia công giao theo NC cho đoạn Taro làm hộ (không vào 4 số HTSP). Trang WTS dùng để lọc danh sách PO
+        ///   (trước: PO chỉ có Taro làm hộ không hiện cho HTSP, phải bật "Hiện phiếu chưa nhận hàng" — thử live 07/11 PO TEST-0711-TARO).
+        ///   Nguồn: CLAUDE (thử live 07/11 22:4x); Hùng 07/11 22:38 giao Gói 8.</summary>
+        public static bool HasWtsInput(LedgerRow row, string group)
+            => row.G(group).NhanSanXuat > 0 || (group == "HTSP" && row.LamHoRuns.Any(r => r.HasTaro && r.In > 0));
+
         /// <summary>[TARO-LAMHO-NC] HTSP chỉ có mã Taro làm hộ (không mã chính nào của HTSP) — rà độc lập gói 6 mục 4.</summary>
         public static bool HtspOnlyLamHo(LedgerRow row)
         {
@@ -2398,6 +2405,8 @@ namespace MES.Web.Services
                     HandoverPurpose.Scrap      => $"{GroupLabel(t.From)} huỷ {t.Issued:0.##} · ô Hàng lỗi",
                     HandoverPurpose.CustReturn => $"{GroupLabel(t.From)} trả khách {t.Issued:0.##} · ô Hàng lỗi",
                     HandoverPurpose.HelpSend   => $"{GroupLabel(t.From)} giao theo NC {t.Issued:0.##}" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ({NcText(t.FromNC)})") + $" → {GroupLabel(t.To)}",   // [N3-FIRST] chữ @VAO
+                    HandoverPurpose.HelpReturn when HandoverCell.IsLamHoLoi(purpose, t.FromCell)   // [LAMHO-B-CHU 2026-11-07] trả hàng làm hộ bị lỗi (mang vụ) — trước chữ như trả hàng tốt
+                                               => $"{GroupLabel(t.From)} trả hàng làm hộ bị lỗi {t.Issued:0.##} → {GroupLabel(t.To)} ô Hàng lỗi (cùng vụ)",
                     HandoverPurpose.HelpReturn => $"{GroupLabel(t.From)} trả về Gia công {t.Issued:0.##} → {GroupLabel(t.To)}" + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})"),
                     _ => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô {HandoverCell.Label(cell)}"
                          + (purpose == HandoverPurpose.NgReturn ? " ☑ lỗi công đoạn trước" : "")
@@ -2431,7 +2440,11 @@ namespace MES.Web.Services
                     }, new LedgerStepRow
                     {
                         Kind = "NHAN", Group = t.To, Other = t.From, Cell = recCell, Qty = r.Ok + r.Ng, Ng = r.Ng, RefId = r.Id,
-                        Text = purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn
+                        // [LAMHO-B-CHU 2026-11-07] nhận phiếu trả hàng làm hộ bị lỗi: cả phiếu là hàng lỗi vào ô Hàng lỗi cùng vụ — trước ghi "(NG 2 trả ngay)"
+                        //   (thử live 07/11 PO TEST-0711-TARO dòng B13) dù không có phiếu trả nào. Nguồn: CLAUDE (thử live 07/11); Hùng 07/11 22:38 giao Gói 8.
+                        Text = HandoverCell.IsLamHoLoi(purpose, t.FromCell)
+                            ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} hàng làm hộ bị lỗi · ô Hàng lỗi (cùng vụ) · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
+                            : purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn
                             ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} giao theo NC" + (r.Ng > 0 ? (back != null ? $" (NG {r.Ng:0.##} → phiếu trả #{back.Id})" : $" (NG {r.Ng:0.##} trả ngay)") : "") + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
                             : $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} · ô {HandoverCell.Label(recCell)}"
                               + (recCell is HandoverCell.Xl ? " (SP đã OK, nhập WTS được)" : "")

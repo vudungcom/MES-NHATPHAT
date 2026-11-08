@@ -205,7 +205,7 @@ namespace MES.Web.Services
             decimal n = act == HandoverForm.ASua ? r.Pass + r.Fail : r.Qty;
             if (n <= 0) return (false, act == HandoverForm.ASua ? "Nhập số sửa đạt hoặc không đạt." : "Số lượng phải lớn hơn 0.");
             string origin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa;
-            string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : (string.IsNullOrWhiteSpace(r.Cause) ? HandoverForm.PrevGroup(g) : r.Cause.Trim());   // (c) Kho: lỗi có sẵn = phôi khách
+            string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : (string.IsNullOrWhiteSpace(r.Cause) ? HandoverForm.PrevGroup(g, before) : r.Cause.Trim());   // (c) Kho: lỗi có sẵn = phôi khách · [LAMHO-L2-KCS] nhóm trước theo PO
 
             // Lỗi công đoạn trước + chiếc chưa làm + trả đúng nơi gây lỗi → 1 phiếu Hàng lỗi công đoạn trước (như cũ)
             if (act == HandoverForm.AGiao && r.Prev && pos.Unworked && g != "KHO" && r.Purpose == HandoverForm.PTra

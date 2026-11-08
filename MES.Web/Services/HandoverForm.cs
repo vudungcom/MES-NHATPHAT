@@ -389,5 +389,10 @@ namespace MES.Web.Services
 
         public static string NextGroup(string from) => from switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
         public static string PrevGroup(string from) => from switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => "" };
+        /// <summary>[LAMHO-L2-KCS 2026-11-07] Nhóm trước theo PO: HTSP chỉ có mã Taro làm hộ (hàng Gia công giao thẳng KCS, HTSP chỉ nhận giao theo NC)
+        ///   thì nhóm trước của KCS là Gia công — nơi gây lỗi mặc định khi KCS tích "Lỗi công đoạn trước" (trước: HTSP → vụ ghi HTSP gây, hàng lỗi trả về
+        ///   HTSP ô Hàng lỗi nếu người dùng không đổi). Nguồn: CLAUDE (rà độc lập Gói 6 L2, sổ dòng LAMHO-L2-KCS); Hùng 07/11 22:38 giao Gói 8.</summary>
+        public static string PrevGroup(string from, LedgerRow? row)
+            => from == "KCS" && row != null && HandoverLedgerService.HtspOnlyLamHo(row) ? "GC" : PrevGroup(from);
     }
 }

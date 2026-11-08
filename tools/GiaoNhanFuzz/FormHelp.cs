@@ -208,7 +208,10 @@ public static class FormHelp
         }
         e.Vu = 1;
         Source();
-        string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause ?? (g switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => null });
+        // [LAMHO-L2-KCS 2026-11-07] HTSP chỉ có mã Taro làm hộ (mọi mã chính của HTSP thuộc đoạn máy loại trừ giữa chuỗi): hàng Gia công giao thẳng KCS
+        //   → bỏ trống nơi gây lỗi ở KCS = Gia công (trước: HTSP). Đáp án đọc dòng sổ trực tiếp (không gọi HandoverForm.PrevGroup).
+        bool onlyLh = pre.G("HTSP").Steps.Where(x => !x.IsPrep).ToList() is { Count: > 0 } hm && hm.All(x => x.LamHoNc != null);
+        string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause ?? (g switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => onlyLh ? "GC" : "HTSP", "PKG" => "KCS", _ => null });
         e.RepNc = pos.StartsWith("NC:") ? pos[3..] : null;
         e.RepOrigin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa; e.RepCause = cause;
         bool unworked = pos == "CHUA" || pos.StartsWith("NC:");

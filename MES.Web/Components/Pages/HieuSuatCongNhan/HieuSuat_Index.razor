@@ -4694,7 +4694,7 @@ else
         // Lọc thô bằng truy vấn cũ trước cho nhẹ, rồi mới tính sổ cho các PO đó.
         var ledgers = await LedgerSvc.GetLedgerForDetailsAsync(receivedIds);
         _hasReceivedForGroup = ledgers.Values
-            .Where(l => l.G(groupCode).NhanSanXuat > 0)
+            .Where(l => HandoverLedgerService.HasWtsInput(l, groupCode))   // [LAMHO-WTS-DSPO] + hàng giao theo NC cho Taro làm hộ (HTSP)
             .Select(l => l.KhPlanDetailId)
             .ToHashSet();
 
