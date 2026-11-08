@@ -760,6 +760,243 @@ public static class WtsScen
             Ok(r.Ok && rk.Ok && db.NgCases.List.First(c => c.NgCaseId == kk.NgCaseId).DetectNC == "K2", "KCS vụ đã có Kết quả sửa, sửa mã K1 → K2: được, DetectNC = K2", (r.ErrorMsg ?? "") + " | " + (rk.ErrorMsg ?? ""));
         }
 
+        // [WTS-SUA-NHOM 2026-11-08] Nguồn: HÙNG 08/11 08:01 (GOI8-THAP (b)). Nút Sửa dòng đã lưu: chỉ sửa trong nhóm lớn của dòng (máy chủ đọc ProcessGroup dòng cũ);
+        //   HTSP đổi Taro / Bavia / Rửa được; dòng cũ không ghi ProcessGroup → không chặn. Bản 2cdcd14: W19a / W19c / W19d SAI (lưu được, dòng đổi nhóm lớn).
+        Console.WriteLine("[W19] WTS-SUA-NHOM — Sửa dòng đã lưu: nhóm lớn khác form bị chặn (xoá rồi nhập lại ở nhóm đúng); HTSP đổi nhóm nhỏ được");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var g = NonGc("HTSP", "Taro"); var ta = Row(2, 2, 0, T, T.AddHours(1), code: "T1", setup: null, mach: null, insp: null, actualPc: 1); g.Rows.Add(ta);
+            var r = await s.SaveGroupAsync(g); Ok(r.Ok, "PO2 (OFF) HTSP Taro T1 OK 2 lưu", r.ErrorMsg);
+            int n0 = WtsCount(db, false);
+            g = NonGc("KCS"); var ek = Row(2, 2, 0, T, T.AddHours(1), code: "K1", setup: null, mach: null, insp: null, actualPc: 1); ek.IsEditing = true; ek.WtsLogId = ta.WtsLogId; g.Rows.Add(ek);
+            r = await s.SaveGroupAsync(g);
+            Eq(r.ErrorMsg, "Dòng này của nhóm HTSP (Taro) — form nhập của bạn là nhóm KCS nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm HTSP thì nhờ Admin).", "W19a dòng HTSP Taro sửa ở form KCS: chặn");
+            Ok(WtsCount(db, false) == n0 && db.WtsProductionLogs.List.Any(w => w.WtsLogId == ta.WtsLogId && !w.IsVoided), "  không ghi gì, dòng cũ còn hiệu lực");
+            g = NonGc("HTSP", "Bavia"); var eb = Row(2, 2, 0, T, T.AddHours(1), code: "B1", setup: null, mach: null, insp: null, actualPc: 1); eb.IsEditing = true; eb.WtsLogId = ta.WtsLogId; g.Rows.Add(eb);
+            r = await s.SaveGroupAsync(g);
+            var nb = db.WtsProductionLogs.List.FirstOrDefault(w => w.WtsLogId == eb.WtsLogId);
+            Ok(r.Ok && nb?.ProcessGroup == "BAVIA" && db.WtsProductionLogs.List.Single(w => w.WtsLogId == ta.WtsLogId).IsVoided, "W19b trong HTSP đổi nhóm nhỏ Taro → Bavia: được (dòng mới BAVIA, dòng cũ huỷ)", r.ErrorMsg);
+            g = Gc(); var eg = Row(2, 2, 0, T, T.AddHours(1)); eg.IsEditing = true; eg.WtsLogId = eb.WtsLogId; g.Rows.Add(eg);
+            r = await s.SaveGroupAsync(g);
+            Eq(r.ErrorMsg, "Dòng này của nhóm HTSP (Bavia) — form nhập của bạn là nhóm Gia công nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm HTSP thì nhờ Admin).", "W19c dòng HTSP Bavia sửa ở form Gia công (vd admin): chặn");
+            g = Gc(); var ga = Row(2, 3, 0, T.AddHours(1), T.AddHours(2)); g.Rows.Add(ga); r = await s.SaveGroupAsync(g);
+            g = NonGc("HTSP", "Taro"); var eh = Row(2, 3, 0, T.AddHours(1), T.AddHours(2), code: "T1", setup: null, mach: null, insp: null, actualPc: 1); eh.IsEditing = true; eh.WtsLogId = ga.WtsLogId; g.Rows.Add(eh);
+            var r2 = await s.SaveGroupAsync(g);
+            Ok(r.Ok && r2.ErrorMsg == "Dòng này của nhóm Gia công — form nhập của bạn là nhóm HTSP nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm Gia công thì nhờ Admin).", "W19d dòng Gia công sửa ở form HTSP: chặn", (r.ErrorMsg ?? "") + " | " + r2.ErrorMsg);
+            g = NonGc("PKG"); var ep = Row(2, 3, 0, T.AddHours(1), T.AddHours(2), code: "P1", setup: null, mach: null, insp: null, actualPc: 1); ep.IsEditing = true; ep.WtsLogId = ga.WtsLogId; g.Rows.Add(ep);
+            r2 = await s.SaveGroupAsync(g);
+            Ok((r2.ErrorMsg ?? "").StartsWith("Dòng này của nhóm Gia công — form nhập của bạn là nhóm Đóng gói"), "W19e dòng Gia công sửa ở form Đóng gói: chặn", r2.ErrorMsg);
+            db.WtsProductionLogs.List.Single(w => w.WtsLogId == ga.WtsLogId).ProcessGroup = null;   // dòng rất cũ không ghi nhóm
+            g = Gc(); var eo = Row(2, 4, 0, T.AddHours(1), T.AddHours(2)); eo.IsEditing = true; eo.WtsLogId = ga.WtsLogId; g.Rows.Add(eo);
+            r2 = await s.SaveGroupAsync(g);
+            Ok(r2.Ok, "W19f dòng cũ không ghi ProcessGroup: sửa được như trước", r2.ErrorMsg);
+            g = Gc(); var ga2 = Row(2, 1, 0, T.AddHours(2), T.AddHours(3)); g.Rows.Add(ga2); await s.SaveGroupAsync(g);
+            g = Gc(nc: "NC2", machine: "M2"); var e2 = Row(2, 1, 0, T.AddHours(2), T.AddHours(3)); e2.IsEditing = true; e2.WtsLogId = ga2.WtsLogId; g.Rows.Add(e2);
+            r2 = await s.SaveGroupAsync(g);
+            Ok(r2.Ok, "W19g cùng nhóm Gia công đổi NC: vẫn sửa được", r2.ErrorMsg);
+            // hàm dùng chung với trang (bấm Sửa báo ngay) — phản chiếu để biên dịch được trên bản cũ
+            var mi = typeof(WtsSaveService).GetMethod("OtherGroupEditMsg"); var fk = typeof(WtsSaveService).GetMethod("FormGroupKey");
+            string? Msg(string? pg, bool gc, bool htsp, string hg) => mi == null || fk == null ? "?" : (string?)mi.Invoke(null, new object?[] { pg, (string)fk.Invoke(null, new object?[] { gc, htsp, hg })! });
+            Ok(Msg("TARO", false, true, "HTSP") == null && Msg("WASHING", false, true, "HTSP") == null && Msg("KCS", false, false, "KCS") == null && Msg("PKG", false, false, "PKG") == null
+               && Msg("GC", true, false, "GC") == null && Msg(" ", true, false, "GC") == null
+               && Msg("KCS", false, false, "PKG") == "Dòng này của nhóm KCS — form nhập của bạn là nhóm Đóng gói nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm KCS thì nhờ Admin)."
+               && Msg("WASHING", true, false, "GC") == "Dòng này của nhóm HTSP (Rửa) — form nhập của bạn là nhóm Gia công nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm HTSP thì nhờ Admin).",
+               "W19h hàm trang dùng (FormGroupKey / OtherGroupEditMsg): cùng nhóm lớn → null; khác → lời báo", Msg("KCS", false, false, "PKG"));
+        }
+
+        // [GOI9-OFF-CANHBAO 2026-11-08] Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a)). Workflow OFF: sửa / xoá dòng WTS có NG của vụ đã đi phiếu (NG → 0, đổi PO,
+        //   xoá dòng, đổi NC Gia công) LƯU ĐƯỢC + cảnh báo (ô vụ âm / NC làm tiếp đổi); Workflow ON chặn như cũ. Bản 2cdcd14: W20a/b/c thiếu cảnh báo, W20d bị chặn.
+        Console.WriteLine("[W20] GOI9-OFF-CANHBAO — Workflow OFF: sửa / xoá dòng WTS của vụ đã đi phiếu lưu được + cảnh báo; ON chặn như cũ");
+        {
+            AppDbContext db = null!; WtsSaveService s = null!; HandoverService hs = null!;
+            async Task Fresh() { db = await SeedAsync(); s = Svc(db); hs = new HandoverService(db); }   // mỗi ca 1 DB riêng (ô hàng lỗi nhóm không lẫn giữa các ca)
+            async Task<(WtsSaveService.WtsSaveRow Row, long Cs)> NgRow(int det, DateTime t0, string nc = "NC1", string m = "M1")
+            {
+                var g0 = Gc(nc: nc, machine: m); var a0 = Row(det, 3, 2, t0, t0.AddMinutes(30), cat: 1); g0.Rows.Add(a0);
+                var r0 = await s.SaveGroupAsync(g0); db.Fixup();
+                if (!r0.Ok) throw new Exception("W20 seed: " + r0.ErrorMsg);
+                return (a0, a0.NgCaseId!.Value);
+            }
+            async Task Move(int det, long cs)
+            {
+                var mv = await hs.IssueByCellAsync(det, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "tra kho", ngCaseId: cs); db.Fixup();
+                if (!mv.Ok) throw new Exception("W20 giao lỗi: " + mv.Error);
+            }
+            // a: PO2 OFF — NG 2 của vụ đã giao Kho → sửa dòng NG 0
+            await Fresh();
+            var (a, ca) = await NgRow(2, T); await Move(2, ca);
+            var g = Gc(); var ea = Row(2, 5, 0, T, T.AddMinutes(30)); ea.IsEditing = true; ea.WtsLogId = a.WtsLogId; ea.NgCaseId = ca; g.Rows.Add(ea);
+            var r = await s.SaveGroupAsync(g); var wa = WtsSvcHelp.Warns(r);
+            Ok(r.Ok && wa.Count == 1 && wa[0].StartsWith("PO PO2 · " + NgCaseNo.Format(ca) + " đã đi phiếu — sau khi sửa: Gia công · tồn hàng lỗi còn -2 (đã giao đi nhiều hơn NG còn ghi).") && wa[0].EndsWith("Workflow OFF nên vẫn lưu — kiểm lại số liệu.")
+               && ea.HasWarning && (ea.WarningMsg ?? "").Contains(NgCaseNo.Format(ca)),
+               "W20a OFF: vụ đã giao Kho, sửa dòng NG 2 → 0 → lưu được + cảnh báo ô vụ âm (trên kết quả + dòng)", (r.ErrorMsg ?? "") + " | " + string.Join(" / ", wa));
+            // b: đổi PO (PO2 OFF → PO1 ON) dòng có NG của vụ đã đi
+            await Fresh();
+            var (b, cb) = await NgRow(2, T.AddHours(1)); await Move(2, cb);
+            g = Gc(); var eb = Row(1, 3, 0, T.AddHours(1), T.AddHours(1).AddMinutes(30)); eb.IsEditing = true; eb.WtsLogId = b.WtsLogId; eb.NgCaseId = cb; g.Rows.Add(eb);
+            r = await s.SaveGroupAsync(g); var wb = WtsSvcHelp.Warns(r);
+            Ok(r.Ok && wb.Count == 1 && wb[0].StartsWith("PO PO2 · " + NgCaseNo.Format(cb) + " đã đi phiếu — sau khi sửa: "),
+               "W20b OFF: dòng NG của vụ đã đi đổi sang PO khác → lưu được + cảnh báo vụ PO cũ", (r.ErrorMsg ?? "") + " | " + string.Join(" / ", wb));
+            // c: xoá dòng
+            await Fresh();
+            var (c, cc) = await NgRow(2, T.AddHours(2)); await Move(2, cc);
+            var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = c.WtsLogId, KhPlanDetailId = 2, UserId = 2 }); db.Fixup(); var wc = WtsSvcHelp.Warns(v);
+            Ok(v.Ok && wc.Count == 1 && wc[0].StartsWith("PO PO2 · " + NgCaseNo.Format(cc) + " đã đi phiếu — sau khi xoá: Gia công · tồn hàng lỗi còn -2 (đã giao đi nhiều hơn NG còn ghi).") && wc[0].EndsWith("Workflow OFF nên vẫn xoá — kiểm lại số liệu.")
+               && db.WtsProductionLogs.List.Single(w => w.WtsLogId == c.WtsLogId).IsVoided,
+               "W20c OFF: xoá dòng NG của vụ đã đi → xoá được + cảnh báo", (v.ErrorMsg ?? "") + " | " + string.Join(" / ", wc));
+            // d: đổi NC Gia công của dòng NG giữ vụ đã đi (K2) — OFF đổi + cảnh báo
+            await Fresh();
+            var (d, cd) = await NgRow(2, T.AddHours(3)); await Move(2, cd);
+            g = Gc(nc: "NC2", machine: "M2"); var ed = Row(2, 3, 2, T.AddHours(3), T.AddHours(3).AddMinutes(30), cat: 1); ed.IsEditing = true; ed.WtsLogId = d.WtsLogId; ed.NgCaseId = cd; g.Rows.Add(ed);
+            r = await s.SaveGroupAsync(g); var wd = WtsSvcHelp.Warns(r);
+            Ok(r.Ok && db.NgCases.List.Single(x => x.NgCaseId == cd).DetectNC == "NC2" && wd.Count == 1
+               && wd[0] == "PO PO2 · " + NgCaseNo.Format(cd) + " đã đi phiếu — NC làm tiếp của vụ đổi NC1 → NC2. Workflow OFF nên vẫn lưu — kiểm lại số liệu.",
+               "W20d OFF: sửa dòng NG giữ vụ đã đi, NC1 → NC2 → lưu được, DetectNC = NC2 + cảnh báo NC làm tiếp", (r.ErrorMsg ?? "") + " | " + string.Join(" / ", wd));
+            // e: cùng thao tác ở PO1 (ON) → chặn như cũ, không cảnh báo
+            await Fresh();
+            var (e1, ce) = await NgRow(1, T.AddHours(4)); await Move(1, ce);
+            g = Gc(); var ee = Row(1, 5, 0, T.AddHours(4), T.AddHours(4).AddMinutes(30)); ee.IsEditing = true; ee.WtsLogId = e1.WtsLogId; ee.NgCaseId = ce; g.Rows.Add(ee);
+            r = await s.SaveGroupAsync(g);
+            var v2 = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = e1.WtsLogId, KhPlanDetailId = 1, UserId = 2 }); db.Fixup();
+            g = Gc(nc: "NC2", machine: "M2"); var en = Row(1, 3, 2, T.AddHours(4), T.AddHours(4).AddMinutes(30), cat: 1); en.IsEditing = true; en.WtsLogId = e1.WtsLogId; en.NgCaseId = ce; g.Rows.Add(en);
+            var r3 = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && !v2.Ok && !r3.Ok && (r.ErrorMsg ?? "").Contains("tồn hàng lỗi = -2") && WtsSvcHelp.Warns(r).Count == 0   // đổi NC khi ON: W18 kiểm lời chặn riêng
+               && !db.WtsProductionLogs.List.Single(w => w.WtsLogId == e1.WtsLogId).IsVoided,
+               "W20e ON: NG → 0 / xoá dòng / đổi NC của vụ đã đi → chặn như cũ", (r.ErrorMsg ?? "") + " | " + v2.ErrorMsg + " | " + r3.ErrorMsg);
+            // f: OFF, vụ CHƯA đi phiếu: NG 2 → 0 → không cảnh báo
+            await Fresh();
+            var (f, cf) = await NgRow(2, T.AddHours(5));
+            g = Gc(); var ef = Row(2, 5, 0, T.AddHours(5), T.AddHours(5).AddMinutes(30)); ef.IsEditing = true; ef.WtsLogId = f.WtsLogId; ef.NgCaseId = cf; g.Rows.Add(ef);
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && WtsSvcHelp.Warns(r).Count == 0 && !ef.HasWarning, "W20f OFF: vụ chưa đi phiếu, NG 2 → 0 → lưu, không cảnh báo", r.ErrorMsg);
+            // g: OFF, vụ đã đi 2 / NG giữ 2 (OK 3 → 4): không âm → không cảnh báo
+            await Fresh();
+            var (h, ch) = await NgRow(2, T.AddHours(6)); await Move(2, ch);
+            g = Gc(); var eh = Row(2, 4, 2, T.AddHours(6), T.AddHours(6).AddMinutes(30), cat: 1); eh.IsEditing = true; eh.WtsLogId = h.WtsLogId; eh.NgCaseId = ch; g.Rows.Add(eh);
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && WtsSvcHelp.Warns(r).Count == 0, "W20g OFF: vụ đã đi nhưng NG giữ nguyên (chỉ đổi OK) → không cảnh báo", r.ErrorMsg + " | " + string.Join(" / ", WtsSvcHelp.Warns(r)));
+            // h: lưu không qua (OFF, dòng thứ 2 lỗi) → không cảnh báo nào (chỉ gắn sau Commit)
+            await Fresh();
+            var (k, ck) = await NgRow(2, T.AddHours(7)); await Move(2, ck);
+            g = Gc(); var ek = Row(2, 5, 0, T.AddHours(7), T.AddHours(7).AddMinutes(30)); ek.IsEditing = true; ek.WtsLogId = k.WtsLogId; ek.NgCaseId = ck; g.Rows.Add(ek);
+            g.Rows.Add(Row(2, 500, 0, T.AddHours(7).AddMinutes(30), T.AddHours(8)));   // vượt SL PO → chặn cả nhóm
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && WtsSvcHelp.Warns(r).Count == 0 && !ek.HasWarning && !db.WtsProductionLogs.List.Single(w => w.WtsLogId == k.WtsLogId).IsVoided,
+               "W20h OFF lưu nhóm bị chặn (dòng khác vượt PO) → không gắn cảnh báo, dòng cũ giữ", r.ErrorMsg);
+            // i: ô vụ đã âm từ lần sửa trước (NG 2 → 1, đã giao 2 → −1); sửa lại chỉ đổi OK (NG giữ 1) → ô vụ không âm THÊM → không cảnh báo (đột biến M8)
+            await Fresh();
+            var (m, cm) = await NgRow(2, T.AddHours(8)); await Move(2, cm);
+            g = Gc(); var em = Row(2, 3, 1, T.AddHours(8), T.AddHours(8).AddMinutes(30), cat: 1); em.IsEditing = true; em.WtsLogId = m.WtsLogId; em.NgCaseId = cm; g.Rows.Add(em);
+            r = await s.SaveGroupAsync(g); db.Fixup(); var wm1 = WtsSvcHelp.Warns(r);
+            g = Gc(); var em2 = Row(2, 4, 1, T.AddHours(8), T.AddHours(8).AddMinutes(30), cat: 1); em2.IsEditing = true; em2.WtsLogId = em.WtsLogId; em2.NgCaseId = cm; g.Rows.Add(em2);
+            var r2i = await s.SaveGroupAsync(g); db.Fixup();
+            Ok(r.Ok && wm1.Count == 1 && wm1[0].Contains("còn -1") && r2i.Ok && WtsSvcHelp.Warns(r2i).Count == 0 && !em2.HasWarning,
+               "W20i OFF: ô vụ đã −1 từ lần trước, sửa lại chỉ đổi OK → không cảnh báo lại (chỉ báo ô âm MỚI / âm thêm)", string.Join(" / ", wm1) + " | " + string.Join(" / ", WtsSvcHelp.Warns(r2i)));
+        }
+
+        // [GOI9-OFF-CANHBAO 2026-11-08] Ngẫu nhiên Workflow OFF (PO2) + ON (PO1): lưu NG / giao hàng lỗi của vụ (GC → Kho) / sửa dòng (NG, OK, NC1 ↔ NC2, đổi PO) / xoá dòng.
+        //   Đáp án ĐỘC LẬP (không gọi sổ): ô vụ ở Gia công = Σ NG dòng WTS còn hiệu lực của vụ − Σ đã giao của vụ.
+        //   OFF: mọi thao tác hợp lệ đều lưu; có cảnh báo ô vụ ⇔ ô vụ sau < 0 và nhỏ hơn trước; có cảnh báo NC làm tiếp ⇔ đổi NC1 ↔ NC2 khi vụ đã giao.
+        //   ON: không bao giờ có cảnh báo; ô vụ sau < 0 (mới / thêm) ⇔ bị chặn; đổi NC khi vụ đã giao ⇒ bị chặn. Số lượt: W21N (mặc định 3 seed × 120 thao tác).
+        Console.WriteLine("[W21] GOI9-OFF-CANHBAO ngẫu nhiên — OFF lưu + cảnh báo đúng lúc, ON chặn đúng lúc (đáp án độc lập: Σ NG vụ − Σ đã giao)");
+        {
+            int nSeed = int.TryParse(Environment.GetEnvironmentVariable("W21N"), out var w21) ? w21 : 3;
+            int bad0 = fails, nOps = 0, nWarn = 0, nBlock = 0, nNcWarn = 0;
+            for (int seed = 1; seed <= nSeed; seed++)
+            {
+                var rnd = new Random(9000 + seed);
+                var db = await SeedAsync(); var s = Svc(db); var hs = new HandoverService(db);
+                int minute = 0;
+                decimal Held(long cid) => db.WtsProductionLogs.List.Where(w => !w.IsVoided && w.NgCaseId == cid).Sum(w => w.QtyNg ?? 0)
+                                        - db.HandoverTransactions.List.Where(x => !x.IsVoided && x.NgCaseId == cid).Sum(x => x.QtyIssued);
+                bool Moved(long cid) => db.HandoverTransactions.List.Any(x => !x.IsVoided && x.NgCaseId == cid);
+                void F(string m) { Ok(false, $"W21 seed {seed} op {nOps}: {m}"); }
+                for (int op = 0; op < 120 && fails - bad0 < 5; op++)
+                {
+                    nOps++;
+                    int det = rnd.Next(2) == 0 ? 1 : 2; bool off = det == 2;
+                    var mine = db.WtsProductionLogs.List.Where(w => !w.IsVoided && w.KhPlanDetailId == det && w.ProcessGroup == "GC" && w.WorkerId == 2).ToList();
+                    var k = rnd.Next(10);
+                    if (k < 3 || mine.Count == 0)
+                    {   // lưu dòng NC1 có NG
+                        var t0 = T.AddMinutes(minute += 7);
+                        var g = Gc(); var a = Row(det, rnd.Next(0, 3), rnd.Next(1, 3), t0, t0.AddMinutes(5), cat: 1); g.Rows.Add(a);
+                        var r = await s.SaveGroupAsync(g); db.Fixup();
+                        if (r.Ok && WtsSvcHelp.Warns(r).Count > 0) F("lưu dòng mới mà có cảnh báo: " + string.Join(" / ", WtsSvcHelp.Warns(r)));
+                        continue;
+                    }
+                    var w = mine[rnd.Next(mine.Count)];
+                    if (k < 5)
+                    {   // giao hàng lỗi của vụ về Kho (có hàng thì giao)
+                        if (w.NgCaseId is long cg && Held(cg) > 0)
+                        { var mv = await hs.IssueByCellAsync(det, "GC", "KHO", 1, 2, "LOI", false, "LOI", w.NC, reason: "tra kho", ngCaseId: cg); db.Fixup(); }
+                        continue;
+                    }
+                    long? cid = w.NgCaseId;
+                    var before = cid is long c0 ? Held(c0) : 0m;
+                    bool movedB = cid is long c1 && Moved(c1);
+                    if (k < 7)
+                    {   // xoá dòng
+                        var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.WtsLogId, KhPlanDetailId = det, UserId = 2 }); db.Fixup();
+                        var after = cid is long c2 ? Held(c2) : 0m;
+                        bool neg = cid != null && before - (w.QtyNg ?? 0) < 0 && (w.QtyNg ?? 0) > 0;
+                        var wv = WtsSvcHelp.Warns(v);
+                        if (off)
+                        {
+                            if (!v.Ok) F($"OFF xoá bị chặn: {v.ErrorMsg}");
+                            else if (neg != (wv.Count > 0)) F($"OFF xoá: ô vụ trước {before} NG dòng {w.QtyNg} → cảnh báo {wv.Count} (cần {(neg ? 1 : 0)}) {string.Join(" / ", wv)}");
+                            if (wv.Count > 0) nWarn++;
+                        }
+                        else
+                        {
+                            if (wv.Count > 0) F("ON xoá có cảnh báo");
+                            if (neg && v.Ok) F($"ON xoá làm ô vụ âm mà không chặn (trước {before}, NG {w.QtyNg})");
+                            if (!v.Ok) nBlock++;
+                        }
+                        continue;
+                    }
+                    {   // sửa dòng: NG mới, OK mới, 25% đổi NC, 15% đổi PO
+                        bool chPo = rnd.NextDouble() < 0.15, chNc = !chPo && rnd.NextDouble() < 0.25;
+                        int det2 = chPo ? 3 - det : det;
+                        var ncNew = chNc ? (w.NC == "NC1" ? "NC2" : "NC1") : w.NC;
+                        var ngNew = (decimal)rnd.Next(0, 3); var okNew = (decimal)rnd.Next(ngNew == 0 ? 1 : 0, 3);
+                        var g = Gc(nc: ncNew, machine: ncNew == "NC1" ? "M1" : "M2");
+                        var e = Row(det2, okNew, ngNew, w.StartTime, w.EndTime, cat: 1); e.IsEditing = true; e.WtsLogId = w.WtsLogId; e.NgCaseId = cid; g.Rows.Add(e);
+                        var r = await s.SaveGroupAsync(g); db.Fixup();
+                        var wr = WtsSvcHelp.Warns(r);
+                        bool keeps = !chPo && ngNew > 0 && cid != null;
+                        decimal afterExp = cid == null ? 0 : before - (w.QtyNg ?? 0) + (keeps ? ngNew : 0);
+                        bool neg = cid != null && afterExp < 0 && afterExp < before;
+                        bool ncChange = keeps && chNc && movedB;
+                        bool capFail = !r.Ok && ((r.ErrorMsg ?? "").Contains("vượt") || (r.ErrorMsg ?? "").Contains("chưa nhận hàng"));
+                        if (off && !chPo)
+                        {
+                            if (!r.Ok) { if (!capFail) F($"OFF sửa bị chặn: {r.ErrorMsg}"); continue; }
+                            bool hasCase = wr.Any(x => x.Contains("đã đi phiếu — sau khi sửa:")), hasNc = wr.Any(x => x.Contains("NC làm tiếp của vụ đổi"));
+                            if (neg != hasCase) F($"OFF sửa: ô vụ {before} → {afterExp} → cảnh báo ô vụ {hasCase} (cần {neg}) {string.Join(" / ", wr)}");
+                            if (ncChange != hasNc) F($"OFF sửa: đổi NC {w.NC}→{ncNew} vụ đã giao {movedB} → cảnh báo NC {hasNc} (cần {ncChange})");
+                            if (hasNc && db.NgCases.List.First(x => x.NgCaseId == cid).DetectNC != ncNew) F("OFF sửa: DetectNC không theo NC mới");
+                            if (hasCase) nWarn++; if (hasNc) nNcWarn++;
+                        }
+                        else if (!off && !chPo)
+                        {
+                            if (wr.Count > 0) F("ON sửa có cảnh báo: " + string.Join(" / ", wr));
+                            if ((neg || ncChange) && r.Ok) F($"ON sửa lọt (ô vụ {before} → {afterExp}, đổi NC vụ đã giao {ncChange})");
+                            if (!r.Ok) nBlock++;
+                        }
+                        else
+                        {   // đổi PO: PO cũ OFF → cảnh báo ⇔ ô vụ âm; PO cũ ON → chặn khi âm (PO mới có thể chặn vì trần)
+                            if (r.Ok && off && neg != wr.Any(x => x.Contains("đã đi phiếu — sau khi sửa:"))) F($"đổi PO (cũ OFF): ô vụ {before} → {afterExp} cảnh báo {string.Join(" / ", wr)}");
+                            if (r.Ok && !off && neg) F($"đổi PO (cũ ON) làm ô vụ âm mà lưu được");
+                            if (r.Ok && !off && wr.Count > 0) F("đổi PO (cũ ON) có cảnh báo");
+                        }
+                    }
+                }
+            }
+            Ok(fails == bad0, $"W21 {nSeed} seed · {nOps} thao tác · OFF cảnh báo ô vụ {nWarn} · OFF cảnh báo NC làm tiếp {nNcWarn} · ON chặn {nBlock}");
+            Ok(nWarn > 0 && nNcWarn > 0 && nBlock > 0, "W21 phủ: có ca OFF cảnh báo ô vụ, cảnh báo NC làm tiếp, ON chặn", $"{nWarn} / {nNcWarn} / {nBlock}");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

@@ -227,7 +227,9 @@ namespace MES.Web.Services
         /// Nguồn: rà độc lập toàn hệ thống 07/11 (Trung) — trước: DetectNC chỉ ghi lúc tạo vụ → NG sửa NC02 → NC01 vẫn làm tiếp NC02 không cần lý do.
         /// Trả lời báo nếu không được đổi; null = được (đã đổi nếu khác). Chỉ vụ sinh từ WTS (vụ khác không lấy NC từ dòng WTS).
         /// </summary>
-        public static async Task<string?> ChangeCaseDetectNcAsync(AppDbContext db, long caseId, string? newNc)
+        /// [GOI9-OFF-CANHBAO 2026-11-08] offWarnings != null (PO Workflow OFF): vụ đã đi phiếu KHÔNG chặn — vẫn đổi NC + thêm 1 lời cảnh báo vào danh sách
+        ///   (nơi gọi gắn lên dòng sau khi lưu). Null = Workflow ON: chặn như cũ. Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a): OFF chỉ cảnh báo).
+        public static async Task<string?> ChangeCaseDetectNcAsync(AppDbContext db, long caseId, string? newNc, List<string>? offWarnings = null)
         {
             var cs = await db.NgCases.FirstOrDefaultAsync(x => x.NgCaseId == caseId);
             if (cs == null || cs.OriginKind != NgOrigin.Wts) return null;
@@ -250,8 +252,10 @@ namespace MES.Web.Services
             }
             var moved = real && (await db.HandoverTransactions.AsNoTracking().AnyAsync(t => t.NgCaseId == caseId && !t.IsVoided)
                      || await db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == caseId && !r.IsVoided));
-            if (moved)
+            if (moved && offWarnings == null)
                 return $"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — không đổi NC / mã CV của dòng có NG được (huỷ các chứng từ đó trước, hoặc giữ NC cũ).";
+            if (moved)   // [GOI9-OFF-CANHBAO] Workflow OFF: đổi + cảnh báo
+                offWarnings!.Add($"{NgCaseNo.Format(caseId)} đã đi phiếu — NC làm tiếp của vụ đổi {(string.IsNullOrWhiteSpace(cs.DetectNC) ? "(trống)" : cs.DetectNC.Trim())} → {nn ?? "(trống)"}.");
             cs.DetectNC = nn;
             await db.SaveChangesAsync();
             return null;

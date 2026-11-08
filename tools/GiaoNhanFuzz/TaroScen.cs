@@ -755,7 +755,8 @@ public static class TaroScen
             var row = (await led.GetLedgerForDetailAsync(det))!;
             Ok(e.Ok && HandoverForm.CaseNextNc(row, cs, "GC") == "NC04", "T19c vụ chưa đi phiếu: sửa dòng NG 2T NC 3 → 5T NC 5 được, NC làm tiếp theo đoạn mới = NC04", $"{e.Err} | {HandoverForm.CaseNextNc(row, cs, "GC")}");
         }
-        {   // rà độc lập Gói 8 (Trung-1): Workflow OFF, vụ Taro làm hộ đã trả về Gia công → sửa dòng NG sang Bavia (mất đoạn làm hộ) → chặn (K5 không chặn khi OFF)
+        {   // rà độc lập Gói 8 (Trung-1): Workflow OFF, vụ Taro làm hộ đã trả về Gia công → sửa dòng NG sang Bavia (mất đoạn làm hộ).
+            //   [GOI9-OFF-CANHBAO 2026-11-08] Hùng 08/11 07:54 chốt OFF chỉ cảnh báo → đáp án đổi: lưu được + cảnh báo NC làm tiếp đổi (trước Gói 9: chặn).
             var (db, det) = await LhStart("P-LHS3", G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1, wfOff: true);
             var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
             await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho NC03");
@@ -763,10 +764,27 @@ public static class TaroScen
             var ng = await Taro(db, det, "2T", "3", 0, 1);
             var lid = ng.LogId!.Value; var cs = db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).NgCaseId!.Value;
             var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 1 });
-            var e = await WtsSvcHelp.SaveAsync(db, det, "BAVIA", null, "B1", 0, 1, U, 1, keepCase: cs, editLogId: lid);
+            var e = await WtsSvcHelp.SaveWAsync(db, det, "BAVIA", null, "B1", 0, 1, U, 1, keepCase: cs, editLogId: lid);
             var row = (await led.GetLedgerForDetailAsync(det))!;
-            Ok(f.Ok && !e.Ok && (e.Err ?? "").Contains("NC Gia công làm tiếp") && HandoverForm.CaseNextNc(row, cs, "GC") == "NC02",
-               "T19d Workflow OFF: sửa dòng NG Taro làm hộ (vụ đã trả về Gia công) sang Bavia B1 → chặn, NC làm tiếp vẫn NC02 (rà độc lập Gói 8 Trung-1)", $"{f.Error} | {e.Err}");
+            Ok(f.Ok && e.Ok && (e.Warn ?? "").Contains(NgCaseNo.Format(cs) + " (Taro làm hộ) đã đi phiếu — NC Gia công làm tiếp của vụ đổi NC02 → ")
+               && (e.Warn ?? "").EndsWith("Workflow OFF nên vẫn lưu — kiểm lại số liệu.") && db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).IsVoided,
+               "T19d Workflow OFF: sửa dòng NG Taro làm hộ (vụ đã trả về Gia công) sang Bavia B1 → LƯU ĐƯỢC + cảnh báo NC làm tiếp đổi (Hùng 08/11 07:54; trước: chặn)", $"{f.Error} | {e.Err} | {e.Warn}");
+        }
+        {   // [GOI9-OFF-CANHBAO] T19e: cùng thao tác T19d nhưng nhóm có dòng thứ 2 lỗi (vượt SL PO) → cả nhóm không lưu → KHÔNG được để cảnh báo trên dòng (chỉ gắn sau Commit; đột biến M6)
+            var (db, det) = await LhStart("P-LHS4", G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1, wfOff: true);
+            var svc = new HandoverService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho NC03");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            var ng = await Taro(db, det, "2T", "3", 0, 1);
+            var lid = ng.LogId!.Value; var cs = db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).NgCaseId!.Value;
+            await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 1 });
+            var grp = WtsSvcHelp.Build(det, "BAVIA", null, "B1", 0, 1, U, 1, cs, lid);
+            var r0 = grp.Rows[0];
+            grp.Rows.Add(new WtsSaveService.WtsSaveRow { KhPlanDetailId = det, PO = "PO" + det, StartTime = r0.StartTime.AddMinutes(-3), EndTime = r0.StartTime.AddMinutes(-2), NC = "B1", WtsCode = "B1",
+                QtyDone = 500, QtyOk = 500, QtyNg = 0, ActualTimePerPc = 1, ProductionMode = "serial" });
+            var res = await new WtsSaveService(db, new HandoverLedgerService(db)).SaveGroupAsync(grp); db.Fixup();
+            Ok(!res.Ok && !r0.HasWarning && string.IsNullOrEmpty(r0.WarningMsg) && !db.WtsProductionLogs.List.Single(w => w.WtsLogId == lid).IsVoided,
+               "T19e Workflow OFF: nhóm có dòng khác vượt PO → không lưu, dòng đổi đoạn làm hộ KHÔNG mang cảnh báo, dòng cũ giữ", $"{res.ErrorMsg} | {r0.WarningMsg}");
         }
     }
 

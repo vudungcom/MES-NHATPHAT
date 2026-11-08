@@ -128,6 +128,9 @@ namespace MES.Web.Services
             public string? ErrorMsg { get; set; }
             /// <summary>PO đã ghi (hoặc đã ghi dở trước khi rollback) — trang nạp lại trần / số đã làm cho các PO này.</summary>
             public List<int> DetailIds { get; set; } = new();
+            /// <summary>[GOI9-OFF-CANHBAO 2026-11-08] Cảnh báo sau khi ĐÃ lưu / xoá (Workflow OFF không chặn — vụ đã đi phiếu: NC làm tiếp đổi,
+            ///   ô của vụ âm). Trang hiện ở khung cảnh báo trên bảng dòng đã lưu (nhóm đã lưu bị bỏ khỏi form nên không hiện được trên dòng).</summary>
+            public List<string> Warnings { get; set; } = new();
         }
 
         public sealed class WtsVoidRequest
@@ -207,6 +210,41 @@ namespace MES.Web.Services
         };
         private static string WtsNoPermMsg(string key) =>
             $"Bạn không có quyền nhập WTS nhóm {key switch { "GC" => "Gia công", "HTSP" => "HTSP", "KCS" => "KCS", _ => "Đóng gói" }} (ma trận phân quyền) — nhờ Admin cấp quyền rồi tải lại trang.";
+
+        // [WTS-SUA-NHOM 2026-11-08] Nguồn: HÙNG 08/11 08:01 ("phải chặn, user nhóm nào chỉ sửa nhóm đó thôi"; chốt GOI8-THAP (b)).
+        //   Nút Sửa dòng đã lưu: chỉ sửa trong NHÓM LỚN của dòng (Gia công / HTSP / KCS / Đóng gói). Dòng của nhóm lớn khác → chặn, báo xoá dòng rồi
+        //   nhập lại ở nhóm đúng (sửa = huỷ + dòng mới; dòng mới mang nhóm của form → đổi nhóm lớn qua nút Sửa làm lệch sổ nhóm cũ / mới mà người sửa
+        //   không thấy). Trong HTSP vẫn đổi nhóm nhỏ Taro / Bavia / Rửa (cùng nhóm lớn — khối LAMHO-SUA-MA-VU vẫn kiểm vụ Taro làm hộ).
+        //   Dòng cũ không ghi ProcessGroup (dữ liệu rất cũ) → không chặn (như trước). Trang dùng chung hàm này để báo ngay lúc bấm Sửa.
+        /// <summary>[WTS-SUA-NHOM] Nhóm lớn của form nhập (cùng khoá quyền WTS): GC / HTSP / KCS / PKG.</summary>
+        public static string FormGroupKey(bool isGc, bool isHtsp, string? handoverGroupCode)
+            => isGc ? "GC" : isHtsp ? "HTSP" : handoverGroupCode == "KCS" ? "KCS" : "PKG";
+        /// <summary>[WTS-SUA-NHOM] Lời báo khi dòng đã lưu (ProcessGroup) thuộc nhóm lớn khác form; null = sửa được.</summary>
+        public static string? OtherGroupEditMsg(string? savedPg, string formKey)
+        {
+            if (string.IsNullOrWhiteSpace(savedPg)) return null;
+            var k = WtsPermKeyOfPg(savedPg.Trim());
+            if (k == formKey) return null;
+            string Name(string x) => x switch { "GC" => "Gia công", "HTSP" => "HTSP", "KCS" => "KCS", _ => "Đóng gói" };
+            var sub = savedPg.Trim().ToUpperInvariant() switch { "TARO" => " (Taro)", "BAVIA" => " (Bavia)", "WASHING" => " (Rửa)", _ => "" };
+            // rà độc lập Gói 9 (Thấp-1): nói rõ form của người sửa là nhóm nào + đường gỡ khi không còn quyền nhóm cũ
+            return $"Dòng này của nhóm {Name(k)}{sub} — form nhập của bạn là nhóm {Name(formKey)} nên không sửa ở đây được: xoá dòng rồi nhập lại ở nhóm đúng (không còn quyền nhóm {Name(k)} thì nhờ Admin).";
+        }
+
+        // [GOI9-OFF-CANHBAO 2026-11-08] Ô của các vụ cho trước mới âm / âm thêm (như NewNegatives nhưng chỉ ô "VU|<id>|…") — Workflow OFF chỉ cảnh báo.
+        private static List<string> CaseNewNegatives(LedgerRow before, LedgerRow after, long caseId)
+        {
+            var pre = "VU|" + caseId + "|";
+            var no = NgCaseNo.Format(caseId) + " ở ";   // rà độc lập Gói 9 (Thấp-3): tên ô bắt đầu bằng mã vụ — lời cảnh báo đã nêu mã vụ, bỏ lặp
+            var b = HandoverLedgerService.NegativeCells(before);
+            return HandoverLedgerService.NegativeCells(after)
+                .Where(kv => kv.Key.StartsWith(pre, StringComparison.Ordinal) && (!b.TryGetValue(kv.Key, out var bv) || kv.Value.Value < bv.Value))
+                .Select(kv => $"{(kv.Value.Text.StartsWith(no, StringComparison.Ordinal) ? kv.Value.Text[no.Length..] : kv.Value.Text)} còn {kv.Value.Value:0.##}").ToList();
+        }
+        // [GOI9-OFF-CANHBAO] chữ cảnh báo ô vụ âm (sửa / xoá) — 1 chỗ cho cả 2 đường
+        private static string CaseNegWarn(string po, long caseId, string act, List<string> cells)
+            => $"PO {po} · {NgCaseNo.Format(caseId)} đã đi phiếu — sau khi {act}: {string.Join("; ", cells)} (đã giao đi nhiều hơn NG còn ghi).";
+        private const string OffWarnTail = " Workflow OFF nên vẫn lưu — kiểm lại số liệu.";
 
         // ProcessGroup ghi trên WTS theo nhóm công nhân (trang: CurrentPg — khớp SaveRowAsync)
         private static string CurrentPg(WtsSaveGroup grp)
@@ -308,6 +346,14 @@ namespace MES.Web.Services
                 sub.MachineUsed = grp.MachineUsed;
                 sub.ProductionMode = grp.ProductionMode;
 
+                // [WTS-SUA-NHOM 2026-11-08] sửa dòng đã lưu: nhóm lớn của dòng cũ (đọc DB, không tin trang) phải = nhóm lớn của form
+                if (sub.IsEditing && sub.WtsLogId.HasValue)
+                {
+                    var _oldPg = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == sub.WtsLogId.Value).Select(l => l.ProcessGroup).FirstOrDefaultAsync();
+                    if (OtherGroupEditMsg(_oldPg, _permKey) is string _grpMsg)
+                    { sub.ErrorMsg = _grpMsg; grp.ErrorMsg = _grpMsg; return Fail(); }
+                }
+
                 if (!sub.KhPlanDetailId.HasValue)
                 { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return Fail(); }
                 if (sub.QtyDone <= 0 && !IsQtyOptional(grp, sub))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
@@ -377,6 +423,7 @@ namespace MES.Web.Services
             //   Trước: khoá Session + tự mở / đóng kết nối, giao dịch chỉ bọc phần ghi ([B2B3-WTS-TRX]). Thứ tự kiểm giữ nguyên.
             (int DetailId, List<long> RemoveIds, List<InWts> Add, bool Loop)? _pendingWhy = null;   // [K5-VONG-HO-WTS-SUA] + Loop: chặn theo thời gian   // [GN-WHY] Lưu bị chặn K5: tìm gốc rễ SAU khi nhả khoá
             var _notify = new List<int>();   // [B2B3-WTS-TRX] PO cần báo màn Giao nhận — báo sau khi ghi hẳn
+            var _warns = new List<(WtsSaveRow Row, string Msg)>();   // [GOI9-OFF-CANHBAO] cảnh báo Workflow OFF — chỉ gắn khi đã Commit
             bool _allOk = false;
             await using (var _wtsTrx = await _db.Database.BeginTransactionAsync())
             {
@@ -412,7 +459,7 @@ namespace MES.Web.Services
 
                 // [GN-WTS-CAP] Kiểm SL theo sổ giao nhận — MỌI nhóm (GC / HTSP / KCS / Đóng gói), từng PO,
                 // TRƯỚC khi void dòng cũ hay lưu dòng nào.
-                var _capErr = await CheckGroupQtyAsync(grp, r => _pendingWhy = r);
+                var _capErr = await CheckGroupQtyAsync(grp, r => _pendingWhy = r, _warns);   // [GOI9-OFF-CANHBAO] + cảnh báo OFF
                 if (_capErr != null) { grp.ErrorMsg = _capErr; }
                 else
                 {
@@ -423,7 +470,7 @@ namespace MES.Web.Services
                     _allOk = true;
                     foreach (var sub in grp.Rows)
                     {
-                        await SaveRowAsync(grp, sub, _notify);
+                        await SaveRowAsync(grp, sub, _notify, _warns);   // [GOI9-OFF-CANHBAO] + cảnh báo OFF (đổi NC phát hiện vụ đã đi)
                         if (sub.ErrorMsg != null)
                         { grp.ErrorMsg = $"Lỗi hàng KH {sub.PO}: {sub.ErrorMsg} — chưa dòng nào trong nhóm được lưu, sửa xong bấm Lưu lại."; _allOk = false; break; }
                     }
@@ -448,6 +495,13 @@ namespace MES.Web.Services
             if (!_allOk) return Fail();
 
             foreach (var id in result.DetailIds) HandoverChangeNotifier.Notify(id);   // [GN-LIVE] báo sau khi đã ghi hẳn
+            // [GOI9-OFF-CANHBAO 2026-11-08] đã Commit → gắn cảnh báo lên dòng + kết quả (trang hiện ở khung cảnh báo)
+            foreach (var (wr, wm) in _warns)
+            {
+                wr.HasWarning = true;
+                wr.WarningMsg = string.IsNullOrEmpty(wr.WarningMsg) ? wm : wr.WarningMsg + " " + wm;
+                if (!result.Warnings.Contains(wm)) result.Warnings.Add(wm);
+            }
             _db.ChangeTracker.Clear();
             result.Ok = true;
             return result;
@@ -573,7 +627,8 @@ namespace MES.Web.Services
         //      (vd sửa giảm OK NC1 khi NC2 / nhóm sau đã dùng số đó).
         // [RS-E14] Mọi Workflow: mã không có trong snapshot quy trình của PO (khi PO đã có snapshot cho nhóm) → chặn.
         // Trả null = qua; khác null = lời báo, chưa có gì bị void / lưu.
-        private async Task<string?> CheckGroupQtyAsync(WtsSaveGroup grp, Action<(int, List<long>, List<InWts>, bool)> setPendingWhy)
+        private async Task<string?> CheckGroupQtyAsync(WtsSaveGroup grp, Action<(int, List<long>, List<InWts>, bool)> setPendingWhy,
+                                                       List<(WtsSaveRow Row, string Msg)> warns)   // [GOI9-OFF-CANHBAO] cảnh báo OFF (gắn sau Commit)
         {
             var pg = CurrentPg(grp);
             string? CodeOf(WtsSaveRow s) => grp.IsGc ? grp.NC : (s.WtsCode ?? s.NC);
@@ -693,6 +748,13 @@ namespace MES.Web.Services
                                      || await _db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == cid && !r.IsVoided);
                             if (!moved) continue;
                             string Nc(string? x) => x == null ? "không có (Taro thường)" : HandoverLedgerService.NcName(x);
+                            // [GOI9-OFF-CANHBAO 2026-11-08] Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a): Workflow OFF "kệ thôi, có chút cảnh báo là được,
+                            //   số liệu họ phải tự cân đối"). Workflow ON chặn như cũ; OFF lưu được + cảnh báo (trước Gói 9: chặn cả OFF).
+                            if (det?.ApplyWorkflow != true)
+                            {
+                                warns.Add((s, $"PO {po} · {NgCaseNo.Format(cid)} (Taro làm hộ) đã đi phiếu — NC Gia công làm tiếp của vụ đổi {Nc(o)} → {Nc(n)}." + OffWarnTail));
+                                continue;
+                            }
                             var msg = $"PO {po} · {NgCaseNo.Format(cid)} (Taro làm hộ) đã giao / huỷ / trả khách / có Kết quả sửa — đổi mã / NC Taro của dòng có NG "
                                     + $"sẽ đổi NC Gia công làm tiếp của vụ ({Nc(o)} → {Nc(n)}). Huỷ các chứng từ đó trước, hoặc giữ mã / NC Taro cũ.";
                             s.ErrorMsg = msg;
@@ -708,6 +770,29 @@ namespace MES.Web.Services
                     {
                         over.ErrorMsg = $"Tổng OK+NG ({over.QtyDone:0.##}) vượt KH ({det!.Quantity:0.##} {det.Unit}).";
                         return $"PO {po}: dòng {over.QtyDone:0.##} vượt SL PO {det.Quantity:0.##} (Workflow OFF chỉ chặn mỗi dòng ≤ PO).";
+                    }
+                    // [GOI9-OFF-CANHBAO 2026-11-08] Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a)). Workflow OFF không chặn K5 (N7) → sửa dòng có NG của vụ
+                    //   đã đi phiếu thành NG 0 / NG ít hơn số đã đi / đổi sang PO khác vẫn lưu; ô của vụ âm thì cảnh báo (ON: K5 bên dưới chặn như cũ).
+                    //   Chỉ xét ô của vụ dòng cũ (đọc DB) — ô nhóm / NC âm khi OFF là bình thường (chưa nhận hàng qua Giao nhận) nên không báo.
+                    if (editIds.Any() && before != null)
+                    {
+                        var oldCases = await _db.WtsProductionLogs.AsNoTracking().Where(l => editIds.Contains(l.WtsLogId) && l.NgCaseId != null)
+                            .Select(l => new { l.WtsLogId, Cid = l.NgCaseId!.Value }).ToListAsync();
+                        if (oldCases.Count > 0)
+                        {
+                            var extraOff = subs.Select(s => new InWts(-1, DateTime.Now, pg, grp.IsGc ? grp.NC : null, grp.IsGc ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
+                                                                      s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null,
+                                                                      StepNC: pg == "TARO" ? s.StepNC : null)).ToList();   // = phần "thử lưu xong" của Workflow ON
+                            var afterOff = await _ledger.GetLedgerForDetailAsync(id, editIds, extraOff);
+                            if (afterOff != null)
+                                foreach (var oc in oldCases)
+                                {
+                                    var badOff = CaseNewNegatives(before, afterOff, oc.Cid);
+                                    var wRow = grp.Rows.FirstOrDefault(r => r.WtsLogId == oc.WtsLogId);
+                                    if (badOff.Count > 0 && wRow != null)
+                                        warns.Add((wRow, CaseNegWarn(po, oc.Cid, "sửa", badOff) + OffWarnTail));
+                                }
+                        }
                     }
                     continue;
                 }
@@ -805,7 +890,7 @@ namespace MES.Web.Services
         };
 
         // ── Lưu 1 dòng (nguyên văn SaveRowAsync của trang; cảnh báo chỉ hiển thị để lại trang) ───────
-        private async Task SaveRowAsync(WtsSaveGroup grp, WtsSaveRow row, List<int> notify)
+        private async Task SaveRowAsync(WtsSaveGroup grp, WtsSaveRow row, List<int> notify, List<(WtsSaveRow Row, string Msg)> warns)   // [GOI9-OFF-CANHBAO] + warns
         {
             row.ErrorMsg = null;
             if (grp.WorkDate.Date != DateTime.Today)
@@ -932,8 +1017,14 @@ namespace MES.Web.Services
                         {
                             var _chg = await NgCaseService.ChangeCaseCategoryAsync(_db, row.NgCaseId.Value, _cat.NgCategoryId);
                             if (_chg != null) { row.ErrorMsg = _chg; return; }
-                            var _chgNc = await NgCaseService.ChangeCaseDetectNcAsync(_db, row.NgCaseId.Value, ncValue ?? wtsCodeValue);   // [WTS-SUA-NC-VU]
+                            // [GOI9-OFF-CANHBAO 2026-11-08] Workflow OFF: vụ đã đi phiếu vẫn đổi NC phát hiện (NC làm tiếp) + cảnh báo; ON chặn như cũ.
+                            //   Cờ Workflow đọc DB (đã giữ khoá PO của dòng từ CheckGroupQtyAsync). Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a)).
+                            var _wfRow = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == row.KhPlanDetailId!.Value)
+                                .Select(d => new { d.PurchaseOrder, On = d.KhPlan != null && d.KhPlan.ApplyWorkflow }).FirstOrDefaultAsync();
+                            var _ncWarn = _wfRow?.On == true ? null : new List<string>();
+                            var _chgNc = await NgCaseService.ChangeCaseDetectNcAsync(_db, row.NgCaseId.Value, ncValue ?? wtsCodeValue, _ncWarn);   // [WTS-SUA-NC-VU]
                             if (_chgNc != null) { row.ErrorMsg = _chgNc; return; }
+                            foreach (var _w in _ncWarn ?? new List<string>()) warns.Add((row, $"PO {_wfRow?.PurchaseOrder ?? row.PO} · {_w}" + OffWarnTail));
                             _ngCaseId = row.NgCaseId;
                         }
                         else
@@ -1405,7 +1496,7 @@ namespace MES.Web.Services
             if (row.WtsLogId.HasValue)
             {
                 var wl = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == row.WtsLogId.Value)
-                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup }).FirstOrDefaultAsync();
+                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup, l.NgCaseId }).FirstOrDefaultAsync();   // [GOI9-OFF-CANHBAO] + vụ
                 if (wl == null || wl.IsVoided)
                 { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
                 if (wl.WorkerId != row.UserId)
@@ -1425,6 +1516,7 @@ namespace MES.Web.Services
                 // [WTS-SVC] Khoá PO LockOwner = Transaction (PoGuard.LockAsync) + câu UPDATE trong cùng giao dịch.
                 bool blocked = false;   // [GN-WHY] bị chặn K5 → tìm gốc rễ sau khi nhả khoá
                 string? blockMsg = null;
+                string? offWarn = null;   // [GOI9-OFF-CANHBAO] cảnh báo OFF — vào kết quả chỉ sau Commit (rà độc lập Gói 9 Thấp-3)
                 await using (var trx = await _db.Database.BeginTransactionAsync())
                 {
                     var lockErr = await PoGuard.LockAsync(_db, detId, deadlockThrows: true);   // [RS-D10c] −3 → VoidRowAsync tự thử lại
@@ -1448,6 +1540,22 @@ namespace MES.Web.Services
                             after = HandoverLedgerService.Compute(afterIn);
                         }
                     }
+                    // [GOI9-OFF-CANHBAO 2026-11-08] Workflow OFF: xoá dòng có NG của vụ đã đi phiếu vẫn xoá (N7) — ô của vụ âm thì cảnh báo sau khi xoá.
+                    //   Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a)). ON: K5 bên dưới chặn như cũ.
+                    else if (before != null && wl.NgCaseId != null)
+                    {
+                        var offIn = await _ledger.GetInputForDetailAsync(detId);
+                        if (offIn != null)
+                        {
+                            offIn.Wts = offIn.Wts.Where(w => w.Id != row.WtsLogId.Value).ToList();
+                            var badOff = CaseNewNegatives(before, HandoverLedgerService.Compute(offIn), wl.NgCaseId.Value);
+                            if (badOff.Count > 0)
+                            {
+                                var poOff = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == detId).Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
+                                offWarn = CaseNegWarn(poOff ?? $"KH#{detId}", wl.NgCaseId.Value, "xoá", badOff) + OffWarnTail.Replace("vẫn lưu", "vẫn xoá");
+                            }
+                        }
+                    }
                     if (before != null && after != null && beforeIn != null && afterIn != null)
                     {
                         var bad = HandoverLedgerService.NewNegatives(before, after);
@@ -1468,6 +1576,7 @@ namespace MES.Web.Services
                         if (n != 1)
                         { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }   // Dispose = Rollback
                         await trx.CommitAsync();
+                        if (offWarn != null) result.Warnings.Add(offWarn);   // [GOI9-OFF-CANHBAO] đã Commit
                     }
                 }   // bị chặn → Dispose = Rollback, khoá PO nhả theo giao dịch
                 if (blocked)

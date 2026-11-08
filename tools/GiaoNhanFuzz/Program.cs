@@ -727,6 +727,16 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (later.Any() && rnd.NextDouble() < 0.1) badLater = later[rnd.Next(later.Count)];
                     }
                     desc = $"kqsua {g} {cell} vu={cid} dat={pass} khong={fail} cap={cap} nc={toNc}";
+                    // [TARO-LAMHO-NC] đáp án: vụ hàng Taro làm hộ bị lỗi chỉ sửa ở Gia công (HandoverService.KetQuaSua) — nhóm khác đang giữ vụ đó ở ô Hàng sửa / Hàng lỗi
+                    //   (Gia công gửi nhờ sửa) thì ghi Kết quả sửa phải bị chặn, chỉ trả lại nơi gửi. Kiem trạm 08/11 seed 23980 PO19: đáp án cũ coi là "trong trần bị từ chối"
+                    //   (có từ Gói 6, 2cdcd14 y hệt). Đường gửi nhờ sửa vụ làm hộ sang nhóm khác: sổ dòng LAMHO-NHO-SUA (Thấp).
+                    if (g != "GC" && caseId is long lhq && row.Cases.TryGetValue(lhq, out var lhqC) && lhqC.IsLamHo)
+                    {
+                        var lhr = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, null, null, Uid(g));
+                        checks++;
+                        if (lhr.Ok || !(lhr.Error ?? "").Contains("là hàng Taro làm hộ bị lỗi")) fails.Add($"[Kết quả sửa vụ làm hộ ngoài Gia công không bị chặn đúng] PO{po} op{op} {desc}: {lhr.Error}");
+                        Inc("lamho.kqsua.chan"); continue;
+                    }
                     if (badLater != null)
                     {
                         var bl = await svc.CreateRepairResultAsync(1, g, cell, caseId, Math.Max(1, Math.Min(pass, cap)), 0, badLater, null, Uid(g), "thu NC sau");

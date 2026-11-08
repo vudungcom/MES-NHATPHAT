@@ -47,6 +47,21 @@ public static class WtsSvcHelp
         return (res.Ok, res.Ok ? null : res.ErrorMsg, grp.Rows[0].WtsLogId);
     }
 
+    /// <summary>[GOI9-OFF-CANHBAO 2026-11-08] Như SaveAsync + cảnh báo dòng (WarningMsg — có cả ở bản trước Gói 9, nên kịch bản chạy được trên bản cũ).</summary>
+    public static async Task<(bool Ok, string? Err, long? LogId, string? Warn)> SaveWAsync(AppDbContext db, int detailId, string pg, string? nc, string? code,
+        decimal ok, decimal ng, int worker, int? catId = null, long? keepCase = null, long? editLogId = null, string? stepNc = null)
+    {
+        var grp = Build(detailId, pg, nc, code, ok, ng, worker, catId, keepCase, editLogId, stepNc: stepNc);
+        var svc = new WtsSaveService(db, new HandoverLedgerService(db));
+        var res = await svc.SaveGroupAsync(grp);
+        db.Fixup();
+        return (res.Ok, res.Ok ? null : res.ErrorMsg, grp.Rows[0].WtsLogId, grp.Rows[0].WarningMsg);
+    }
+
+    /// <summary>[GOI9-OFF-CANHBAO] Cảnh báo của kết quả lưu / xoá (WtsSaveResult.Warnings) — đọc bằng phản chiếu để kịch bản biên dịch được trên bản cũ (không có = rỗng).</summary>
+    public static List<string> Warns(WtsSaveService.WtsSaveResult r)
+        => r.GetType().GetProperty("Warnings")?.GetValue(r) as List<string> ?? new List<string>();
+
     /// <summary>Xoá dòng WTS bằng service thật (K5 + khoá PO trong giao dịch).</summary>
     public static async Task<(bool Ok, string? Err)> VoidAsync(AppDbContext db, long wtsLogId, int detailId, int worker)
     {

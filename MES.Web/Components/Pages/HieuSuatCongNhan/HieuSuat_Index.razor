@@ -415,6 +415,13 @@ else
 
         <div class="card-body p-2">
 
+            @* [GOI9-OFF-CANHBAO][WTS-SUA-NHOM 2026-11-08] cảnh báo sau khi lưu / xoá (Workflow OFF) + lời chặn Sửa dòng nhóm khác *@
+            <div id="wts-notice" class="alert alert-warning py-1 px-2 small mb-2 align-items-start gap-2" style="@WtsNoticeStyle">
+                <i class="bi bi-exclamation-triangle mt-1"></i>
+                <div class="flex-grow-1">@_wtsNotice</div>
+                <button class="btn-close btn-sm" @onclick="CloseWtsNotice" title="Đóng"></button>
+            </div>
+
             @* ── Dòng đã lưu (saved rows từ DB) ── *@
 
             @* [WTS-SAVED-LAYOUT 2026-10-31] Khách: dòng đã lưu hiện khác form lúc nhập, bị cắt cột → nay cùng thứ tự cột với form nhập
@@ -4705,6 +4712,7 @@ else
     private async Task LoadSavedRowsAsync()
 
     {
+        _wtsNotice = null;   // [GOI9-OFF-CANHBAO][WTS-SUA-NHOM] rà độc lập Gói 9 (Thấp-2): đổi ngày / nạp lại bảng → bỏ lời báo cũ (lưu / xoá gán lại sau khi nạp)
 
         var start = _workDate.Date;
 
@@ -4775,6 +4783,7 @@ else
                 NC             = log.NC ?? log.WtsCode,
                 StepNC         = log.StepNC,         // [TARO-NC-MA 2026-11-06] NC Taro của dòng (giữ khi Sửa dòng)
                 HtspSubGroup   = log.HtspSubGroup,   // [FIX-NONGC-SUBGROUP] giữ nhóm nhỏ khi Sửa dòng
+                SavedPg        = log.ProcessGroup,   // [WTS-SUA-NHOM 2026-11-08] nhóm lớn của dòng (chặn Sửa ở form nhóm khác)
 
                 PartNo         = _allRows.FirstOrDefault(r => r.KhPlanDetailId == log.KhPlanDetailId)?.PartNo,
 
@@ -5066,12 +5075,17 @@ else
 
     {
         // [ML16-ACT] dòng "Việc không ra sản phẩm" sửa ở form riêng (trước: mở thành nhóm sản xuất → bắt chọn PO, không lưu được)
+        _wtsNotice = null;   // [WTS-SUA-NHOM] rà độc lập Gói 9 (Thấp-2): bấm Sửa dòng khác → bỏ lời báo cũ
         if (row.ActivityLogId.HasValue && !row.WtsLogId.HasValue) { await OpenActivityEditAsync(row); return; }
 
         // [WTS-VOID-PO 2026-11-01] Form sửa dùng BẢN SAO của dòng đã lưu. Trước: đưa chính object của bảng "dòng đã lưu" vào form →
         //   đổi PO / NC trong form thì bảng dòng đã lưu đổi theo, bấm xoá dòng đó gửi PO đang gõ (khoá nhầm PO); bỏ nhóm sửa (X) thì dòng
         //   đã lưu vẫn mang số đang gõ + cờ đang sửa. Nay bảng dòng đã lưu giữ đúng số trong DB; dòng đang mở sửa thì không mở thêm lần nữa.
         if (row.WtsLogId.HasValue && _groups.SelectMany(g => g.SubRows).Any(s => s.IsEditing && s.WtsLogId == row.WtsLogId)) return;
+        // [WTS-SUA-NHOM 2026-11-08] Nguồn: HÙNG 08/11 08:01 — dòng của nhóm lớn khác form (vd admin / người vừa đổi quyền) không mở sửa:
+        //   báo xoá dòng rồi nhập lại ở nhóm đúng (máy chủ WtsSaveService cũng chặn). HTSP đổi Taro / Bavia / Rửa vẫn được.
+        if (row.WtsLogId.HasValue && WtsSaveService.OtherGroupEditMsg(row.SavedPg, WtsSaveService.FormGroupKey(IsGcGroup, IsHtspGroup, HandoverGroupCode)) is string _grpMsg)
+        { _wtsNotice = _grpMsg; return; }
         row = row.CloneForEdit();
 
         // Tạo nhóm mới từ row đã lưu để sửa lại
@@ -5146,6 +5160,11 @@ else
 
     }
 
+    // [GOI9-OFF-CANHBAO][WTS-SUA-NHOM 2026-11-08] Khung báo trên bảng dòng đã lưu: cảnh báo sau khi lưu / xoá (Workflow OFF) + lời chặn nút Sửa khác nhóm
+    private string? _wtsNotice;
+    private string WtsNoticeStyle => _wtsNotice != null ? "display:flex;white-space:pre-line" : "display:none";
+    private void CloseWtsNotice() { _wtsNotice = null; }
+
     // [GN-WTS-CAP][K5] Lời báo khi không cho xoá (modal giữ nguyên để người dùng đọc)
     private string? _voidBlockMsg;
     private string VoidBlockStyle => _voidBlockMsg != null ? "display:block;white-space:pre-line" : "display:none";   // [GN-WHY] + xuống dòng các bước gợi ý
@@ -5177,6 +5196,7 @@ else
         });
         if (!res.Ok) { _voidBlockMsg = res.ErrorMsg; return false; }
         await LoadSavedRowsAsync();
+        _wtsNotice = res.Warnings.Count > 0 ? "Đã xoá. " + string.Join("\n", res.Warnings) : null;   // [GOI9-OFF-CANHBAO] cảnh báo Workflow OFF (sau khi nạp lại — LoadSavedRowsAsync xoá khung)
         // [WTS-PANEL-QTY 2026-10-31] Xoá dòng xong: nạp lại sổ trần (trước: còn số cũ tới khi lưu / chọn lại PO) + bảng quy trình
         if (row.KhPlanDetailId.HasValue) await ReloadFlowAsync(row.KhPlanDetailId.Value);
         if (row.KhPlanDetailId.HasValue) await ReloadPanelAsync(new[] { row.KhPlanDetailId.Value });
@@ -7055,6 +7075,7 @@ else
     //   Cảnh báo chỉ hiển thị (đọc cache trang) vẫn tính ở đây: ApplyLegacySaveWarnings.
     private async Task SaveGroupAsync(WtsGroup grp)
     {
+        _wtsNotice = null;   // [GOI9-OFF-CANHBAO] rà độc lập Gói 9 (Thấp-2): không giữ lời báo của lần trước
         grp.ErrorMsg = null;
         grp.IsSaving = true;
         StateHasChanged();
@@ -7112,6 +7133,8 @@ else
             var unsavedGroups = _groups.ToList();
 
             await LoadSavedRowsAsync();
+            // [GOI9-OFF-CANHBAO 2026-11-08] nhóm đã lưu bị bỏ khỏi form → cảnh báo máy chủ (Workflow OFF, vụ đã đi phiếu) hiện ở khung trên bảng dòng đã lưu
+            _wtsNotice = res.Warnings.Count > 0 ? "Đã lưu. " + string.Join("\n", res.Warnings) : null;
 
             _groups.AddRange(unsavedGroups);
         }
@@ -8084,6 +8107,8 @@ else
         /// <summary>Nhóm nhỏ HTSP đang chọn: "Taro" / "Bavia" / "Rua"</summary>
 
         public string? HtspSubGroup { get; set; }
+        /// <summary>[WTS-SUA-NHOM 2026-11-08] ProcessGroup của dòng đã lưu (DB) — nút Sửa chỉ mở khi cùng nhóm lớn với form (máy chủ kiểm lại).</summary>
+        public string? SavedPg { get; set; }
 
         /// <summary>Danh sách mã công việc cho nhóm non-GC (load từ snapshot Taro/Bavia/Washing/Inspection/Packaging)</summary>
 

@@ -342,4 +342,51 @@ public static class HarnessSua
             balanced = row.Balanced, neg = HandoverLedgerService.NegativeCells(row).Count,
         };
     }
+
+    // [WTS-SUA-NHOM][GOI9-OFF-CANHBAO 2026-11-08] Dữ liệu drive_g9.py (POST /harness/g9-seed): KH-G9 Workflow OFF / PO-G9 20 chiếc, GC NC01 → NC02, KCS K1;
+    //   Kho → GC 20 (đã nhận). Của gc01 hôm nay: (A) 1 dòng KCS K1 OK 1 (như dòng lưu lúc gc01 còn quyền KCS — nút Sửa phải báo khác nhóm);
+    //   (B), (C) 2 dòng GC NC01 OK 3 NG 2 (WtsSaveService thật → 2 vụ), mỗi vụ đã giao Gia công → Kho ô Hàng lỗi 2 (vụ đã đi phiếu).
+    public static async Task<object> SeedG9Async(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-G9"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            var gc = db.Users.List.First(u => u.Username == "gc01");
+            var cust = db.Customers.List.First();
+            var t0 = DateTime.Now.AddHours(-3);
+            var plan = new KhPlan { PlanNo = "KH-G9", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = false, CreatedBy = admin.UserId, CreatedAt = t0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-G9", PurchaseOrder = "PO-G9", Quantity = 20, Unit = "EA", STD = t0.AddDays(10), CreatedAt = t0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+            int so = 0;
+            foreach (var (nc, m) in new[] { ("NC01", "M1"), ("NC02", "M2") })
+                db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = ++so, NC = nc, MachineRegistered = m, SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3 });
+            db.KhPlanRouteSnapshotInspection.Add(new KhPlanRouteSnapshotInspection { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "K1", StandardTime = 1 });
+            db.KhoVatLieus.Add(new KhoVatLieu { PlanDetailId = d.KhPlanDetailId, IsActive = true, SoLuongThucNhan = 20, SoLuongKeHoach = 20, NgayNhanPhoi = t0, OrderVatLieu = "OVL-G9", ViTriDePhoi = "G9", SoPO = "PO-G9", PartNo = "PART-G9", CreatedAt = t0, CreatedBy = admin.UserId });
+            await db.SaveChangesAsync(); db.Fixup();
+            var svc = new HandoverService(db);
+            async Task Must(Task<(bool Ok, string Error)> t, string what) { var r = await t; if (!r.Ok) throw new Exception("g9-seed " + what + ": " + r.Error); db.Fixup(); }
+            long Last() => db.HandoverTransactions.List.Max(x => x.HandoverTxId);
+            await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "KHO", "GC", 20, admin.UserId, "MOI", false, "MOI", toNC: "NC01"), "giao 20");
+            await Must(svc.ReceiveAsync(Last(), 20, 0, null, admin.UserId), "nhận 20");
+            var day = DateTime.Today;
+            db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "KCS", WtsCode = "K1", QtyDone = 1, QtyOk = 1, QtyNg = 0,
+                StartTime = day.AddMinutes(10), EndTime = day.AddMinutes(20), WorkerId = gc.UserId, ActualTimePerPc = 1, CreatedAt = DateTime.Now });
+            await db.SaveChangesAsync(); db.Fixup();
+            var wsvc = new WtsSaveService(db, new HandoverLedgerService(db));
+            var cat = db.NgCategories.List.First(c => c.IsActive).NgCategoryId;
+            foreach (var (k, m) in new[] { (30, "M1"), (60, "M1") })
+            {
+                var grp = new WtsSaveService.WtsSaveGroup { IsGc = true, HandoverGroupCode = "GC", NC = "NC01", MachineUsed = m, ProductionMode = "serial", UserId = gc.UserId, WorkDate = DateTime.Today };
+                grp.Rows.Add(new WtsSaveService.WtsSaveRow { KhPlanDetailId = d.KhPlanDetailId, PO = "PO-G9", StartTime = day.AddMinutes(k), EndTime = day.AddMinutes(k + 20), NC = "NC01",
+                    QtyDone = 5, QtyOk = 3, QtyNg = 2, NgCategoryId = cat, SetupTime_Actual = 5, MachiningTime_Actual = 10, InspectionTime_Actual = 5, ProductionMode = "serial" });
+                var r = await wsvc.SaveGroupAsync(grp);
+                if (!r.Ok) throw new Exception("g9-seed WTS: " + r.ErrorMsg);
+                db.Fixup();
+                await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "GC", "KHO", 2, admin.UserId, "LOI", false, "LOI", reason: "tra kho", ngCaseId: grp.Rows[0].NgCaseId), "giao lỗi");
+            }
+        }
+        var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-G9");
+        return new { det.KhPlanDetailId };
+    }
 }
