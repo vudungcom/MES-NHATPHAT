@@ -4108,6 +4108,7 @@ else
     // Set các KhPlanDetailId mà nhóm này đã nhận hàng (từ HandoverReceives)
 
     private HashSet<int> _hasReceivedForGroup = new();
+    private HashSet<int> _htspLamHoOnly = new();   // [GOI8-THAP-F] PO HTSP mới chỉ có hàng Taro làm hộ
 
     // ── [VULOI][DS-LOI 2026-10-28] Loại lỗi (DS Lỗi) cho ô NG ──
     private List<NgCategory> _ngCats = new();
@@ -4675,6 +4676,7 @@ else
     {
 
         _hasReceivedForGroup.Clear();
+        _htspLamHoOnly.Clear();   // [GOI8-THAP-F]
 
         if (!_allRows.Any()) return;
 
@@ -4704,6 +4706,12 @@ else
             .Where(l => HandoverLedgerService.HasWtsInput(l, groupCode))   // [LAMHO-WTS-DSPO] + hàng giao theo NC cho Taro làm hộ (HTSP)
             .Select(l => l.KhPlanDetailId)
             .ToHashSet();
+        // [GOI8-THAP-F 2026-11-08] PO mà HTSP mới chỉ có hàng Taro làm hộ (Nhận sản xuất = 0): danh sách PO dùng chung cả trang (nhóm nhỏ chọn theo từng dòng)
+        //   nên vẫn hiện cho người làm Bavia / Rửa — dòng chọn Bavia / Rửa với PO này hiện cảnh báo ngay (trước: chỉ biết khi bấm Lưu). Máy chủ vẫn chặn như cũ.
+        //   Nguồn: CLAUDE (rà độc lập Gói 8, sổ GOI8-THAP (f)); Hùng 08/11 11:24 OK Gói 10.
+        _htspLamHoOnly = groupCode == "HTSP"
+            ? ledgers.Values.Where(l => l.G("HTSP").NhanSanXuat <= 0 && HandoverLedgerService.HasWtsInput(l, "HTSP")).Select(l => l.KhPlanDetailId).ToHashSet()
+            : new HashSet<int>();
 
     }
 
@@ -5656,8 +5664,12 @@ else
     // [ML35-PO-CAP 2026-10-30] Số chưa làm / nhận của PO dòng này — cùng sổ / cùng trần với lúc Lưu (GetWtsCap)
     private HandoverLedgerService.WtsCapInfo? RowCap(WtsGroup grp, WtsRow sub)
         => sub.KhPlanDetailId.HasValue ? GetWtsCap(sub.KhPlanDetailId, CurrentPg(grp), CapCode(grp, sub)) : null;   // [TARO-NC-MA] khoá (mã, NC)
+    /// <summary>[GOI8-THAP-F 2026-11-08] Dòng nhóm nhỏ Bavia / Rửa chọn PO mà HTSP mới chỉ có hàng Taro làm hộ (chưa có hàng của Bavia / Rửa).</summary>
+    private bool LamHoOnlyWarn(WtsGroup grp, WtsRow sub)
+        => IsHtspGroup && grp.HtspSubGroup is "Bavia" or "Rua" && sub.KhPlanDetailId is int lid && _htspLamHoOnly.Contains(lid) && IsWorkflowOn(sub.KhPlanDetailId);
     private string RowCapText(WtsGroup grp, WtsRow sub)
     {
+        if (LamHoOnlyWarn(grp, sub)) return $"🔒 PO này HTSP mới có hàng Taro làm hộ — {HtspSubLabel(grp.HtspSubGroup)} chưa có hàng nhận vào";   // [GOI8-THAP-F]
         var cap = RowCap(grp, sub);
         if (cap == null || cap.Max == null) return "";
         if (cap.Locked) return "🔒 chưa nhận hàng";
@@ -5666,6 +5678,7 @@ else
     }
     private string RowCapCls(WtsGroup grp, WtsRow sub)
     {
+        if (LamHoOnlyWarn(grp, sub)) return "text-danger";   // [GOI8-THAP-F]
         var cap = RowCap(grp, sub);
         return cap == null || cap.Max == null ? "" : (cap.Locked || cap.Max.Value <= 0) ? "text-danger" : "text-muted";
     }

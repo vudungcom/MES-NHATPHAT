@@ -393,6 +393,22 @@ namespace MES.Web.Services
         ///   thì nhóm trước của KCS là Gia công — nơi gây lỗi mặc định khi KCS tích "Lỗi công đoạn trước" (trước: HTSP → vụ ghi HTSP gây, hàng lỗi trả về
         ///   HTSP ô Hàng lỗi nếu người dùng không đổi). Nguồn: CLAUDE (rà độc lập Gói 6 L2, sổ dòng LAMHO-L2-KCS); Hùng 07/11 22:38 giao Gói 8.</summary>
         public static string PrevGroup(string from, LedgerRow? row)
-            => from == "KCS" && row != null && HandoverLedgerService.HtspOnlyLamHo(row) ? "GC" : PrevGroup(from);
+            => from == "KCS" && row != null && HtspNoOwnWork(row) ? "GC" : PrevGroup(from);   // [GOI8-THAP-E] HtspOnlyLamHo → HtspNoOwnWork (+ PO không có công đoạn HTSP)
+        /// <summary>[GOI8-THAP-E 2026-11-08] HTSP không có công đoạn của mình trong PO: không có mã chính nào ngoài mã chuẩn bị / mã Taro làm hộ — gồm PO không có
+        ///   snapshot HTSP (Part không khai Taro / Bavia / Rửa) và PO HTSP chỉ làm hộ (LAMHO-L2-KCS). Trước: PO không có HTSP thì nhóm trước của KCS vẫn là HTSP
+        ///   (vụ "Lỗi công đoạn trước" ở KCS mặc định ghi HTSP gây, hàng lỗi mặc định trả HTSP) và form giao Hàng mới từ Gia công mặc định HTSP.
+        ///   Chỉ đổi giá trị MẶC ĐỊNH trên form (người dùng vẫn đổi được); chặn ở máy chủ giữ nguyên. Nguồn: CLAUDE (rà độc lập Gói 8, sổ GOI8-THAP (e));
+        ///   Hùng 08/11 11:24 OK Gói 10.</summary>
+        ///   [GOI8-THAP-E rà độc lập Gói 10 T1] PO cũ chưa có snapshot HTSP mà HTSP VẪN nhận làm hàng thật (Nhận sản xuất > 0, giao Hàng mới tự do GN-ROUTE-FREE)
+        ///   thì KHÔNG coi là "không có công đoạn" (trước bản sửa: KCS lỗi công đoạn trước bỏ trống nơi gây → vụ ghi Gia công dù hàng đi HTSP → KCS).
+        ///   Nguồn: CLAUDE (rà độc lập Gói 10, ca R1 → TaroScen T23c).
+        public static bool HtspNoOwnWork(LedgerRow row)
+            => HandoverLedgerService.HtspOnlyLamHo(row)
+            || (!row.G("HTSP").Steps.Any(s => !s.IsPrep) && row.G("HTSP").NhanSanXuat <= 0);
+        /// <summary>[GOI8-THAP-E 2026-11-08] Nhóm kế tiếp theo PO: Gia công → KCS khi HTSP không có công đoạn của mình (mặc định nhóm nhận Hàng mới trên form).</summary>
+        public static string NextGroup(string from, LedgerRow? row)
+            => from == "GC" && row != null && HtspNoOwnWork(row) && row.G("HTSP").ChoNhan <= 0 ? "KCS" : NextGroup(from);
+        //   [GOI8-THAP-E rà độc lập Gói 10 vòng 2] HTSP đang có phiếu chờ nhận (PO chưa snapshot HTSP, Gia công vừa giao HTSP) → phiếu sau vẫn mặc định HTSP.
+        //   Nguồn: CLAUDE (rà độc lập Gói 10 vòng 2, ca RV2-B → TaroScen T23d).
     }
 }

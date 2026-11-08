@@ -245,6 +245,10 @@ namespace MES.Web.Services
         private static string CaseNegWarn(string po, long caseId, string act, List<string> cells)
             => $"PO {po} · {NgCaseNo.Format(caseId)} đã đi phiếu — sau khi {act}: {string.Join("; ", cells)} (đã giao đi nhiều hơn NG còn ghi).";
         private const string OffWarnTail = " Workflow OFF nên vẫn lưu — kiểm lại số liệu.";
+        /// <summary>[GOI9-LOAILOI-OFF 2026-11-08] PO bật Workflow (đọc DB; không tìm thấy PO = coi như ON — chặn như cũ).</summary>
+        private async Task<bool> WorkflowOnAsync(int? detailId)
+            => detailId == null || (await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == detailId.Value)
+                   .Select(d => (bool?)(d.KhPlan != null && d.KhPlan.ApplyWorkflow)).FirstOrDefaultAsync() ?? true);
 
         // ProcessGroup ghi trên WTS theo nhóm công nhân (trang: CurrentPg — khớp SaveRowAsync)
         private static string CurrentPg(WtsSaveGroup grp)
@@ -394,7 +398,8 @@ namespace MES.Web.Services
                 if (sub.QtyNg > 0 && (await NgCaseService.GetCategoryForCaseAsync(_db, sub.NgCategoryId, sub.IsEditing ? sub.NgCaseId : null)) == null)
                 { sub.ErrorMsg = "Loại lỗi đã ngưng dùng — chọn loại khác."; grp.ErrorMsg = sub.ErrorMsg; return Fail(); }
                 if (sub.QtyNg > 0 && sub.IsEditing && sub.NgCaseId != null && sub.NgCategoryId != null
-                    && await NgCaseService.CategoryChangeBlockedAsync(_db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk)
+                    && await NgCaseService.CategoryChangeBlockedAsync(_db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk
+                    && await WorkflowOnAsync(sub.KhPlanDetailId))   // [GOI9-LOAILOI-OFF 2026-11-08] Workflow OFF: không chặn ở đây — SaveRowAsync đổi + cảnh báo (Hùng 08/11 11:24)
                 { sub.ErrorMsg = _catBlk; grp.ErrorMsg = _catBlk; return Fail(); }
 
                 // [ML17-MIN 2026-11-01] Giờ dòng làm tròn tới phút (chia giờ nhóm cũ để lại số lẻ giây ở dòng giữa) → phút luôn nguyên,
@@ -1015,13 +1020,14 @@ namespace MES.Web.Services
                         _ngLabel = _cat.Label;
                         if (row.NgCaseId != null)
                         {
-                            var _chg = await NgCaseService.ChangeCaseCategoryAsync(_db, row.NgCaseId.Value, _cat.NgCategoryId);
-                            if (_chg != null) { row.ErrorMsg = _chg; return; }
                             // [GOI9-OFF-CANHBAO 2026-11-08] Workflow OFF: vụ đã đi phiếu vẫn đổi NC phát hiện (NC làm tiếp) + cảnh báo; ON chặn như cũ.
                             //   Cờ Workflow đọc DB (đã giữ khoá PO của dòng từ CheckGroupQtyAsync). Nguồn: HÙNG 08/11 07:54 (GOI8-THAP (a)).
+                            // [GOI9-LOAILOI-OFF 2026-11-08] đọc cờ TRƯỚC khi đổi loại lỗi — OFF: đổi loại lỗi vụ đã đi cũng chỉ cảnh báo (Hùng 08/11 11:24).
                             var _wfRow = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == row.KhPlanDetailId!.Value)
                                 .Select(d => new { d.PurchaseOrder, On = d.KhPlan != null && d.KhPlan.ApplyWorkflow }).FirstOrDefaultAsync();
                             var _ncWarn = _wfRow?.On == true ? null : new List<string>();
+                            var _chg = await NgCaseService.ChangeCaseCategoryAsync(_db, row.NgCaseId.Value, _cat.NgCategoryId, _ncWarn);   // [GOI9-LOAILOI-OFF] + cảnh báo OFF
+                            if (_chg != null) { row.ErrorMsg = _chg; return; }
                             var _chgNc = await NgCaseService.ChangeCaseDetectNcAsync(_db, row.NgCaseId.Value, ncValue ?? wtsCodeValue, _ncWarn);   // [WTS-SUA-NC-VU]
                             if (_chgNc != null) { row.ErrorMsg = _chgNc; return; }
                             foreach (var _w in _ncWarn ?? new List<string>()) warns.Add((row, $"PO {_wfRow?.PurchaseOrder ?? row.PO} · {_w}" + OffWarnTail));

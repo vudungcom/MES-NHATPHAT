@@ -997,6 +997,63 @@ public static class WtsScen
             Ok(nWarn > 0 && nNcWarn > 0 && nBlock > 0, "W21 phủ: có ca OFF cảnh báo ô vụ, cảnh báo NC làm tiếp, ON chặn", $"{nWarn} / {nNcWarn} / {nBlock}");
         }
 
+        // [W22] [GOI9-LOAILOI-OFF 2026-11-08] Nguồn: HÙNG 08/11 11:24 ("off thì cảnh báo đc gì thì cảnh báo vì lúc đó họ tự kiểm soát, mình chặn lại ko đúng ý họ").
+        //   Workflow OFF: sửa dòng NG của vụ ĐÃ ĐI phiếu mà đổi loại lỗi → LƯU ĐƯỢC, loại lỗi cả vụ đổi + cảnh báo (tên cũ → mới); dòng WTS cũ (huỷ "Sửa lại")
+        //   giữ tên lỗi cũ (truy vết). ON: chặn như cũ. Vụ chưa đi: đổi, không cảnh báo. Bản a32c59a: W22a SAI (chặn cả OFF).
+        Console.WriteLine("[W22] GOI9-LOAILOI-OFF — Workflow OFF: đổi loại lỗi vụ đã đi phiếu lưu được + cảnh báo; ON chặn như cũ");
+        {
+            async Task<(AppDbContext db, WtsSaveService s, WtsSaveService.WtsSaveRow a, long cs)> Setup(int det, bool move)
+            {
+                var db = await SeedAsync(); var s = Svc(db);
+                var g0 = Gc(); var a0 = Row(det, 3, 2, T.AddHours(6), T.AddHours(6).AddMinutes(30), cat: 1); g0.Rows.Add(a0);
+                var r0 = await s.SaveGroupAsync(g0); db.Fixup();
+                if (!r0.Ok) throw new Exception("W22 seed: " + r0.ErrorMsg);
+                if (move)
+                {
+                    var mv = await new HandoverService(db).IssueByCellAsync(det, "GC", "KHO", 2, 2, "LOI", false, "LOI", reason: "tra kho", ngCaseId: a0.NgCaseId); db.Fixup();
+                    if (!mv.Ok) throw new Exception("W22 giao lỗi: " + mv.Error);
+                }
+                return (db, s, a0, a0.NgCaseId!.Value);
+            }
+            WtsSaveService.WtsSaveGroup Edit(int det, WtsSaveService.WtsSaveRow a, long cs, int cat)
+            {
+                var g = Gc(); var e = Row(det, 3, 2, T.AddHours(6), T.AddHours(6).AddMinutes(30), cat: cat); e.IsEditing = true; e.WtsLogId = a.WtsLogId; e.NgCaseId = cs; g.Rows.Add(e); return g;
+            }
+            {   // a: PO2 OFF, vụ đã giao Kho → đổi loại lỗi 1 → 2
+                var (db, s, a, cs) = await Setup(2, true);
+                var cat1 = db.NgCategories.List.Single(c => c.NgCategoryId == 1); var cat2 = db.NgCategories.List.Single(c => c.NgCategoryId == 2);
+                var g = Edit(2, a, cs, 2); var r = await s.SaveGroupAsync(g); db.Fixup(); var w = WtsSvcHelp.Warns(r);
+                var oldRow = db.WtsProductionLogs.List.Single(x => x.WtsLogId == a.WtsLogId);
+                var newRow = db.WtsProductionLogs.List.Single(x => x.WtsLogId == g.Rows[0].WtsLogId);
+                Ok(r.Ok && db.NgCases.List.Single(x => x.NgCaseId == cs).NgCategoryId == 2 && newRow.NgCaseId == cs && oldRow.IsVoided && oldRow.NgReason == cat1.Label && newRow.NgReason == cat2.Label
+                   && w.Count == 1 && w[0] == $"PO PO2 · {NgCaseNo.Format(cs)} đã giao / huỷ / trả khách / có Kết quả sửa — đổi loại lỗi {cat1.Label} → {cat2.Label} áp cho CẢ vụ"
+                                       + " (kể cả phần đã giao đi / đã sửa; phiếu cũ hiện tên lỗi mới, dòng WTS cũ giữ tên lỗi cũ). Workflow OFF nên vẫn lưu — kiểm lại số liệu."
+                   && g.Rows[0].HasWarning,
+                   "W22a OFF: vụ đã giao Kho, sửa dòng đổi loại lỗi → lưu được, vụ đổi loại lỗi, dòng cũ giữ tên lỗi cũ, cảnh báo đủ chữ", (r.ErrorMsg ?? "") + " | " + string.Join(" / ", w));
+            }
+            {   // b: PO1 ON → chặn như cũ, vụ giữ loại lỗi
+                var (db, s, a, cs) = await Setup(1, true);
+                var r = await s.SaveGroupAsync(Edit(1, a, cs, 2)); db.Fixup();
+                Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("không đổi loại lỗi được") && db.NgCases.List.Single(x => x.NgCaseId == cs).NgCategoryId == 1
+                   && !db.WtsProductionLogs.List.Single(x => x.WtsLogId == a.WtsLogId).IsVoided && WtsSvcHelp.Warns(r).Count == 0,
+                   "W22b ON: vụ đã đi, đổi loại lỗi → chặn như cũ, dòng cũ giữ", r.ErrorMsg);
+            }
+            {   // c: OFF, vụ chưa đi → đổi, không cảnh báo
+                var (db, s, a, cs) = await Setup(2, false);
+                var r = await s.SaveGroupAsync(Edit(2, a, cs, 3)); db.Fixup();
+                Ok(r.Ok && db.NgCases.List.Single(x => x.NgCaseId == cs).NgCategoryId == 3 && WtsSvcHelp.Warns(r).Count == 0, "W22c OFF: vụ chưa đi phiếu, đổi loại lỗi → lưu, không cảnh báo", r.ErrorMsg);
+            }
+            {   // d: OFF, đổi loại lỗi + nhóm có dòng khác lỗi (vượt PO) → không lưu gì: vụ GIỮ loại lỗi cũ (rollback), không cảnh báo
+                var (db, s, a, cs) = await Setup(2, true);
+                var g = Edit(2, a, cs, 2);
+                g.Rows.Add(Row(2, 500, 0, T.AddHours(7), T.AddHours(7).AddMinutes(30)));
+                var r = await s.SaveGroupAsync(g); db.Fixup();
+                Ok(!r.Ok && db.NgCases.List.Single(x => x.NgCaseId == cs).NgCategoryId == 1 && !g.Rows[0].HasWarning && WtsSvcHelp.Warns(r).Count == 0
+                   && !db.WtsProductionLogs.List.Single(x => x.WtsLogId == a.WtsLogId).IsVoided,
+                   "W22d OFF: nhóm bị chặn (dòng khác vượt PO) → vụ giữ loại lỗi cũ, không cảnh báo, dòng cũ giữ", r.ErrorMsg);
+            }
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

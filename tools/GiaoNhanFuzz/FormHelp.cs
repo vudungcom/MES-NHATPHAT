@@ -210,7 +210,12 @@ public static class FormHelp
         Source();
         // [LAMHO-L2-KCS 2026-11-07] HTSP chỉ có mã Taro làm hộ (mọi mã chính của HTSP thuộc đoạn máy loại trừ giữa chuỗi): hàng Gia công giao thẳng KCS
         //   → bỏ trống nơi gây lỗi ở KCS = Gia công (trước: HTSP). Đáp án đọc dòng sổ trực tiếp (không gọi HandoverForm.PrevGroup).
-        bool onlyLh = pre.G("HTSP").Steps.Where(x => !x.IsPrep).ToList() is { Count: > 0 } hm && hm.All(x => x.LamHoNc != null);
+        // [GOI8-THAP-E 2026-11-08] + PO không có công đoạn HTSP của mình (không mã chính nào ngoài chuẩn bị / làm hộ — gồm PO không có snapshot HTSP) → KCS ← Gia công
+        //   (rà độc lập Gói 10 T1) PO không có mã HTSP nhưng HTSP đã nhận làm hàng thật (Hàng mới / Hàng lỗi xử lý / làm hộ về > 0) → vẫn HTSP.
+        var hMains = pre.G("HTSP").Steps.Where(x => !x.IsPrep).ToList();
+        var hG = pre.G("HTSP");
+        bool onlyLh = (hMains.Count > 0 && hMains.All(x => x.LamHoNc != null))
+                   || (hMains.Count == 0 && hG.NhanMoi + hG.NhanLoiXl + hG.NhanLamHoVe <= 0);
         string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause ?? (g switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => onlyLh ? "GC" : "HTSP", "PKG" => "KCS", _ => null });
         e.RepNc = pos.StartsWith("NC:") ? pos[3..] : null;
         e.RepOrigin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa; e.RepCause = cause;

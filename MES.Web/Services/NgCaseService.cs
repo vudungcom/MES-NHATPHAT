@@ -210,12 +210,23 @@ namespace MES.Web.Services
         /// [VULOI] Sửa dòng WTS có NG: dòng mới giữ vụ cũ. Đổi loại lỗi chỉ được khi vụ chưa đi phiếu nào (chưa ai nhận / chuyển tiếp).
         /// Trả lời báo nếu không được đổi; null = được (đã đổi nếu khác).
         /// </summary>
-        public static async Task<string?> ChangeCaseCategoryAsync(AppDbContext db, long caseId, int newCategoryId)
+        /// [GOI9-LOAILOI-OFF 2026-11-08] offWarnings != null (PO Workflow OFF): vụ đã đi phiếu / có Kết quả sửa KHÔNG chặn — vẫn đổi loại lỗi của cả vụ
+        ///   + thêm 1 lời cảnh báo (nơi gọi gắn lên dòng sau khi lưu). Null = Workflow ON: chặn như cũ. Truy vết: dòng WTS cũ (huỷ "Sửa lại") giữ lý do NG
+        ///   = tên loại lỗi cũ. Nguồn: HÙNG 08/11 11:24 ("off thì cảnh báo đc gì thì cảnh báo vì lúc đó họ tự kiểm soát, mình chặn lại không đúng ý họ").
+        public static async Task<string?> ChangeCaseCategoryAsync(AppDbContext db, long caseId, int newCategoryId, List<string>? offWarnings = null)
         {
             var blk = await CategoryChangeBlockedAsync(db, caseId, newCategoryId);
-            if (blk != null) return blk;
+            if (blk != null && offWarnings == null) return blk;
             var cs = await db.NgCases.FirstOrDefaultAsync(x => x.NgCaseId == caseId);
             if (cs == null || cs.NgCategoryId == newCategoryId) return null;
+            if (blk != null)   // [GOI9-LOAILOI-OFF] chỉ tới đây khi Workflow OFF
+            {
+                var lbl = await db.NgCategories.AsNoTracking().Where(c => c.NgCategoryId == cs.NgCategoryId || c.NgCategoryId == newCategoryId)
+                    .Select(c => new { c.NgCategoryId, c.Code, c.Name }).ToListAsync();
+                string L(int id) => lbl.FirstOrDefault(c => c.NgCategoryId == id) is { } c ? $"{c.Code} · {c.Name}" : "#" + id;   // như NgCategory.Label
+                offWarnings!.Add($"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — đổi loại lỗi {L(cs.NgCategoryId)} → {L(newCategoryId)} áp cho CẢ vụ"
+                                 + " (kể cả phần đã giao đi / đã sửa; phiếu cũ hiện tên lỗi mới, dòng WTS cũ giữ tên lỗi cũ).");
+            }
             cs.NgCategoryId = newCategoryId;
             await db.SaveChangesAsync();
             return null;

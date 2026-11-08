@@ -80,13 +80,14 @@ bool chuoi = Environment.GetEnvironmentVariable("CHUOI") == "1";
 //   không có đường gỡ) thì ghi lỗi [H10 kẹt] kèm sổ chứng từ để tái hiện vòng khoá.
 bool whyAll = Environment.GetEnvironmentVariable("WHYALL") == "1";
 var h10Seen = new HashSet<string>();
+Dictionary<long, long>? editPrevCur = null; long lastRevertNew = 0;   // [H10-KET-WHY-3] số dòng mới của lần sửa về gần nhất   // [H10-KET-WHY-3] editPrev của PO đang chạy (bước gợi ý WTSV sửa dòng → ghi chuỗi sửa như thao tác wtsedit)
 int h10MaxSteps = 0;
 var swProg = System.Diagnostics.Stopwatch.StartNew(); double lastProg = 0; // [FUZZ-UX] đồng hồ báo tiến độ
 for (int po = startPo; po < startPo + poCount; po++)
 {
     var rnd = new Random(seed0 * 100000 + po);
     var db = new AppDbContext();
-    var editPrev = new Dictionary<long, long>();   // [WTS-SUA-PHAN] bộ kiểm tự ghi dòng sửa → dòng nó thay (KHÔNG qua EditOrigins — đáp án độc lập, rà độc lập lần 3 Vừa)
+    var editPrev = new Dictionary<long, long>(); editPrevCur = editPrev;   // [H10-KET-WHY-3] WtsRevertStep ghi tiếp chuỗi sửa · [WTS-SUA-PHAN] bộ kiểm tự ghi dòng sửa → dòng nó thay (KHÔNG qua EditOrigins — đáp án độc lập, rà độc lập lần 3 Vừa)
     WtsSvcHelp.Reset();   // [WTS-SVC] khung giờ WTS bắt đầu lại từng PO
     double exclP = Environment.GetEnvironmentVariable("EXCL") is string exv ? double.Parse(exv) : 0.3;
     bool excl;
@@ -309,6 +310,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                         desc = $"issue {from}->{to} {cell}{(prev ? "☑" : "")}->{toCell} q={q} max={max} fnc={fnc} vu={vu} cat={cat}";
                         var r = await svc.IssueByCellAsync(1, from, to, q, Uid(from), cell, prev, toCell, fnc, null, null, null, cat, vu);
                         ok = r.Ok; if (!ok) Inc("rej.issue");
+                        if (takes && to != "GC" && toCell == HandoverCell.Sua && vu is long lhv && row.Cases.TryGetValue(lhv, out var lhvC) && lhvC.IsLamHo)
+                        {   // [LAMHO-NHO-SUA 2026-11-08] đáp án: vụ làm hộ vào ô Hàng sửa nhóm khác Gia công → phải chặn
+                            Inc(ok ? "lamho.nhosua.LOT" : "lamho.nhosua.chan");
+                            if (ok) fails.Add($"[LAMHO-NHO-SUA gửi vụ làm hộ vào ô Hàng sửa nhóm khác không bị chặn] PO{po} op{op} {desc}");
+                        }
                         if (ok && q > max) fails.Add($"[Giao vượt trần vụ] PO{po} op{op} {desc}");
                         if (ok && prev && cat is null or 6) fails.Add($"[Hàng lỗi công đoạn trước không có loại lỗi] PO{po} op{op} {desc}");
                         if (ok && prev)
@@ -372,6 +378,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var r = await svc.ReceiveAsync(t.HandoverTxId, cell == HandoverCell.Loi ? 0 : okq, cell == HandoverCell.Sua ? 0 : ng, null, Uid(t.ToGroupCode),
                         null, pickCell, pickCell != null ? "doi o" : null, rcat, pickNc, ncWhyR);
                     ok = r.Ok; if (!ok) { Inc("rej.recv"); desc += " ERR " + r.Error; }
+                    if (carryR && t.ToGroupCode != "GC" && cell == HandoverCell.Sua && t.NgCaseId is long rlv && row.Cases.TryGetValue(rlv, out var rlvC) && rlvC.IsLamHo)
+                    {   // [LAMHO-NHO-SUA 2026-11-08] đáp án: nhận vụ làm hộ vào ô Hàng sửa nhóm khác Gia công → phải chặn
+                        Inc(ok ? "lamho.nhosua.recv.LOT" : "lamho.nhosua.recv.chan");
+                        if (ok) fails.Add($"[LAMHO-NHO-SUA nhận vụ làm hộ vào ô Hàng sửa nhóm khác không bị chặn] PO{po} op{op} {desc}");
+                    }
                     if (ok && needCat && rcat == null) fails.Add($"[Nhận sinh vụ không có loại lỗi] PO{po} op{op} {desc}");
                     if (!ok && !needCat && r.Error == NgCaseService.MsgPickCategory) fails.Add($"[Nhận phiếu mang vụ bị bắt chọn lỗi] PO{po} op{op} {desc}");
                     if (ok)
@@ -873,6 +884,14 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 req.Purpose = cg != null && rnd.NextDouble() < 0.5 ? HandoverForm.PTra : HandoverForm.PNho;
                                 req.ToGroup = req.Purpose == HandoverForm.PTra && rnd.NextDouble() < 0.8 ? cg : others[rnd.Next(others.Length)];
                                 if (rnd.NextDouble() < 0.1) req.ToCell = HandoverCell.ReceiveCells[rnd.Next(HandoverCell.ReceiveCells.Length)];
+                                // [LAMHO-NHO-SUA 2026-11-08] đáp án: vụ Taro làm hộ bị lỗi sang nhóm khác Gia công — ô Hàng sửa chặn (chỉ Gia công sửa),
+                                //   ô hàng đạt chặn (Gói 6 vòng 3 T2 — trước gói này bộ kiểm chưa đặt đáp án cho nhánh ô hàng đạt), ô Hàng lỗi được
+                                var tcLh = req.ToCell ?? (req.Purpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua);
+                                if (cs.IsLamHo && req.ToGroup != null && req.ToGroup != "GC")
+                                {
+                                    if (tcLh == HandoverCell.Sua) { expErr ??= "chỉ Gia công sửa"; Inc("lamho.nhosua.form"); }
+                                    else if (tcLh is HandoverCell.Moi or HandoverCell.Xl) expErr ??= "Taro làm hộ";
+                                }
                             }
                             else if (req.Action is HandoverForm.ATraLai or HandoverForm.ASuaXong)
                                 req.ToGroup = HandoverForm.CaseSender(cs, g) ?? others[rnd.Next(others.Length)];
@@ -1500,6 +1519,16 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
             var vl = row.Cases.Values.Sum(x => x.HeldAt(G.Code, HandoverCell.Loi));
             var vs = row.Cases.Values.Sum(x => x.HeldAt(G.Code, HandoverCell.Sua));
             if (vl != G.LoiGiu || vs != G.SuaGiu) F("Vụ lỗi ≠ ô sổ", $"{G.Code}: vụ {vl}/{vs} ≠ sổ {G.LoiGiu}/{G.SuaGiu}");
+            // [LAMHO-NHO-SUA 2026-11-08] vụ Taro làm hộ bị lỗi không bao giờ nằm ở ô Hàng sửa nhóm khác Gia công (chỉ Gia công sửa) — đáp án độc lập: đọc vụ + nhóm
+            if (G.Code != "GC" && row.ApplyWorkflow)   // Workflow OFF: sửa dòng WTS đổi vụ thường đã đi thành vụ làm hộ được (GOI9-OFF-CANHBAO, chỉ cảnh báo)
+            {
+                checks++;
+                var lhSua = row.Cases.Values.Where(x => x.IsLamHo && x.HeldAt(G.Code, HandoverCell.Sua) > 0).Select(x => x.No).ToList();
+                if (lhSua.Any()) F("[LAMHO-NHO-SUA] vụ làm hộ ở ô Hàng sửa nhóm khác Gia công", $"{G.Code}: {string.Join(", ", lhSua)}");
+                var lhTx = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.ToGroupCode == G.Code && t.ToCell == HandoverCell.Sua
+                                                                  && t.NgCaseId is long lc && row.Cases.TryGetValue(lc, out var lcC) && lcC.IsLamHo).Select(t => "#" + t.HandoverTxId).ToList();
+                if (lhTx.Any()) F("[LAMHO-NHO-SUA] phiếu vụ làm hộ chỉ định ô Hàng sửa nhóm khác Gia công", $"{G.Code}: {string.Join(", ", lhTx)}");
+            }
         }
         var trv = HandoverNgTrace.Build((await led.GetInputForDetailAsync(1))!, null, steps);
         checks++;
@@ -1600,6 +1629,7 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
                     bool exists = st.Kind switch
                     {
                         "WTS" => sim.Wts.Any(w => w.Id == st.Id),
+                        "WTSV" => sim.Wts.Any(w => w.Id == st.Id && HandoverWhy.CanRevertWts(w)),   // [H10-KET-WHY-3]
                         "NHAN" => sim.Txs.Any(x => x.Receives.Any(y => y.Id == st.Id)),
                         "BAOLOI" => sim.NgReps.Any(b2 => b2.Id == st.Id),
                         "KQSUA" => sim.Repairs.Any(x => x.Id == st.Id),   // [K5-VONG-SUA 05/11] trước rơi vào nhánh phiếu
@@ -1608,7 +1638,7 @@ async Task WhyAllCheck(AppDbContext db, HandoverLedgerService led, int po, int o
                     };
                     if (!exists) { bad = $"bước {st.Kind}#{st.Id} trỏ chứng từ đã mất"; break; }
                     var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
-                    (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), "KQSUA" => HandoverWhy.OpVoidRepair(st.Id), "XNSUA" => HandoverWhy.OpVoidRepairCheck(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
+                    HandoverWhy.StepOpOf(st)(s2);   // [H10-KET-WHY-3] dùng chung thao tác của Plan (+ WTSV sửa dòng về số trước)
                     if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s2)).Any()) { bad = $"bước {st.Kind}#{st.Id} tự nó bị K5 chặn"; break; }
                     sim = s2;
                 }
@@ -1668,10 +1698,13 @@ async Task WhyCheck(AppDbContext db, HandoverService svc, HandoverLedgerService 
     if (svcMsg != null && plan.Steps.Count > 0 && !svcMsg.Contains("nên kiểm tra theo các bước sau"))
         fails.Add($"[GN-WHY thiếu lời gợi ý] PO{po} op{opIdx} {desc}");
     // Làm theo gợi ý
+    var wMap = new Dictionary<long, long>();   // [H10-KET-WHY-3] sửa dòng WTS (bước WTSV) → dòng mới mang số mới; bước sau đụng cùng dòng dùng số mới (lời gợi ý nói rõ "chính dòng đã sửa ở bước trên")
+    long WId(long id) { while (wMap.TryGetValue(id, out var n2)) id = n2; return id; }
     foreach (var st in plan.Steps)
     {
         bool okStep;
-        if (st.Kind == "WTS") okStep = await WtsVoid(db, led, st.Id);
+        if (st.Kind == "WTS") okStep = await WtsVoid(db, led, WId(st.Id));
+        else if (st.Kind == "WTSV") { var o2 = WId(st.Id); okStep = await WtsRevertStep(db, led, o2); if (okStep) wMap[o2] = lastRevertNew; }   // [H10-KET-WHY-3] sửa dòng về số trước bằng hàm thật
         else if (st.Kind == "NHAN") { var r = await svc.VoidReceiveAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }
         else if (st.Kind == "BAOLOI") { var r = await svc.VoidNgReportAsync(st.Id, "goi y", 1, All); okStep = r.Ok; lastErr = r.Error; }   // [GN-NG-AFTER]
         else if (st.Kind == "KQSUA") { var r = await svc.VoidRepairResultAsync(st.Id, "goi y", 1); okStep = r.Ok; lastErr = r.Error; }   // [GC-SUA-TAI-CHO]
@@ -1697,10 +1730,13 @@ async Task<(bool Ok, string Error)> VoidRecvDeep(AppDbContext db, HandoverServic
     var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid), RecvOpDocs(input, rid), loopOp: true);   // [H10] tập bỏ qua như máy chủ
     if (!plan.Complete || plan.Steps.Count == 0) return r0;
     if (Environment.GetEnvironmentVariable("DEEPDBG") == "1") Console.WriteLine($"   [DEEP] huỷ lần nhận #{rid} (tầng {depth}) bị chặn: {r0.Error}\n   [DEEP] gợi ý: {string.Join(" → ", plan.Steps.Select(st => st.Kind + "#" + st.Id))}");
+    var wMap = new Dictionary<long, long>();   // [H10-KET-WHY-3] như WhyCheck: số dòng mới sau bước WTSV
+    long WId(long id) { while (wMap.TryGetValue(id, out var n2)) id = n2; return id; }
     foreach (var st in plan.Steps)
     {
         (bool Ok, string Error) rs;
-        if (st.Kind == "WTS") { var okW = await WtsVoid(db, led, st.Id); rs = (okW, lastErr ?? ""); }
+        if (st.Kind == "WTS") { var okW = await WtsVoid(db, led, WId(st.Id)); rs = (okW, lastErr ?? ""); }
+        else if (st.Kind == "WTSV") { var o2 = WId(st.Id); var okV = await WtsRevertStep(db, led, o2); if (okV) wMap[o2] = lastRevertNew; rs = (okV, lastErr ?? ""); }   // [H10-KET-WHY-3]
         else if (st.Kind == "NHAN") rs = await VoidRecvDeep(db, svc, led, st.Id, depth + 1);
         else if (st.Kind == "BAOLOI") rs = await svc.VoidNgReportAsync(st.Id, "goi y", 1, All);
         // [GN-FORM1 2026-11-05] lỗi BỘ KIỂM (có từ [GC-SUA-TAI-CHO]): gợi ý KQSUA / XNSUA bị coi là phiếu → huỷ nhầm phiếu cùng số Id
@@ -1752,6 +1788,25 @@ async Task<List<string>> WtsVoidBad(HandoverLedgerService led, long wid)
     var bad = HandoverLedgerService.NewNegatives(b, HandoverLedgerService.Compute(ai));
     bad.AddRange(HandoverLedgerService.NewLoopKeys(bi, b, ai).Select(x => $"{x.Text} = {x.Value:0.##}"));
     return bad;
+}
+
+// [H10-KET-WHY-3 2026-11-08] Bước gợi ý "sửa dòng WTS về số trước lần sửa" làm bằng HÀM THẬT (WtsSaveService sửa dòng: huỷ dòng + dòng mới giữ vụ),
+//   như người dùng bấm Sửa ở trang WTS. Số đích lấy từ chuỗi bản của sổ (bản ngay trước bản cuối). Ghi chuỗi sửa vào editPrev như thao tác wtsedit.
+async Task<bool> WtsRevertStep(AppDbContext db, HandoverLedgerService led, long wid)
+{
+    var w = db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == wid && !x.IsVoided);
+    if (w == null) { lastErr = "WTS không còn"; return false; }
+    var inW = (await led.GetInputForDetailAsync(w.KhPlanDetailId))!.Wts.FirstOrDefault(x => x.Id == wid);
+    if (inW == null || !HandoverWhy.CanRevertWts(inW)) { lastErr = "dòng WTS không sửa về được (không còn bản trước)"; return false; }
+    var p = inW.Vers![^2];
+    var cat = w.NgCaseId != null ? db.NgCases.List.First(x => x.NgCaseId == w.NgCaseId).NgCategoryId : 1;
+    var keep = p.Ng > 0 ? w.NgCaseId : null;
+    var se = await WtsSvcHelp.SaveAsync(db, w.KhPlanDetailId, w.ProcessGroup, w.NC, w.WtsCode, p.Ok, p.Ng, w.WorkerId, cat, keep, wid, stepNc: w.StepNC);
+    if (!se.Ok) { lastErr = se.Err ?? ""; return false; }
+    if (editPrevCur != null) editPrevCur[se.LogId!.Value] = wid;
+    lastRevertNew = se.LogId!.Value;
+    Inc("why.wtsv");
+    return true;
 }
 
 // Mô phỏng xoá dòng WTS đúng như trang WTS (K5)

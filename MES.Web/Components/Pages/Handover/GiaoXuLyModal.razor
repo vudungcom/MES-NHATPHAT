@@ -143,11 +143,11 @@
         get
         {
             if (LamHo || LamHoLoi) return "GC";   // [TARO-LAMHO-NC]
-            if (IsTot && _group == "GC" && HandoverLedgerService.HtspOnlyLamHo(Row)) return "KCS";   // [TARO-LAMHO-NC] HTSP chỉ làm hộ: giao thẳng KCS
-            if (IsTot) return HandoverForm.NextGroup(_group);
+            if (IsTot && HelpFrom) return HandoverForm.NextGroup(_group);   // [GOI8-THAP-E rà độc lập Gói 10 T2] giao theo NC (làm hộ) mặc định HTSP như cũ — không theo "PO không có HTSP / HTSP chỉ làm hộ" (trước: ra KCS, máy chủ chặn). Nguồn: CLAUDE (rà độc lập Gói 10)
+            if (IsTot) return HandoverForm.NextGroup(_group, Row);   // [TARO-LAMHO-NC] HTSP chỉ làm hộ: giao thẳng KCS · [GOI8-THAP-E] + PO không có công đoạn HTSP
             if (Act is HandoverForm.ATraLai or HandoverForm.ASuaXong) return (Case == null ? null : HandoverForm.CaseSender(Case, _group)) ?? "";
             if (EffPurpose == HandoverForm.PTra && CauseGroup != null) return CauseGroup;
-            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group, Row) is var p && p != "" ? p : HandoverForm.NextGroup(_group);   // [LAMHO-L2-KCS]
+            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group, Row) is var p && p != "" ? p : HandoverForm.NextGroup(_group, Row);   // [LAMHO-L2-KCS] · [GOI8-THAP-E]
         }
     }
     string Dest => LamHo || LamHoLoi ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC]

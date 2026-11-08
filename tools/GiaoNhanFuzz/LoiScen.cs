@@ -270,7 +270,7 @@ public static class LoiScen
             foreach (var st in plan.Steps)
             {
                 var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
-                (st.Kind switch { "WTS" => HandoverWhy.OpWts(new[] { st.Id }), "NHAN" => HandoverWhy.OpVoidReceive(st.Id), "BAOLOI" => HandoverWhy.OpVoidNgRep(st.Id), "KQSUA" => HandoverWhy.OpVoidRepair(st.Id), "XNSUA" => HandoverWhy.OpVoidRepairCheck(st.Id), _ => HandoverWhy.OpVoidIssue(st.Id) })(s2);
+                HandoverWhy.StepOpOf(st)(s2);   // [H10-KET-WHY-3] dùng chung thao tác của Plan (+ WTSV sửa dòng về số trước)
                 if (HandoverLedgerService.NewNegativeKeys(bs, HandoverLedgerService.Compute(s2)).Any()) { bad = $"bước {st.Kind}#{st.Id} bị K5 chặn"; break; }
                 sim = s2;
             }

@@ -21,7 +21,7 @@ public static class WhyReplay
         foreach (var st in plan.Steps)
         {
             var bs = HandoverLedgerService.Compute(sim); var s2 = HandoverWhyTest.CloneInput(sim);
-            Op(st)(s2);
+            HandoverWhy.StepOpOf(st)(s2);   // [H10-KET-WHY-3] + WTSV
             Console.WriteLine($"  {st.Kind}#{st.Id} · {st.Text}");
             sim = s2;
             var s3 = HandoverWhyTest.CloneInput(sim); HandoverWhy.OpVoidReceive(rid)(s3);
