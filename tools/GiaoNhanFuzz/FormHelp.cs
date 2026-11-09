@@ -51,20 +51,24 @@ public static class FormHelp
                      && string.Equals(w.ProcessGroup, "TARO", IC) && c.DetectGroupCode == "HTSP");
         if (wl != null && !string.IsNullOrWhiteSpace(wl.WtsCode))
         {
-            static string K(string s) { var t = s.Trim(); if (t.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) t = t[2..]; t = t.TrimStart('0'); return t.ToUpperInvariant(); }
+            // [LAMHO-NCKEY 2026-11-08] (rà độc lập Gói 11 L3) khoá như luật mới: "NC0" / "00" → "0"; NC Taro khớp 2 NC Gia công khác chữ → không làm hộ (xuống switch)
+            static string K(string s) { var t = s.Trim(); if (t.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) t = t[2..]; t = t.Replace(" ", ""); var k = t.TrimStart('0'); if (k.Length == 0 && t.Length > 0) k = "0"; return k.ToUpperInvariant(); }
             var code = wl.WtsCode.Trim();
             var tnc = !string.IsNullOrWhiteSpace(wl.StepNC) ? wl.StepNC!.Trim() : null;
             var taroRows = db.KhPlanRouteSnapshotTaro.List.Where(t => t.KhPlanDetailId == id && string.Equals((string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode).Trim(), code, IC)).ToList();
-            bool backup = taroRows.Any() && taroRows.All(t => t.IsBackup);
-            if (tnc == null) { var ncsT = taroRows.Where(t => !t.IsBackup).Select(t => t.NC.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); if (ncsT.Count == 1) tnc = ncsT[0]; }
+            // [GOI11-FUZZ-DP 2026-11-08] dòng Taro dự phòng CŨ (dữ liệu trước TARO-DUPHONG): sổ coi như mã ở NC dòng CHA (StepNc = ParentNC — InCodeStep) → cũng là
+            //   Taro làm hộ nếu NC cha là NC máy loại trừ giữa chuỗi. Trước đáp án bỏ qua dòng dự phòng → rơi xuống "HTSP phát hiện → NC cuối" (lệch sổ, sổ đúng:
+            //   vụ đang giữ ở ô LAMHO). Lộ ra khi thao tác lhsua Gói 11 đi trúng đường (seed 1102 PO1 op27 vụ 3T-DP). Nguồn: CLAUDE (kiểm Gói 11).
+            if (tnc == null) { var ncsT = taroRows.Select(t => (t.IsBackup ? t.ParentNC : t.NC)?.Trim()).Where(x => !string.IsNullOrEmpty(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(); if (ncsT.Count == 1) tnc = ncsT[0]; }
             bool prep = new[] { "1V", "1T", "1R", "1K", "1D", "1G" }.Contains(code, StringComparer.OrdinalIgnoreCase);
-            if (tnc != null && !backup && !prep)
+            if (tnc != null && !prep)
             {
                 var exclT = db.KhPlanRouteSnapshotMachineExclude.List.Where(e => e.KhPlanDetailId == id && !string.IsNullOrWhiteSpace(e.SoMay)).Select(e => e.SoMay!.Trim().ToUpperInvariant()).ToHashSet();
                 var rowsT = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == id && !s.IsBackup).OrderBy(s => s.StepOrder).ToList();
                 bool ExT(KhPlanRouteSnapshotMachining s) => !string.IsNullOrWhiteSpace(s.MachineRegistered) && exclT.Contains(s.MachineRegistered!.Trim().ToUpperInvariant());
                 int k = rowsT.FindIndex(r => K(r.NC) == K(tnc) && ExT(r));
-                if (k >= 0 && rowsT.Skip(k + 1).Any(r => !ExT(r)))
+                bool trung = rowsT.Where(r => K(r.NC) == K(tnc)).Select(r => r.NC.Trim().ToUpperInvariant()).Distinct().Count() > 1;   // [LAMHO-NCKEY]
+                if (k >= 0 && !trung && rowsT.Skip(k + 1).Any(r => !ExT(r)))
                 {
                     int i = k - 1; while (i >= 0 && ExT(rowsT[i])) i--;
                     return i < 0 ? null : ncs.FirstOrDefault(x => x.Equals(rowsT[i].NC, IC));

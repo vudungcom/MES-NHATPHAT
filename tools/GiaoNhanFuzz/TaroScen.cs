@@ -396,6 +396,9 @@ public static class TaroScen
         await LamHoTrang();     // [T21] [LAMHO-WTS-DSPO] [LAMHO-B-CHU]
         await LamHoNhoSua();    // [T22] [LAMHO-NHO-SUA]
         await KhongHtsp();      // [T23] [GOI8-THAP-E]
+        await LamHoNhanNg();    // [T25] [LAMHO-NHAN-NG]
+        await NcKeyTrung();     // [T26] [LAMHO-NCKEY]
+        await OkBoNgCheo();     // [T24] [OKBO-NG-CHEO] ghi nhớ hành vi hiện tại
 
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
@@ -973,5 +976,153 @@ public static class TaroScen
         var cs = db.NgCases.List.Count > n0 ? db.NgCases.List.Last() : null;
         Ok(f.Ok && cs?.CauseGroupCode == "HTSP",
            "T23c KCS lỗi công đoạn trước bỏ trống nơi gây → vụ ghi HTSP gây (hàng thật đi HTSP → KCS)", $"{f.Error} · do {cs?.CauseGroupCode}");
+    }
+
+    // [T25] [LAMHO-NHAN-NG 2026-11-08] Vụ sinh lúc ĐẾM NG KHI NHẬN phiếu theo NC (Gia công nhận hàng làm hộ trả về / nhóm làm hộ nhận hàng Gia công giao theo NC):
+    //   chiếc thuộc chuỗi Gia công → chỉ Gia công sửa; không vào ô hàng đạt / ô Hàng sửa nhóm khác (như vụ Taro làm hộ NG — TARO-LAMHO-NC / LAMHO-NHO-SUA).
+    //   Bản 5d42247 (đo 08/11): vụ thường → HTSP sửa tại chỗ + KCS xác nhận = chiếc vào hàng sản xuất HTSP, hoặc HTSP giao KCS ô Hàng lỗi đã xử lý / Hàng mới,
+    //   bỏ qua NC04..NC06 (số PO vẫn cân, sai đường đi) → T25a / T25b / T25d / T25f SAI. Nguồn: CLAUDE (sổ LAMHO-NHAN-NG); Hùng 08/11 16:37 OK.
+    static async Task LamHoNhanNg()
+    {
+        Console.WriteLine("[T25] [LAMHO-NHAN-NG] NG đếm lúc nhận hàng làm hộ (trả về / giao đi theo NC): chỉ Gia công sửa, không vào hàng đạt nhóm khác");
+        var G6 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4"), ("NC05", "M5"), ("NC06", "M6") };
+        // (1) Gia công nhận hàng Taro làm hộ trả về NC04, đếm NG 1 → phiếu tự lập trả HTSP ô Hàng lỗi (vụ); HTSP có mã riêng (Bavia) để ô hàng đạt nhận được
+        async Task<(AppDbContext db, int det, long cs)> TraVe(string partNo, (string nc, string code)[] taros)
+        {
+            var (db, det) = await LhStart(partNo, G6, taros, 5, new[] { "NC01", "NC02" }, bavia: 1);
+            var svc = new HandoverService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            if (taros.Length > 0) await Taro(db, det, taros[0].code, taros[0].nc, 5, 0);
+            var b = await svc.IssueSpecialAsync(det, "HTSP", "GC", 5, U, HandoverPurpose.HelpReturn, null, "NC04", "tra NC4");
+            var r = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 1, null, U, ngCategoryId: 1);
+            var auto = db.HandoverTransactions.List.Last();
+            var r2 = await svc.ReceiveAsync(auto.HandoverTxId, 0, 1, null, U);   // HTSP nhận lại phiếu trả NG (ô Hàng lỗi)
+            if (!(b.Ok && r.Ok && r2.Ok && auto.NgCaseId != null && auto.Purpose == HandoverPurpose.NgReturn)) throw new Exception($"T25 dựng hỏng: {b.Error} {r.Error} {r2.Error}");
+            return (db, det, auto.NgCaseId!.Value);
+        }
+        {
+            var (db, det, cs) = await TraVe("P-LNN1", new[] { ("3", "2T") });
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(row.Cases[cs].IsLamHo && row.Cases[cs].LamHoNhan && row.CaseHeld(cs, "HTSP", HandoverCell.Loi) == 1 && row.Cases[cs].DetectNc == "NC04",
+               "T25 tiền đề: Gia công nhận 4 + NG 1 hàng làm hộ trả về NC04 → vụ ở HTSP ô Hàng lỗi, là vụ làm hộ (NG lúc nhận), nơi phát hiện NC04",
+               $"IsLamHo {row.Cases[cs].IsLamHo} · HTSP lỗi {row.CaseHeld(cs, "HTSP", HandoverCell.Loi)} · {row.Cases[cs].DetectNc}");
+            int nk = db.HandoverRepairResults.List.Count, nt = db.HandoverTransactions.List.Count;
+            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Notes = "sua" });
+            Ok(!f.Ok && f.Error.Contains("làm hộ bị lỗi") && f.Error.Contains("sửa ở Gia công") && db.HandoverRepairResults.List.Count == nk,
+               "T25a HTSP sửa tại nhóm vụ đó (Kết quả sửa) → chặn: chỉ Gia công sửa (trước: lưu được, KCS xác nhận = chiếc vào hàng sản xuất HTSP)", f.Error);
+            var x1 = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            var x2 = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "MOI", null, null, null, null, null, cs);
+            var x3 = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "SUA", null, null, null, null, null, cs);
+            Ok(!x1.Ok && !x2.Ok && !x3.Ok && x1.Error.Contains("làm hộ bị lỗi") && x3.Error.Contains("chỉ Gia công sửa") && db.HandoverTransactions.List.Count == nt,
+               "T25b HTSP giao vụ đó sang KCS ô Hàng lỗi đã xử lý / Hàng mới / Hàng sửa → chặn (trước: lưu được, chiếc bỏ qua NC04..NC06)", $"{x1.Error} | {x2.Error} | {x3.Error}");
+            var t = await svc.IssueByCellAsync(det, "HTSP", "GC", 1, U, "LOI", false, "LOI", null, null, null, null, null, cs);
+            var tr = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 1, null, U);
+            row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(t.Ok && tr.Ok && row.CaseHeld(cs, "GC", HandoverCell.Loi) == 1 && HandoverForm.CaseNextNc(row, cs) == "NC04",
+               "T25c HTSP trả Gia công ô Hàng lỗi → được; Gia công giữ vụ, NC làm tiếp mặc định NC04 (NC đích của phiếu trả)", $"{t.Error} {tr.Error} · {HandoverForm.CaseNextNc(row, cs)}");
+            var gs = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Notes = "sua tai GC" });
+            Ok(gs.Ok && db.HandoverRepairResults.List.Last().ToNC == "NC04", "T25c Gia công sửa tại nhóm → được, làm tiếp NC04", gs.Error);
+        }
+        {   // làm hộ N3 không phải Taro (HTSP làm NC03 máy loại trừ, PO không có mã Taro ở đó): cùng luật
+            var (db, det, cs) = await TraVe("P-LNN2", new (string, string)[0]);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            var x = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            Ok(row.Cases[cs].IsLamHo && !x.Ok && x.Error.Contains("làm hộ bị lỗi — NG lúc nhận"), "T25d làm hộ không Taro (N3 thường): vụ NG lúc nhận cũng chỉ Gia công sửa — giao KCS ô Hàng lỗi đã xử lý → chặn", x.Error);
+        }
+        {   // (2) nhóm làm hộ nhận hàng Gia công giao theo NC, đếm NG 1 → trả Gia công ô Hàng lỗi; Gia công "sửa xong trả nơi gửi" HTSP ô Hàng lỗi đã xử lý → chặn
+            var (db, det) = await LhStart("P-LNN3", G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 1, null, U, ngCategoryId: 1);
+            var auto = db.HandoverTransactions.List.Last(); var cs = auto.NgCaseId!.Value;
+            await svc.ReceiveAsync(auto.HandoverTxId, 0, 1, null, U);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            var x = await svc.IssueByCellAsync(det, "GC", "HTSP", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            var s = await svc.IssueByCellAsync(det, "GC", "HTSP", 1, U, "LOI", false, "SUA", null, null, null, null, null, cs);
+            Ok(row.Cases[cs].IsLamHo && row.CaseHeld(cs, "GC", HandoverCell.Loi) == 1 && !x.Ok && !s.Ok,
+               "T25e HTSP đếm NG 1 lúc nhận hàng Gia công giao theo NC → vụ về Gia công; Gia công giao HTSP ô Hàng lỗi đã xử lý / Hàng sửa → chặn", $"{x.Error} | {s.Error}");
+            var gs = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Notes = "sua" });
+            Ok(gs.Ok && db.HandoverRepairResults.List.Last().ToNC == "NC02", "T25f Gia công sửa tại nhóm → được, NC làm tiếp mặc định NC02 (làm lại NC giao theo NC — NC03 máy loại trừ)",
+               $"{gs.Error} · {db.HandoverRepairResults.List.LastOrDefault()?.ToNC}");
+        }
+        {   // đối chứng: phiếu Gia công → HTSP hàng mới (không theo NC), HTSP đếm NG lúc nhận → vụ thường, HTSP vẫn sửa / giao như cũ
+            var (db, det) = await LhStart("P-LNN4", new[] { ("NC01", "M1"), ("NC02", "M2") }, new[] { ("T1", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var row0 = (await led.GetLedgerForDetailAsync(det))!;
+            var i = await svc.IssueByCellAsync(det, "GC", "HTSP", 1, U, "MOI", false, "MOI");
+            var r = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 1, null, U, ngCategoryId: 1);
+            var auto = db.HandoverTransactions.List.Last();
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(i.Ok && r.Ok && auto.NgCaseId is long c0 && !row.Cases[c0].IsLamHo, "T25g đối chứng: NG lúc nhận phiếu hàng mới (không theo NC) → vụ thường (không phải vụ làm hộ)", $"{i.Error} {r.Error}");
+        }
+    }
+
+    // [T24] [OKBO-NG-CHEO 2026-11-08] GHI NHỚ hành vi hiện tại (sổ đếm theo SỐ, không theo từng chiếc — giới hạn mô hình, chờ Hùng chốt có đổi luật N5 không):
+    //   HTSP nhận 2, mã 3T + 4T. A: 3T đạt rồi 4T hỏng; B: 4T đạt → OK HTSP 1 dù chưa chiếc nào xong đủ (không phân biệt được với ca B làm đủ, A hỏng 4T trước 3T).
+    //   B tiếp 3T hỏng: Workflow ON chặn (vượt Chưa làm 0); OFF lưu được, Chưa làm −1 + cảnh báo ô âm. Kịch bản này để mọi thay đổi cách tính phải có chủ đích.
+    //   Nguồn: CLAUDE (sổ OKBO-NG-CHEO, đo 08/11 trên 5d42247).
+    static async Task OkBoNgCheo()
+    {
+        Console.WriteLine("[T24] [OKBO-NG-CHEO] NG chéo mã (ghi nhớ — sổ đếm theo số): OK HTSP = OK nhỏ nhất các mã");
+        foreach (var wf in new[] { true, false })
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false); WtsSvcHelp.Reset();
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-CHEO" + wf, new ChuoiHelp.Shape { Gc = 1, DongDang = false, DuPhong = false, Taro = 2, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
+            var det = (await ChuoiHelp.CreateKhAsync(db, pid, "P-CHEO" + wf, new decimal[] { 2 }, "PO-CHEO" + wf, wf))[0];
+            await Feed(db, det, 2);
+            var led = new HandoverLedgerService(db);
+            var a1 = await Taro(db, det, "3T", null, 1, 0); var a2 = await Taro(db, det, "4T", null, 0, 1); var b1 = await Taro(db, det, "4T", null, 1, 0);
+            var g = (await led.GetLedgerForDetailAsync(det))!.G("HTSP");
+            var b2 = await Taro(db, det, "3T", null, 0, 1);
+            var g2 = (await led.GetLedgerForDetailAsync(det))!.G("HTSP");
+            if (wf)
+                Ok(a1.Ok && a2.Ok && b1.Ok && g.DaLam == 1 && g.NgCuoi == 1 && g.ChuaLam == 0 && !b2.Ok && (b2.Err ?? "").Contains("vượt Chưa làm 0") && g2.ChuaLam == 0,
+                   "T24a Workflow ON: sau 3 dòng OK HTSP 1 · NG 1 · Chưa làm 0; dòng B 3T NG 1 bị chặn (vượt Chưa làm 0)", $"{g.DaLam}/{g.NgCuoi}/{g.ChuaLam} · {b2.Err}");
+            else
+                Ok(b2.Ok && g2.DaLam == 1 && g2.NgCuoi == 2 && g2.ChuaLam == -1,
+                   "T24b Workflow OFF: dòng B 3T NG 1 lưu được → OK HTSP 1 · NG 2 · Chưa làm −1 (ô âm, họ tự cân)", $"{b2.Err} · {g2.DaLam}/{g2.NgCuoi}/{g2.ChuaLam}");
+        }
+    }
+
+    // [T26] [LAMHO-NCKEY 2026-11-08] NC Taro so với NC Gia công bằng NcKey (bỏ chữ "NC" + số 0 đầu). 2 NC Gia công KHÁC CHỮ cùng khoá ("NC03" máy loại trừ và "3"
+    //   máy thường): NC Taro "3" không biết khớp NC nào → không ghép làm hộ (tính như mã HTSP thường) + cảnh báo sổ + QuetSo TARO_NC_LECH. "NC0" → khoá "0".
+    //   Bản 5d42247: T26a / T26b / T26c SAI (gán làm hộ NC03 — NC gặp đầu; "NC0" → khoá rỗng). Nguồn: CLAUDE (sổ LAMHO-NCKEY); Hùng 08/11 16:37 OK.
+    static async Task NcKeyTrung()
+    {
+        Console.WriteLine("[T26] [LAMHO-NCKEY] NC Taro khớp 2 NC Gia công khác chữ → không ghép làm hộ, cảnh báo; NcKey \"NC0\" = \"0\"");
+        var G5 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("3", "M5"), ("NC04", "M4") };
+        var (db, det) = await LhStart("P-NCK1", G5, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" });
+        var led = new HandoverLedgerService(db);
+        var row = (await led.GetLedgerForDetailAsync(det))!;
+        var st = row.G("HTSP").Steps.FirstOrDefault(s => s.Code == "2T");
+        Ok(st != null && st.LamHoNc == null && !row.LamHoRuns.Any(r => r.HasTaro),
+           "T26a NC Gia công \"NC03\" (máy loại trừ) và \"3\" cùng khoá; Taro NC \"3\" → KHÔNG ghép Taro làm hộ NC03 (trước: lấy NC gặp đầu)", $"LamHoNc {st?.LamHoNc}");
+        var w = row.G("HTSP").Warnings.FirstOrDefault(m => m.StartsWith(HandoverLedgerService.TaroNcLechHead));
+        Ok(w != null && w.Contains("NC03") && w.Contains("\"3\""), "T26b sổ HTSP cảnh báo NC Taro \"3\" khớp NC03 / 3", w);
+        var q = await QuetSo.QuetCore.ScanAsync(db, led);
+        Ok(q.Findings.Any(f => f.Kind == QuetSo.QuetCore.TaroNcLech && f.DetailId == det) && !q.Findings.Any(f => f.Kind == QuetSo.QuetCore.CanhBao && f.Detail.StartsWith(HandoverLedgerService.TaroNcLechHead)),
+           "T26b QuetSo: loại TARO_NC_LECH (không lặp ở CANH_BAO_SO)", string.Join(" | ", q.Findings.Where(f => f.DetailId == det).Select(f => f.Kind)));
+        Ok(HandoverLedgerService.NcKey("NC0") == "0" && HandoverLedgerService.NcKey(" 00 ") == "0" && HandoverLedgerService.NcKey("nc03") == "3" && HandoverLedgerService.NcKey("NC") == ""
+           && HandoverLedgerService.NcKey("NC4A") == "4A",
+           "T26c NcKey: \"NC0\" / \"00\" → \"0\" (trước: rỗng), \"nc03\" → \"3\", \"NC4A\" → \"4A\"", $"{HandoverLedgerService.NcKey("NC0")}|{HandoverLedgerService.NcKey(" 00 ")}");
+        // đối chứng: không trùng khoá (chỉ NC03) → vẫn ghép làm hộ
+        var (db2, det2) = await LhStart("P-NCK2", new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4") }, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" });
+        var row2 = (await new HandoverLedgerService(db2).GetLedgerForDetailAsync(det2))!;
+        Ok(row2.G("HTSP").Steps.First(s => s.Code == "2T").LamHoNc == "NC03" && !row2.G("HTSP").Warnings.Any(m => m.StartsWith(HandoverLedgerService.TaroNcLechHead)),
+           "T26d đối chứng: chỉ NC03 mang khoá \"3\" → Taro \"3\" vẫn là Taro làm hộ NC03, không cảnh báo");
+        // [T26f] (rà độc lập Gói 11 vòng 2 Th1) NC máy loại trừ CUỐI chuỗi ("NC03" H04) cùng khoá với NC thường "3" → không có đoạn làm hộ → không cảnh báo
+        var (db4, det4) = await LhStart("P-NCK4", new[] { ("NC01", "M1"), ("3", "M5"), ("NC03", "H04") }, new[] { ("3", "2T") }, 5, new[] { "NC01" });
+        var row4 = (await new HandoverLedgerService(db4).GetLedgerForDetailAsync(det4))!;
+        Ok(!row4.LamHoRuns.Any() && !row4.G("HTSP").Warnings.Any(m => m.StartsWith(HandoverLedgerService.TaroNcLechHead)),
+           "T26f NC máy loại trừ cuối chuỗi cùng khoá NC thường → không đoạn làm hộ, không cảnh báo NC Taro khớp nhiều NC", string.Join(" | ", row4.G("HTSP").Warnings));
+        // [T26e] (rà độc lập Gói 11 L2) 2 NC máy THƯỜNG cùng khoá ("NC03" / "3"), không máy loại trừ nào mang khoá đó → không có làm hộ, không cảnh báo
+        var (db3, det3) = await LhStart("P-NCK3", new[] { ("NC01", "M1"), ("NC03", "M3"), ("3", "M5"), ("NC04", "M4") }, new[] { ("3", "2T") }, 5, new[] { "NC01" });
+        var row3 = (await new HandoverLedgerService(db3).GetLedgerForDetailAsync(det3))!;
+        Ok(row3.G("HTSP").Steps.First(s => s.Code == "2T").LamHoNc == null && !row3.G("HTSP").Warnings.Any(m => m.StartsWith(HandoverLedgerService.TaroNcLechHead)),
+           "T26e 2 NC máy thường cùng khoá (NC03 / 3), không máy loại trừ → không cảnh báo NC Taro khớp nhiều NC (trước bản rà: badge đỏ giả)",
+           string.Join(" | ", row3.G("HTSP").Warnings));
     }
 }

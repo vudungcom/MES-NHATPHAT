@@ -46,6 +46,9 @@ public static class QuetCore
     public const string WtsKhoangTrang = "WTS_MA_KHOANGTRANG";
     //   + quy trình (snapshot) PO có NC / mã CV / dòng cha dư khoảng trắng: sổ nay bỏ khi đọc (cả 2 phía) — chỉ để biết, nguồn ở Part Master.
     public const string SnapKhoangTrang = "SNAP_KHOANGTRANG";
+    // [LAMHO-NCKEY 2026-11-08] NC Taro khớp 2 NC Gia công khác chữ (vd "3" / "NC003" — so bỏ chữ NC + số 0 đầu): sổ không ghép làm hộ (tính như HTSP thường),
+    //   cảnh báo trên sổ. Chỉ để biết — sửa tên NC ở Part Master. Nguồn: CLAUDE (sổ LAMHO-NCKEY); Hùng 08/11 16:37 OK.
+    public const string TaroNcLech = "TARO_NC_LECH";
 
     public sealed class Result
     {
@@ -83,7 +86,7 @@ public static class QuetCore
                     + $" · mã: {string.Join(", ", r.G("HTSP").Steps.Where(s => s.LamHoNc != null && !s.IsPrep && lr.Ncs.Contains(s.LamHoNc)).Select(s => $"{s.Code} OK {s.Ok:0.##} NG {s.Ng:0.##} chờ {s.Waiting:0.##}"))}");
             foreach (var G in r.Groups.Values)
                 foreach (var msg in G.Warnings.Where(m => !m.Contains("WTS nhập vượt") && !m.Contains("khác giữ + chuyển") && !m.Contains("tổng vụ lỗi đang giữ ô")))   // "WTS nhập vượt" đã ghi ở WTS_VUOT_TRAN; 2 loại vụ lệch ghi ở VU_LECH (không đếm 2 lần — rà độc lập 06/11 mục 8)
-                    Add(r, CanhBao, msg);
+                    Add(r, msg.StartsWith(HandoverLedgerService.TaroNcLechHead) ? TaroNcLech : CanhBao, msg);   // [LAMHO-NCKEY] tách loại riêng
         }
 
         // [PM-NC-DUP-SVC 2026-11-01] Mã chính trùng trong snapshot PO (dòng dự phòng không xét — như trang Part Master [B6-NC-DUP]).
@@ -307,6 +310,7 @@ public static class QuetCore
         // [QUET-VU-SOLE 2026-11-06] 2 mục mới in rõ cả khi không có gì (để biết đã kiểm)
         o.WriteLine($"  Vụ lỗi cân ({VuLech}): {(res.Findings.Any(f => f.Kind == VuLech) ? "CÓ LỆCH — xem từng PO" : "mọi vụ cân, khớp ô sổ + khung lỗi")}");
         o.WriteLine($"  Huỷ phần chưa nhận từng lần ({CloseLech}): {(res.Findings.Any(f => f.Kind == CloseLech) ? "CÓ LỆCH — xem từng PO" : "bảng HandoverTxCloses khớp mọi phiếu")}");   // [K5-CLOSE-NHIEU]
+        o.WriteLine($"  NC Taro khớp nhiều NC Gia công ({TaroNcLech}, chỉ để biết — sửa Part Master): {res.Findings.Count(f => f.Kind == TaroNcLech)} · {res.Findings.Where(f => f.Kind == TaroNcLech).Select(f => f.DetailId).Distinct().Count()} PO");   // [LAMHO-NCKEY]
         o.WriteLine($"  Taro làm hộ ({LamHoTaro}, chỉ để biết): {res.Findings.Count(f => f.Kind == LamHoTaro)} đoạn · {res.Findings.Where(f => f.Kind == LamHoTaro).Select(f => f.DetailId).Distinct().Count()} PO");   // [TARO-LAMHO-NC]
         o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");
         o.WriteLine();

@@ -118,7 +118,7 @@ namespace MES.Web.Services
                     return (false, $"{NgCaseNo.Format(ngCaseId.Value)} không thuộc PO này.");
             }
             if (groupCode != "GC" && ngCaseId is long lhCs && row.Cases.TryGetValue(lhCs, out var lhC) && lhC.IsLamHo)   // [TARO-LAMHO-NC] vụ hàng làm hộ: chỉ sửa ở Gia công
-                return (false, $"{NgCaseNo.Format(lhCs)} là hàng Taro làm hộ bị lỗi (chiếc của chuỗi Gia công): sửa ở Gia công — giao trả Gia công, không sửa tại {HandoverLedgerService.GroupLabel(groupCode)}.");
+                return (false, $"{NgCaseNo.Format(lhCs)} là {lhC.LamHoTen} (chiếc của chuỗi Gia công): sửa ở Gia công — giao trả Gia công, không sửa tại {HandoverLedgerService.GroupLabel(groupCode)}.");
             if (ngCaseId == null && row.CaseHeld(0, groupCode, sourceCell) <= 0)
                 return (false, $"Chọn {NgCaseNo.Term} đang giữ ở ô {HandoverCell.Label(sourceCell)} của {HandoverLedgerService.GroupLabel(groupCode)}.");
 

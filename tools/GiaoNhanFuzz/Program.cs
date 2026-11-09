@@ -205,7 +205,10 @@ for (int po = startPo; po < startPo + poCount; po++)
             ("pmedit", chuoi ? 5 : 0),
             // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận + huỷ. KQSUA=0 tắt (chạy lại seed cũ trước gói này ra đúng dãy thao tác cũ).
             ("kqsua", kq * 8), ("xnsua", kq * 7), ("vkqsua", kq * 3), ("vxnsua", kq * 3),
-            ("form", int.TryParse(Environment.GetEnvironmentVariable("FORM"), out var fw) ? fw : 12));   // [GN-FORM1] form Giao / xử lý hàng (FORM=0 tắt)   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
+            ("form", int.TryParse(Environment.GetEnvironmentVariable("FORM"), out var fw) ? fw : 12),
+            // [LAMHO-NHO-SUA][LAMHO-NHAN-NG 2026-11-08] Gói 11: thử gửi / nhận đổi ô vụ làm hộ vào ô Hàng sửa / ô hàng đạt nhóm khác Gia công (phải chặn).
+            //   Chỉ lượt LAMHO=1 (trọng số 0 ở lượt khác → dãy thao tác các seed cũ không đổi). Nguồn: CLAUDE (Gói 10: fuzz chưa đi trúng đường này — chỉ T22 phủ).
+            ("lhsua", Environment.GetEnvironmentVariable("LAMHO") == "1" ? 20 : 0));   // [GN-FORM1] form Giao / xử lý hàng (FORM=0 tắt)   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
         string desc = kind;
         bool ok = false;
         try
@@ -479,6 +482,113 @@ for (int po = startPo; po < startPo + poCount; po++)
                     ok = true;
                     break;
                 }
+                case "lhsua":
+                {   // [LAMHO-NHO-SUA][LAMHO-NHAN-NG 2026-11-08] vụ làm hộ (Taro làm hộ NG / NG lúc nhận phiếu theo NC) đang giữ ở ô Hàng lỗi một nhóm:
+                    //   (a) giao sang nhóm khác Gia công ô Hàng sửa / Hàng lỗi đã xử lý / Hàng mới → phải chặn, không phiếu nào;
+                    //   (b) form "Giao / xử lý hàng" nhờ nhóm khác sửa → phải chặn; (c) nhóm khác Gia công giữ vụ: Kết quả sửa → phải chặn;
+                    //   (d) giao ô Hàng lỗi sang nhóm khác (được) rồi bên nhận đổi ô sang Hàng sửa → phải chặn; nhận ô Hàng lỗi → được.
+                    //   Đáp án độc lập: vụ làm hộ = vụ có chặng phát sinh ở ô LAMHO (WTS Taro làm hộ NG) HOẶC vụ của lần nhận có NG trên phiếu theo NC (đọc DB).
+                    bool LamHoVu(LedgerCase x) => LamHoVuDoc(db, x);
+                    var cands = groups.SelectMany(g => row.CasesHeldAt(g, HandoverCell.Loi).Where(x => x.Id > 0 && LamHoVu(x)).Select(x => (g, x))).ToList();
+                    if (!cands.Any())
+                    {   // chưa có vụ làm hộ ở ô Hàng lỗi nào: dựng bằng hàm thật — (1) nhận phiếu theo NC đang chờ có đếm NG 1 (sinh vụ NG lúc nhận),
+                        //   (2) HTSP trả chiếc Taro làm hộ bị lỗi về Gia công ô Hàng lỗi (form, như T21) rồi Gia công nhận
+                        // (0) phiếu trả chiếc làm hộ bị lỗi (ô Hàng lỗi, mang vụ) đang chờ Gia công nhận → nhận vào ô Hàng lỗi
+                        var pLoi = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status != "COMPLETED"
+                                        && t.Purpose == HandoverPurpose.HelpReturn && t.FromCell == HandoverCell.Loi).ToList();
+                        if (pLoi.Any())
+                        {
+                            var t = pLoi[rnd.Next(pLoi.Count)];
+                            var rem = t.QtyIssued - db.HandoverReceives.List.Where(x => x.HandoverTxId == t.HandoverTxId && !x.IsVoided).Sum(x => x.QtyOk + x.QtyNg) - (t.QtyClosed ?? 0);
+                            if (rem >= 1)
+                            {
+                                desc = $"lhsua.dung Gia công nhận #{t.HandoverTxId} chiếc làm hộ bị lỗi {rem}";
+                                var r = await svc.ReceiveAsync(t.HandoverTxId, 0, rem, null, Uid("GC"));
+                                ok = r.Ok; Inc(ok ? "lhsua.dung.nhanloi" : "lhsua.dung.nhanloi.rej"); if (!ok) desc += " ERR " + r.Error;
+                                break;
+                            }
+                        }
+                        var pend = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status != "COMPLETED"
+                                        && t.Purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn && t.FromCell != HandoverCell.Loi).ToList();
+                        if (!pend.Any() && row.LamHoRuns.FirstOrDefault(x => x.HasTaro) is { } lr0)
+                        {   // (3) chưa có phiếu theo NC chờ nhận: HTSP trả 1 chiếc làm hộ (hàng tốt) về NC sau đoạn → bước sau Gia công nhận có NG
+                            var (mx, _) = HandoverLedgerService.IssueCapCase(row, "HTSP", HandoverPurpose.HelpReturn, null, null, null, lr0.NextNc);
+                            if (mx >= 1)
+                            {
+                                var r = await svc.IssueSpecialAsync(1, "HTSP", "GC", 1, Uid("HTSP"), HandoverPurpose.HelpReturn, null, lr0.NextNc, "lhsua tra");
+                                desc = $"lhsua.dung HTSP trả 1 về {lr0.NextNc}"; ok = r.Ok; Inc(ok ? "lhsua.dung.trave" : "lhsua.dung.trave.rej"); if (!ok) desc += " ERR " + r.Error;
+                                break;
+                            }
+                        }
+                        var lhNgH = row.LamHoNgHeld("HTSP");
+                        if (pend.Any())
+                        {
+                            var t = pend[rnd.Next(pend.Count)];
+                            var rem = t.QtyIssued - db.HandoverReceives.List.Where(x => x.HandoverTxId == t.HandoverTxId && !x.IsVoided).Sum(x => x.QtyOk + x.QtyNg) - (t.QtyClosed ?? 0);
+                            if (rem < 1) { Inc("skip.lhsua"); continue; }
+                            desc = $"lhsua.dung nhận #{t.HandoverTxId} {t.Purpose} NG 1";
+                            var r = await svc.ReceiveAsync(t.HandoverTxId, rem - 1, 1, null, Uid(t.ToGroupCode), null, null, null, rnd.Next(1, 6));
+                            ok = r.Ok; Inc(ok ? "lhsua.dung.nhan" : "lhsua.dung.nhan.rej"); if (!ok) desc += " ERR " + r.Error;
+                            break;
+                        }
+                        if (lhNgH > 0)
+                        {
+                            var vl = row.Cases.Values.FirstOrDefault(x => x.Id > 0 && x.HeldAt("HTSP", HandoverCell.LamHo) > 0);
+                            if (vl == null) { Inc("skip.lhsua"); continue; }
+                            desc = $"lhsua.dung trả {vl.No} về Gia công ô Hàng lỗi";
+                            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = 1, Group = "HTSP", UserId = Uid("HTSP"), Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = vl.Id, Action = HandoverForm.AGiao, Qty = 1 });
+                            ok = f.Ok; Inc(ok ? "lhsua.dung.tra" : "lhsua.dung.tra.rej"); if (!ok) desc += " ERR " + f.Error;
+                            break;
+                        }
+                        Inc("skip.lhsua"); continue;
+                    }
+                    var (hg, cs) = cands[rnd.Next(cands.Count)];
+                    var others = groups.Where(g => g != "GC" && g != hg).ToArray();
+                    var to = others[rnd.Next(others.Length)];
+                    var n0 = db.HandoverTransactions.List.Count; var k0 = db.HandoverRepairResults.List.Count;
+                    var how = Pick(rnd, ("giao", 4), ("form", 2), ("kq", hg == "GC" ? 0 : 2), ("nhan", 3));
+                    desc = $"lhsua {how} {cs.No} giữ {hg} → {to}";
+                    Inc("lhsua." + how);
+                    if (how == "giao")
+                    {
+                        var tc = Pick(rnd, (HandoverCell.Sua, 3), (HandoverCell.Xl, 2), (HandoverCell.Moi, 1));
+                        var r = await svc.IssueByCellAsync(1, hg, to, 1, Uid(hg), HandoverCell.Loi, false, tc, null, null, null, null, null, cs.Id);
+                        desc += $" ô {tc}";
+                        if (r.Ok || db.HandoverTransactions.List.Count != n0) fails.Add($"[LAMHO gửi vụ làm hộ vào ô {tc} nhóm khác Gia công không bị chặn] PO{po} op{op} {desc}");
+                        else if (!(r.Error ?? "").Contains("làm hộ bị lỗi")) fails.Add($"[LAMHO chặn sai lời] PO{po} op{op} {desc}: {r.Error}");
+                        ok = false; Inc("lhsua.chan");
+                    }
+                    else if (how == "form")
+                    {
+                        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = 1, Group = hg, UserId = Uid(hg), Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs.Id,
+                                                                               Action = HandoverForm.AGiao, Purpose = HandoverForm.PNho, ToGroup = to, Qty = 1 });
+                        if (f.Ok || db.HandoverTransactions.List.Count != n0) fails.Add($"[LAMHO form nhờ nhóm khác sửa vụ làm hộ không bị chặn] PO{po} op{op} {desc}");
+                        ok = false; Inc("lhsua.chan");
+                    }
+                    else if (how == "kq")
+                    {
+                        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = 1, Group = hg, UserId = Uid(hg), Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs.Id,
+                                                                               Action = HandoverForm.ASua, Pass = 1, Notes = "sua" });
+                        if (f.Ok || db.HandoverRepairResults.List.Count != k0) fails.Add($"[LAMHO {hg} ghi Kết quả sửa vụ làm hộ không bị chặn] PO{po} op{op} {desc}");
+                        ok = false; Inc("lhsua.chan");
+                    }
+                    else
+                    {   // giao ô Hàng lỗi (được) → bên nhận đổi ô sang Hàng sửa (chặn) → nhận ô Hàng lỗi (được)
+                        var r = await svc.IssueByCellAsync(1, hg, to, 1, Uid(hg), HandoverCell.Loi, false, HandoverCell.Loi, null, null, null, null, null, cs.Id);
+                        if (!r.Ok) { Inc("lhsua.nhan.skip"); desc += " giao ô Hàng lỗi bị từ chối: " + r.Error; ok = false; break; }
+                        var tid = db.HandoverTransactions.List.Last().HandoverTxId;
+                        var r1 = await svc.ReceiveAsync(tid, 1, 0, null, Uid(to), null, HandoverCell.Sua, "doi o lhsua");
+                        if (r1.Ok) fails.Add($"[LAMHO nhận đổi ô vụ làm hộ sang Hàng sửa {to} không bị chặn] PO{po} op{op} {desc}");
+                        else Inc("lhsua.nhan.chan");
+                        if (rnd.NextDouble() < 0.6)
+                        {
+                            var r2 = await svc.ReceiveAsync(tid, 0, 1, null, Uid(to));
+                            if (!r2.Ok) fails.Add($"[LAMHO nhận vụ làm hộ vào ô Hàng lỗi {to} bị chặn] PO{po} op{op} {desc}: {r2.Error}");
+                        }
+                        ok = true;
+                    }
+                    break;
+                }
                 case "wtsvoid":
                 {
                     var ws = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided).ToList();   // [CHUOI] chỉ PO 1
@@ -745,7 +855,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         var lhr = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, null, null, Uid(g));
                         checks++;
-                        if (lhr.Ok || !(lhr.Error ?? "").Contains("là hàng Taro làm hộ bị lỗi")) fails.Add($"[Kết quả sửa vụ làm hộ ngoài Gia công không bị chặn đúng] PO{po} op{op} {desc}: {lhr.Error}");
+                        if (lhr.Ok || !(lhr.Error ?? "").Contains("làm hộ bị lỗi")) fails.Add($"[Kết quả sửa vụ làm hộ ngoài Gia công không bị chặn đúng] PO{po} op{op} {desc}: {lhr.Error}");
                         Inc("lamho.kqsua.chan"); continue;
                     }
                     if (badLater != null)
@@ -868,6 +978,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                             var n = Q(ch);
                             req.Fail = pos.HeldCell == HandoverCell.Sua ? rnd.Next(0, n + 1) : 0; req.Pass = n - req.Fail;
                             PickNc(cs.Id, null);
+                            // [LAMHO-NHAN-NG] (rà độc lập Gói 11 vòng 2 Tr1) vụ làm hộ ở nhóm khác Gia công: Sửa tại nhóm phải bị chặn (KetQuaSua) — đáp án độc lập
+                            if (g != "GC" && LamHoVuDoc(db, cs)) { expErr ??= "làm hộ bị lỗi"; Inc("lamho.form.asua.chan"); }
                         }
                         else
                         {
@@ -887,10 +999,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 // [LAMHO-NHO-SUA 2026-11-08] đáp án: vụ Taro làm hộ bị lỗi sang nhóm khác Gia công — ô Hàng sửa chặn (chỉ Gia công sửa),
                                 //   ô hàng đạt chặn (Gói 6 vòng 3 T2 — trước gói này bộ kiểm chưa đặt đáp án cho nhánh ô hàng đạt), ô Hàng lỗi được
                                 var tcLh = req.ToCell ?? (req.Purpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua);
-                                if (cs.IsLamHo && req.ToGroup != null && req.ToGroup != "GC")
+                                if (LamHoVuDoc(db, cs) && req.ToGroup != null && req.ToGroup != "GC")   // [LAMHO-NHAN-NG] đáp án độc lập (rà độc lập Gói 11 T1 phụ)
                                 {
                                     if (tcLh == HandoverCell.Sua) { expErr ??= "chỉ Gia công sửa"; Inc("lamho.nhosua.form"); }
-                                    else if (tcLh is HandoverCell.Moi or HandoverCell.Xl) expErr ??= "Taro làm hộ";
+                                    else if (tcLh is HandoverCell.Moi or HandoverCell.Xl) expErr ??= "làm hộ bị lỗi";   // [LAMHO-NHAN-NG] chữ theo loại vụ (vụ NG lúc nhận: "hàng làm hộ bị lỗi — NG lúc nhận …")
                                 }
                             }
                             else if (req.Action is HandoverForm.ATraLai or HandoverForm.ASuaXong)
@@ -1530,6 +1642,13 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
                 if (lhTx.Any()) F("[LAMHO-NHO-SUA] phiếu vụ làm hộ chỉ định ô Hàng sửa nhóm khác Gia công", $"{G.Code}: {string.Join(", ", lhTx)}");
             }
         }
+        {   // [LAMHO-NHAN-NG 2026-11-08] đáp án độc lập: vụ "NG lúc nhận phiếu theo NC" = vụ của lần nhận còn hiệu lực có NG trên phiếu giao làm hộ / trả hàng làm hộ (đọc DB)
+            checks++;
+            var helpTx2 = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn && t.FromCell != HandoverCell.Loi).Select(t => t.HandoverTxId).ToHashSet();   // trừ phiếu trả chiếc làm hộ bị lỗi (mang vụ)
+            var expNhan = db.HandoverReceives.List.Where(r => !r.IsVoided && r.QtyNg > 0 && r.NgCaseId != null && helpTx2.Contains(r.HandoverTxId)).Select(r => r.NgCaseId!.Value).ToHashSet();
+            var lech = row.Cases.Values.Where(x => x.Id > 0 && x.LamHoNhan != expNhan.Contains(x.Id)).Select(x => $"{x.No} sổ {x.LamHoNhan}").ToList();
+            if (lech.Any()) F("[LAMHO-NHAN-NG] cờ vụ NG lúc nhận phiếu theo NC ≠ đáp án", string.Join(", ", lech));
+        }
         var trv = HandoverNgTrace.Build((await led.GetInputForDetailAsync(1))!, null, steps);
         checks++;
         var sSinh = row.Cases.Values.Sum(x => x.SinhRa); var sChuyen = row.Cases.Values.Sum(x => x.Transit);
@@ -1580,6 +1699,15 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     }
 }
 
+// [LAMHO-NHAN-NG 2026-11-08] Đáp án độc lập "vụ làm hộ" (đọc DB, không đọc cờ sổ): vụ có chặng phát sinh ở ô LAMHO (WTS Taro làm hộ NG — chặng của sổ)
+//   HOẶC vụ của lần nhận còn hiệu lực có NG trên phiếu theo NC (giao làm hộ / trả hàng làm hộ), trừ phiếu trả chiếc làm hộ bị lỗi (ô Hàng lỗi, mang vụ).
+static bool LamHoVuDoc(MES.Web.Data.AppDbContext db, LedgerCase x)
+{
+    if (x.Id <= 0) return false;
+    if (x.Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo)) return true;
+    var helpTx = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn && t.FromCell != HandoverCell.Loi).Select(t => t.HandoverTxId).ToHashSet();
+    return db.HandoverReceives.List.Any(r => !r.IsVoided && r.QtyNg > 0 && r.NgCaseId == x.Id && helpTx.Contains(r.HandoverTxId));
+}
 static int Uid(string g) => g switch { "KHO" => 1, "GC" => 2, "HTSP" => 3, "KCS" => 4, "PKG" => 5, _ => 6 };
 static T Pick<T>(Random r, params (T v, int w)[] xs)
 {

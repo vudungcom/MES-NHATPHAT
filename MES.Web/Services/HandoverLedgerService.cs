@@ -466,7 +466,14 @@ namespace MES.Web.Services
         public string? HelpFromNc { get; set; }
         /// <summary>[TARO-LAMHO-NC] Vụ sinh từ WTS Taro làm hộ NG (chặng phát sinh ở ô LAMHO): chiếc thuộc chuỗi Gia công — chỉ sửa / làm tiếp ở Gia công
         ///   (rà độc lập gói 6 vòng 3 T2: vụ đi vòng về HTSP rồi sửa tại chỗ → vào hàng sản xuất HTSP, bỏ qua NC sau).</summary>
-        public bool IsLamHo => Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo);
+        public bool IsLamHo => LamHoNhan || Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo);   // [LAMHO-NHAN-NG] + vụ NG lúc nhận phiếu theo NC
+        /// <summary>[LAMHO-NHAN-NG 2026-11-08] Vụ sinh lúc ĐẾM NG KHI NHẬN phiếu theo NC (Gia công giao làm hộ / nhóm làm hộ trả về Gia công): chiếc cũng thuộc
+        ///   chuỗi Gia công (chưa làm xong / chưa làm tiếp các NC sau) → luật như vụ Taro làm hộ NG: chỉ Gia công sửa, không vào ô hàng đạt / ô Hàng sửa nhóm khác.
+        ///   Trước: vụ thường → nhóm làm hộ sửa tại chỗ (KCS xác nhận) hoặc giao KCS ô Hàng lỗi đã xử lý → chiếc vào hàng sản xuất nhóm đó, bỏ qua các NC sau
+        ///   (số PO vẫn cân, sai đường đi). Nguồn: CLAUDE (sổ LAMHO-NHAN-NG, đo bằng kịch bản 08/11 trên 5d42247); Hùng 08/11 16:37 OK (cả làm hộ Taro lẫn N3 nhóm khác).</summary>
+        public bool LamHoNhan { get; set; }
+        /// <summary>[LAMHO-NHAN-NG] Tên loại vụ làm hộ trong lời báo (vụ Taro làm hộ NG giữ chữ cũ).</summary>
+        public string LamHoTen => Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo) ? "hàng Taro làm hộ bị lỗi" : "hàng làm hộ bị lỗi — NG lúc nhận hàng giao / trả theo NC";
         public DateTime? At      { get; set; }
         public string? Who       { get; set; }
 
@@ -643,7 +650,11 @@ namespace MES.Web.Services
                         // [WTS-SUA-PHAN 2026-11-05] dòng là bản SỬA của dòng khác: Saved = giờ lưu gốc; Vers = các bản của cả chuỗi sửa (cũ → mới,
                         //   mỗi bản: giờ lưu, OK, NG; bản đang thử lưu có At = DateTime.MaxValue). null = dòng thường. Xem SnapshotBefore.
                         IReadOnlyList<WtsVer>? Vers = null,
-                        string? StepNC = null);   // [TARO-NC-MA 2026-11-06] NC Taro của dòng (WtsProductionLogs.StepNC) — chỉ khi mã CV dùng ở nhiều NC
+                        string? StepNC = null,   // [TARO-NC-MA 2026-11-06] NC Taro của dòng (WtsProductionLogs.StepNC) — chỉ khi mã CV dùng ở nhiều NC
+                        // [H10-WHY-NGAYCU 2026-11-08] giờ BẮT ĐẦU dòng (WtsProductionLogs.StartTime) — chỉ cho lời khuyên gợi ý gỡ "dòng ngày trước hôm nay"
+                        //   (máy chủ chỉ cho sửa / xoá dòng BẮT ĐẦU hôm nay — WtsSaveService; At = EndTime lệch với ca qua đêm). Không dùng tính số nào.
+                        //   null = dòng đang thử lưu / dựng tay → lời khuyên xét theo At như cũ. Nguồn: CLAUDE (rà độc lập Gói 10 vòng 2, sổ H10-WHY-NGAYCU).
+                        DateTime? Start = null);
     /// <summary>[WTS-SUA-PHAN] 1 bản của dòng WTS trong chuỗi sửa: có hiệu lực từ At (giờ máy chủ lưu bản đó) tới bản sau.</summary>
     public record WtsVer(DateTime At, decimal Ok, decimal Ng);
     public record InGcStep(int StepOrder, string NC, bool IsBackup, string? ParentNC, string? Machine, bool IsExcluded);
@@ -775,6 +786,7 @@ namespace MES.Web.Services
                 .Select(w => new
                 {
                     w.WtsLogId, w.KhPlanDetailId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
+                    w.StartTime,  // [H10-WHY-NGAYCU] chỉ cho lời khuyên gợi ý gỡ
                     w.StepNC,     // [TARO-NC-MA 2026-11-06]
                     w.QtyDone, w.QtyOk, w.QtyNg,
                     w.NgCaseId,   // [VULOI]
@@ -909,7 +921,7 @@ namespace MES.Web.Services
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,
                         w.QtyOk ?? (w.QtyDone - (w.QtyNg ?? 0)), w.QtyNg ?? 0, w.Worker, w.NgCaseId,
                         wtsOrigin.TryGetValue(w.WtsLogId, out var _goc) ? _goc.Origin : w.CreatedAt,   // [VULOI] + vụ lỗi · [K5-VONG-SUA] + giờ máy chủ lưu · [WTS-SUA-GIO-GOC] dòng sửa = giờ lưu gốc
-                        _goc?.Vers, w.StepNC)).ToList(),   // [WTS-SUA-PHAN] các bản của chuỗi sửa · [TARO-NC-MA] + NC Taro
+                        _goc?.Vers, w.StepNC, w.StartTime)).ToList(),   // [WTS-SUA-PHAN] các bản của chuỗi sửa · [TARO-NC-MA] + NC Taro · [H10-WHY-NGAYCU] + giờ bắt đầu
                     GcSteps = mach.Where(m => m.KhPlanDetailId == id).Select(m => new InGcStep(
                         m.StepOrder, m.NC ?? "", m.IsBackup, m.ParentNC, m.MachineRegistered,
                         !string.IsNullOrWhiteSpace(m.MachineRegistered) && exclSet.Contains(m.MachineRegistered!.Trim()))).ToList(),
@@ -1316,9 +1328,22 @@ namespace MES.Web.Services
         {
             var s = (nc ?? "").Trim();
             if (s.StartsWith("NC", StringComparison.OrdinalIgnoreCase)) s = s[2..];
-            s = s.Replace(" ", "").TrimStart('0');
-            return s.ToUpperInvariant();
+            s = s.Replace(" ", "");
+            var k = s.TrimStart('0');
+            if (k.Length == 0 && s.Length > 0) k = "0";   // [LAMHO-NCKEY 2026-11-08] "NC0" / "00" giữ "0" (trước thành chuỗi rỗng). Nguồn: CLAUDE (sổ LAMHO-NCKEY).
+            return k.ToUpperInvariant();
         }
+
+        /// <summary>[LAMHO-NCKEY 2026-11-08] Khoá NC (NcKey) mà 2 NC Gia công KHÁC CHỮ cùng mang (vd "3" và "NC003"): NC Taro mang khoá đó không biết khớp NC nào
+        ///   → không coi là Taro làm hộ (rơi về cách cũ: tính như mã HTSP thường) + cảnh báo trên sổ. Trước: lấy NC gặp đầu tiên (GroupBy.First) — có thể gán nhầm.
+        ///   Nguồn: CLAUDE (sổ LAMHO-NCKEY); Hùng 08/11 16:37 OK (không cảnh báo ở trang Part Master — chỉ sổ PO + quét).</summary>
+        public static HashSet<string> AmbiguousNcKeys(LedgerInput inp)
+            => inp.GcSteps.Where(s => !s.IsBackup && !string.IsNullOrWhiteSpace(s.NC))
+                  .GroupBy(s => NcKey(s.NC))
+                  .Where(g => g.Select(s => s.NC.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+                  .Select(g => g.Key).ToHashSet();
+        /// <summary>[LAMHO-NCKEY] Đầu câu cảnh báo NC Taro khớp nhiều NC Gia công (QuetSo tách riêng loại TARO_NC_LECH theo đầu câu này).</summary>
+        public const string TaroNcLechHead = "Taro ở NC khớp nhiều NC Gia công";
 
         /// <summary>[TARO-LAMHO-NC] Các đoạn NC máy loại trừ liền nhau mà sau đó còn NC thường (đoạn đầu chuỗi: NC nguồn = @VAO).</summary>
         public static List<LedgerLamHoRun> LamHoRunsOf(LedgerInput inp)
@@ -1338,7 +1363,8 @@ namespace MES.Web.Services
                 i = j;
             }
             // chỉ mã Taro CHÍNH (không mã chuẩn bị, không dự phòng) — đoạn chỉ có 1T không có OK bộ, câu 1 sẽ kẹt (rà độc lập gói 6 mục 3)
-            var taroNcs = inp.CodeSteps.Where(s => s.Pg == "TARO" && !s.IsBackup && !IsPrepCode(s.RawCode ?? s.Code) && !string.IsNullOrWhiteSpace(s.StepNc)).Select(s => NcKey(s.StepNc)).ToHashSet();
+            var amb = AmbiguousNcKeys(inp);   // [LAMHO-NCKEY] khoá NC trùng giữa 2 NC Gia công khác chữ → không ghép
+            var taroNcs = inp.CodeSteps.Where(s => s.Pg == "TARO" && !s.IsBackup && !IsPrepCode(s.RawCode ?? s.Code) && !string.IsNullOrWhiteSpace(s.StepNc)).Select(s => NcKey(s.StepNc)).Where(k => !amb.Contains(k)).ToHashSet();
             foreach (var r in res) r.HasTaro = r.Ncs.Any(n => taroNcs.Contains(NcKey(n)));
             return res;
         }
@@ -1348,7 +1374,8 @@ namespace MES.Web.Services
         {
             var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (runs.Count == 0) return d;
-            var ncOf = runs.SelectMany(r => r.Ncs).GroupBy(NcKey).ToDictionary(g => g.Key, g => g.First());
+            var amb = AmbiguousNcKeys(inp);   // [LAMHO-NCKEY] khoá trùng → mã Taro tính như HTSP thường (cách cũ), không lấy NC gặp đầu
+            var ncOf = runs.SelectMany(r => r.Ncs).GroupBy(NcKey).Where(g => !amb.Contains(g.Key)).ToDictionary(g => g.Key, g => g.First());
             foreach (var s in inp.CodeSteps.Where(s => s.Pg == "TARO" && !string.IsNullOrWhiteSpace(s.Code) && !string.IsNullOrWhiteSpace(s.StepNc)))
                 if (ncOf.TryGetValue(NcKey(s.StepNc), out var nc)) d[s.Code.Trim()] = nc;
             return d;
@@ -1777,6 +1804,8 @@ namespace MES.Web.Services
                     {
                         var csH = Cs(r.NgCaseId);   // [VULOI] NG đếm lúc nhận hàng theo NC: vụ mới sinh ở bên nhận
                         if (purpose == HandoverPurpose.HelpSend && !string.IsNullOrEmpty(t.FromNC)) csH.HelpFromNc ??= t.FromNC;   // [GN-FORM1] chỉ ghi lại, không tính
+                        if (r.NgCaseId is long nid && nid > 0) csH.LamHoNhan = true;   // [LAMHO-NHAN-NG 2026-11-08] chiếc của chuỗi Gia công — chỉ Gia công sửa (không đổi phép tính số nào);
+                                                                                        //   vụ 0 (hàng lỗi cũ chưa mã, gom chung) không gắn cờ — rà độc lập Gói 11 L1
                         csH.SinhRa += r.Ng;
                         CHop(csH, "PS", t.To, t.From, null, r.Ng, txDocName, t.Id, r.At);
                         NgBack(t, purpose, r, purpose == HandoverPurpose.HelpSend ? "glLamHo" : "glTra", false, csH);
@@ -2614,6 +2643,19 @@ namespace MES.Web.Services
             //   Nguồn: KHÁCH 02/11 09:14 (3T thay bộ 3T1–3T3); HÙNG 05/11 15:37 OK "3T = min(3T1..3T3)" (cách tính gửi 03/11).
             var units = group == "HTSP" ? TaroGopUnits(inp, mains, G) : new List<(InCodeStep Gop, List<InCodeStep> Parts)>();
             var lamHo = group == "HTSP" ? LamHoCodes(inp, row.LamHoRuns) : new Dictionary<string, string>();   // [TARO-LAMHO-NC]
+            if (group == "HTSP")
+            {   // [LAMHO-NCKEY 2026-11-08] NC Taro khớp 2 NC Gia công khác chữ (vd "3" / "NC003") → không ghép làm hộ; báo để sửa Part Master. Chỉ cảnh báo, không đổi số.
+                //   Chỉ khi khoá trùng có NC thuộc một ĐOẠN làm hộ (NC máy loại trừ còn NC thường phía sau — row.LamHoRuns) — 2 NC máy thường cùng khoá,
+                //   hay NC loại trừ cuối chuỗi, vốn không có làm hộ → không cảnh báo (rà độc lập Gói 11 L2 + vòng 2 Th1: tránh badge đỏ "lỗi" giả).
+                var amb = AmbiguousNcKeys(inp);
+                var runKeys = row.LamHoRuns.SelectMany(r => r.Ncs).Select(NcKey).ToHashSet();
+                amb.RemoveWhere(k => !runKeys.Contains(k));
+                foreach (var g in steps.Where(s => s.Pg == "TARO" && !s.IsBackup && !string.IsNullOrWhiteSpace(s.StepNc) && amb.Contains(NcKey(s.StepNc)))
+                                       .GroupBy(s => s.StepNc!.Trim(), StringComparer.OrdinalIgnoreCase))
+                    G.Warnings.Add($"{TaroNcLechHead}: NC Taro \"{g.Key}\" ({string.Join(", ", g.Select(s => s.Code).Distinct())}) khớp "
+                        + string.Join(" / ", inp.GcSteps.Where(s => !s.IsBackup && NcKey(s.NC) == NcKey(g.Key)).Select(s => NcName(s.NC.Trim())).Distinct())
+                        + " — không coi là Taro làm hộ, tính như mã HTSP thường; sửa tên NC ở Part Master cho khớp đúng 1 NC");
+            }
             var info = new Dictionary<InCodeStep, (decimal ok, List<InWts> rows, LedgerStepLine line)>(ReferenceEqualityComparer.Instance);
             foreach (var m in steps.OrderBy(s => Array.IndexOf(pgs, s.Pg)).ThenBy(s => s.StepOrder))
             {

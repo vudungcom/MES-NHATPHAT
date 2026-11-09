@@ -117,6 +117,7 @@ public static class WhyScen
         }
         Y9().GetAwaiter().GetResult();   // [H10-KET-WHY-3]
         Y11().GetAwaiter().GetResult();  // [H10-KET-WHY-3] đột biến M5 / M6
+        Y12().GetAwaiter().GetResult();  // [H10-WHY-NGAYCU] dòng WTS ca qua đêm
         // [Y10] [GOI8-THAP-D 2026-11-08] ô "HTSP|ChoKcs" + "VU|5|CHUYEN" âm: thao tác thật không làm 2 ô này mới âm (phân tích ở HandoverWhy) → dựng thử trên sổ Y8
         //   bằng thao tác giả "Kết quả sửa #2 còn đạt 0" (KCS đã xác nhận 1). Gợi ý phải ra lần KCS xác nhận #1 (trước: không ứng viên, "chưa lần ra").
         //   Bản a32c59a: Y10a SAI. Nguồn: CLAUDE (sổ GOI8-THAP (d)); Hùng 08/11 11:24 OK Gói 10.
@@ -260,5 +261,63 @@ public static class WhyScen
            "Y9d dòng đã sửa về theo gợi ý (chuỗi 2 → 3 → 2): không đề xuất sửa ngược về 3", $"{wr?.Vers?.Count} bản · {(wr == null ? "" : HandoverWhy.CanRevertWts(wr).ToString())}");
         var v1 = await svc.VoidReceiveAsync(rid2, "huy thu y9", U, all);
         Ok(r1.Ok && v1.Ok, "Y9c làm theo gợi ý (sửa dòng về OK 2 bằng hàm thật) rồi huỷ lần nhận → được", $"{r1.Err} | {v1.Error}");
+    }
+
+    // [Y12] [H10-WHY-NGAYCU 2026-11-08] Lời khuyên gợi ý gỡ cho dòng WTS ngày cũ phải xét giờ BẮT ĐẦU như máy chủ (WtsSaveService chỉ cho người nhập
+    //   sửa / xoá dòng BẮT ĐẦU hôm nay). Ca qua đêm: bắt đầu hôm qua 22:00, kết thúc hôm nay → phải báo "(dòng ngày trước hôm nay …)" ở cả bước xoá dòng (WTS)
+    //   lẫn bước sửa dòng về số trước (WTSV); dòng bắt đầu hôm nay thì không. Máy chủ thật từ chối xoá / sửa dòng đó (đối chiếu lời khuyên với hàm thật).
+    //   Bản 5d42247: Y12a / Y12c SAI (bước WTS không có lời ngày cũ; WTSV xét giờ kết thúc). Nguồn: CLAUDE (rà độc lập Gói 10 vòng 2, sổ H10-WHY-NGAYCU).
+    static async Task Y12()
+    {
+        Console.WriteLine("[Y12] [H10-WHY-NGAYCU] dòng WTS ca qua đêm (bắt đầu hôm qua, kết thúc hôm nay): lời khuyên báo ngày cũ theo giờ bắt đầu");
+        const int U = ChuoiHelp.Admin;
+        var all = new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" };
+        async Task<(MES.Web.Data.AppDbContext db, int det, long rid2, HandoverLedgerService led, HandoverService svc)> Dung(string partNo)
+        {
+            var db = new MES.Web.Data.AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false); WtsSvcHelp.Reset();
+            var pid = await ChuoiHelp.BuildPartAsync(db, partNo, new ChuoiHelp.Shape { Gc = 2, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
+            var det = (await ChuoiHelp.CreateKhAsync(db, pid, partNo, new decimal[] { 3 }, "PO-" + partNo))[0];
+            var svc = new HandoverService(db);
+            await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(det, DateTime.Now, 3, "OVL", "A1", null, null, null, "phoi", U);
+            await svc.IssueByCellAsync(det, "KHO", "GC", 2, U, "MOI", false, "MOI");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 2, 0, null, U);
+            await svc.IssueByCellAsync(det, "KHO", "GC", 1, U, "MOI", false, "MOI");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            return (db, det, db.HandoverReceives.List.Last().ReceiveId, new HandoverLedgerService(db), svc);
+        }
+        DateTime homQua22 = DateTime.Today.AddHours(-2);   // 22:00 hôm qua
+        {   // bước WTS (xoá dòng): dòng NC01 OK 3 làm huỷ lần nhận thứ 2 bị K5 chặn
+            var (db, det, rid2, led, svc) = await Dung("P-Y12A");
+            var w = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 3, 0, U);
+            var input = (await led.GetInputForDetailAsync(det))!;
+            var p0 = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid2), new HashSet<string> { "R:" + rid2 }, loopOp: true);
+            var s0 = p0.Steps.FirstOrDefault(x => x.Kind == "WTS" && x.Id == w.LogId);
+            Ok(w.Ok && s0 != null && !(s0.Hint ?? "").Contains("ngày trước hôm nay"), "Y12b dòng bắt đầu hôm nay: bước xoá dòng WTS không ghi \"ngày trước hôm nay\"",
+               string.Join(" → ", p0.Steps.Select(x => $"{x.Kind}#{x.Id} {x.Hint}")));
+            var row = db.WtsProductionLogs.List.Single(l => l.WtsLogId == w.LogId); row.StartTime = homQua22; db.Fixup();   // ca qua đêm: kết thúc vẫn hôm nay
+            input = (await led.GetInputForDetailAsync(det))!;
+            var p1 = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid2), new HashSet<string> { "R:" + rid2 }, loopOp: true);
+            var s1 = p1.Steps.FirstOrDefault(x => x.Kind == "WTS" && x.Id == w.LogId);
+            var v0 = await svc.VoidReceiveAsync(rid2, "huy thu y12", U, all);
+            var del = await new WtsSaveService(db, new HandoverLedgerService(db)).VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.LogId, UserId = U, KhPlanDetailId = det });
+            Ok(s1 != null && (s1.Hint ?? "").Contains("ngày trước hôm nay") && row.EndTime.Date == DateTime.Today && !v0.Ok && v0.Error.Contains("ngày trước hôm nay")
+               && !del.Ok && (del.ErrorMsg ?? "").Contains("hôm nay"),
+               "Y12a ca qua đêm (bắt đầu hôm qua 22:00, kết thúc hôm nay): bước xoá dòng WTS báo \"dòng ngày trước hôm nay\" (lời báo chặn cũng có); máy chủ thật không cho xoá",
+               $"{s1?.Hint} | {v0.Error} | xoá: {del.ErrorMsg}");
+        }
+        {   // bước WTSV (sửa dòng về số trước): như Y9, dòng sửa bắt đầu hôm qua 22:00
+            var (db, det, rid2, led, svc) = await Dung("P-Y12C");
+            var w1 = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 2, 0, U);
+            await Task.Delay(20);
+            var w2 = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 3, 0, U, editLogId: w1.LogId);
+            var row = db.WtsProductionLogs.List.Single(l => l.WtsLogId == w2.LogId); row.StartTime = homQua22; db.Fixup();
+            var input = (await led.GetInputForDetailAsync(det))!;
+            var plan = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid2), new HashSet<string> { "R:" + rid2 }, loopOp: true);
+            var st = plan.Steps.FirstOrDefault(x => x.Kind == "WTSV");
+            var ed = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 2, 0, U, editLogId: w2.LogId);   // máy chủ thật: sửa dòng ngày cũ không được
+            Ok(w2.Ok && st != null && (st.Hint ?? "").Contains("sửa dòng này về OK 2 NG 0") && (st.Hint ?? "").Contains("ngày trước hôm nay") && !ed.Ok,
+               "Y12c ca qua đêm: bước sửa dòng WTS về số trước báo \"dòng ngày trước hôm nay\" (trước: xét giờ kết thúc = hôm nay → không báo); máy chủ thật không cho sửa",
+               $"{st?.Hint} | sửa: {ed.Err}");
+        }
     }
 }

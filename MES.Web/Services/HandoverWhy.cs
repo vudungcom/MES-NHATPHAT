@@ -608,7 +608,14 @@ namespace MES.Web.Services
         // [H10-KET-WHY-2] Chữ từng loại bước (trước viết thẳng trong NextCandidate — giữ nguyên chữ).
         static WhyStep StepWts(InWts w) => new() { Kind = "WTS", Id = w.Id, At = w.At,
             Text = $"WTS #{w.Id} · {WtsWhere(w)} · OK {w.Ok:0.##}"
-                 + (w.Ng > 0 ? $" NG {w.Ng:0.##}" : "") + (string.IsNullOrEmpty(w.Worker) ? "" : $" · {w.Worker}") + $" · {w.At:dd/MM HH:mm}" };
+                 + (w.Ng > 0 ? $" NG {w.Ng:0.##}" : "") + (string.IsNullOrEmpty(w.Worker) ? "" : $" · {w.Worker}") + $" · {w.At:dd/MM HH:mm}",
+            // [H10-WHY-NGAYCU 2026-11-08] bước xoá / sửa dòng WTS ngày cũ: nói rõ trang WTS không làm được (trước: chỉ bước WTSV có, lại xét theo giờ kết thúc).
+            //   Nguồn: CLAUDE (rà độc lập Gói 10 vòng 2, sổ H10-WHY-NGAYCU).
+            Hint = OldDay(w) ? "nếu nhập sai thì xoá / sửa dòng này ở trang WTS" + OldDayNote : null };
+        /// <summary>[H10-WHY-NGAYCU 2026-11-08] Dòng WTS bắt đầu trước hôm nay — máy chủ chỉ cho người nhập sửa / xoá dòng BẮT ĐẦU hôm nay
+        ///   (WtsSaveService: StartTime &gt;= hôm nay). Trước xét theo At = giờ KẾT THÚC → ca qua đêm (bắt đầu hôm qua, kết thúc hôm nay) không báo mà trang không cho sửa.</summary>
+        static bool OldDay(InWts w) => (w.Start ?? w.At).Date < DateTime.Today;
+        const string OldDayNote = " (dòng ngày trước hôm nay: trang WTS chỉ sửa dòng hôm nay — cần quyền cao hơn)";
         /// <summary>[H10-KET-WHY-3] Bước "sửa dòng WTS về số trước lần sửa cuối" (chữ như StepWts + lời khuyên riêng có số đích + giờ lần sửa).</summary>
         static WhyStep StepWtsRevert(InWts w)
         {
@@ -619,7 +626,7 @@ namespace MES.Web.Services
                     // [H10-KET-WHY-3 rà độc lập Gói 10 L2 / L3] trang WTS chỉ cho người nhập sửa dòng của mình trong ngày; dòng NG 0 → có NG thì chọn lại loại lỗi.
                     //   Nguồn: CLAUDE (rà độc lập Gói 10).
                     + (string.IsNullOrEmpty(w.Worker) ? "" : $" — người nhập {w.Worker} sửa")
-                    + (w.At.Date < DateTime.Today ? " (dòng ngày trước hôm nay: trang WTS chỉ sửa dòng hôm nay — cần quyền cao hơn)" : "")
+                    + (OldDay(w) ? OldDayNote : "")   // [H10-WHY-NGAYCU] xét giờ BẮT ĐẦU như máy chủ (trước: w.At = giờ kết thúc)
                     + (w.Ng <= 0 && p.Ng > 0 ? " · chọn lại loại lỗi cho phần NG" : "");
             return st;
         }
