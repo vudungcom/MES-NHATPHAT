@@ -2270,6 +2270,20 @@ namespace MES.Web.Services
                 }
                 if (cs.Lech != 0)
                     row.G(cs.DetectGroup ?? "KHO").Warnings.Add($"{cs.No}: sinh ra {cs.SinhRa:0.##} khác giữ + chuyển + đã xử lý + huỷ + trả khách (lệch {cs.Lech:0.##}) — báo lại để kiểm");
+                // [LAMHO-OFF 2026-11-09] Vụ làm hộ (chiếc của chuỗi Gia công) mà đã vào ô hàng đạt / ô Hàng sửa / Kết quả sửa của nhóm khác Gia công: Workflow ON máy chủ chặn,
+                //   OFF lưu được (họ tự kiểm soát) → cảnh báo trên sổ nhóm đó (dữ liệu cũ trước khi có chặn cũng hiện). Không đổi phép tính số.
+                //   Nguồn: HÙNG 09/11 08:21 + 09:18 OK (Gói 12).
+                if (cs.Id > 0 && cs.IsLamHo)
+                {
+                    var lot = cs.DaXuLy.Where(x => x.Key != "GC" && x.Value > 0).Select(x => (x.Key, "vào hàng đạt (Hàng lỗi đã xử lý / Hàng mới)"))
+                        .Concat(cs.Held.Where(x => x.Value > 0 && x.Key.EndsWith("|" + HandoverCell.Sua) && !x.Key.StartsWith("GC|")).Select(x => (x.Key.Split('|')[0], "ở ô Hàng sửa")))
+                        .Concat(cs.Hops.Where(h => h.Kind == "SUA" && h.Group != "GC").Select(h => (h.Group, "có Kết quả sửa")))
+                        .GroupBy(x => x.Item1).ToList();
+                    foreach (var gl in lot)
+                        row.G(gl.Key).Warnings.Add($"{cs.No} là {cs.LamHoTen}: {string.Join(", ", gl.Select(x => x.Item2).Distinct())} ở {GroupLabel(gl.Key)}"
+                            + " — chiếc của chuỗi Gia công chưa làm các NC sau, chỉ Gia công sửa"
+                            + (row.ApplyWorkflow ? " (nhập lúc Workflow OFF / dữ liệu cũ — Gia công kiểm lại)" : " (Workflow OFF không chặn — nhóm tự kiểm soát)"));   // rà độc lập Gói 12 mục 1
+                }
             }
             foreach (var code in GroupCodes)
             {

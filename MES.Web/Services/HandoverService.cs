@@ -710,12 +710,14 @@ namespace MES.Web.Services
                 }
             }
             // [TARO-LAMHO-NC] (rà vòng 3 T2) vụ hàng Taro làm hộ bị lỗi: chiếc của chuỗi Gia công — chỉ vào ô hàng đạt (Hàng mới / Hàng lỗi đã xử lý) ở Gia công
-            if (takesCase && ngCaseId is long lhId && row.Cases.TryGetValue(lhId, out var lhCase) && lhCase.IsLamHo && toGroupCode != "GC" && toCell is HandoverCell.Xl or HandoverCell.Moi)
+            // [LAMHO-OFF 2026-11-09] 5 chặn vụ làm hộ (2 ở đây + 2 lúc nhận + Kết quả sửa) chỉ khi Workflow ON; OFF lưu được, sổ PO cảnh báo (LedgerCase — xem HandoverLedgerService [LAMHO-OFF]).
+            //   Nguồn: HÙNG 09/11 08:21 ("off họ phải tự kiểm soát") + 09:18 OK làm theo đề xuất Claude (Gói 12).
+            if (row.ApplyWorkflow && takesCase && ngCaseId is long lhId && row.Cases.TryGetValue(lhId, out var lhCase) && lhCase.IsLamHo && toGroupCode != "GC" && toCell is HandoverCell.Xl or HandoverCell.Moi)
                 return (false, $"{NgCaseNo.Format(lhId)} là {lhCase.LamHoTen}: sửa xong trả về Gia công (làm tiếp theo NC của vụ), không giao vào ô hàng đạt của {HandoverLedgerService.GroupLabel(toGroupCode)}.");
             // [LAMHO-NHO-SUA 2026-11-08] Vụ làm hộ chỉ SỬA ở Gia công (Kết quả sửa nhóm khác bị chặn — KetQuaSua [TARO-LAMHO-NC]) → không gửi nhờ sửa
             //   vào ô Hàng sửa của nhóm khác (trước: lưu được, nhóm nhận chỉ trả lại được — đường cụt, số vẫn cân). Ô Hàng lỗi nhóm khác vẫn cho (để trả về).
             //   Nguồn: CLAUDE (kiem trạm Gói 9 seed 23980 PO19, sổ dòng LAMHO-NHO-SUA); Hùng 08/11 11:24 OK Gói 10.
-            if (takesCase && ngCaseId is long lhId2 && row.Cases.TryGetValue(lhId2, out var lhCase2) && lhCase2.IsLamHo && toGroupCode != "GC" && toCell == HandoverCell.Sua)
+            if (row.ApplyWorkflow && takesCase && ngCaseId is long lhId2 && row.Cases.TryGetValue(lhId2, out var lhCase2) && lhCase2.IsLamHo && toGroupCode != "GC" && toCell == HandoverCell.Sua)   // [LAMHO-OFF] chỉ ON
                 return (false, LamHoNhoSuaMsg(lhId2, toGroupCode, lhCase2.LamHoTen));   // [LAMHO-NHAN-NG] chữ theo loại vụ
             var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId, toNC);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ; [TARO-LAMHO-NC] + NC nhận (câu 1)
             if (qtyIssued > max)
@@ -932,12 +934,12 @@ namespace MES.Web.Services
             bool autoTx  = txHead.SourceReceiveId != null;
             bool carryTx = !autoTx && txFromCell is HandoverCell.Loi or HandoverCell.Sua;
             // [TARO-LAMHO-NC] (rà vòng 3 T2) vụ hàng Taro làm hộ bị lỗi chỉ vào ô hàng đạt ở Gia công
-            if (before != null && carryTx && tx.ToGroupCode != "GC" && effCell is HandoverCell.Moi or HandoverCell.Xl
+            if (before != null && before.ApplyWorkflow && carryTx && tx.ToGroupCode != "GC" && effCell is HandoverCell.Moi or HandoverCell.Xl   // [LAMHO-OFF] chỉ ON
                 && tx.NgCaseId is long rlh && before.Cases.TryGetValue(rlh, out var rlhC) && rlhC.IsLamHo)
                 return (false, $"{NgCaseNo.Format(rlh)} là {rlhC.LamHoTen}: chỉ nhận vào ô Hàng lỗi ở {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} rồi trả về Gia công (Gia công sửa).");   // [LAMHO-NHO-SUA] chữ: bỏ "/ Hàng sửa"
             // [LAMHO-NHO-SUA 2026-11-08] … và không vào ô Hàng sửa của nhóm khác Gia công (chỉ Gia công sửa được vụ làm hộ). Phiếu cũ đã chỉ định ô Hàng sửa:
             //   bên nhận đổi sang ô Hàng lỗi (kèm lý do) rồi trả về Gia công, hoặc bên giao huỷ phiếu. Nguồn: CLAUDE (sổ LAMHO-NHO-SUA); Hùng 08/11 11:24.
-            if (before != null && carryTx && tx.ToGroupCode != "GC" && effCell == HandoverCell.Sua
+            if (before != null && before.ApplyWorkflow && carryTx && tx.ToGroupCode != "GC" && effCell == HandoverCell.Sua   // [LAMHO-OFF] chỉ ON
                 && tx.NgCaseId is long rlh2 && before.Cases.TryGetValue(rlh2, out var rlhC2) && rlhC2.IsLamHo)
                 return (false, LamHoNhoSuaMsg(rlh2, tx.ToGroupCode, rlhC2.LamHoTen) + " Phiếu này: nhận vào ô Hàng lỗi (ghi lý do đổi ô) rồi trả về Gia công, hoặc bên giao huỷ phiếu.");
             bool newCase = !autoTx && !carryTx && (effCell is HandoverCell.Loi or HandoverCell.Sua || qtyNg > 0);

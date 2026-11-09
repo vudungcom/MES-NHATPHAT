@@ -313,7 +313,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         desc = $"issue {from}->{to} {cell}{(prev ? "☑" : "")}->{toCell} q={q} max={max} fnc={fnc} vu={vu} cat={cat}";
                         var r = await svc.IssueByCellAsync(1, from, to, q, Uid(from), cell, prev, toCell, fnc, null, null, null, cat, vu);
                         ok = r.Ok; if (!ok) Inc("rej.issue");
-                        if (takes && to != "GC" && toCell == HandoverCell.Sua && vu is long lhv && row.Cases.TryGetValue(lhv, out var lhvC) && lhvC.IsLamHo)
+                        if (row.ApplyWorkflow && takes && to != "GC" && toCell == HandoverCell.Sua && vu is long lhv && row.Cases.TryGetValue(lhv, out var lhvC) && lhvC.IsLamHo)
                         {   // [LAMHO-NHO-SUA 2026-11-08] đáp án: vụ làm hộ vào ô Hàng sửa nhóm khác Gia công → phải chặn
                             Inc(ok ? "lamho.nhosua.LOT" : "lamho.nhosua.chan");
                             if (ok) fails.Add($"[LAMHO-NHO-SUA gửi vụ làm hộ vào ô Hàng sửa nhóm khác không bị chặn] PO{po} op{op} {desc}");
@@ -381,7 +381,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var r = await svc.ReceiveAsync(t.HandoverTxId, cell == HandoverCell.Loi ? 0 : okq, cell == HandoverCell.Sua ? 0 : ng, null, Uid(t.ToGroupCode),
                         null, pickCell, pickCell != null ? "doi o" : null, rcat, pickNc, ncWhyR);
                     ok = r.Ok; if (!ok) { Inc("rej.recv"); desc += " ERR " + r.Error; }
-                    if (carryR && t.ToGroupCode != "GC" && cell == HandoverCell.Sua && t.NgCaseId is long rlv && row.Cases.TryGetValue(rlv, out var rlvC) && rlvC.IsLamHo)
+                    if (row.ApplyWorkflow && carryR && t.ToGroupCode != "GC" && cell == HandoverCell.Sua && t.NgCaseId is long rlv && row.Cases.TryGetValue(rlv, out var rlvC) && rlvC.IsLamHo)
                     {   // [LAMHO-NHO-SUA 2026-11-08] đáp án: nhận vụ làm hộ vào ô Hàng sửa nhóm khác Gia công → phải chặn
                         Inc(ok ? "lamho.nhosua.recv.LOT" : "lamho.nhosua.recv.chan");
                         if (ok) fails.Add($"[LAMHO-NHO-SUA nhận vụ làm hộ vào ô Hàng sửa nhóm khác không bị chặn] PO{po} op{op} {desc}");
@@ -489,6 +489,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     //   (d) giao ô Hàng lỗi sang nhóm khác (được) rồi bên nhận đổi ô sang Hàng sửa → phải chặn; nhận ô Hàng lỗi → được.
                     //   Đáp án độc lập: vụ làm hộ = vụ có chặng phát sinh ở ô LAMHO (WTS Taro làm hộ NG) HOẶC vụ của lần nhận có NG trên phiếu theo NC (đọc DB).
                     bool LamHoVu(LedgerCase x) => LamHoVuDoc(db, x);
+                    if (!row.ApplyWorkflow) { Inc("skip.lhsua.off"); continue; }   // [LAMHO-OFF 2026-11-09] OFF không chặn — đáp án lhsua chỉ cho Workflow ON (OFF: kịch bản taro T27)
                     var cands = groups.SelectMany(g => row.CasesHeldAt(g, HandoverCell.Loi).Where(x => x.Id > 0 && LamHoVu(x)).Select(x => (g, x))).ToList();
                     if (!cands.Any())
                     {   // chưa có vụ làm hộ ở ô Hàng lỗi nào: dựng bằng hàm thật — (1) nhận phiếu theo NC đang chờ có đếm NG 1 (sinh vụ NG lúc nhận),
@@ -851,7 +852,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     // [TARO-LAMHO-NC] đáp án: vụ hàng Taro làm hộ bị lỗi chỉ sửa ở Gia công (HandoverService.KetQuaSua) — nhóm khác đang giữ vụ đó ở ô Hàng sửa / Hàng lỗi
                     //   (Gia công gửi nhờ sửa) thì ghi Kết quả sửa phải bị chặn, chỉ trả lại nơi gửi. Kiem trạm 08/11 seed 23980 PO19: đáp án cũ coi là "trong trần bị từ chối"
                     //   (có từ Gói 6, 2cdcd14 y hệt). Đường gửi nhờ sửa vụ làm hộ sang nhóm khác: sổ dòng LAMHO-NHO-SUA (Thấp).
-                    if (g != "GC" && caseId is long lhq && row.Cases.TryGetValue(lhq, out var lhqC) && lhqC.IsLamHo)
+                    if (row.ApplyWorkflow && g != "GC" && caseId is long lhq && row.Cases.TryGetValue(lhq, out var lhqC) && lhqC.IsLamHo)   // [LAMHO-OFF] chỉ ON
                     {
                         var lhr = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, null, null, Uid(g));
                         checks++;
@@ -958,6 +959,14 @@ for (int po = startPo; po < startPo + poCount; po++)
                             {
                                 if (rnd.NextDouble() < 0.15) req.ToCell = HandoverCell.ReceiveCells[rnd.Next(HandoverCell.ReceiveCells.Length)];
                                 if (req.ToGroup == "GC" && (req.ToCell ?? HandoverCell.Moi) is HandoverCell.Moi or HandoverCell.Xl && rnd.NextDouble() < 0.5) req.ToNC = RndNc();
+                                // [GOI12-FUZZ-HTSPLH 2026-11-09] đáp án còn thiếu từ Gói 6 (TARO-LAMHO-NC, HandoverService ~dòng 671): Workflow ON, HTSP chỉ có mã Taro làm hộ
+                                //   → giao Hàng mới cho HTSP bị chặn ("chỉ làm Taro làm hộ"). Lộ ở kiem trạm 09/11 10:31 seed 15504 PO5 op115 (Kho → HTSP);
+                                //   bản 719c14c y hệt (không phải lỗi Gói 12). Đáp án độc lập: mọi mã HTSP chính (không chuẩn bị) đều là mã Taro ở NC của một đoạn làm hộ có Taro.
+                                //   Chỉ phiếu thường (giao theo NC làm hộ không phải Hàng mới — kiem trạm 09/11 11:21 seed 28904 PO9).
+                                if (pos.HelpFrom == null && row.ApplyWorkflow && req.ToGroup == "HTSP" && HandoverCell.ResolveCells(HandoverCell.Moi, false, req.ToCell ?? HandoverCell.Moi).Item1 == HandoverPurpose.New
+                                    && row.G("HTSP").Steps.Where(s => !s.IsPrep).ToList() is { Count: > 0 } hm && hm.All(s => s.Pg == "TARO" && s.LamHoNc != null
+                                        && row.LamHoRuns.Any(r => r.HasTaro && r.Ncs.Contains(s.LamHoNc, StringComparer.OrdinalIgnoreCase))))
+                                    expErr ??= "chỉ làm Taro làm hộ";
                             }
                         }
                         req.Qty = Q(have);
@@ -979,7 +988,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                             req.Fail = pos.HeldCell == HandoverCell.Sua ? rnd.Next(0, n + 1) : 0; req.Pass = n - req.Fail;
                             PickNc(cs.Id, null);
                             // [LAMHO-NHAN-NG] (rà độc lập Gói 11 vòng 2 Tr1) vụ làm hộ ở nhóm khác Gia công: Sửa tại nhóm phải bị chặn (KetQuaSua) — đáp án độc lập
-                            if (g != "GC" && LamHoVuDoc(db, cs)) { expErr ??= "làm hộ bị lỗi"; Inc("lamho.form.asua.chan"); }
+                            if (row.ApplyWorkflow && g != "GC" && LamHoVuDoc(db, cs)) { expErr ??= "làm hộ bị lỗi"; Inc("lamho.form.asua.chan"); }
                         }
                         else
                         {
@@ -999,7 +1008,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 // [LAMHO-NHO-SUA 2026-11-08] đáp án: vụ Taro làm hộ bị lỗi sang nhóm khác Gia công — ô Hàng sửa chặn (chỉ Gia công sửa),
                                 //   ô hàng đạt chặn (Gói 6 vòng 3 T2 — trước gói này bộ kiểm chưa đặt đáp án cho nhánh ô hàng đạt), ô Hàng lỗi được
                                 var tcLh = req.ToCell ?? (req.Purpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua);
-                                if (LamHoVuDoc(db, cs) && req.ToGroup != null && req.ToGroup != "GC")   // [LAMHO-NHAN-NG] đáp án độc lập (rà độc lập Gói 11 T1 phụ)
+                                if (row.ApplyWorkflow && LamHoVuDoc(db, cs) && req.ToGroup != null && req.ToGroup != "GC")   // [LAMHO-OFF] chỉ ON   // [LAMHO-NHAN-NG] đáp án độc lập (rà độc lập Gói 11 T1 phụ)
                                 {
                                     if (tcLh == HandoverCell.Sua) { expErr ??= "chỉ Gia công sửa"; Inc("lamho.nhosua.form"); }
                                     else if (tcLh is HandoverCell.Moi or HandoverCell.Xl) expErr ??= "làm hộ bị lỗi";   // [LAMHO-NHAN-NG] chữ theo loại vụ (vụ NG lúc nhận: "hàng làm hộ bị lỗi — NG lúc nhận …")

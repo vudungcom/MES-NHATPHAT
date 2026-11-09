@@ -398,6 +398,7 @@ public static class TaroScen
         await KhongHtsp();      // [T23] [GOI8-THAP-E]
         await LamHoNhanNg();    // [T25] [LAMHO-NHAN-NG]
         await NcKeyTrung();     // [T26] [LAMHO-NCKEY]
+        await LamHoOff();       // [T27] [LAMHO-OFF]
         await OkBoNgCheo();     // [T24] [OKBO-NG-CHEO] ghi nhớ hành vi hiện tại
 
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
@@ -1124,5 +1125,119 @@ public static class TaroScen
         Ok(row3.G("HTSP").Steps.First(s => s.Code == "2T").LamHoNc == null && !row3.G("HTSP").Warnings.Any(m => m.StartsWith(HandoverLedgerService.TaroNcLechHead)),
            "T26e 2 NC máy thường cùng khoá (NC03 / 3), không máy loại trừ → không cảnh báo NC Taro khớp nhiều NC (trước bản rà: badge đỏ giả)",
            string.Join(" | ", row3.G("HTSP").Warnings));
+    }
+
+    // [T27] [LAMHO-OFF 2026-11-09] Workflow OFF: các chặn vụ làm hộ (chỉ Gia công sửa, không vào ô hàng đạt / ô Hàng sửa nhóm khác, nhóm khác không ghi Kết quả sửa)
+    //   KHÔNG chặn nữa — lưu được, sổ cảnh báo ở nhóm đó; số PO vẫn cân. Workflow ON y như cũ (T22 / T25). Bản 719c14c: T27a–d SAI (OFF bị chặn).
+    //   Nguồn: HÙNG 09/11 08:21 ("off họ phải tự kiểm soát") + 09:18 OK làm theo đề xuất Claude.
+    static async Task LamHoOff()
+    {
+        Console.WriteLine("[T27] [LAMHO-OFF] Workflow OFF: vụ làm hộ vào hàng đạt / Hàng sửa / Kết quả sửa nhóm khác → lưu được + sổ cảnh báo");
+        var G6 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4"), ("NC05", "M5"), ("NC06", "M6") };
+        async Task<(AppDbContext db, int det, long cs)> TraVe(string partNo)
+        {
+            var (db, det) = await LhStart(partNo, G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1, wfOff: true);
+            var svc = new HandoverService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await Taro(db, det, "2T", "3", 5, 0);
+            await svc.IssueSpecialAsync(det, "HTSP", "GC", 5, U, HandoverPurpose.HelpReturn, null, "NC04", "tra NC4");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 4, 1, null, U, ngCategoryId: 1);
+            var auto = db.HandoverTransactions.List.Last();
+            await svc.ReceiveAsync(auto.HandoverTxId, 0, 1, null, U);
+            return (db, det, auto.NgCaseId!.Value);
+        }
+        string W(LedgerRow r, string g, long cs) => r.G(g).Warnings.FirstOrDefault(m => m.StartsWith(NgCaseNo.Format(cs)) && m.Contains("chỉ Gia công sửa (")) ?? "";
+        async Task<string> Sach(AppDbContext db, int det)   // (rà độc lập Gói 12 mục 3) sổ sạch: PO cân, "Đang ở đâu" = phôi, mọi vụ cân
+        {
+            var r = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(det))!;
+            var w = HandoverLedgerService.WhereIs(r);
+            var lech = r.Cases.Values.Where(x => x.Lech != 0).Select(x => x.No).ToList();
+            return r.Balanced && w.Balanced && lech.Count == 0 ? "" : $"cân {r.Balanced} · đang ở đâu {w.Total}/{w.Phoi} · vụ lệch {string.Join(",", lech)}";
+        }
+        {
+            var (db, det, cs) = await TraVe("P-LOF1");
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var row0 = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(!row0.ApplyWorkflow && row0.Cases[cs].IsLamHo && W(row0, "HTSP", cs) == "", "T27 tiền đề: PO Workflow OFF, vụ làm hộ (NG lúc nhận) ở HTSP ô Hàng lỗi, chưa cảnh báo");
+            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Notes = "sua" });
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(f.Ok && db.HandoverRepairResults.List.Any(k => k.NgCaseId == cs && k.GroupCode == "HTSP") && W(row, "HTSP", cs).Contains("có Kết quả sửa") && row.Balanced,
+               "T27a OFF: HTSP sửa tại nhóm vụ làm hộ → lưu được (ON chặn), sổ HTSP cảnh báo \"có Kết quả sửa … Workflow OFF không chặn\", PO cân", $"{f.Error} | {W(row, "HTSP", cs)}");
+        }
+        {
+            var (db, det, cs) = await TraVe("P-LOF2");
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var x1 = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            var r1 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(x1.Ok && r1.Ok && W(row, "KCS", cs).Contains("vào hàng đạt") && row.Balanced,
+               "T27b OFF: HTSP giao vụ làm hộ sang KCS ô Hàng lỗi đã xử lý + KCS nhận → lưu được, sổ KCS cảnh báo \"vào hàng đạt\", PO cân", $"{x1.Error} {r1.Error} | {W(row, "KCS", cs)}");
+        }
+        {
+            var (db, det, cs) = await TraVe("P-LOF3");
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var x = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "SUA", null, null, null, null, null, cs);
+            var r = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(x.Ok && r.Ok && row.CaseHeld(cs, "KCS", HandoverCell.Sua) == 1 && W(row, "KCS", cs).Contains("ô Hàng sửa") && await Sach(db, det) == "",
+               "T27c OFF: gửi vụ làm hộ vào ô Hàng sửa KCS + nhận → lưu được, sổ KCS cảnh báo \"ở ô Hàng sửa\"", $"{x.Error} {r.Error} | {W(row, "KCS", cs)}");
+        }
+        {   // nhận đổi ô: HTSP giao KCS ô Hàng lỗi, KCS nhận đổi sang Hàng sửa → OFF được
+            var (db, det, cs) = await TraVe("P-LOF4");
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "LOI", null, null, null, null, null, cs);
+            var r = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U, toCell: HandoverCell.Sua, toCellReason: "sua giup");
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            Ok(r.Ok && row.CaseHeld(cs, "KCS", HandoverCell.Sua) == 1 && W(row, "KCS", cs) != "" && await Sach(db, det) == "", "T27d OFF: KCS nhận đổi ô vụ làm hộ sang Hàng sửa → lưu được + cảnh báo", $"{r.Error} | {W(row, "KCS", cs)}");
+        }
+        {   // [T27f] (rà độc lập Gói 12 mục 3) vụ Taro làm hộ NG (chặng ô LAMHO), OFF: Gia công gửi HTSP ô Hàng sửa → HTSP nhận → Kết quả sửa → KCS xác nhận → sổ sạch + cảnh báo
+            var (db, det) = await LhStart("P-LOF6", G6, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, bavia: 1, wfOff: true);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await Taro(db, det, "2T", "3", 3, 2);
+            var cs = db.WtsProductionLogs.List.Last().NgCaseId!.Value;
+            await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 2 });
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 2, null, U);   // Gia công giữ vụ ở ô Hàng lỗi
+            var g = await svc.IssueByCellAsync(det, "GC", "HTSP", 2, U, "LOI", false, "SUA", null, null, null, null, null, cs);
+            var n1 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 2, 0, null, U);
+            var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "TONSUA", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Fail = 1, Notes = "sua" });
+            var k = db.HandoverRepairResults.List.LastOrDefault();
+            var x = k == null ? (false, "không có Kết quả sửa") : await svc.ConfirmRepairAsync(k.HandoverRepairResultId, 1, 0, null, 4);
+            var row = (await led.GetLedgerForDetailAsync(det))!; var s = await Sach(db, det);
+            Ok(row.Cases[cs].IsLamHo && !row.Cases[cs].LamHoNhan && g.Ok && n1.Ok && f.Ok && x.Item1 && W(row, "HTSP", cs).Contains("Workflow OFF không chặn") && s == "",
+               "T27f OFF, vụ Taro làm hộ NG: gửi HTSP ô Hàng sửa → nhận → Kết quả sửa → KCS xác nhận đều lưu được; sổ sạch (cân, Đang ở đâu = phôi, vụ cân) + cảnh báo HTSP",
+               $"{g.Error} {n1.Error} {f.Error} {x.Item2} | {W(row, "HTSP", cs)} | {s}");
+        }
+        {   // [T27g] phiếu lập lúc OFF vào ô hàng đạt KCS (chưa nhận) → bật Workflow → nhận bị chặn; đổi sang ô Hàng lỗi (lý do) → được
+            var (db, det, cs) = await TraVe("P-LOF7");
+            var svc = new HandoverService(db);
+            var x = await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            var tid = db.HandoverTransactions.List.Last().HandoverTxId;
+            db.KhPlans.List.First(p => db.KhPlanDetails.List.Any(d => d.KhPlanDetailId == det && d.KhPlanId == p.KhPlanId)).ApplyWorkflow = true; db.Fixup();
+            var r1 = await svc.ReceiveAsync(tid, 1, 0, null, U);
+            var r2 = await svc.ReceiveAsync(tid, 0, 1, null, U, toCell: HandoverCell.Loi, toCellReason: "lam ho tra GC");
+            var row = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(det))!;
+            Ok(x.Ok && !r1.Ok && r1.Error.Contains("làm hộ bị lỗi") && r2.Ok && row.CaseHeld(cs, "KCS", HandoverCell.Loi) == 1 && W(row, "KCS", cs) == "",
+               "T27g phiếu lập lúc OFF vào ô hàng đạt KCS, bật Workflow rồi nhận → chặn (chỗ chặn lúc nhận ô hàng đạt, ON); đổi ô Hàng lỗi → được, không cảnh báo",
+               $"{x.Error} | {r1.Error} | {r2.Error} | {W(row, "KCS", cs)}");
+        }
+        {   // [T27h] (rà độc lập Gói 12 mục 1) dữ liệu nhập lúc OFF rồi bật Workflow: cảnh báo vẫn hiện, đuôi chữ nói "nhập lúc Workflow OFF / dữ liệu cũ"
+            var (db, det, cs) = await TraVe("P-LOF8");
+            var svc = new HandoverService(db);
+            await svc.IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            db.KhPlans.List.First(p => db.KhPlanDetails.List.Any(d => d.KhPlanDetailId == det && d.KhPlanId == p.KhPlanId)).ApplyWorkflow = true; db.Fixup();
+            var row = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(det))!;
+            Ok(W(row, "KCS", cs).Contains("nhập lúc Workflow OFF / dữ liệu cũ") && !W(row, "KCS", cs).Contains("Workflow OFF không chặn"),
+               "T27h dữ liệu nhập lúc OFF, PO nay ON: cảnh báo ghi \"nhập lúc Workflow OFF / dữ liệu cũ — Gia công kiểm lại\"", W(row, "KCS", cs));
+        }
+        {   // đối chứng: ON vẫn chặn (cùng dữ liệu, bật Workflow)
+            var (db, det, cs) = await TraVe("P-LOF5");
+            db.KhPlans.List.First(p => db.KhPlanDetails.List.Any(d => d.KhPlanDetailId == det && d.KhPlanId == p.KhPlanId)).ApplyWorkflow = true; db.Fixup();
+            var x = await new HandoverService(db).IssueByCellAsync(det, "HTSP", "KCS", 1, U, "LOI", false, "XL", null, null, null, null, null, cs);
+            Ok(!x.Ok && x.Error.Contains("làm hộ bị lỗi"), "T27e đối chứng: cùng dữ liệu, Workflow ON → vẫn chặn", x.Error);
+        }
     }
 }
