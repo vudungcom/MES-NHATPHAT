@@ -70,6 +70,8 @@ namespace MES.Web.Services
     {
         /// <summary>[GN-FORM1] Mã gửi lên khi chọn "như hàng mới" ở NC làm tiếp.</summary>
         public const string FormNewNc = "@NEW";
+        /// <summary>[CAUSE-BAT-BUOC 2026-11-10] Lời báo khi tích "Lỗi công đoạn trước" mà chưa chọn nơi gây lỗi (Nguồn: HÙNG 10/11 16:52).</summary>
+        public const string CauseRequiredMsg = "\"Lỗi công đoạn trước\": chọn nơi gây lỗi (bắt buộc).";
 
         public Task<(bool Ok, string Error)> SaveFormAsync(FormGiaoRequest r)
             => RetryDeadlockAsync(() => SaveFormOnceAsync(r));   // [RS-D10]
@@ -204,8 +206,13 @@ namespace MES.Web.Services
             if (act is not (HandoverForm.AGiao or HandoverForm.ASua or HandoverForm.AGiu or HandoverForm.AHuy or HandoverForm.AKhach)) return (false, BadAct);
             decimal n = act == HandoverForm.ASua ? r.Pass + r.Fail : r.Qty;
             if (n <= 0) return (false, act == HandoverForm.ASua ? "Nhập số sửa đạt hoặc không đạt." : "Số lượng phải lớn hơn 0.");
+            // [GC-LOI-TRUOC-NCDAU 2026-11-10] dòng không cho tích "Lỗi công đoạn trước" (Gia công, Workflow ON: hàng đã gia công) → chặn trước khi ghi
+            if (r.Prev && !pos.PrevOk) return (false, HandoverForm.GcPrevMsg);
             string origin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa;
-            string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : (string.IsNullOrWhiteSpace(r.Cause) ? HandoverForm.PrevGroup(g, before) : r.Cause.Trim());   // (c) Kho: lỗi có sẵn = phôi khách · [LAMHO-L2-KCS] nhóm trước theo PO
+            // [CAUSE-BAT-BUOC 2026-11-10] "Lỗi công đoạn trước": bắt buộc chọn nơi gây lỗi, không điền sẵn (trước: trống = nhóm trước).
+            //   Nguồn: HÙNG 10/11 16:52 "họ bắt buộc phải chọn mà, mình cũng ko cần gợi ý sẵn đâu, kệ họ". Kho: phôi khách (KHACH) như cũ.
+            if (r.Prev && g != "KHO" && string.IsNullOrWhiteSpace(r.Cause)) return (false, CauseRequiredMsg);
+            string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause!.Trim();   // (c) Kho: lỗi có sẵn = phôi khách · nơi khác: người dùng chọn ([CAUSE-BAT-BUOC]; trước [LAMHO-L2-KCS] trống = nhóm trước theo PO)
 
             // Lỗi công đoạn trước + chiếc chưa làm + trả đúng nơi gây lỗi → 1 phiếu Hàng lỗi công đoạn trước (như cũ)
             if (act == HandoverForm.AGiao && r.Prev && pos.Unworked && g != "KHO" && r.Purpose == HandoverForm.PTra

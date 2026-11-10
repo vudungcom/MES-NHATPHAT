@@ -691,7 +691,19 @@ namespace MES.Web.Services
                     return (false, "Gia công trả hàng lỗi: bắt buộc chọn NC phát hiện lỗi.");
                 if (!row.G("GC").Steps.Any(s => s.Code == fromNC && !s.IsExcluded))
                     return (false, $"{HandoverLedgerService.NcText(fromNC)} không có trong snapshot của PO (hoặc là máy loại trừ).");   // [N3-FIRST] chữ @VAO
+                // [GC-LOI-TRUOC-NCDAU 2026-11-10] Workflow ON: chỉ hàng chưa gia công (chờ NC đầu / NC ngay sau máy loại trừ) — HandoverForm.GcPrevStageOk
+                if (row.ApplyWorkflow && !HandoverForm.GcPrevStageOk(row, fromNC))
+                    return (false, HandoverForm.GcPrevMsg);
             }
+            // [GN-NGUOC-CHAN 2026-11-10] Workflow ON: Hàng mới không giao ngược về bộ phận trước (HandoverForm.IsBackward)
+            if (row.ApplyWorkflow && purpose == HandoverPurpose.New && HandoverForm.IsBackward(fromGroupCode, toGroupCode))
+                return (false, HandoverForm.BackwardMsg(fromGroupCode, toGroupCode));
+            // [KHO-NC-DAU 2026-11-10] Workflow ON: phôi Kho giao Gia công (hàng "như hàng mới") chỉ vào NC đầu; hàng của vụ đã qua Gia công giữ K2
+            //   (rà độc lập Gói 13 T1: không áp cho phiếu trả hàng làm hộ HelpReturn — Kho làm hộ NC máy loại trừ trả về NC sau đoạn theo K3 / N3-TONC)
+            if (row.ApplyWorkflow && fromGroupCode == "KHO" && toGroupCode == "GC" && gcHasNc && !isOut && !string.IsNullOrEmpty(toNC) && purpose != HandoverPurpose.HelpReturn
+                && (takesCase && ngCaseId is long kvu ? HandoverForm.CaseNextNc(row, kvu, "KHO") : null) == null
+                && !HandoverForm.KhoNcOk(row, toNC))
+                return (false, HandoverForm.KhoNcMsg(row));
             // [VULOI] Vụ lấy hàng phải thuộc PO này và đang có hàng ở ô bên giao; không chọn vụ = hàng lỗi cũ chưa có mã (chỉ khi còn)
             if (takesCase)
             {
@@ -1072,6 +1084,9 @@ namespace MES.Web.Services
             // [NHAN-DOI-O-NC] rà độc lập T3: đưa về đúng chữ mã NC như sổ (khoá "in:"+NC phân biệt hoa thường) — trước: gửi "nc2" lưu "nc2", sổ cho vào NC đầu
             if (chosen != null)
                 chosen = before!.G("GC").Steps.FirstOrDefault(s => s.Pg == "GC" && string.Equals(s.Code, chosen, StringComparison.OrdinalIgnoreCase))?.Code ?? chosen;
+            // [KHO-NC-DAU 2026-11-10] Workflow ON: hàng Kho gửi (như hàng mới) nhận vào Gia công chỉ ở NC đầu (cả khi bên nhận đổi ô)
+            if (before!.ApplyWorkflow && tx.FromGroupCode == "KHO" && def == null && chosen != null && !HandoverForm.KhoNcOk(before, chosen))
+                return (HandoverForm.KhoNcMsg(before), null, null);
             var (err, add) = HandoverForm.CheckNextNc(before!, def, chosen, reason, free: caseKey == 0);
             if (err != null) return (err, null, null);
             return (null, chosen, add);
@@ -1428,6 +1443,10 @@ namespace MES.Web.Services
             bool gcPin = groupCode == "GC" && sourceCell == HandoverNgSource.Chua && row.G("GC").Steps.Any(s => !s.IsExcluded);
             if (gcPin && string.IsNullOrEmpty(nc)) return (false, "Gia công: bắt buộc chọn NC đang chứa hàng lỗi.");
             if (!gcPin) nc = null;
+            // [GC-LOI-TRUOC-NCDAU 2026-11-10] Workflow ON: lỗi đầu vào (công đoạn trước / phôi khách) ở Gia công chỉ báo được từ hàng chưa gia công
+            if (row.ApplyWorkflow && groupCode == "GC" && origin == HandoverNgSource.DauVao && row.G("GC").Steps.Any(s => !s.IsExcluded)
+                && (sourceCell == HandoverNgSource.Da || !HandoverForm.GcPrevStageOk(row, nc)))
+                return (false, HandoverForm.GcPrevMsg);
             var (max, ex) = HandoverLedgerService.NgReportCap(row, groupCode, sourceCell, nc);
             if (qty > max)
                 return (false, $"Báo lỗi tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể báo {qty:0.##}.");

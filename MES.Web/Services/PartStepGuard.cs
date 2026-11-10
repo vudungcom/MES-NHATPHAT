@@ -25,6 +25,33 @@ public static class PartStepGuard
 {
     public static string LockName(int partId) => "MES_PM_STEPS_" + partId;
 
+    // ================================================================
+    // [PM-LOAITRU-TARO 2026-11-10] NC Gia công dùng máy loại trừ (chỉ Taro đứng máy loại trừ — khách 10/11 câu 3.1) phải có dòng Taro
+    //   cùng NC, không thì nhóm Taro không có mã CV để ghi WTS NC đó, hàng kẹt ở Taro (vd Part 3N-PT0419010: NC3 / NC5 máy H01, mục C.1 trống).
+    //   Nguồn: KHÁCH 10/11 (vòng 1 hỏi lại câu 3.2 chọn A "không cho lưu" + "có thể cho lưu nháp"); HÙNG 10/11 14:02.
+    //   Dùng chung: trang Part Master chặn "Lưu & Xác nhận OK" (lưu nháp vẫn được); Kế hoạch không đẩy quy trình sang PO (KhPlanService).
+    //   So NC theo HandoverLedgerService.NcKey (bỏ chữ "NC", khoảng trắng, số 0 đầu — như sổ ghép Taro làm hộ). Chỉ dòng chính (không dự phòng).
+    // ================================================================
+    /// <summary>[PM-LOAITRU-TARO] Các NC (chữ như Part Master) dùng máy loại trừ mà chưa có dòng Taro cùng NC: "NC 3 (máy H01)" / "NC03 (máy H04)".</summary>
+    /// <param name="taro">Dòng Taro chính: (NC, mã CV — trống thì mã = NC). Mã chuẩn bị (1T…) không tính (sổ không đếm số — rà độc lập Gói 13 T4).
+    ///   NC Gia công khác chữ mà cùng khoá NcKey (vd "3" / "NC03") → coi là thiếu (sổ không ghép được Taro — LAMHO-NCKEY).</param>
+    public static List<string> ExcludedNcMissingTaro(IEnumerable<(string NC, string? Machine)> mainMachining, IEnumerable<string> excludeMachines, IEnumerable<(string? NC, string? Code)> taro)
+    {
+        var ex = new HashSet<string>(excludeMachines.Select(Norm).Where(x => x.Length > 0), StringComparer.OrdinalIgnoreCase);
+        var tk = new HashSet<string>(taro.Where(t => !IsBlank(t.NC) && !HandoverLedgerService.IsPrepCode(IsBlank(t.Code) ? Norm(t.NC) : Norm(t.Code)))
+                                         .Select(t => HandoverLedgerService.NcKey(t.NC)));
+        var mm = mainMachining.Where(m => !IsBlank(m.NC)).ToList();
+        var amb = mm.Select(m => Norm(m.NC)).Distinct(StringComparer.OrdinalIgnoreCase).GroupBy(HandoverLedgerService.NcKey).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        return mm
+            .Where(m => !string.IsNullOrWhiteSpace(m.Machine) && ex.Contains(Norm(m.Machine))
+                        && (!tk.Contains(HandoverLedgerService.NcKey(m.NC)) || amb.Contains(HandoverLedgerService.NcKey(m.NC))))
+            .Select(m => $"{(Norm(m.NC).StartsWith("NC", StringComparison.OrdinalIgnoreCase) ? Norm(m.NC) : "NC " + Norm(m.NC))} (máy {Norm(m.Machine)})").Distinct().ToList();
+    }
+
+    public static string ExcludedNcMissingTaroMsg(List<string> miss, bool partMaster = true)
+        => $"{string.Join(", ", miss)} dùng máy loại trừ nhưng mục C.1 Taro chưa khai mã CV (không tính mã chuẩn bị) cho NC đó — nhóm Taro không ghi được WTS. "
+         + (partMaster ? "Khai dòng Taro cùng NC (người có quyền mục C), hoặc Lưu nháp." : "Sửa Part Master (khai Taro NC đó, Xác nhận OK) rồi lập lại.");
+
     public static string Norm(string? code) => (code ?? "").Trim();
 
     public static bool IsBlank(string? code)

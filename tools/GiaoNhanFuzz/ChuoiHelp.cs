@@ -39,6 +39,10 @@ public static class ChuoiHelp
         public bool TaroGop = false;       // [TARO-3T-GOP 2026-11-06] thêm bộ gộp 8G ← 8G1 + 8G2 (khai WTS tiêu chuẩn) ở NC T1 (+ T9 nếu TaroNc2)
         public int ExclAt2 = -1;           // [TARO-LAMHO-NC] NC thứ 2 máy loại trừ (liền NC thứ nhất = đoạn 2 NC; cách 1 NC = 2 đoạn) — chỉ lượt LAMHO=1
         public bool TaroLamHo = false;     // [TARO-LAMHO-NC] Taro dòng đầu (và bộ gộp) ở đúng NC máy loại trừ GIỮA chuỗi Gia công (ghi số "2" cho NC02 — so NC bỏ chữ / số 0)
+        // [PM-LOAITRU-TARO 2026-11-10] NC máy loại trừ chưa có dòng Taro cùng NC → Kế hoạch không chép quy trình (khách 10/11 câu 3.2). true = thêm dòng Taro
+        //   mã "9X" / "9X2" ở mỗi NC máy loại trừ còn thiếu (Part hợp lệ — đường của khách). Dữ liệu cũ (PO tạo trước luật, NC máy loại trừ nhóm khác làm hộ
+        //   không Taro) dựng bằng CreateKhLegacyAsync. false = Part thiếu Taro (tạo KH bị chặn — ca kiểm luật).
+        public bool ExclTaro = true;
 
         public static Shape Random(Random rnd, bool allowExcl)
         {
@@ -122,6 +126,11 @@ public static class ChuoiHelp
             foreach (var t in db.PartTaroSteps.List.Where(x => x.PartId == pm.PartId && x.IsActive && !x.IsBackup && !string.IsNullOrWhiteSpace(x.WtsTaskCode) && x.WtsTaskCode != "1T").ToList())
                 // [TARO-LAMHO-NC] lượt LAMHO có máy loại trừ thứ 2: Taro lần 2 ở đúng NC đó
                 await taro.AddAsync(pm.PartId, new PartTaroStep { NC = s.TaroLamHo && s.ExclAt2 >= 0 ? $"{s.ExclAt2 + 1}" : "T9", WtsTaskCode = t.WtsTaskCode, StepName = t.StepName + " (lần 2)", StandardTime = (t.StandardTime ?? 1) / 2 }, Admin, Reason);
+        // [PM-LOAITRU-TARO 2026-11-10] mỗi NC máy loại trừ chưa có dòng Taro cùng NC (so NcKey) → thêm 1 dòng Taro mã "9X"/"9X2" ở đúng NC đó (ghi số như TaroLamHo)
+        if (s.ExclTaro)
+            foreach (var xi in new[] { s.ExclAt, s.ExclAt2 }.Where(x => x >= 0 && x < s.Gc).Distinct())
+                if (!db.PartTaroSteps.List.Any(t => t.PartId == pm.PartId && t.IsActive && !t.IsBackup && HandoverLedgerService.NcKey(t.NC) == HandoverLedgerService.NcKey($"NC{xi + 1:00}")))
+                    await taro.AddAsync(pm.PartId, new PartTaroStep { NC = $"{xi + 1}", WtsTaskCode = xi == s.ExclAt ? "9X" : "9X2", StepName = "Taro máy loại trừ", StandardTime = 1 }, Admin, Reason);
         var bavia = new PartBaviaService(db);
         for (int i = 0; i < s.Bavia; i++) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = $"B{i + 1}", StepName = "Bavia " + (i + 1), StandardTime = 1 }, Admin, Reason);
         if (s.Prep && s.Bavia > 0) await bavia.AddAsync(pm.PartId, new PartBaviaStep { NC = "1V", StepName = "Chuẩn bị bavia", StandardTime = 4 }, Admin, Reason);
@@ -166,6 +175,19 @@ public static class ChuoiHelp
         }
         catch { await trx.RollbackAsync(); db.ChangeTracker.Clear(); throw; }
         return plan.Details.Select(d => d.KhPlanDetailId).ToList();
+    }
+
+    /// <summary>[PM-LOAITRU-TARO 2026-11-10] Dựng DỮ LIỆU CŨ: PO tạo trước luật 10/11 (NC máy loại trừ không có Taro — nhóm khác làm hộ N3).
+    ///   Tạo KH bình thường (Part có dòng Taro "9X*" builder thêm) rồi gỡ các dòng "9X*" khỏi Part Master và snapshot PO — như PO cũ chụp lúc Part chưa khai Taro.</summary>
+    public static async Task<List<int>> CreateKhLegacyAsync(AppDbContext db, int partId, string partNo, decimal[] qtys, string poPrefix, bool workflow = true)
+    {
+        var ids = await CreateKhAsync(db, partId, partNo, qtys, poPrefix, workflow);
+        static bool X(string? c) => (c ?? "").StartsWith("9X", StringComparison.OrdinalIgnoreCase);
+        foreach (var t in db.PartTaroSteps.List.Where(t => t.PartId == partId && X(t.WtsTaskCode))) t.IsActive = false;
+        db.KhPlanRouteSnapshotTaro.List.RemoveAll(t => ids.Contains(t.KhPlanDetailId) && X(t.WtsTaskCode));
+        db.KhPlanRouteSnapshotStdConfirms.List.RemoveAll(c => ids.Contains(c.KhPlanDetailId) && c.SnapshotTable == StdTrack.Table.Taro && !db.KhPlanRouteSnapshotTaro.List.Any(t => t.SnapshotId == c.SnapshotRowId));
+        await db.SaveChangesAsync(); db.Fixup();
+        return ids;
     }
 
     // ── Ảnh chụp Part Master (đúng các cột CopyRouteSnapshotAsync chép) để so với snapshot ──

@@ -556,6 +556,11 @@ else
                                         <div style="font-size:11px;color:#666;margin-top:2px">
                                             <i class="bi bi-person me-1"></i>@p.IssuedByName
                                             <span class="ms-2 text-success"><i class="bi bi-arrow-return-right me-1"></i>bên giao chỉ định vào ô <strong>@(recvCell != null ? HandoverCell.Label(recvCell) : "theo NC (ngoài 8 ô Excel)")</strong></span>
+                                            @if (PendingTailNote(p) is string tailN)
+                                            {
+                                                @* [GC-HTSP-NC-HIEN 2026-11-10] Gia công → HTSP Hàng mới, sau NC cuối còn NC máy loại trừ: "để làm NC5 (Taro)" (chỉ hiển thị) *@
+                                                <span class="ms-2 text-primary">@tailN</span>
+                                            }
                                             @if (p.QtyReceivedSoFar > 0)
                                             {
                                                 <span class="text-success ms-2"><i class="bi bi-check me-1"></i>Đã nhận @p.QtyReceivedSoFar.ToString("0.##") / @p.QtyIssued.ToString("0.##")</span>
@@ -994,6 +999,11 @@ else
 
     string  _receiveToGroup  = "";
     List<HandoverTxPending> _pendingTxs = new();
+
+    /// <summary>[GC-HTSP-NC-HIEN 2026-11-10] Chữ "để làm NC5 (Taro)" cho phiếu Hàng mới Gia công → HTSP (chỉ hiển thị). Nguồn: KHÁCH 10/11 câu 5b (B).</summary>
+    string? PendingTailNote(HandoverTxPending p)
+        => _selectedRow != null && p.FromGroupCode == "GC" && _receiveToGroup == "HTSP" && PendingPurpose(p) == HandoverPurpose.New
+           ? HandoverForm.TailExclText(_selectedRow) : null;
     long    _expandedTxId;
     decimal _receiveQtyOk;
     decimal _receiveQtyNg;
@@ -1979,7 +1989,9 @@ else
     long RecvNcCase(HandoverTxPending p) => RecvCarry(p) ? (p.NgCaseId ?? 0) : 0;
     List<HandoverForm.NcOpt> RecvNcOpts(HandoverTxPending p)
         => !RecvNcApplies(p) ? new()
-           : HandoverForm.NcOptions(_selectedRow!, HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC"), free: RecvNcCase(p) == 0);
+           : HandoverForm.NcOptions(_selectedRow!, HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC"), free: RecvNcCase(p) == 0)
+               // [KHO-NC-DAU 2026-11-10] (rà độc lập Gói 13 T2) phiếu Kho, hàng như hàng mới: chỉ NC đầu — cùng luật máy chủ ReceiveNc
+               .Where(o => !(p.FromGroupCode == "KHO" && _selectedRow!.ApplyWorkflow && HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC") == null) || HandoverForm.KhoNcOk(_selectedRow!, o.Code)).ToList();
     static string RecvNcKey(HandoverForm.NcOpt o) => o.Default ? "" : o.Code ?? HandoverService.FormNewNc;
     bool RecvNcEarlier(HandoverTxPending p) => !string.IsNullOrEmpty(_receiveNc) && RecvNcOpts(p).FirstOrDefault(o => RecvNcKey(o) == _receiveNc)?.Earlier == true;
     void OnRecvNcChanged(ChangeEventArgs e) { _receiveNc = e.Value?.ToString() ?? ""; _receiveNcReason = ""; _modalError = ""; }

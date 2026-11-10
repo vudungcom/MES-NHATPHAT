@@ -21,6 +21,37 @@ public static class FormHelp
         return (ncs, rows.Count > 0 && Ex(rows[0]) && ncs.Count > 0);
     }
 
+    /// <summary>[GÓI 13 2026-11-10] Đáp án độc lập (đọc snapshot, không dùng HandoverForm): NC Gia công được tích "Lỗi công đoạn trước"
+    ///   = NC thường đầu (có @VAO thì chỉ "@VAO") + NC thường đứng ngay sau 1 NC máy loại trừ. Khách 10/11 câu 5a.</summary>
+    public static HashSet<string> GcPrevNcs(AppDbContext db, int id)
+    {
+        var excl = db.KhPlanRouteSnapshotMachineExclude.List.Where(e => e.KhPlanDetailId == id && !string.IsNullOrWhiteSpace(e.SoMay))
+                     .Select(e => e.SoMay!.Trim().ToUpperInvariant()).ToHashSet();
+        var rows = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == id && !s.IsBackup).OrderBy(s => s.StepOrder).ToList();
+        bool Ex(KhPlanRouteSnapshotMachining s) => !string.IsNullOrWhiteSpace(s.MachineRegistered) && excl.Contains(s.MachineRegistered!.Trim().ToUpperInvariant());
+        var res = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (rows.Count == 0 || rows.All(Ex)) return res;
+        if (Ex(rows[0])) res.Add("@VAO"); else res.Add(rows[0].NC.Trim());
+        for (int i = 1; i < rows.Count; i++) if (!Ex(rows[i]) && Ex(rows[i - 1])) res.Add(rows[i].NC.Trim());
+        return res;
+    }
+
+    /// <summary>[GÓI 13] Đáp án độc lập: Hàng mới giao ngược (Kho 0 · GC 1 · HTSP 2 · KCS 3 · Đóng gói 4; Đóng gói → Kho không ngược). Khách 10/11 câu 5.</summary>
+    public static bool Nguoc(string from, string to)
+    {
+        if (from == "PKG" && to == "KHO") return false;
+        var o = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
+        return Array.IndexOf(o, to) < Array.IndexOf(o, from);
+    }
+
+    /// <summary>[GÓI 13] Đáp án độc lập: Kho giao Gia công (như hàng mới) chỉ được NC trống hoặc NC thường đầu (không @VAO). Khách 10/11 câu 5.</summary>
+    public static bool KhoNcDung(AppDbContext db, int id, string? toNc)
+    {
+        if (string.IsNullOrWhiteSpace(toNc)) return true;
+        var (ncs, vao) = Chain(db, id);
+        return !vao && ncs.Count > 0 && ncs[0].Trim().Equals(toNc.Trim(), IC);
+    }
+
     /// <summary>NC làm tiếp mặc định (null = như hàng mới). [GN-FORM1] rà độc lập V1/V2: hàng lỗi cũ (vụ 0) → NC cuối; vụ sinh lúc nhóm làm hộ
     ///   đếm NG khi nhận hàng giao theo NC từ NC k → NC ngay sau k (máy loại trừ thì NC k; @VAO thì như hàng mới); vụ GC không NC từ nhóm sau GC → NC cuối.</summary>
     public static string? ExpectNextNc(AppDbContext db, int id, long caseId, string? holder = null)
@@ -216,11 +247,8 @@ public static class FormHelp
         //   → bỏ trống nơi gây lỗi ở KCS = Gia công (trước: HTSP). Đáp án đọc dòng sổ trực tiếp (không gọi HandoverForm.PrevGroup).
         // [GOI8-THAP-E 2026-11-08] + PO không có công đoạn HTSP của mình (không mã chính nào ngoài chuẩn bị / làm hộ — gồm PO không có snapshot HTSP) → KCS ← Gia công
         //   (rà độc lập Gói 10 T1) PO không có mã HTSP nhưng HTSP đã nhận làm hàng thật (Hàng mới / Hàng lỗi xử lý / làm hộ về > 0) → vẫn HTSP.
-        var hMains = pre.G("HTSP").Steps.Where(x => !x.IsPrep).ToList();
-        var hG = pre.G("HTSP");
-        bool onlyLh = (hMains.Count > 0 && hMains.All(x => x.LamHoNc != null))
-                   || (hMains.Count == 0 && hG.NhanMoi + hG.NhanLoiXl + hG.NhanLamHoVe <= 0);
-        string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause ?? (g switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => onlyLh ? "GC" : "HTSP", "PKG" => "KCS", _ => null });
+        // [CAUSE-BAT-BUOC 2026-11-10] nơi gây lỗi bỏ trống bị máy chủ chặn (người gọi đặt expErr "nơi gây lỗi" — Build chỉ dựng đáp án ca lưu được) → không còn mặc định nhóm trước
+        string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause?.Trim();
         e.RepNc = pos.StartsWith("NC:") ? pos[3..] : null;
         e.RepOrigin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa; e.RepCause = cause;
         bool unworked = pos == "CHUA" || pos.StartsWith("NC:");

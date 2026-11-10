@@ -3,7 +3,8 @@
 #   N1 bảng "Gia công — từng NC" có dòng Nhận vào (chưa qua NC): vào 8, Đã GC "—", Chưa GC 8; NC02 vào 0
 #   N2 form Giao / xử lý hàng [GN-FORM1] · Gia công · Hàng tốt: dòng "Nhận vào (chưa qua NC) · chờ giao làm NC01 (máy loại trừ)" có 8; giao 5 cho HTSP → DB phiếu FromNC = @VAO, 5 chiếc
 #   N3 sau khi giao: dòng Nhận vào còn chờ 3, Giao đi 5 (số cân / không âm kiểm ở GiaoNhanFuzz chuoi C14 + nang)
-#   N4 cửa sổ Giao Kho → Gia công Hàng mới: ô "Nhận vào NC" KHÔNG có @VAO, dòng mặc định ghi "Nhận vào (chưa qua NC) (mặc định)"
+#   N4 cửa sổ Giao Kho → Gia công Hàng mới: [KHO-NC-DAU 10/11, đổi theo khách câu 5] KHÔNG có ô "Nhận vào NC" (phôi luôn vào NC đầu = "Nhận vào");
+#      trước 10/11: ô có NC02, không có @VAO, dòng mặc định "Nhận vào (chưa qua NC) (mặc định)"
 # Dữ liệu: POST /harness/n3f-seed (Stubs/HarnessN3f.cs). Chạy trên harness VỪA khởi động: python3 drive_n3f.py <port> <old|new>
 import sys, asyncio, json, urllib.request
 from playwright.async_api import async_playwright
@@ -92,21 +93,20 @@ async def main():
         v = [r for r in st if r and r[0].startswith("Nhận vào (chưa qua NC)")]
         ok(len(v) == 1 and v[0][2] == "8" and v[0][5] == "3" and v[0][6] == "5", "N31 dòng Nhận vào: vào 8 · Chưa GC 3 · Giao đi 5", st)
 
-        print("[N4] Kho → Gia công: ô 'Nhận vào NC' không có @VAO")
-        o4 = []; v4 = []
+        print("[N4] Kho → Gia công: không có ô 'Nhận vào NC' (KHO-NC-DAU — phôi vào \"Nhận vào\")")
+        o4 = []; v4 = []; t4 = ""
         try:
             await open_issue_from(pg, "Kho")
             m = modal(pg)
             await m.locator("button.gn-cellbtn", has_text="Hàng tốt").first.click(); await pg.wait_for_timeout(700)
             await m.locator("button.gn-cellbtn", has_text="Phôi còn (chưa giao)").first.click(); await pg.wait_for_timeout(700)
             await m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first.select_option(label="Gia công"); await pg.wait_for_timeout(900)
-            sel = m.locator("select", has=pg.locator("option", has_text="(mặc định)")).first
-            o4 = [ (await o.inner_text()).strip() for o in await sel.locator("option").all() ]
-            v4 = [ await o.get_attribute("value") for o in await sel.locator("option").all() ]
+            t4 = await m.inner_text()
+            o4 = [ (await o.inner_text()).strip() for o in await m.locator("select option", has_text="(mặc định)").all() ]
         except Exception as e:
             print("   lỗi mở Kho → Gia công:", e)
-        ok(len(v4) > 0 and "@VAO" not in v4 and "NC02" in v4, "N41 ô Nhận vào NC: có NC02, không có @VAO", list(zip(v4, o4)))
-        ok(len(o4) > 0 and o4[0] == "-- Nhận vào (chưa qua NC) (mặc định) --", "N42 dòng mặc định ghi 'Nhận vào (chưa qua NC) (mặc định)'", o4[:1])
+        ok(len(t4) > 0 and "Nhận vào NC" not in t4 and not o4, "N41 [KHO-NC-DAU] Kho → Gia công: không có ô 'Nhận vào NC' (không chọn được NC02 bỏ qua máy loại trừ)", t4[-400:])
+        ok("Gia công sẽ nhận vào ô Hàng mới" in t4, "N42 vẫn hiện 'Gia công sẽ nhận vào ô Hàng mới'", t4[-300:])
         await close_modal(pg)
         await b.close()
     print(f"\nKẾT QUẢ {OUT}: " + ("ĐẠT hết" if fails == 0 else f"{fails} SAI"))

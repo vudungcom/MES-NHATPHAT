@@ -556,7 +556,7 @@ public static class TaroScen
 
             var db3 = new AppDbContext(); ChuoiHelp.SeedBase(db3, exclH04: true);
             var pid3 = await ChuoiHelp.BuildPartAsync(db3, "P-LH3", new ChuoiHelp.Shape { Gc = 3, ExclAt = 1, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
-            var d3 = (await ChuoiHelp.CreateKhAsync(db3, pid3, "P-LH3", new decimal[] { 4 }, "PO-LH3"))[0];
+            var d3 = (await ChuoiHelp.CreateKhLegacyAsync(db3, pid3, "P-LH3", new decimal[] { 4 }, "PO-LH3"))[0];
             var row3 = (await new HandoverLedgerService(db3).GetLedgerForDetailAsync(d3))!;
             Ok(row3.LamHoRuns.Count == 1 && !row3.LamHoRuns[0].HasTaro && row3.G("HTSP").Steps.All(s => s.LamHoNc == null),
                "T17b PO có NC loại trừ giữa chuỗi nhưng Taro ở NC riêng (T1): đoạn không có Taro → mã Taro tính như cũ");
@@ -573,7 +573,25 @@ public static class TaroScen
             await gc.AddAsync(pid, new PartMachiningStep { NC = nc, MachineRegistered = m, TimingMachine = m, SetupTime = 10, MachiningTime = 5, InspectionTime = 1, PreparationTime = 2, TrialRunTime = 3 }, U, "lamho");
         var t = new PartTaroService(db);
         foreach (var (nc, c) in taros) await t.AddAsync(pid, new PartTaroStep { NC = nc, WtsTaskCode = c, StepName = "Taro " + c, StandardTime = 1 }, U, "taro");
-        var det = (await ChuoiHelp.CreateKhAsync(db, pid, partNo, new decimal[] { q }, "PO-" + partNo))[0];
+        // [PM-LOAITRU-TARO 2026-11-10] NC máy loại trừ không có Taro (đoạn nhóm khác làm hộ) = dữ liệu cũ: nay Kế hoạch không chép quy trình Part thiếu Taro
+        //   → thêm Taro "9X" tạm ở NC đó, tạo KH, gỡ lại (CreateKhLegacyAsync) — PO giữ đúng quy trình ca kiểm cần (như PO tạo trước luật)
+        int xi = 0;
+        foreach (var (nc, m) in gcs.Where(g => g.m == "H04"))
+            if (!taros.Any(x => HandoverLedgerService.NcKey(x.nc) == HandoverLedgerService.NcKey(nc) && !HandoverLedgerService.IsPrepCode(x.code)))   // NC chỉ có mã chuẩn bị (P-LH8 1T) cũng tính thiếu (rà T4)
+                await t.AddAsync(pid, new PartTaroStep { NC = nc, WtsTaskCode = "9X" + (xi++), StepName = "Taro tam", StandardTime = 1 }, U, "taro tam");
+        // NC máy loại trừ trùng khoá NC với NC khác (P-NCK1 "NC03"/"3" — rà T4: khoá lẫn = thiếu, Taro tạm không gỡ được) → dữ liệu cũ:
+        //   bỏ máy loại trừ khi tạo KH rồi ghi lại vào bảng chụp của PO (như PO tạo trước luật [PM-LOAITRU-TARO])
+        var keys = gcs.Select(g => HandoverLedgerService.NcKey(g.nc)).ToList();
+        bool amb = gcs.Any(g => g.m == "H04" && keys.Count(k => k == HandoverLedgerService.NcKey(g.nc)) > 1);
+        var exSet = amb ? db.MachineExcludeSettings.List.ToList() : new();
+        if (amb) { db.MachineExcludeSettings.List.Clear(); db.Fixup(); }
+        var det = (await ChuoiHelp.CreateKhLegacyAsync(db, pid, partNo, new decimal[] { q }, "PO-" + partNo))[0];
+        if (amb)
+        {
+            db.MachineExcludeSettings.List.AddRange(exSet);
+            foreach (var m in exSet) db.KhPlanRouteSnapshotMachineExclude.List.Add(new KhPlanRouteSnapshotMachineExclude { KhPlanDetailId = det, SnapshotAt = DateTime.Now, SnapshotBy = 1, SoMay = m.SoMay });
+            await db.SaveChangesAsync(); db.Fixup();
+        }
         if (wfOff) { db.KhPlans.List.First(p => db.KhPlanDetails.List.Any(d => d.KhPlanDetailId == det && d.KhPlanId == p.KhPlanId)).ApplyWorkflow = false; db.Fixup(); }   // [T19d]
         var svc = new HandoverService(db);
         await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(det, DateTime.Now, (int)q, "OVL", "A1", null, null, null, "phoi", U);
@@ -814,12 +832,17 @@ public static class TaroScen
         var row = (await led.GetLedgerForDetailAsync(det))!;
         Ok(HandoverForm.PrevGroup("KCS", row) == "GC" && HandoverForm.PrevGroup("HTSP", row) == "GC" && HandoverForm.PrevGroup("PKG", row) == "KCS",
            "T20a nhóm trước theo PO: KCS ← Gia công (HTSP chỉ làm hộ); HTSP ← Gia công, Đóng gói ← KCS giữ nguyên", HandoverForm.PrevGroup("KCS", row));
-        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+        // [CAUSE-BAT-BUOC 2026-11-10] bỏ trống nơi gây lỗi nay bị chặn (không lấy nhóm trước) → kiểm chặn + chọn tay. Nguồn: HÙNG 10/11 16:52
+        int t0 = db.HandoverTransactions.List.Count;
+        var f0 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+                                                               CatId = 1, Action = HandoverForm.AGiao, Purpose = HandoverForm.PTra, ToGroup = "GC", Qty = 1 });
+        Ok(!f0.Ok && f0.Error.Contains("nơi gây lỗi") && db.HandoverTransactions.List.Count == t0, "T20b0 [CAUSE-BAT-BUOC] KCS tích Lỗi công đoạn trước, bỏ trống nơi gây lỗi → chặn, không phiếu", f0.Error);
+        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = "GC",
                                                                CatId = 1, Action = HandoverForm.AGiao, Purpose = HandoverForm.PTra, ToGroup = "GC", Qty = 1 });
         var tx = db.HandoverTransactions.List.Last();
         var cs = tx.NgCaseId == null ? null : db.NgCases.List.FirstOrDefault(c => c.NgCaseId == tx.NgCaseId);
         Ok(f.Ok && tx.Purpose == HandoverPurpose.NgReturn && tx.ToGroupCode == "GC" && cs?.CauseGroupCode == "GC",
-           "T20b KCS lỗi công đoạn trước, bỏ trống nơi gây lỗi, trả Gia công → phiếu Hàng lỗi công đoạn trước về Gia công, vụ ghi Gia công gây (trước: HTSP)",
+           "T20b KCS lỗi công đoạn trước, chọn Gia công gây, trả Gia công → phiếu Hàng lỗi công đoạn trước về Gia công, vụ ghi Gia công gây",
            $"{f.Error} | {tx.Purpose} → {tx.ToGroupCode} · do {cs?.CauseGroupCode}");
         {   // PO thường (HTSP có mã chính không làm hộ): KCS ← HTSP như cũ
             var (db2, det2) = await LhStart("P-LHK2", G4, new[] { ("3", "2T"), ("T9", "9T") }, 5, new[] { "NC01" });
@@ -937,12 +960,17 @@ public static class TaroScen
            && HandoverForm.PrevGroup("PKG", row) == "KCS" && HandoverForm.NextGroup("KHO", row) == "GC",
            "T23a PO không có công đoạn HTSP: nhóm trước KCS = Gia công, nhóm kế Gia công = KCS (Đóng gói ← KCS, Kho → Gia công giữ nguyên)",
            $"{HandoverForm.PrevGroup("KCS", row)} / {HandoverForm.NextGroup("GC", row)}");
-        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+        // [CAUSE-BAT-BUOC 2026-11-10] bỏ trống nơi gây lỗi nay bị chặn (không lấy nhóm trước) → kiểm chặn + chọn tay. Nguồn: HÙNG 10/11 16:52
+        int t0 = db.HandoverTransactions.List.Count;
+        var f0 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+                                                               CatId = 1, Action = HandoverForm.AGiao, Purpose = HandoverForm.PTra, ToGroup = "GC", Qty = 1 });
+        Ok(!f0.Ok && f0.Error.Contains("nơi gây lỗi") && db.HandoverTransactions.List.Count == t0, "T23b0 [CAUSE-BAT-BUOC] PO không HTSP: KCS bỏ trống nơi gây lỗi → chặn", f0.Error);
+        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = "GC",
                                                                CatId = 1, Action = HandoverForm.AGiao, Purpose = HandoverForm.PTra, ToGroup = "GC", Qty = 1 });
         var tx = db.HandoverTransactions.List.Last();
         var cs = tx.NgCaseId == null ? null : db.NgCases.List.FirstOrDefault(c => c.NgCaseId == tx.NgCaseId);
         Ok(f.Ok && tx.Purpose == HandoverPurpose.NgReturn && cs?.CauseGroupCode == "GC",
-           "T23b KCS lỗi công đoạn trước, bỏ trống nơi gây lỗi → vụ ghi Gia công gây (trước: HTSP — PO không có HTSP)", $"{f.Error} | {tx.Purpose} · do {cs?.CauseGroupCode}");
+           "T23b KCS lỗi công đoạn trước, chọn Gia công gây → vụ ghi Gia công gây", $"{f.Error} | {tx.Purpose} · do {cs?.CauseGroupCode}");
         await KhongSnapshotHtspThat();
     }
 
@@ -972,11 +1000,15 @@ public static class TaroScen
            "T23c PO chưa có snapshot HTSP nhưng HTSP đã nhận làm 5: nhóm trước KCS = HTSP, nhóm kế Gia công = HTSP (không coi là PO không có HTSP)",
            $"{r1.Error} {r2.Error} | steps {row.G("HTSP").Steps.Count} nhận {row.G("HTSP").NhanSanXuat} | {HandoverForm.PrevGroup("KCS", row)} / {HandoverForm.NextGroup("GC", row)}");
         var n0 = db.NgCases.List.Count;
-        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = null,
+        // [CAUSE-BAT-BUOC 2026-11-10] bỏ trống nơi gây lỗi nay bị chặn (không lấy nhóm trước) → kiểm chặn + chọn tay. Nguồn: HÙNG 10/11 16:52
+        var f0 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = "  ",
+                                                               CatId = 1, Action = HandoverForm.AGiu, Qty = 1 });
+        Ok(!f0.Ok && f0.Error.Contains("nơi gây lỗi") && db.NgCases.List.Count == n0, "T23c0 [CAUSE-BAT-BUOC] KCS giữ lại, nơi gây lỗi chỉ khoảng trắng → chặn, không vụ", f0.Error);
+        var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "KCS", UserId = U, Kind = HandoverForm.Loi, Pos = "CHUA", Prev = true, Cause = "HTSP",
                                                                CatId = 1, Action = HandoverForm.AGiu, Qty = 1 });
         var cs = db.NgCases.List.Count > n0 ? db.NgCases.List.Last() : null;
         Ok(f.Ok && cs?.CauseGroupCode == "HTSP",
-           "T23c KCS lỗi công đoạn trước bỏ trống nơi gây → vụ ghi HTSP gây (hàng thật đi HTSP → KCS)", $"{f.Error} · do {cs?.CauseGroupCode}");
+           "T23c KCS lỗi công đoạn trước chọn HTSP gây → vụ ghi HTSP gây", $"{f.Error} · do {cs?.CauseGroupCode}");
     }
 
     // [T25] [LAMHO-NHAN-NG 2026-11-08] Vụ sinh lúc ĐẾM NG KHI NHẬN phiếu theo NC (Gia công nhận hàng làm hộ trả về / nhóm làm hộ nhận hàng Gia công giao theo NC):

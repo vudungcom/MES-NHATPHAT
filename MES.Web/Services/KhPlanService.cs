@@ -1228,7 +1228,24 @@ public class KhPlanService
                                       || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive))) ngSec.Add("C HTSP");
         if (!part.IsKcsConfirmed && await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("D KCS");
         if (!part.IsPkgConfirmed && await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("E Đóng gói");
-        return ngSec.Any() ? $"Part Master còn mục {string.Join(", ", ngSec)} chưa Xác nhận OK — chưa đẩy quy trình sang PO" : null;
+        if (ngSec.Any()) return $"Part Master còn mục {string.Join(", ", ngSec)} chưa Xác nhận OK — chưa đẩy quy trình sang PO";
+        // [PM-LOAITRU-TARO 2026-11-10] NC máy loại trừ chưa có dòng Taro cùng NC → chưa đẩy quy trình (cả Part đã Xác nhận OK từ trước)
+        return await ExclTaroMissingAsync(partId) is string miss ? miss + " — chưa đẩy quy trình sang PO" : null;
+    }
+
+    /// <summary>[PM-LOAITRU-TARO 2026-11-10] Part có NC máy loại trừ chưa có dòng Taro cùng NC → câu báo "Part …: NC 3 (máy H01) … chưa khai mã CV"; null = đủ.
+    ///   Dùng khi chép quy trình sang PO (tạo KH / cập nhật / tự cập nhật) — khách 10/11 câu 3.2: Part chưa khai đủ thì chưa dùng lập Kế hoạch / PO.
+    ///   Nguồn: KHÁCH 10/11 (vòng 1 hỏi lại câu 3.2 A + hỏi tiếp "chưa được dùng để lập Kế hoạch / PO cho đến khi khai đủ"); HÙNG 10/11 14:02.</summary>
+    private async Task<string?> ExclTaroMissingAsync(int partId)
+    {
+        var pmMach = await _db.PartMachiningSteps.AsNoTracking().Where(s => s.PartId == partId && s.IsActive && !s.IsBackup)
+            .Select(s => new { s.NC, s.MachineRegistered }).ToListAsync();
+        var pmExcl = await _db.MachineExcludeSettings.AsNoTracking().Select(x => x.SoMay).ToListAsync();
+        var pmTaro = await _db.PartTaroSteps.AsNoTracking().Where(s => s.PartId == partId && s.IsActive && !s.IsBackup).Select(s => new { s.NC, s.WtsTaskCode }).ToListAsync();
+        var miss = PartStepGuard.ExcludedNcMissingTaro(pmMach.Select(m => (m.NC, m.MachineRegistered)), pmExcl, pmTaro.Select(t => ((string?)t.NC, t.WtsTaskCode)));
+        if (miss.Count == 0) return null;
+        var no = await _db.PartMasters.AsNoTracking().Where(p => p.PartId == partId).Select(p => p.PartNo).FirstOrDefaultAsync();
+        return $"Part {no}: {PartStepGuard.ExcludedNcMissingTaroMsg(miss, partMaster: false)}";
     }
 
     /// <summary>[K6-NOTRUN] Chữ ký quy trình (snapshot) của 1 PO để biết làm mới có đổi gì không: mọi cột trừ khoá / giờ chụp / người chụp.</summary>
@@ -1544,6 +1561,8 @@ public class KhPlanService
         try
         {
             await PartStepGuard.LockSnapshotReadAsync(_db, partId);
+            // [PM-LOAITRU-TARO 2026-11-10] đọc dưới khoá đọc Part: NC máy loại trừ chưa có Taro → không chép (tạo KH báo lỗi + rollback; cập nhật PO giữ quy trình cũ)
+            if (await ExclTaroMissingAsync(partId) is string exMiss) throw new InvalidOperationException(exMiss);
             await CopyRouteSnapshotCoreAsync(khPlanDetailId, partId, snapshotBy);
             if (ownTx != null) await ownTx.CommitAsync();
         }

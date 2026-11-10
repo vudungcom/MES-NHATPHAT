@@ -115,7 +115,8 @@ for (int po = startPo; po < startPo + poCount; po++)
             var nsvc = new HandoverService(db);
             var nbRow0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(nbId))!;   // [N3-TONC] NC thường đầu tiên (NC đầu có thể là máy loại trừ)
             var nc0 = nbRow0.G("GC").Steps.First(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Code;   // [N3-FIRST] @VAO không phải NC nhận
-            var gi = await nsvc.IssueByCellAsync(nbId, "KHO", "GC", q2, 1, "MOI", false, "MOI", null, nc0);
+            // [KHO-NC-DAU 2026-11-10] NC đầu là máy loại trừ: Kho không chọn NC (hàng vào "Nhận vào") — kiem sandbox seed 1302 PO7 / PO13
+            var gi = await nsvc.IssueByCellAsync(nbId, "KHO", "GC", q2, 1, "MOI", false, "MOI", null, HandoverForm.KhoNcOk(nbRow0, nc0) ? nc0 : null);
             if (!gi.Ok) fails.Add($"[CHUOI] PO{po} PO hàng xóm giao Kho → GC lỗi: {gi.Error}");
             if (gi.Ok) await nsvc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, q2 - 1, 1, "loi", 2, null, null, null, 2);
             db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = nbId, ProcessGroup = "GC", NC = nc0, WorkerId = 2, QtyDone = 2, QtyOk = 2, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now });
@@ -293,6 +294,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (prev && from == "GC")
                             {
                                 var cands = smart ? row.G("GC").Steps.Where(x => !x.IsExcluded && (x.Waiting ?? 0) > 0).Select(x => x.Code).ToList() : new List<string>();
+                                // [GC-LOI-TRUOC-NCDAU 2026-11-10] Workflow ON: 85% chọn NC được tích (chờ NC đầu / sau máy loại trừ) — còn lại thử NC khác (phải bị chặn)
+                                if (row.ApplyWorkflow && cands.Count > 0 && rnd.NextDouble() < 0.85) { var okC = cands.Where(c => FormHelp.GcPrevNcs(db, 1).Contains(c)).ToList(); if (okC.Count > 0) cands = okC; }
                                 fnc = cands.Any() ? cands[rnd.Next(cands.Count)] : ncs[rnd.Next(ncs.Length)];
                             }
                             vu = null;
@@ -319,6 +322,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (ok) fails.Add($"[LAMHO-NHO-SUA gửi vụ làm hộ vào ô Hàng sửa nhóm khác không bị chặn] PO{po} op{op} {desc}");
                         }
                         if (ok && q > max) fails.Add($"[Giao vượt trần vụ] PO{po} op{op} {desc}");
+                        // [GÓI 13 2026-11-10] đáp án độc lập (FormHelp, đọc snapshot): Workflow ON chặn Hàng mới giao ngược / Lỗi công đoạn trước Gia công ở hàng đã gia công
+                        if (row.ApplyWorkflow && purpose == HandoverPurpose.New && FormHelp.Nguoc(from, to))
+                        { Inc(ok ? "g13.nguoc.LOT" : "g13.nguoc.chan"); if (ok) fails.Add($"[GN-NGUOC-CHAN Hàng mới giao ngược lọt] PO{po} op{op} {desc}"); }
+                        if (row.ApplyWorkflow && prev && from == "GC" && fnc != null && !FormHelp.GcPrevNcs(db, 1).Contains(fnc))
+                        { Inc(ok ? "g13.gcprev.LOT" : "g13.gcprev.chan"); if (ok) fails.Add($"[GC-LOI-TRUOC-NCDAU lỗi công đoạn trước ở hàng đã gia công lọt] PO{po} op{op} {desc}"); }
                         if (ok && prev && cat is null or 6) fails.Add($"[Hàng lỗi công đoạn trước không có loại lỗi] PO{po} op{op} {desc}");
                         if (ok && prev)
                         {
@@ -814,7 +822,12 @@ for (int po = startPo; po < startPo + poCount; po++)
                             fails.Add($"[Vụ báo lỗi sai nhãn] PO{po} op{op} {desc}");
                     }
                     if (over && ok) fails.Add($"[Báo lỗi vượt trần] PO{po} op{op} {desc}");
-                    if (!over && !ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập (FormHelp.GcPrevNcs): Workflow ON, Gia công báo lỗi ĐẦU VÀO từ hàng đã gia công (NC khác NC đầu / sau máy loại trừ,
+                    //   hoặc "đã làm") → phải chặn đúng lời; lộ ở fuzz sandbox 10/11 seed 1304 PO11 / 1305 PO6 (trước: thiếu đáp án)
+                    bool gcPrevBad = row.ApplyWorkflow && g == "GC" && origin == HandoverNgSource.DauVao && G.Steps.Any(x => !x.IsExcluded)
+                                     && (src == HandoverNgSource.Da || nc == null || !FormHelp.GcPrevNcs(db, 1).Contains(nc));
+                    if (gcPrevBad) { Inc(ok ? "g13.ngrep.LOT" : "g13.ngrep.chan"); if (ok) fails.Add($"[GC-LOI-TRUOC-NCDAU báo lỗi đầu vào ở hàng đã gia công lọt] PO{po} op{op} {desc}"); }
+                    if (!over && !ok && !res.Error.StartsWith("Không lưu") && !(gcPrevBad && res.Error == HandoverForm.GcPrevMsg)) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
                     break;
                 }
                 case "kqsua":   // [GC-SUA-TAI-CHO] ghi Kết quả sửa (hàm thật CreateRepairResultAsync)
@@ -967,6 +980,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                                     && row.G("HTSP").Steps.Where(s => !s.IsPrep).ToList() is { Count: > 0 } hm && hm.All(s => s.Pg == "TARO" && s.LamHoNc != null
                                         && row.LamHoRuns.Any(r => r.HasTaro && r.Ncs.Contains(s.LamHoNc, StringComparer.OrdinalIgnoreCase))))
                                     expErr ??= "chỉ làm Taro làm hộ";
+                                // [GÓI 13 2026-11-10] đáp án độc lập: Workflow ON — Hàng tốt giao ngược chặn; Kho → Gia công chỉ NC đầu (KHO-NC-DAU).
+                                //   Đặt SAU luật "HTSP chỉ làm Taro làm hộ" — đúng thứ tự máy chủ kiểm (rà độc lập Gói 13 T5)
+                                if (pos.HelpFrom == null && row.ApplyWorkflow && FormHelp.Nguoc(g, req.ToGroup!)) { expErr ??= "giao ngược"; Inc("g13.form.nguoc"); }
+                                else if (pos.HelpFrom == null && row.ApplyWorkflow && g == "KHO" && req.ToGroup == "GC" && fncs.Count > 0 && !FormHelp.KhoNcDung(db, 1, req.ToNC)) { expErr ??= "NC đầu"; Inc("g13.form.khonc"); }
                             }
                         }
                         req.Qty = Q(have);
@@ -1021,12 +1038,16 @@ for (int po = startPo; po < startPo + poCount; po++)
                     else
                     {
                         req.Prev = rnd.NextDouble() < 0.5;
+                        // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập: Workflow ON, Gia công tích ở dòng hàng đã gia công (NC khác NC đầu / sau máy loại trừ, hoặc đã xong NC cuối) → chặn
+                        if (req.Prev && g == "GC" && row.ApplyWorkflow && fncs.Count > 0 && !(pos.Id.StartsWith("NC:") && FormHelp.GcPrevNcs(db, 1).Contains(pos.Id[3..])))
+                        { expErr ??= "chưa gia công"; Inc("g13.form.gcprev"); }
                         if (req.Prev && g != "KHO")
                         {
                             var pg0 = HandoverForm.PrevGroup(g);
                             var causes = new[] { "KHACH" }.Concat(others).ToArray();
                             req.Cause = rnd.NextDouble() < 0.7 && pg0 != "" ? pg0 : causes[rnd.Next(causes.Length)];
-                            if (rnd.NextDouble() < 0.1) req.Cause = null;   // [T4] bỏ trống → máy chủ lấy nhóm trước
+                            // [CAUSE-BAT-BUOC 2026-11-10] bỏ trống nơi gây lỗi → máy chủ chặn (trước [T4]: lấy nhóm trước). Nguồn: HÙNG 10/11 16:52
+                            if (rnd.NextDouble() < 0.15) { req.Cause = rnd.NextDouble() < 0.3 ? " " : null; expErr ??= "nơi gây lỗi"; Inc("g13.form.causenull"); }   // (rà Thấp 4) có cả chuỗi trắng
                         }
                         var cx = rnd.NextDouble();
                         req.CatId = cx < 0.02 ? null : cx < 0.04 ? 6 : rnd.Next(1, 6);
@@ -1071,6 +1092,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (rnd.NextDouble() < 0.7) req.NcReason = "da qua NC do"; else expErr = "lý do";
                         }
                         else if (y < 0.25 && latC.Any()) { req.ToNC = latC[rnd.Next(latC.Count)]; req.NcReason = "abc"; expErr = "không bỏ qua NC"; }
+                        // [KHO-NC-DAU 2026-11-10] đáp án độc lập: Workflow ON, Kho giao Gia công hàng "như hàng mới" (NC mặc định trống) chỉ NC đầu — lệnh NC khác (kể cả hàng cũ vụ 0 + lý do) bị chặn
+                        if (g == "KHO" && row.ApplyWorkflow && defC == null && expErr == null && req.ToNC != HandoverService.FormNewNc && !FormHelp.KhoNcDung(db, 1, req.ToNC)) { expErr = "NC đầu"; Inc("g13.form.khonc.vu"); }
                     }
                     var caseNcExp = exp.ToNcByCase ? FormHelp.CaseNcFor(db, req) : null;
                     desc = $"form {g} {req.Kind} {pos.Id} {req.Action} q={req.Qty} p={req.Pass}/{req.Fail} to={req.ToGroup} {req.Purpose} cell={req.ToCell} nc={req.NcNext} tonc={req.ToNC} vu={req.CaseId} prev={req.Prev}:{req.Cause} cat={req.CatId} have={have} over={over} exp={expErr}";

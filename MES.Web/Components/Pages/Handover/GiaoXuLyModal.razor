@@ -132,9 +132,15 @@
                   : Pos.Have;
 
     /// <summary>Nơi gây lỗi là nhóm khác nhóm mình ((b) Hùng 17:35: chỉ khi đó mới có "Trả nơi gây lỗi").</summary>
-    string? CauseGroup => IsFresh ? (_prev && _group != "KHO" && EffCause != "KHACH" && EffCause != _group ? EffCause : null)
+    string? CauseGroup => IsFresh ? (PrevOn && _group != "KHO" && !string.IsNullOrEmpty(EffCause) && EffCause != "KHACH" && EffCause != _group ? EffCause : null)   // [CAUSE-BAT-BUOC] chưa chọn → chưa có "Trả nơi gây lỗi"
                         : Case != null ? HandoverForm.CaseCauseGroup(Case, _group) : null;
-    string EffCause => !string.IsNullOrEmpty(_cause) ? _cause : (_group == "KHO" ? "KHACH" : HandoverForm.PrevGroup(_group, Row));   // [LAMHO-L2-KCS] nhóm trước theo PO (HTSP chỉ làm hộ: KCS ← Gia công)
+    // [CAUSE-BAT-BUOC 2026-11-10] "Lỗi công đoạn trước": người dùng BẮT BUỘC tự chọn nơi gây lỗi, không điền sẵn (trước: mặc định nhóm trước).
+    //   Nguồn: HÙNG 10/11 16:52 "họ bắt buộc phải chọn mà, mình cũng ko cần gợi ý sẵn đâu, kệ họ". Kho: lỗi có sẵn = phôi khách (không chọn).
+    string EffCause => _group == "KHO" ? "KHACH" : _cause;   // (trước [CAUSE-BAT-BUOC]: [LAMHO-L2-KCS] trống = nhóm trước theo PO)
+    // [CAUSE-BAT-BUOC] (rà độc lập Thấp 1) tích "Lỗi công đoạn trước" chỉ tính khi dòng còn cho tích (PrevOk) — sổ vẽ lại làm ô tích ẩn thì không kẹt nút Lưu
+    bool PrevOn => IsFresh && _prev && (Pos == null || Pos.PrevOk);
+    // [CAUSE-BAT-BUOC] (rà độc lập Thấp 2) chưa chọn nơi gây lỗi → chưa xem trước chứng từ / ô nhận (sẽ đổi theo nơi chọn)
+    bool CauseMissing => PrevOn && _group != "KHO" && string.IsNullOrEmpty(_cause);
     bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi;   // [TARO-LAMHO-NC]
     string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
 
@@ -164,14 +170,18 @@
     /// <summary>[K2] Hàng của vụ (đã xử lý) giao vào Gia công ô Hàng lỗi đã xử lý / Hàng mới: NC nhận theo vụ, như sửa tại nhóm (rà độc lập V3).</summary>
     bool CaseToGc => !IsTot && IsGiao && Dest == "GC" && GcHasNc && ToCellNow is HandoverCell.Moi or HandoverCell.Xl;
     bool NeedToNc => !CaseToGc && Dest == "GC" && GcHasNc
-                     && (LamHo || (!HelpFrom && ToCellNow is HandoverCell.Moi or HandoverCell.Xl));
+                     && (LamHo || (!HelpFrom && ToCellNow is HandoverCell.Moi or HandoverCell.Xl))
+                     && !(_group == "KHO" && Row.ApplyWorkflow && !LamHo);   // [KHO-NC-DAU 2026-11-10] phôi Kho luôn vào NC đầu (máy chủ kiểm)
     bool NcForSua => IsSua && _group == "GC" && _pass > 0;
 
     /// <summary>NC làm tiếp mặc định (Gia công: sửa đạt / hàng của vụ vào Gia công) — cùng hàm máy chủ kiểm.</summary>
     string? NcDefault => !(NcForSua || CaseToGc) ? null
         : IsFresh ? HandoverForm.CaseNextNc(Row, _group, Pos!.NgNc, NgOrigin.BaoLoi)
         : HandoverForm.CaseNextNc(Row, _caseId ?? 0, _group);   // [GN-FORM1] vòng 2 C1
-    List<HandoverForm.NcOpt> NcOpts => (NcForSua || CaseToGc) && GcHasNc ? HandoverForm.NcOptions(Row, NcDefault, free: !IsFresh && (_caseId ?? 0) == 0) : new();   // [GN-FORM1] vòng 3 C1b: hàng cũ chưa mã vụ
+    List<HandoverForm.NcOpt> NcOpts => (NcForSua || CaseToGc) && GcHasNc
+        ? HandoverForm.NcOptions(Row, NcDefault, free: !IsFresh && (_caseId ?? 0) == 0)
+              .Where(o => !(_group == "KHO" && Row.ApplyWorkflow && NcDefault == null) || HandoverForm.KhoNcOk(Row, o.Code)).ToList()   // [KHO-NC-DAU] Kho: hàng như hàng mới chỉ NC đầu
+        : new();   // [GN-FORM1] vòng 3 C1b: hàng cũ chưa mã vụ
     HandoverForm.NcOpt? NcChosen => NcOpts.FirstOrDefault(o => OptKey(o) == _ncNext);
     bool NcEarlier => NcChosen?.Earlier == true;
     bool NcLater => NcChosen?.Label.StartsWith("Làm tiếp ở") == true;   // [GN-FORM1] rà vòng 4 L-a: chữ ô lý do khi chọn NC sau (hàng cũ chưa mã vụ)
@@ -190,6 +200,7 @@
             else if (_qty <= 0 || _qty > Have) return false;
             if (IsGiao && (string.IsNullOrEmpty(Dest) || Dest == _group)) return false;
             if (NeedCat && _catId == null) return false;
+            if (CauseMissing) return false;   // [CAUSE-BAT-BUOC] phải chọn nơi gây lỗi
             if (NcEarlier && _ncReason.Trim().Length < HandoverForm.NcReasonMin) return false;
             if (LamHo && NeedToNc && string.IsNullOrEmpty(_toNc)) return false;   // (rà độc lập T2) PO không có NC thường: không bắt chọn
             if (NotesRequired && string.IsNullOrWhiteSpace(_notes)) return false;
@@ -245,6 +256,12 @@
     RenderFragment PrevBox() => __builder =>
     {
         if (!IsFresh) return;
+        // [GC-LOI-TRUOC-NCDAU 2026-11-10] Gia công (Workflow ON): hàng đã gia công → lỗi của Gia công, không tích "Lỗi công đoạn trước"
+        if (Pos is { PrevOk: false })
+        {
+            <div class="mt-2 p-2 border rounded small text-muted">Hàng đã qua NC: lỗi tính cho Gia công (lỗi đầu ra). "Lỗi công đoạn trước" chỉ chọn được ở hàng chưa gia công (chờ NC đầu / hàng làm hộ trả về).</div>
+            return;
+        }
         <div class="mt-2 p-2 border rounded @(_prev ? "border-danger" : "")">
             <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="gxlPrev" checked="@_prev" @onchange="OnPrevChanged" />
@@ -254,7 +271,8 @@
             {
                 <div class="mt-1">
                     <label class="form-label form-label-sm mb-1">Nơi gây lỗi</label>
-                    <select class="form-select form-select-sm" @onchange="OnCauseChanged">
+                    <select class="form-select form-select-sm @(string.IsNullOrEmpty(_cause) ? "is-invalid" : "")" @onchange="OnCauseChanged">
+                        <option value="" selected="@(string.IsNullOrEmpty(_cause))">-- Chọn nơi gây lỗi --</option>
                         @foreach (var c in CauseOptions())
                         {
                             <option value="@c" selected="@(EffCause == c)">@HandoverNgSource.CauseLabel(c)</option>
@@ -267,7 +285,9 @@
     };
 
     string PrevHint => _prev
-        ? (_group == "KHO" ? "Lỗi đầu vào: phôi khách lỗi sẵn — không phải Kho làm hỏng." : $"Lỗi đầu vào: có sẵn khi nhận, do {HandoverNgSource.CauseLabel(EffCause)} — không phải {HandoverLedgerService.GroupLabel(_group)} làm hỏng.")
+        ? (_group == "KHO" ? "Lỗi đầu vào: phôi khách lỗi sẵn — không phải Kho làm hỏng."
+           : string.IsNullOrEmpty(EffCause) ? "Chọn nơi gây lỗi (bắt buộc)."
+           : $"Lỗi đầu vào: có sẵn khi nhận, do {HandoverNgSource.CauseLabel(EffCause)} — không phải {HandoverLedgerService.GroupLabel(_group)} làm hỏng.")
         : $"Không tích = {HandoverLedgerService.GroupLabel(_group)} làm hỏng (lỗi đầu ra).";
 
     List<string> CauseOptions()
@@ -409,7 +429,8 @@
             {
                 <select class="form-select form-select-sm" @onchange="OnDestChanged">
                     <option value="" selected="@(string.IsNullOrEmpty(Dest))">-- Chọn nhóm nhận --</option>
-                    @foreach (var g in HandoverLedgerService.GroupCodes.Where(x => x != _group))
+                    @* [GN-NGUOC-CHAN 2026-11-10] Hàng tốt (Workflow ON) không giao ngược về bộ phận trước *@
+                    @foreach (var g in HandoverLedgerService.GroupCodes.Where(x => x != _group && !(IsTot && !HelpFrom && Row.ApplyWorkflow && HandoverForm.IsBackward(_group, x))))
                     {
                         <option value="@g" selected="@(Dest == g)">@HandoverLedgerService.GroupLabel(g)</option>
                     }
@@ -445,9 +466,9 @@
         {
             @NcSelect("Gia công nhận vào NC (theo vụ)")
         }
-        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi)
+        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi && !CauseMissing)   // [CAUSE-BAT-BUOC] (rà Thấp 2)
         {
-            <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow) — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
+            <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow)@TailNote — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
         }
         if (HelpFrom)
         {
@@ -476,6 +497,9 @@
             </div>
         }
     };
+
+    /// <summary>[GC-HTSP-NC-HIEN 2026-11-10] Gia công giao Hàng tốt cho HTSP khi sau NC cuối còn NC máy loại trừ: " · để làm NC5 (Taro)" (chỉ hiển thị).</summary>
+    string TailNote => _group == "GC" && IsTot && !HelpFrom && Dest == "HTSP" && HandoverForm.TailExclText(Row) is string t ? " · " + t : "";
 
     string ToNcDefaultLabel => Row.G("GC").Steps.Any(x => HandoverLedgerService.IsVao(x.Code))
         ? (LamHo ? "-- Chọn NC --" : $"-- {HandoverLedgerService.VaoLabel} (mặc định) --")
@@ -536,6 +560,7 @@
     /// <summary>Dòng "Sẽ ghi" — chỉ chữ, máy chủ ánh xạ thật (SaveFormAsync).</summary>
     string WillWrite()
     {
+        if (CauseMissing) return "Chọn nơi gây lỗi ở trên trước — chứng từ sẽ ghi tuỳ nơi chọn.";   // [CAUSE-BAT-BUOC] (rà Thấp 2)
         var G = HandoverLedgerService.GroupLabel(_group);
         var D = HandoverLedgerService.GroupLabel(Dest);
         if (IsTot)
@@ -551,7 +576,7 @@
                 HandoverForm.AKhach   => "Sẽ ghi: phiếu Trả khách hàng lỗi (ra khỏi PO).",
                 _                     => $"Sẽ ghi: phiếu giao hàng {(Pos!.HeldCell == HandoverCell.Sua ? "sửa" : "lỗi")} {G} → {D}, cùng vụ."
             };
-        bool one = Act == HandoverForm.AGiao && _prev && Pos!.Unworked && _group != "KHO" && EffPurpose == HandoverForm.PTra && Dest == EffCause && ToCellNow == HandoverCell.Loi;
+        bool one = Act == HandoverForm.AGiao && PrevOn && Pos!.Unworked && _group != "KHO" && EffPurpose == HandoverForm.PTra && Dest == EffCause && ToCellNow == HandoverCell.Loi;
         if (one) return $"Sẽ ghi: phiếu Hàng lỗi công đoạn trước {G} → {D} (1 chứng từ, sinh vụ mới).";
         var tail = Act switch
         {
@@ -631,7 +656,7 @@
         {
             KhPlanDetailId = detailId, Group = _group, UserId = UserId, Kind = _kind, Pos = _pos,
             CaseId = IsHeld ? _caseId : null,
-            Prev = IsFresh && _prev, Cause = IsFresh && _prev ? EffCause : null,
+            Prev = PrevOn, Cause = PrevOn ? EffCause : null,   // [CAUSE-BAT-BUOC] (rà Thấp 1)
             Action = Act,
             ToGroup = IsGiao ? Dest : null,
             Purpose = ShowPurpose ? EffPurpose : (IsGiao && !IsTot && _group == "KHO" ? HandoverForm.PNho : null),

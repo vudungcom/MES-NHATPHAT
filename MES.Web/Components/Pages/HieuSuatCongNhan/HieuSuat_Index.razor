@@ -646,7 +646,7 @@ else
 
                                     }
 
-                                    <td><small>@(row.NC ?? row.WtsCode ?? "—")</small>@if (!string.IsNullOrEmpty(row.StepNC)) { <small class="text-primary"> · NC @row.StepNC</small> }@if (!string.IsNullOrEmpty(row.WtsName)) { <span class="d-block" style="font-size:10px;color:#6c757d">@row.WtsName</span> }</td>
+                                    <td><small>@(row.NC ?? row.WtsCode ?? "—")</small>@if (SavedTaroNc(row) is string snc) { <small class="text-primary"> · NC @snc</small> }@if (!string.IsNullOrEmpty(row.WtsName)) { <span class="d-block" style="font-size:10px;color:#6c757d">@row.WtsName</span> }</td>
 
                                 }
 
@@ -7613,10 +7613,36 @@ else
         OnSubWtsCodeChanged(grp, sub, sub.WtsCode);   // T.Chuẩn + trần + chia giờ theo (mã, NC) mới (cùng mã → không xoá T.Thực tế)
     }
 
+    // [WTS-TARO-NC 2026-11-10] WTS Taro luôn có ô NC: mã chỉ ở 1 NC → hiện sẵn NC đó (chỉ xem — máy chủ / sổ như cũ, StepNC = NULL);
+    //   mã ở nhiều NC → chọn như cũ [TARO-NC-MA]. Dòng đã lưu hiện NC (mã 1 NC: NC lấy từ quy trình PO). Chỉ hiển thị, không đổi phép tính số.
+    //   Nguồn: KHÁCH 10/11 (trả lời chung câu 3+4: "WTS của nhóm Taro chưa có chỗ nhập NC → bổ sung trường NC để nhập"); HÙNG 10/11 14:02.
+    private string? TaroSingleNc(WtsGroup grp, WtsRow sub)
+    {
+        if (CurrentPg(grp) != "TARO" || string.IsNullOrEmpty(sub.PO) || string.IsNullOrWhiteSpace(sub.WtsCode) || !_fullSnapshotCache.TryGetValue(sub.PO, out var snap)) return null;
+        var ncs = TaroNcsSnap(snap, sub.WtsCode);
+        return ncs.Count == 1 && ncs[0].Length > 0 && !string.Equals(ncs[0], sub.WtsCode.Trim(), StringComparison.OrdinalIgnoreCase) ? ncs[0] : null;   // NC trống / mã = NC (dòng không mã CV): không hiện
+    }
+
+    /// <summary>[WTS-TARO-NC] NC hiện ở dòng đã lưu: NC đã chọn, hoặc (Taro mã 1 NC) NC của mã trong quy trình PO.</summary>
+    private string? SavedTaroNc(WtsRow r)
+    {
+        if (!string.IsNullOrEmpty(r.StepNC)) return r.StepNC;
+        if (PgOfRow(r) != "TARO" || string.IsNullOrEmpty(r.PO) || string.IsNullOrWhiteSpace(r.NC) || !_fullSnapshotCache.TryGetValue(r.PO, out var snap)) return null;
+        var ncs = TaroNcsSnap(snap, r.NC);
+        return ncs.Count == 1 && ncs[0].Length > 0 && !string.Equals(ncs[0], r.NC.Trim(), StringComparison.OrdinalIgnoreCase) ? ncs[0] : null;
+    }
+
     private RenderFragment TaroNcPicker(WtsGroup grp, WtsRow sub) => __builder =>
     {
         var ncs = TaroNcsForSub(grp, sub);
-        if (ncs == null) return;
+        if (ncs == null)
+        {
+            if (TaroSingleNc(grp, sub) is string one)
+            {
+                <div class="mt-1 small text-primary" style="font-size:11px" title="Mã này chỉ dùng ở 1 NC Taro của PO — phần mềm tự lấy NC">NC @one</div>
+            }
+            return;
+        }
         <select class="form-select form-select-sm mt-1" style="font-size:11px" title="Mã này dùng ở nhiều NC Taro — chọn NC đang làm"
                 @onchange="e => OnSubStepNcChanged(grp, sub, e)">
             <option value="" selected="@string.IsNullOrEmpty(sub.StepNC)">— chọn NC Taro —</option>

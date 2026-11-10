@@ -7,6 +7,14 @@ using Microsoft.EntityFrameworkCore;
 
 public static class ChuoiScen
 {
+    /// <summary>[KHO-NC-DAU 2026-11-10] Chạy 1 thao tác lúc PO đang Workflow OFF (dựng dữ liệu cũ mà nay Workflow ON chặn), xong bật ON lại.</summary>
+    static async Task<T> OffOnAsync<T>(AppDbContext db, int detailId, Func<Task<T>> act)
+    {
+        var plan = db.KhPlans.List.First(p => p.KhPlanId == db.KhPlanDetails.List.First(d => d.KhPlanDetailId == detailId).KhPlanId);
+        var was = plan.ApplyWorkflow; plan.ApplyWorkflow = false;
+        try { return await act(); } finally { plan.ApplyWorkflow = was; }
+    }
+
     static int fails = 0;
     static void Ok(bool cond, string name, string? info = null)
     {
@@ -22,8 +30,8 @@ public static class ChuoiScen
             var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
             var pid = await ChuoiHelp.BuildPartAsync(db, "P-001", Full());
             var pic = ChuoiHelp.Picture(db, pid);
-            Ok(pic.Gc.Count == 4 && pic.Gc.Count(x => x.Split('|')[3] == "1") == 1 && pic.Gc[0].EndsWith("1:M1b:11:6:1:2:3:VJ-M1b:D8") && pic.Taro.Count == 3 && pic.Bavia.Count == 2 && pic.Rua.Count == 2 && pic.Kcs.Count == 2 && pic.Pkg.Count == 1 && pic.Excl.SequenceEqual(new[] { "H04" }),
-               "Part Master dựng đúng: 3 NC + 1 dự phòng, NC01 có máy đồng dạng M1b, NC03 máy H04 (loại trừ), Taro T1(3T)+DP+1T, Bavia B1+1V, Rửa R1+1R, KCS 2, ĐG 1", pic.Sig);
+            Ok(pic.Gc.Count == 4 && pic.Gc.Count(x => x.Split('|')[3] == "1") == 1 && pic.Gc[0].EndsWith("1:M1b:11:6:1:2:3:VJ-M1b:D8") && pic.Taro.Count == 4 && pic.Taro.Any(t => t.Contains("|3|") && t.EndsWith("|9X")) && pic.Bavia.Count == 2 && pic.Rua.Count == 2 && pic.Kcs.Count == 2 && pic.Pkg.Count == 1 && pic.Excl.SequenceEqual(new[] { "H04" }),
+               "Part Master dựng đúng: 3 NC + 1 dự phòng, NC01 có máy đồng dạng M1b, NC03 máy H04 (loại trừ), Taro T1(3T)+DP+1T + 9X ở NC 3 (PM-LOAITRU-TARO: NC máy loại trừ có Taro), Bavia B1+1V, Rửa R1+1R, KCS 2, ĐG 1", pic.Sig);
             var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-001", new decimal[] { 40 }, "PO-1");
             Ok(ids.Count == 1 && ids[0] == 1 && db.KhPlans.List.Count == 1 && db.KhPlans.List[0].PlanNo == $"KH-{DateTime.Today:yyyyMMdd}-0001" && db.KhPlanDetails.List.Single().PurchaseOrder == "PO-1",
                "Tạo KH bằng CreateAsync: 1 phiếu, số KH đúng dạng, 1 dòng PO-1");
@@ -140,7 +148,8 @@ public static class ChuoiScen
             await svc.IssueByCellAsync(ids[2], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
             await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
             var wc = await WtsSvcHelp.SaveAsync(db, ids[2], "GC", "NC01", null, 2, 0, 2);
-            await svc.IssueByCellAsync(ids[3], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02");
+            // [KHO-NC-DAU 2026-11-10] Workflow ON chặn Kho → Gia công vào NC sau NC đầu: phiếu "đã cấp vào NC02" dựng lúc Workflow OFF (dữ liệu cũ) rồi bật lại
+            await OffOnAsync(db, ids[3], () => svc.IssueByCellAsync(ids[3], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02"));
             await svc.IssueByCellAsync(ids[4], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC01");
             var re = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 9, 1, null, 2, ngCategoryId: db.NgCategories.List.First().NgCategoryId);
             Ok(wc.Ok && re.Ok, "Dựng 5 PO (C ghi WTS, E nhận có 1 NG)", wc.Err ?? re.Error);
@@ -190,7 +199,7 @@ public static class ChuoiScen
             var kh = new KhPlanService(db); var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db);
             foreach (var i in new[] { 0, 1 }) await kho.SaveKhoInputAsync(ids[i], DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
             var g0 = await svc.IssueByCellAsync(ids[0], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, null);   // mặc định NC đầu
-            var g1 = await svc.IssueByCellAsync(ids[1], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02");
+            var g1 = await OffOnAsync(db, ids[1], () => svc.IssueByCellAsync(ids[1], "KHO", "GC", 10, 1, "MOI", false, "MOI", null, "NC02"));   // [KHO-NC-DAU] dữ liệu cũ (Workflow OFF)
             await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
             Ok(g0.Ok && g1.Ok, "PO A: Kho → GC mặc định NC đầu (chờ nhận) · PO B: Kho → GC vào NC02 (đã nhận)", g0.Error ?? g1.Error);
             var ledA0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]))!; var ledB0 = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[1]))!;
@@ -198,6 +207,8 @@ public static class ChuoiScen
             // Part Master: thêm NC + NC02 đổi máy đăng ký sang máy loại trừ H04
             await ChuoiHelp.MutateAsync(db, new Random(2), pid, 1);
             db.PartMachiningSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "NC02").MachineRegistered = "H04"; db.Fixup();
+            // [PM-LOAITRU-TARO 2026-11-10] NC máy loại trừ phải có dòng Taro cùng NC thì Kế hoạch mới đẩy quy trình (khách 10/11 câu 3.2) → thêm Taro NC "2"
+            await new PartTaroService(db).AddAsync(pid, new PartTaroStep { NC = "2", WtsTaskCode = "9X", StepName = "Taro máy loại trừ", StandardTime = 1 }, 1, "taro NC02 loai tru");
             var pm = db.PartMasters.List.First(x => x.PartId == pid); pm.IsPlanConfirmed = pm.IsMachiningConfirmed = pm.IsHtspConfirmed = pm.IsKcsConfirmed = pm.IsPkgConfirmed = true;
             var picNow = ChuoiHelp.Picture(db, pid);
             var res = await kh.AutoRefreshRoutesForPartAsync(pid, 1, "luu part master");
@@ -367,7 +378,7 @@ public static class ChuoiScen
         {
             var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
             var pid = await ChuoiHelp.BuildPartAsync(db, "P-014", new ChuoiHelp.Shape { Gc = 3, ExclAt = 0, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 1, Prep = false, TaroTaskCode = false });
-            await ChuoiHelp.CreateKhAsync(db, pid, "P-014", new decimal[] { 10 }, "PO-14");
+            await ChuoiHelp.CreateKhLegacyAsync(db, pid, "P-014", new decimal[] { 10 }, "PO-14");
             var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
             await kho.SaveKhoInputAsync(1, DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
             const string VAO = HandoverLedgerService.VaoCode;
@@ -487,7 +498,7 @@ public static class ChuoiScen
             {
                 var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
                 var pid = await ChuoiHelp.BuildPartAsync(db, "P-165", new ChuoiHelp.Shape { Gc = 2, ExclAt = 0, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 0, Pkg = 0, Prep = false, TaroTaskCode = false });
-                await ChuoiHelp.CreateKhAsync(db, pid, "P-165", new decimal[] { 6 }, "PO-165");
+                await ChuoiHelp.CreateKhLegacyAsync(db, pid, "P-165", new decimal[] { 6 }, "PO-165");
                 await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(1, DateTime.Now, 6, "OVL", "A1", null, null, null, "nhan phoi", 1);
                 var svc = new HandoverService(db);
                 await svc.IssueByCellAsync(1, "KHO", "GC", 6, 1, "MOI", false, "MOI");
@@ -896,6 +907,39 @@ public static class ChuoiScen
             db.PartPackagingSteps.List.Add(oldDp); db.Fixup();
             var e6 = await Err(() => pkg.UpdateAsync(9292, new PartPackagingStep { NC = "PB-DP-09", IsBackup = true, ParentNC = "PB ", StepName = "cu", StandardTime = 5 }, 1, "sua gio"));
             Ok(e6 == null && oldDp.StandardTime == 5 && oldDp.ParentNC == "PB ", "T6 dữ liệu cũ cha 'PB ' chỉ sửa giờ → lưu giờ, ParentNC giữ nguyên (chỉ chuẩn hoá khi đổi cha)", $"{e6} · cha='{oldDp.ParentNC}'");
+        }
+
+        // [PM-LOAITRU-TARO 2026-11-10] Khách 10/11 câu 3.2 (A + "cho lưu nháp"): NC máy loại trừ phải có dòng Taro cùng NC thì mới dùng lập Kế hoạch / PO.
+        //   Bản 9bd3973: tạo KH chép quy trình thiếu Taro, tự cập nhật đẩy được → SAI đúng ở đây.
+        Console.WriteLine("[C21] [PM-LOAITRU-TARO] NC máy loại trừ chưa có Taro cùng NC: tạo KH bị chặn (không ghi gì), tự cập nhật PO giữ quy trình cũ; khai Taro xong thì được");
+        {
+            var mt = PartStepGuard.ExcludedNcMissingTaro(new[] { ("NC1", (string?)"P17"), ("NC3", "H01"), ("NC5", "H01"), ("NC7", "h01 "), ("NC9", "H01") }, new[] { "H01", "H04" },
+                                                         new (string?, string?)[] { ("3", "2T"), ("NC07", null), ("9", "1T") });
+            Ok(mt.SequenceEqual(new[] { "NC5 (máy H01)", "NC9 (máy H01)" }),
+               "Hàm kiểm: NC3 có Taro 2T ở \"3\", NC7 có Taro \"NC07\" (so bỏ chữ NC / số 0 / hoa thường / khoảng trắng máy); NC5 thiếu; NC9 chỉ mã chuẩn bị 1T = thiếu (rà độc lập T4)", string.Join(" | ", mt));
+            var mAmb = PartStepGuard.ExcludedNcMissingTaro(new[] { ("3", (string?)"H01"), ("NC03", "M3") }, new[] { "H01" }, new (string?, string?)[] { ("3", "2T") });
+            Ok(mAmb.Count == 1, "Hàm kiểm: 2 NC Gia công khác chữ cùng khoá (\"3\" / \"NC03\") → coi là thiếu (sổ không ghép được Taro — LAMHO-NCKEY)", string.Join(" | ", mAmb));
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-021", new ChuoiHelp.Shape { Gc = 3, ExclAt = 2, ExclTaro = false, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
+            int kh0 = db.KhPlans.List.Count, det0 = db.KhPlanDetails.List.Count, sn0 = db.KhPlanRouteSnapshotMachining.List.Count;
+            string? err = null;
+            try { await ChuoiHelp.CreateKhAsync(db, pid, "P-021", new decimal[] { 5 }, "PO-21"); } catch (InvalidOperationException ex) { err = ex.Message; }
+            Ok(err != null && err.Contains("NC03 (máy H04)") && err.Contains("chưa khai mã CV") && db.KhPlanRouteSnapshotMachining.List.Count == sn0,
+               "Tạo KH với Part thiếu Taro ở NC03 (máy H04): bị chặn, báo NC + máy, không chép quy trình", err);
+            // khai Taro NC "3" → tạo KH được
+            await new PartTaroService(db).AddAsync(pid, new PartTaroStep { NC = "3", WtsTaskCode = "9X", StepName = "Taro NC3", StandardTime = 1 }, 1, "khai taro NC3");
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-021", new decimal[] { 5 }, "PO-21B");
+            var row = (await new HandoverLedgerService(db).GetLedgerForDetailAsync(ids[0]))!;
+            Ok(db.KhPlanRouteSnapshotTaro.List.Any(t => t.KhPlanDetailId == ids[0] && t.WtsTaskCode == "9X") && row.G("GC").Steps.Last().IsExcluded,
+               "Khai Taro NC 3 xong: tạo KH được, PO có quy trình (NC03 máy loại trừ, Taro 9X)");
+            // Part đổi NC02 sang máy loại trừ mà chưa khai Taro NC 2 → tự cập nhật PO chưa chạy: giữ quy trình cũ, báo lý do
+            var snapB = ChuoiHelp.SnapPicture(db, ids[0]).Sig;
+            db.PartMachiningSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup && x.NC == "NC02").MachineRegistered = "H04"; db.Fixup();
+            var pm = db.PartMasters.List.First(x => x.PartId == pid); pm.IsPlanConfirmed = pm.IsMachiningConfirmed = pm.IsHtspConfirmed = pm.IsKcsConfirmed = pm.IsPkgConfirmed = true;
+            var ar = await new KhPlanService(db).AutoRefreshRoutesForPartAsync(pid, 1, "Part Master doi NC02");
+            var rr = ar.FirstOrDefault(a => a.KhPlanDetailId == ids[0]);
+            Ok(rr != null && rr.Status == KhPlanService.AutoRouteResult.Kept && (rr.Note ?? "").Contains("NC02 (máy H04)") && ChuoiHelp.SnapPicture(db, ids[0]).Sig == snapB,
+               "Part đổi NC02 sang máy loại trừ, chưa khai Taro NC 2: tự cập nhật giữ quy trình cũ, báo NC02", rr?.Status + " " + rr?.Note);
         }
 
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");

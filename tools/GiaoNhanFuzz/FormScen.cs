@@ -33,7 +33,7 @@ public static class FormScen
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = 30, NgayNhanPhoi = DateTime.Now, SoPO = "PO1", PartNo = "P" });
         for (int i = 1; i <= 3; i++)
             db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = i, KhPlanDetailId = 1, StepOrder = i, NC = "NC" + i,
-                MachineRegistered = (excl == "mid" && i == 2) || (excl == "first" && i == 1) ? "H04" : "M" + i });
+                MachineRegistered = (excl == "mid" && i == 2) || (excl == "first" && i == 1) || (excl == "last" && i == 3) ? "H04" : "M" + i });   // [GC-HTSP-NC-HIEN] + "last"
         if (excl != "") db.KhPlanRouteSnapshotMachineExclude.List.Add(new KhPlanRouteSnapshotMachineExclude { SnapshotId = 1, KhPlanDetailId = 1, SoMay = "H04" });
         db.KhPlanRouteSnapshotTaro.List.Add(new KhPlanRouteSnapshotTaro { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "T1", WtsTaskCode = "T1" });
         db.KhPlanRouteSnapshotBavia.List.Add(new KhPlanRouteSnapshotBavia { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 2, NC = "B1" });
@@ -121,6 +121,9 @@ public static class FormScen
         return res;
     }
 
+    /// <summary>[GC-LOI-TRUOC-NCDAU 2026-11-10] Bật / tắt Workflow của PO 1 (dựng dữ liệu cũ mà nay Workflow ON chặn).</summary>
+    static void WorkflowSet(AppDbContext db, bool on) => db.KhPlans.List.First(p => p.KhPlanId == 1).ApplyWorkflow = on;
+
     static List<FormPos> P(LedgerRow r, string g, bool good) => HandoverForm.FormPositions(r, g, good);
     static FormPos? Pos(LedgerRow r, string g, bool good, string id) => P(r, g, good).FirstOrDefault(p => p.Id == id);
 
@@ -167,8 +170,28 @@ public static class FormScen
 
         Console.WriteLine("[F2] K1/K4 lỗi công đoạn trước, chiếc chưa làm, trả đúng nơi gây lỗi → 1 phiếu Hàng lỗi công đoạn trước (như cũ)");
         {
+            // [GC-LOI-TRUOC-NCDAU 2026-11-10] đổi theo khách (vòng 1 hỏi tiếp câu 5a): Workflow ON chỉ hàng chưa gia công (chờ NC đầu) được tích
+            //   "Lỗi công đoạn trước" — chờ NC2 / NC3 / đã xong NC cuối bị chặn, không ghi gì. Bản 9bd3973 cho lưu → SAI đúng ở đây.
+            var r2a = await Row(db);
+            Ok(Pos(r2a, "GC", false, "NC:NC1")!.PrevOk && !Pos(r2a, "GC", false, "NC:NC2")!.PrevOk && !Pos(r2a, "GC", false, "NC:NC3")!.PrevOk && !Pos(r2a, "GC", false, "DA")!.PrevOk,
+               "[GC-LOI-TRUOC-NCDAU] form: chỉ dòng \"Vừa nhận, chưa làm NC1\" cho tích Lỗi công đoạn trước (NC2 / NC3 / đã xong NC cuối không)");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.AGiao, 2, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
-                       "GC: 2 chiếc \"Đã làm xong NC1 · chưa làm NC2\" lỗi do Kho → trả Kho");
+                       "[GC-LOI-TRUOC-NCDAU] GC: chờ NC2 (đã gia công NC1) tích lỗi do Kho → trả Kho", false, "chưa gia công");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "DA", HandoverForm.AGiao, 1, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
+                       "[GC-LOI-TRUOC-NCDAU] GC: đã xong NC cuối tích lỗi do Kho → trả Kho", false, "chưa gia công");
+            var bD = FormHelp.Docs(db, 1);
+            var dNg = await svc.IssueByCellAsync(1, "GC", "KHO", 1, Gc, HandoverCell.Loi, true, HandoverCell.Loi, "NC2", null, null, null, 2);
+            var dBl = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC3", 1, HandoverNgSource.DauVao, "KHO", "", null, Gc, Array.Empty<string>(), 2);
+            var dBl2 = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Da, null, 1, HandoverNgSource.DauVao, "KHO", "", null, Gc, Array.Empty<string>(), 2);
+            Ok(!dNg.Ok && dNg.Error == HandoverForm.GcPrevMsg && !dBl.Ok && dBl.Error == HandoverForm.GcPrevMsg && !dBl2.Ok && dBl2.Error == HandoverForm.GcPrevMsg && FormHelp.Docs(db, 1) == bD,
+               "[GC-LOI-TRUOC-NCDAU] máy chủ (ngoài form): phiếu Hàng lỗi công đoạn trước từ NC2 / báo lỗi đầu vào ở NC3 / đã xong NC cuối → chặn, không ghi", $"{dNg.Error} | {dBl.Error} | {dBl2.Error}");
+            var dOk = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC3", 1, HandoverNgSource.DauRa, null, "", null, Gc, Array.Empty<string>(), 2);
+            Ok(dOk.Ok, "[GC-LOI-TRUOC-NCDAU] bỏ tích (lỗi của Gia công) ở NC3: báo lỗi được", dOk.Error);
+            await Check(db, "F2 lỗi đầu ra NC3");
+            // Các bước cũ của F2 / F3 giữ nguyên (đường đi hàng phía sau dùng tiếp): dựng lúc Workflow OFF = dữ liệu nhập trước luật / OFF tự kiểm soát
+            WorkflowSet(db, false);
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.AGiao, 2, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
+                       "GC (Workflow OFF): 2 chiếc \"Đã làm xong NC1 · chưa làm NC2\" lỗi do Kho → trả Kho");
             var t = db.HandoverTransactions.List.Last(); var vu = db.NgCases.List.Last();
             Ok(t.Purpose == HandoverPurpose.NgReturn && t.FromNC == "NC2" && vu.OriginKind == NgOrigin.TraLoi && vu.DetectNC == "NC2" && vu.CauseGroupCode == "KHO" && vu.NgCategoryId == 2,
                "Phiếu Hàng lỗi công đoạn trước chốt NC2, vụ TRALOI · phát hiện NC2 · do Kho · đúng loại lỗi", $"{t.Purpose} {t.FromNC} {vu.OriginKind} {vu.DetectNC} {vu.CauseGroupCode}");
@@ -187,6 +210,7 @@ public static class FormScen
                        "GC: 1 chiếc đã làm xong NC cuối lỗi do Kho → trả Kho (báo lỗi + phiếu ô Hàng lỗi)");
             await svc.ReceiveAsync(db.HandoverTransactions.List.Where(t => t.ToGroupCode == "HTSP" && t.Status == "PENDING").Max(t => t.HandoverTxId), 1, 0, null, Htsp);
             await svc.ReceiveAsync(LastTx(db), 0, 1, null, Kho);
+            WorkflowSet(db, true);   // [GC-LOI-TRUOC-NCDAU] hết phần dựng lúc OFF
             await Check(db, "F3 nhận");
         }
 
@@ -373,7 +397,11 @@ public static class FormScen
             await Check(d5, "F13 V3 Gia công nhận");
             // V2: HTSP làm xong giao lại Gia công, Gia công đếm NG lúc nhận → vụ phát hiện ở Gia công không NC, do HTSP → NC cuối
             foreach (var (pg, c) in new[] { ("TARO", "T1"), ("BAVIA", "B1"), ("BAVIA", "1V"), ("WASHING", "R1") }) await VuHelp.Wts(d5, pg, null, c, 2, 0, Htsp, 0);
-            await Save(d5, Req("HTSP", Htsp, HandoverForm.Tot, "DA", HandoverForm.AGiao, 2, "GC"), "HTSP giao 2 lại Gia công");
+            // [GN-NGUOC-CHAN 2026-11-10] Workflow ON chặn Hàng mới giao ngược (đổi theo khách câu 5) → phiếu ngược dựng lúc OFF (dữ liệu cũ), nhận lúc ON
+            await Save(d5, Req("HTSP", Htsp, HandoverForm.Tot, "DA", HandoverForm.AGiao, 2, "GC"), "[GN-NGUOC-CHAN] HTSP giao Hàng tốt ngược lại Gia công (Workflow ON)", false, "giao ngược");
+            WorkflowSet(d5, false);
+            await Save(d5, Req("HTSP", Htsp, HandoverForm.Tot, "DA", HandoverForm.AGiao, 2, "GC"), "HTSP giao 2 lại Gia công (Workflow OFF — dữ liệu cũ)");
+            WorkflowSet(d5, true);
             { var rr = await s5.ReceiveAsync(LastTx(d5), 0, 2, null, Gc, toCell: HandoverCell.Loi, toCellReason: "ba via sot", ngCategoryId: 2); Ok(rr.Ok, "Gia công nhận 2 vào ô Hàng lỗi", rr.Error); }
             var vuB = d5.NgCases.List.Last();
             r = await Row(d5);
@@ -455,7 +483,11 @@ public static class FormScen
             Ok(d8.HandoverRepairResults.List.Last().ToNC == null, "C1b: làm tiếp như hàng mới (trước vòng 3: NC3 bỏ qua NC1/NC2)", d8.HandoverRepairResults.List.Last().ToNC);
             // V-a: Gia công làm xong NC1..NC3, giao Kho; Kho nhận vào ô Hàng lỗi → vụ phát hiện ở Kho do Gia công
             foreach (var nc in new[] { "NC1", "NC2", "NC3" }) await VuHelp.Wts(d8, "GC", nc, null, 4, 0, Gc, 0);
-            await Save(d8, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 3, "KHO"), "GC giao 3 về Kho");
+            // [GN-NGUOC-CHAN 2026-11-10] Hàng mới Gia công → Kho = giao ngược: Workflow ON chặn; dựng lúc OFF (dữ liệu cũ), nhận lúc ON
+            await Save(d8, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 3, "KHO"), "[GN-NGUOC-CHAN] GC giao Hàng tốt ngược về Kho (Workflow ON)", false, "giao ngược");
+            WorkflowSet(d8, false);
+            await Save(d8, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 3, "KHO"), "GC giao 3 về Kho (Workflow OFF — dữ liệu cũ)");
+            WorkflowSet(d8, true);
             { var rr = await s8.ReceiveAsync(LastTx(d8), 0, 3, null, Kho, toCell: HandoverCell.Loi, toCellReason: "ren hong", ngCategoryId: 2); Ok(rr.Ok, "Kho nhận 3 vào ô Hàng lỗi", rr.Error); }
             var vuK = d8.NgCases.List.Last();
             r8 = await Row(d8);
@@ -515,6 +547,122 @@ public static class FormScen
             Ok(k.Success && r2.G("KHO").ConGiao == 30 && r2.TraKhach == 1 && vu2.TraKhach == 1 && r2.Balanced,
                "Kho sửa SL thực nhận 30 → 31 (lý do khách gửi lại): Phôi còn 30, trả khách vẫn 1 (truy vết giữ), sổ cân", $"{k.Error} · còn {r2.G("KHO").ConGiao} · trả khách {r2.TraKhach} · cân={r2.Balanced}");
             await Save(dk, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 30, "GC"), "Kho giao đủ 30 phôi (gồm chiếc khách gửi lại) cho Gia công");
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // [GÓI 13 2026-11-10] Khách 10/11 (vòng 1 + hỏi lại + hỏi tiếp): KHO-NC-DAU · GN-NGUOC-CHAN · GC-LOI-TRUOC-NCDAU · GC-HTSP-NC-HIEN.
+        //   Bản 9bd3973 phải SAI ở F18 / F19 / F20 / F21 (lưu được hoặc thiếu chữ); Workflow OFF lưu được như cũ (N7).
+        Console.WriteLine("[F18] [KHO-NC-DAU] Kho giao phôi cho Gia công luôn vào NC đầu (form + máy chủ + nhận đổi ô); Workflow OFF như cũ");
+        {
+            var dk = Seed(); var sk = new HandoverService(dk);
+            await Save(dk, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 3, "GC", toNc: "NC2"), "[KHO-NC-DAU] form: Kho giao Gia công chọn NC2", false, "NC đầu");
+            var b0 = FormHelp.Docs(dk, 1);
+            var i3 = await sk.IssueByCellAsync(1, "KHO", "GC", 3, Kho, "MOI", false, "MOI", null, "NC3");
+            var iX = await sk.IssueByCellAsync(1, "KHO", "GC", 3, Kho, "MOI", false, HandoverCell.Xl, null, "NC2");
+            Ok(!i3.Ok && i3.Error.Contains("NC đầu") && !iX.Ok && iX.Error.Contains("NC đầu") && FormHelp.Docs(dk, 1) == b0,
+               "[KHO-NC-DAU] máy chủ: phiếu Kho → Gia công vào NC3 / ô Hàng lỗi đã xử lý vào NC2 bị chặn, không ghi", i3.Error + " | " + iX.Error);
+            await Save(dk, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 3, "GC", toNc: "NC1"), "Kho giao Gia công chọn đúng NC1 (NC đầu)");
+            await sk.ReceiveAsync(LastTx(dk), 3, 0, null, Gc);
+            await Save(dk, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 2, "GC"), "Kho giao Gia công không chọn NC (mặc định NC đầu)");
+            await sk.ReceiveAsync(LastTx(dk), 2, 0, null, Gc);
+            var rk = await Check(dk, "F18 Kho → GC NC đầu");
+            Ok(rk.G("GC").Steps.First(x => x.Code == "NC1").Waiting == 5 && rk.G("GC").Steps.Where(x => x.Code != "NC1").All(x => (x.In ?? 0) == 0), "Chờ NC1 = 5, NC2 / NC3 không nhận gì");
+            // nhận đổi ô: Kho gửi nhờ sửa phôi lỗi (ô Hàng sửa) → Gia công nhận đổi sang Hàng mới, chọn NC2 → chặn; mặc định / NC1 được
+            await Save(dk, Req("KHO", Kho, HandoverForm.Loi, "PHOI", HandoverForm.AGiao, 2, "GC", HandoverForm.PNho, prev: true, cat: 1), "Kho: 2 phôi lỗi có sẵn → gửi Gia công nhờ sửa");
+            var tS = LastTx(dk);
+            var rv = await sk.ReceiveAsync(tS, 1, 0, null, Gc, null, HandoverCell.Moi, "phoi dung duoc", null, "NC2", "da lam ngoai");
+            Ok(!rv.Ok && rv.Error.Contains("NC đầu"), "[KHO-NC-DAU] Gia công nhận đổi ô phiếu Kho sang Hàng mới vào NC2 → chặn", rv.Error);
+            var rv1 = await sk.ReceiveAsync(tS, 1, 0, null, Gc, null, HandoverCell.Moi, "phoi dung duoc");
+            Ok(rv1.Ok, "Gia công nhận đổi ô phiếu Kho sang Hàng mới (mặc định NC đầu) → được", rv1.Error);
+            await Check(dk, "F18 nhận đổi ô");
+            WorkflowSet(dk, false);
+            var off = await sk.IssueByCellAsync(1, "KHO", "GC", 1, Kho, "MOI", false, "MOI", null, "NC3");
+            WorkflowSet(dk, true);
+            Ok(off.Ok, "Workflow OFF: Kho → Gia công vào NC3 vẫn lưu (N7 — họ tự kiểm soát)", off.Error);
+            // NC đầu là máy loại trừ: hàng vào "Nhận vào", chọn NC thường đầu (NC2 sau máy loại trừ) cũng chặn
+            var df = Seed("first"); var sf = new HandoverService(df);
+            var fx = await sf.IssueByCellAsync(1, "KHO", "GC", 2, Kho, "MOI", false, "MOI", null, "NC2");
+            Ok(!fx.Ok && fx.Error.Contains("NC đầu") && fx.Error.Contains(HandoverLedgerService.VaoLabel), "[KHO-NC-DAU] NC1 máy loại trừ: Kho → Gia công chọn NC2 bị chặn (hàng vào \"Nhận vào\")", fx.Error);
+            await Save(df, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 2, "GC"), "NC1 máy loại trừ: Kho giao không chọn NC → \"Nhận vào\"");
+            // rà độc lập Gói 13 T1: Kho làm hộ NC máy loại trừ (đoạn không Taro — dữ liệu / quy trình cũ) trả về Gia công NC sau đoạn → KHÔNG bị luật NC đầu chặn (K3 / N3-TONC)
+            var dm = Seed("mid"); var sm = new HandoverService(dm);
+            await Save(dm, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 6, "GC"), "PO NC2 máy loại trừ: Kho giao 6");
+            await sm.ReceiveAsync(LastTx(dm), 6, 0, null, Gc);
+            await VuHelp.Wts(dm, "GC", "NC1", null, 6, 0, Gc, 0);
+            await Save(dm, Req("GC", Gc, HandoverForm.Tot, "HELP:NC1", HandoverForm.AGiao, 3, "KHO", notes: "kho lam ho H04"), "Gia công giao theo NC từ NC1 cho Kho làm hộ 3");
+            await sm.ReceiveAsync(LastTx(dm), 3, 0, null, Kho);
+            await Save(dm, Req("KHO", Kho, HandoverForm.Tot, "LAMHO", HandoverForm.AGiao, 3, "GC", toNc: "NC3"), "[KHO-NC-DAU] (T1) Kho trả hàng làm hộ về Gia công vào NC3 → được (không phải phôi)");
+        }
+
+        Console.WriteLine("[F19] [GN-NGUOC-CHAN] Hàng mới không giao ngược về bộ phận trước (Workflow ON); Đóng gói → Kho thành phẩm vẫn được; OFF như cũ");
+        {
+            Ok(HandoverForm.IsBackward("GC", "KHO") && HandoverForm.IsBackward("KCS", "HTSP") && HandoverForm.IsBackward("PKG", "GC") && !HandoverForm.IsBackward("PKG", "KHO")
+               && !HandoverForm.IsBackward("KHO", "PKG") && !HandoverForm.IsBackward("GC", "KCS"), "Thứ tự Kho → GC → HTSP → KCS → Đóng gói; Đóng gói → Kho không phải ngược");
+            var dn = Seed(); var sn = new HandoverService(dn);
+            await Save(dn, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 10, "GC"), "Kho giao 10");
+            await sn.ReceiveAsync(LastTx(dn), 10, 0, null, Gc);
+            foreach (var nc in new[] { "NC1", "NC2", "NC3" }) await VuHelp.Wts(dn, "GC", nc, null, 10, 0, Gc, 0);
+            await Save(dn, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 8, "KCS"), "GC giao 8 thẳng KCS (xuôi, bỏ qua HTSP — được)");
+            await sn.ReceiveAsync(LastTx(dn), 8, 0, null, Kcs);
+            await VuHelp.Wts(dn, "KCS", null, "K1", 8, 0, Kcs, 0);
+            var b1 = FormHelp.Docs(dn, 1);
+            foreach (var to in new[] { "HTSP", "GC", "KHO" })
+            {
+                var x = await sn.IssueByCellAsync(1, "KCS", to, 1, Kcs, "MOI", false, "MOI");
+                Ok(!x.Ok && x.Error.Contains("giao ngược"), $"[GN-NGUOC-CHAN] máy chủ: KCS → {to} Hàng mới bị chặn", x.Error);
+            }
+            await Save(dn, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 1, "KHO"), "[GN-NGUOC-CHAN] form: Gia công giao Hàng tốt về Kho", false, "giao ngược");
+            Ok(FormHelp.Docs(dn, 1) == b1, "Các lần bị chặn không ghi gì");
+            await Save(dn, Req("KCS", Kcs, HandoverForm.Tot, "DA", HandoverForm.AGiao, 8, "PKG"), "KCS giao 8 cho Đóng gói (xuôi)");
+            await sn.ReceiveAsync(LastTx(dn), 8, 0, null, Pkg);
+            await VuHelp.Wts(dn, "PKG", null, "P1", 8, 0, Pkg, 0);
+            await Save(dn, Req("PKG", Pkg, HandoverForm.Tot, "DA", HandoverForm.AGiao, 8, "KHO"), "Đóng gói → Kho thành phẩm (không phải giao ngược)");
+            await sn.ReceiveAsync(LastTx(dn), 8, 0, null, Kho);
+            // hàng lỗi giao ngược vẫn được: KCS phát hiện 1 chiếc chưa kiểm lỗi do Gia công → trả Gia công (Lỗi công đoạn trước)
+            await Save(dn, Req("KCS", Kcs, HandoverForm.Tot, "DA", HandoverForm.AGiao, 0, "PKG"), "(KCS hết hàng đã kiểm — 0 chiếc)", false);
+            WorkflowSet(dn, false);
+            var offN = await sn.IssueByCellAsync(1, "GC", "KHO", 1, Gc, "MOI", false, "MOI");
+            WorkflowSet(dn, true);
+            Ok(offN.Ok, "Workflow OFF: Gia công → Kho Hàng mới vẫn lưu (N7)", offN.Error);
+            await sn.ReceiveAsync(LastTx(dn), 1, 0, null, Kho);
+            await Check(dn, "F19");
+        }
+
+        Console.WriteLine("[F20] [GC-LOI-TRUOC-NCDAU] máy loại trừ: hàng làm hộ trả về (chờ NC sau máy loại trừ, chưa làm) được tích Lỗi công đoạn trước; \"Nhận vào\" (NC1 loại trừ) được");
+        {
+            var d2 = Seed("mid"); var s2 = new HandoverService(d2);
+            await Save(d2, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 10, "GC"), "Kho giao 10");
+            await s2.ReceiveAsync(LastTx(d2), 10, 0, null, Gc);
+            await VuHelp.Wts(d2, "GC", "NC1", null, 6, 0, Gc, 0);
+            await Save(d2, Req("GC", Gc, HandoverForm.Tot, "HELP:NC1", HandoverForm.AGiao, 4, "HTSP", notes: "lam ho H04"), "GC giao theo NC từ NC1 cho HTSP làm hộ 4");
+            await s2.ReceiveAsync(LastTx(d2), 4, 0, null, Htsp);
+            await Save(d2, Req("HTSP", Htsp, HandoverForm.Tot, "LAMHO", HandoverForm.AGiao, 4, "GC", toNc: "NC3"), "HTSP trả 4 về Gia công vào NC3");
+            await s2.ReceiveAsync(LastTx(d2), 4, 0, null, Gc);
+            var r = await Check(d2, "F20 nhận về NC3");
+            Ok(Pos(r, "GC", false, "NC:NC1")!.PrevOk && Pos(r, "GC", false, "NC:NC3")!.PrevOk && !Pos(r, "GC", false, "DA")!.PrevOk,
+               "Dòng chờ NC1 (đầu) và chờ NC3 (ngay sau máy loại trừ NC2) cho tích; đã xong NC cuối không");
+            // [CAUSE-BAT-BUOC 2026-11-10] Hùng 10/11 16:52: tích "Lỗi công đoạn trước" bắt buộc chọn nơi gây lỗi, không điền sẵn → bỏ trống bị chặn, không ghi
+            await Save(d2, Req("GC", Gc, HandoverForm.Loi, "NC:NC3", HandoverForm.AGiao, 1, "HTSP", HandoverForm.PTra, prev: true, cat: 2),
+                       "[CAUSE-BAT-BUOC] GC tích Lỗi công đoạn trước, bỏ trống nơi gây lỗi", false, "nơi gây lỗi");
+            await Save(d2, Req("GC", Gc, HandoverForm.Loi, "NC:NC3", HandoverForm.AGiao, 1, "HTSP", HandoverForm.PTra, prev: true, cause: "HTSP", cat: 2),
+                       "GC: 1 chiếc làm hộ trả về (chờ NC3, chưa làm) lỗi do HTSP → trả HTSP (1 phiếu Hàng lỗi công đoạn trước)");
+            Ok(d2.NgCases.List.Last().CauseGroupCode == "HTSP" && d2.HandoverTransactions.List.Last().ToGroupCode == "HTSP", "vụ ghi HTSP gây lỗi, phiếu trả HTSP");
+            await Save(d2, Req("GC", Gc, HandoverForm.Loi, "NC:NC1", HandoverForm.AGiao, 1, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
+                       "GC: 1 chiếc chờ NC1 (chưa làm) lỗi do Kho → trả Kho");
+            var df = Seed("first"); var sf = new HandoverService(df);
+            await Save(df, Req("KHO", Kho, HandoverForm.Tot, "PHOI", HandoverForm.AGiao, 5, "GC"), "NC1 máy loại trừ: Kho giao 5 → \"Nhận vào\"");
+            await sf.ReceiveAsync(LastTx(df), 5, 0, null, Gc);
+            var rf = await Row(df);
+            Ok(Pos(rf, "GC", false, "NC:" + HandoverLedgerService.VaoCode)!.PrevOk, "Dòng \"Nhận vào (chưa qua NC)\" cho tích Lỗi công đoạn trước");
+            await Save(df, Req("GC", Gc, HandoverForm.Loi, "NC:" + HandoverLedgerService.VaoCode, HandoverForm.AGiao, 1, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
+                       "GC: 1 chiếc ở \"Nhận vào\" lỗi do Kho → trả Kho");
+        }
+
+        Console.WriteLine("[F21] [GC-HTSP-NC-HIEN] NC cuối là máy loại trừ (Taro ở HTSP): chữ \"để làm NC3 (Taro)\"; không có máy loại trừ cuối thì không có chữ");
+        {
+            var dl = Seed("last");
+            Ok(HandoverForm.TailExclText(await Row(dl)) == "để làm NC3 (Taro)", "NC3 máy loại trừ cuối: \"để làm NC3 (Taro)\"", HandoverForm.TailExclText(await Row(dl)));
+            Ok(HandoverForm.TailExclText(await Row(Seed("mid"))) == null && HandoverForm.TailExclText(await Row(Seed())) == null, "Máy loại trừ giữa chuỗi / không có: không có chữ");
         }
 
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");

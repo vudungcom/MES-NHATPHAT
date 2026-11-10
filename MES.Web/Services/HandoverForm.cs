@@ -30,6 +30,8 @@ namespace MES.Web.Services
         public string? NgNc   { get; set; }
         /// <summary>Chiếc chưa làm (CHUA / GC chờ NC): tích "Lỗi công đoạn trước" + trả đúng nơi gây lỗi = 1 phiếu Hàng lỗi công đoạn trước.</summary>
         public bool    Unworked { get; set; }
+        /// <summary>[GC-LOI-TRUOC-NCDAU 2026-11-10] Dòng này được tích "Lỗi công đoạn trước" (Gia công, Workflow ON: chỉ hàng chưa gia công — xem GcPrevStageOk).</summary>
+        public bool    PrevOk { get; set; } = true;
         /// <summary>Đã làm xong NC cuối của Gia công (sửa đạt: làm lại NC cuối — câu chờ khách).</summary>
         public bool    IsLast { get; set; }
         /// <summary>Ô đang giữ theo vụ: LOI | SUA.</summary>
@@ -187,10 +189,12 @@ namespace MES.Web.Services
                 foreach (var s in G.Steps.Where(s => !s.IsExcluded && s.Waiting != null))
                 {
                     var cap = HandoverLedgerService.NgReportCap(row, "GC", HandoverNgSource.Chua, s.Code).Max;
+                    var unw = !row.ApplyWorkflow || GcPrevStageOk(row, s.Code);   // [GC-LOI-TRUOC-NCDAU] Workflow ON: chỉ hàng chưa gia công
                     list.Add(new FormPos { Id = "NC:" + s.Code, Label = GcStageText(chain, s.Code), Have = Pos0(cap),
-                                           Fresh = true, NgSource = HandoverNgSource.Chua, NgNc = s.Code, Unworked = true });
+                                           Fresh = true, NgSource = HandoverNgSource.Chua, NgNc = s.Code, Unworked = unw, PrevOk = unw });
                 }
-                list.Add(new FormPos { Id = "DA", Label = GcDoneText(chain), Have = Pos0(G.ConGiao), Fresh = true, NgSource = HandoverNgSource.Da, IsLast = true });
+                list.Add(new FormPos { Id = "DA", Label = GcDoneText(chain), Have = Pos0(G.ConGiao), Fresh = true, NgSource = HandoverNgSource.Da, IsLast = true,
+                                       PrevOk = !row.ApplyWorkflow });   // [GC-LOI-TRUOC-NCDAU] đã làm xong NC cuối: lỗi là của Gia công
             }
             else
             {
@@ -230,6 +234,83 @@ namespace MES.Web.Services
             => row.G("GC").Steps.Where(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Select(s => s.Code).ToList();
 
         static bool HasVao(LedgerRow row) => row.G("GC").Steps.Any(s => HandoverLedgerService.IsVao(s.Code));
+
+        // ================================================================
+        // [GC-LOI-TRUOC-NCDAU 2026-11-10] "Lỗi công đoạn trước" ở Gia công chỉ cho hàng CHƯA gia công.
+        //   Nguồn: KHÁCH 10/11 (vòng 1 hỏi tiếp, câu 5a: "hàng lỗi trả về bộ phận trước chỉ phát sinh ở NC đầu / chưa thực hiện cv … hàng đã GC
+        //   mà phát sinh lỗi thì là lỗi do BP tự làm ra → cần chọn NC phát sinh lỗi"); HÙNG 10/11 14:02 "khách chốt rồi … làm đi".
+        //   Dòng được tích = chờ NC thường đầu tiên của chuỗi (hoặc dòng "Nhận vào" @VAO khi NC đầu là máy loại trừ) và chờ NC ngay SAU máy loại trừ
+        //   (hàng làm hộ vừa trả về, Gia công chưa động vào — cùng nguyên tắc "chưa thực hiện cv"). Các NC khác / "đã làm xong NC cuối":
+        //   lỗi là của Gia công (đầu ra, ghi NG ở NC phát sinh). Chỉ Workflow ON (OFF họ tự kiểm soát — N7). Không đổi phép tính số.
+        // ================================================================
+        public const string GcPrevMsg = "Gia công: \"Lỗi công đoạn trước\" chỉ dùng cho hàng chưa gia công (chờ NC đầu, hoặc hàng làm hộ trả về chưa làm NC đó). "
+                                      + "Hàng đã qua NC mà lỗi là lỗi của Gia công — bỏ tích, báo lỗi ở NC phát sinh.";
+
+        /// <summary>[GC-LOI-TRUOC-NCDAU] Chờ NC <paramref name="nc"/> của Gia công là hàng chưa gia công: NC (không máy loại trừ) đầu tiên của chuỗi
+        ///   (gồm @VAO) hoặc NC đứng ngay sau 1 NC máy loại trừ. nc trống / không có trong chuỗi → false.</summary>
+        public static bool GcPrevStageOk(LedgerRow row, string? nc)
+        {
+            if (string.IsNullOrWhiteSpace(nc)) return false;
+            var steps = row.G("GC").Steps;
+            var i = steps.FindIndex(s => string.Equals(s.Code, nc.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (i < 0 || steps[i].IsExcluded) return false;
+            var firstNormal = steps.FindIndex(s => !s.IsExcluded);
+            return i == firstNormal || (i > 0 && steps[i - 1].IsExcluded);
+        }
+
+        // ================================================================
+        // [GN-NGUOC-CHAN 2026-11-10] Không giao ngược Hàng mới về bộ phận trước — giao ngược chỉ cho hàng lỗi.
+        //   Nguồn: KHÁCH 10/11 (vòng 1 hỏi lại, câu 5: "bộ phận sau giao ngược bộ phận trước thì chỉ có hàng lỗi mới trả ngược lại, chứ hàng mới
+        //   ko trả lại"); HÙNG 10/11 14:02. Thứ tự Kho → Gia công → HTSP → KCS → Đóng gói; Đóng gói → Kho (thành phẩm) không phải ngược.
+        //   Chỉ Workflow ON (N7). Trước: [GN-ROUTE-FREE] cho giao Hàng mới tới nhóm bất kỳ. Không đổi phép tính số.
+        // ================================================================
+        public static bool IsBackward(string from, string to)
+        {
+            if (from == "PKG" && to == "KHO") return false;
+            var o = HandoverLedgerService.GroupCodes;
+            int a = Array.IndexOf(o, from), b = Array.IndexOf(o, to);
+            return a >= 0 && b >= 0 && b < a;
+        }
+
+        public static string BackwardMsg(string from, string to)
+            => $"Không giao ngược Hàng mới: {HandoverLedgerService.GroupLabel(to)} đứng trước {HandoverLedgerService.GroupLabel(from)} — giao ngược chỉ dùng cho hàng lỗi "
+             + "(Lỗi công đoạn trước / gửi nhờ sửa / trả nơi gây lỗi).";
+
+        // ================================================================
+        // [KHO-NC-DAU 2026-11-10] Phôi Kho giao Gia công luôn vào NC đầu theo Part Master (không chọn NC khác).
+        //   Nguồn: KHÁCH 10/11 (vòng 1 câu 5 chọn A + hỏi lại câu 5 "Kho giao luôn là NC đầu"); HÙNG 10/11 14:02.
+        //   NC đầu = NC thường đầu tiên; NC đầu là máy loại trừ (có dòng @VAO) → không chọn NC (hàng tự nằm ở "Nhận vào").
+        //   Áp cho hàng "như hàng mới" (phôi, vụ của phôi / Kho / không rõ — CaseNextNc = null); hàng của vụ đã qua Gia công (CaseNextNc có NC)
+        //   giữ luật NC làm tiếp K2. Chỉ Workflow ON (N7). Không đổi phép tính số.
+        // ================================================================
+        public static bool KhoNcOk(LedgerRow row, string? toNc)
+        {
+            if (string.IsNullOrWhiteSpace(toNc)) return true;
+            if (HasVao(row)) return false;
+            var ncs = NormalNcs(row);
+            return ncs.Count > 0 && string.Equals(ncs[0], toNc.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string KhoNcMsg(LedgerRow row)
+            => "Kho giao phôi cho Gia công luôn vào NC đầu theo Part Master"
+             + (HasVao(row) ? $" (NC đầu là máy loại trừ: hàng vào \"{HandoverLedgerService.VaoLabel}\")" : NormalNcs(row) is { Count: > 0 } n ? $" ({Nc(n[0])})" : "")
+             + " — không chọn NC khác.";
+
+        // ================================================================
+        // [GC-HTSP-NC-HIEN 2026-11-10] Gia công xong (NC thường cuối) mà sau đó còn NC máy loại trừ (Taro làm ở HTSP như việc thường — câu 4):
+        //   phiếu Gia công → HTSP hiện "để làm NC5 (Taro)". Chỉ hiển thị, không lưu, không đổi phép tính số.
+        //   Nguồn: KHÁCH 10/11 (vòng 1 hỏi tiếp, câu 5b chọn B); HÙNG 10/11 14:02.
+        // ================================================================
+        public static string? TailExclText(LedgerRow row)
+        {
+            var steps = row.G("GC").Steps;
+            var lastNormal = steps.FindLastIndex(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
+            if (lastNormal < 0) return null;
+            var tail = steps.Skip(lastNormal + 1).Where(s => s.IsExcluded).Select(s => Nc(s.Code)).ToList();
+            if (tail.Count == 0) return null;
+            var taro = row.G("HTSP").Steps.Any(s => s.Pg == "TARO" && !s.IsPrep);   // rà độc lập Gói 13 Thấp 4: PO cũ không có dòng Taro → không ghi "(Taro)"
+            return $"để làm {string.Join(", ", tail)}" + (taro ? " (Taro)" : "");
+        }
 
         /// <summary>Vị trí trên chuỗi: null (như hàng mới) = trước NC đầu (có @VAO) hoặc = NC đầu (không có @VAO).</summary>
         static int NcIdx(LedgerRow row, List<string> ncs, string? code)

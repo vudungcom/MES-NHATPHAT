@@ -3687,6 +3687,16 @@ else
         if (_canEditC) { CheckNcList(_taroEdits, "Taro", validationErrors, t => string.IsNullOrWhiteSpace(t.WtsTaskCode) ? t.NC : t.WtsTaskCode, t => t.NC); CheckTaroSwap(_taroEdits, validationErrors); CheckNcList(_baviaEdits, "Bavia", validationErrors); CheckNcList(_washingEdits, "Rửa", validationErrors); }   // [TARO-DOI-CHEO-NC] + đổi chéo theo (mã, NC)
         if (_canEditD) CheckNcList(_inspectionEdits, "KCS", validationErrors);
         if (_canEditE) CheckNcList(_packagingEdits, "Đóng gói", validationErrors);
+        // [PM-LOAITRU-TARO 2026-11-10] "Lưu & Xác nhận OK": NC dùng máy loại trừ phải có dòng Taro cùng NC (Lưu nháp vẫn được — khách 10/11 câu 3.2).
+        //   Xét theo dữ liệu đang hiện (B + C.1, bỏ dòng đã xoá / dự phòng); Kế hoạch cũng kiểm lại ở máy chủ (KhPlanService). Nguồn: KHÁCH 10/11 câu 3.2 (A).
+        if (!isDraft && (_canEditB || _canEditC))
+        {
+            var missTaro = PartStepGuard.ExcludedNcMissingTaro(
+                _machiningEdits.Where(e => e.State != EditState.Deleted && !e.IsBackup).Select(e => (e.NC, e.MachineRegistered)),
+                _excludeSettings.Select(x => x.SoMay),
+                _taroEdits.Where(t => t.State != EditState.Deleted && !t.IsBackup).Select(t => ((string?)t.NC, t.WtsTaskCode)));
+            if (missTaro.Count > 0) validationErrors.Add(PartStepGuard.ExcludedNcMissingTaroMsg(missTaro));
+        }
         if (validationErrors.Count > 0)
         {
             _saveResult = "⚠️ Không thể lưu — giá trị không hợp lệ:\n" + string.Join("\n", validationErrors);
