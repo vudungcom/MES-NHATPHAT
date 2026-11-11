@@ -214,16 +214,18 @@ public static class FormScen
             await Check(db, "F3 nhận");
         }
 
-        Console.WriteLine("[F4] K2 sửa tại nhóm: hàng sửa đạt làm tiếp đúng NC của vụ; chỉ lùi NC trước + lý do; NC sau bị chặn (máy chủ kiểm)");
+        Console.WriteLine("[F4] K2 sửa tại nhóm: hàng sửa đạt làm tiếp đúng NC của vụ; [SUA-KHONG-LUI] Workflow ON không lùi NC trước (OFF lùi + lý do như cũ); NC sau bị chặn (máy chủ kiểm)");
         {
             var b = FormHelp.Docs(db, 1);
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, fail: 0, ncNext: "NC3", cat: 4), "GC lỗi chưa làm NC2, sửa đạt làm tiếp NC3 (bỏ qua NC2)", false, "không bỏ qua NC");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, fail: 0, ncNext: "NC1", cat: 4), "Làm lại từ NC1 không lý do", false, "lý do");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, fail: 0, ncNext: "NC1", ncReason: "ab", cat: 4), "Làm lại từ NC1 lý do 2 ký tự", false, "lý do");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, fail: 0, ncNext: "NC1", cat: 4), "[SUA-KHONG-LUI] Làm lại từ NC1 không lý do (Workflow ON)", false, "Không làm lại NC");   // đổi 10/11 theo khách 2.2 A (trước: "lý do")
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, fail: 0, ncNext: "NC1", ncReason: "ab", cat: 4), "[SUA-KHONG-LUI] Làm lại từ NC1 lý do 2 ký tự (Workflow ON)", false, "Không làm lại NC");
             Ok(FormHelp.Docs(db, 1) == b, "3 lần bị chặn: báo lỗi của lần đó cũng không ghi (không ghi dở)");
             var ex = HandoverForm.NcOptions(await Row(db), "NC2");
-            Ok(ex.Count == 2 && ex[0].Code == "NC2" && ex[0].Default && ex[1].Code == "NC1" && ex[1].Earlier, "Lựa chọn NC làm tiếp (vụ NC2): NC2 mặc định, NC1 làm lại — không có NC3",
+            Ok(ex.Count == 2 && ex[0].Code == "NC2" && ex[0].Default && ex[1].Code == "NC1" && ex[1].Earlier, "Lựa chọn NC làm tiếp (vụ NC2, Workflow OFF): NC2 mặc định, NC1 làm lại — không có NC3",
                string.Join(" | ", ex.Select(o => o.Code + ":" + o.Label)));
+            var exOn = HandoverForm.NcOptions(await Row(db), "NC2", allowEarlier: false);   // [SUA-KHONG-LUI]
+            Ok(exOn.Count == 1 && exOn[0].Code == "NC2" && exOn[0].Default, "[SUA-KHONG-LUI] Workflow ON: chỉ NC2 (mặc định), không có làm lại NC1", string.Join(" | ", exOn.Select(o => o.Code + ":" + o.Label)));
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 2, fail: 1, cat: 4), "GC lỗi đầu ra 3 chiếc chưa làm NC2 → sửa đạt 2, không đạt 1 (NC mặc định)");
             var k = db.HandoverRepairResults.List.Last();
             Ok(k.ToNC == "NC2" && k.QtyPass == 2 && k.QtyFail == 0 && k.SourceCell == HandoverCell.Loi, "Kết quả sửa: đạt 2 làm tiếp NC2 (mặc định = NC của vụ), không đạt ở lại Tồn hàng lỗi", $"{k.ToNC} {k.QtyPass}/{k.QtyFail}");
@@ -231,24 +233,27 @@ public static class FormScen
             await svc.ConfirmRepairAsync(k.HandoverRepairResultId, 2, 0, null, Kcs);
             var r = await Check(db, "F4 KCS xác nhận");
             Ok(r.G("GC").Steps.First(s => s.Code == "NC2").Waiting == w0 + 2, "KCS đạt → chờ NC2 +2 (làm tiếp đúng NC kế)");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, ncNext: "NC1", ncReason: "lam lai vat", cat: 4), "Làm lại từ NC1 có lý do");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, ncNext: "NC1", ncReason: "lam lai vat", cat: 4), "[SUA-KHONG-LUI] Làm lại từ NC1 có lý do (Workflow ON)", false, "Không làm lại NC");
+            WorkflowSet(db, false);   // [SUA-KHONG-LUI] chỉ còn khi Workflow OFF (họ tự kiểm soát)
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, ncNext: "NC1", ncReason: "lam lai vat", cat: 4), "Workflow OFF: làm lại từ NC1 có lý do");
+            WorkflowSet(db, true);
             var k2 = db.HandoverRepairResults.List.Last();
             Ok(k2.ToNC == "NC1" && (k2.Notes ?? "").Contains("Làm lại từ NC1") && (k2.Notes ?? "").Contains("lam lai vat"), "Lưu NC1 + lý do vào Ghi chú (truy vết)", k2.Notes);
             var oldApi = await svc.CreateRepairResultAsync(1, "GC", HandoverCell.Loi, db.HandoverNgReports.List.Last(b0 => b0.NC == "NC2").NgCaseId, 1, 0, "NC3", null, Gc);
             Ok(!oldApi.Ok && oldApi.Error.Contains("không bỏ qua NC"), "Hàm cũ CreateRepairResultAsync cũng kiểm luật NC (máy chủ, không tin trang)", oldApi.Error);
         }
 
-        Console.WriteLine("[F5] (d) vụ phát hiện sau Gia công → làm lại NC cuối; vụ phôi Kho → như hàng mới; Tồn hàng lỗi / sửa theo vụ");
+        Console.WriteLine("[F5] (d) vụ phát hiện sau Gia công → [SUA-XL-GIU] không làm lại NC (dấu @XONG); vụ phôi Kho → như hàng mới; Tồn hàng lỗi / sửa theo vụ");
         {
             // HTSP phát hiện lỗi do GC trên 1 chiếc chưa làm → trả GC (1 phiếu); GC nhận ô Hàng lỗi
             await Save(db, Req("HTSP", Htsp, HandoverForm.Loi, "CHUA", HandoverForm.AGiao, 1, "GC", HandoverForm.PTra, prev: true, cause: "GC", cat: 5), "HTSP: 1 chiếc chưa làm lỗi do GC → trả GC");
             await svc.ReceiveAsync(LastTx(db), 0, 1, null, Gc);
             var vuH = db.NgCases.List.Last().NgCaseId;
             Ok(FormHelp.ExpectNextNc(db, 1, vuH) == "NC3" && HandoverForm.CaseNextNc(await Row(db), vuH) == "NC3", "Vụ phát hiện ở HTSP: NC làm tiếp mặc định = NC cuối NC3 (d)");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vuH, pass: 1, ncNext: HandoverService.FormNewNc), "Như hàng mới (làm lại từ đầu) không lý do", false, "lý do");
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vuH, pass: 1, ncNext: HandoverService.FormNewNc), "[SUA-KHONG-LUI] Như hàng mới (làm lại từ đầu) — Workflow ON bị chặn", false, "Không làm lại NC");   // đổi 10/11 (trước: "lý do")
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vuH, pass: 1, fail: 1), "Tồn hàng lỗi: ghi không đạt", false, "chỉ ghi số đạt");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vuH, pass: 1), "GC sửa tại nhóm 1 chiếc của vụ HTSP (mặc định NC3)");
-            Ok(db.HandoverRepairResults.List.Last().ToNC == "NC3", "Kết quả sửa làm tiếp NC3");
+            Ok(db.HandoverRepairResults.List.Last().ToNC == HandoverLedgerService.RepXong, "[SUA-XL-GIU] Kết quả sửa vụ HTSP phát hiện: không làm lại NC (dấu @XONG; trước: làm lại NC3)", db.HandoverRepairResults.List.Last().ToNC);
             // Kho: phôi khách lỗi sẵn → gửi GC nhờ sửa (Kho chỉ có Gửi nhờ sửa); GC nhận ô Hàng sửa → sửa: như hàng mới
             await Save(db, Req("KHO", Kho, HandoverForm.Loi, "PHOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, prev: true, cat: 1), "Kho: 1 phôi lỗi có sẵn (phôi khách) → gửi GC nhờ sửa");
             var vk = db.NgCases.List.Last();
@@ -257,6 +262,25 @@ public static class FormScen
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASua, caseId: vk.NgCaseId, pass: 1, ncNext: "NC2", ncReason: "xx x"), "Phôi Kho gửi sửa: làm tiếp NC2 (sau \"như hàng mới\")", false, "không bỏ qua NC");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASua, caseId: vk.NgCaseId, pass: 1), "GC sửa phôi Kho gửi: như hàng mới (mặc định)");
             Ok(db.HandoverRepairResults.List.Last().ToNC == null && db.HandoverRepairResults.List.Last().SourceCell == HandoverCell.Sua, "Kết quả sửa ô Hàng sửa, NC làm tiếp = như hàng mới");
+        }
+
+        Console.WriteLine("[F22] [SUA-OFF-LUI] Workflow OFF: đích hàng sửa đạt là dấu nhưng form vẫn cho chọn làm lại NC (như cũ); mặc định = không làm lại NC (rà độc lập Gói 15 T2)");
+        {
+            await Save(db, Req("HTSP", Htsp, HandoverForm.Loi, "CHUA", HandoverForm.AGiao, 2, "GC", HandoverForm.PTra, prev: true, cause: "GC", cat: 5), "HTSP: 2 chiếc chưa làm lỗi do GC → trả GC");
+            await svc.ReceiveAsync(LastTx(db), 0, 2, null, Gc);
+            var vO = db.NgCases.List.Last().NgCaseId;
+            WorkflowSet(db, false);
+            var rO = await Row(db);
+            var oldDef = HandoverForm.CaseNextNc(rO, vO, "GC");
+            var opts = HandoverForm.OffMarkOptions(rO, oldDef);
+            Ok(HandoverForm.RepairTarget(rO, vO, "GC") == HandoverLedgerService.RepXong && opts.Count >= 2 && opts[0].Default && opts[0].Code == null
+               && opts.Any(o => o.Code == "NC3" && !o.Default && !o.Earlier) && opts.Any(o => o.Code == "NC1" && o.Earlier),
+               "OFF: ô chọn = 'Không làm lại NC (mặc định)' + 'Làm lại NC3 (như trước)' + 'Làm lại từ NC1 (ghi lý do)'", string.Join(" | ", opts.Select(o => o.Label)));
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vO, pass: 1, ncNext: "NC3"), "OFF: chọn làm lại NC3 (như trước Gói 15) lưu được");
+            Ok(db.HandoverRepairResults.List.Last().ToNC == "NC3", "OFF: Kết quả sửa ToNC NC3 (chứng từ kiểu cũ)", db.HandoverRepairResults.List.Last().ToNC);
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, caseId: vO, pass: 1), "OFF: để mặc định → không làm lại NC");
+            Ok(db.HandoverRepairResults.List.Last().ToNC == HandoverLedgerService.RepXong, "OFF mặc định: dấu @XONG", db.HandoverRepairResults.List.Last().ToNC);
+            WorkflowSet(db, true);
         }
 
         Console.WriteLine("[F6] Chỉ báo lỗi giữ lại · Huỷ · Trả khách (lỗi mới và Tồn hàng lỗi)");
@@ -387,9 +411,13 @@ public static class FormScen
                        "V3: HTSP giao 1 chiếc của vụ vào Gia công ô Hàng lỗi đã xử lý (mặc định)");
             Ok(d5.HandoverTransactions.List.Last().ToNC == "NC3", "V3: phiếu mang NC3 theo vụ (trước: không NC → nhận vào như hàng mới)", d5.HandoverTransactions.List.Last().ToNC);
             await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1"),
-                       "V3: lùi NC1 không lý do", false, "lý do");
+                       "[SUA-KHONG-LUI] V3: lùi NC1 không lý do (Workflow ON)", false, "Không làm lại NC");
             await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1", ncReason: "ren hong lam lai"),
-                       "V3: lùi NC1 có lý do");
+                       "[SUA-KHONG-LUI] V3: lùi NC1 có lý do (Workflow ON)", false, "Không làm lại NC");
+            WorkflowSet(d5, false);   // [SUA-KHONG-LUI] lùi NC chỉ còn khi Workflow OFF
+            await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1", ncReason: "ren hong lam lai"),
+                       "V3: Workflow OFF lùi NC1 có lý do");
+            WorkflowSet(d5, true);
             var t5 = d5.HandoverTransactions.List.Last();
             Ok(t5.ToNC == "NC1" && (t5.Notes ?? "").Contains("ren hong lam lai"), "V3: phiếu mang NC1, lý do vào Ghi chú", t5.ToNC + " · " + t5.Notes);
             await s5.ReceiveAsync(LastTx(d5) - 1, 1, 0, null, Gc);
@@ -408,7 +436,7 @@ public static class FormScen
             Ok(vuB.DetectGroupCode == "GC" && string.IsNullOrEmpty(vuB.DetectNC) && HandoverForm.CaseNextNc(r, vuB.NgCaseId) == "NC3" && FormHelp.ExpectNextNc(d5, 1, vuB.NgCaseId) == "NC3",
                "V2: vụ Gia công nhận lỗi từ HTSP (không NC) → mặc định NC3 (trước: như hàng mới)", $"{vuB.DetectGroupCode} {vuB.DetectNC} do {vuB.CauseGroupCode} → {HandoverForm.CaseNextNc(r, vuB.NgCaseId)}");
             await Save(d5, Req("GC", Gc, HandoverForm.Loi, "TONLOI", HandoverForm.ASua, pass: 1, caseId: vuB.NgCaseId), "V2: Gia công sửa đạt 1 (mặc định)");
-            Ok(d5.HandoverRepairResults.List.Last().ToNC == "NC3", "V2: Kết quả sửa làm tiếp NC3");
+            Ok(d5.HandoverRepairResults.List.Last().ToNC == HandoverLedgerService.RepXong, "[SUA-XL-GIU] V2: Kết quả sửa không làm lại NC (dấu @XONG — Gia công là nơi phát hiện, đã xong chiếc; trước: NC3)", d5.HandoverRepairResults.List.Last().ToNC);
 
             // V1 — PO máy loại trừ giữa chuỗi: vụ sinh lúc HTSP nhận hàng Gia công giao theo NC từ NC1
             var d6 = Seed("mid"); var s6 = new HandoverService(d6);

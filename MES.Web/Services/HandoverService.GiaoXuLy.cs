@@ -123,6 +123,20 @@ namespace MES.Web.Services
             string? toCellOpt = string.IsNullOrWhiteSpace(r.ToCell) ? null : r.ToCell.Trim();
             const string BadAct = "Việc chọn ở bước 3 không hợp lệ với dòng hàng đã chọn — chọn lại.";
 
+            // ── [SUA-XL-GIU][XL-TRA-LAI 2026-11-10] Hàng đã sửa đang giữ ở Tồn hàng lỗi đã xử lý (theo vụ) ──
+            //   Hàng tốt → trả tiếp về nơi phát hiện (ô Hàng lỗi đã xử lý); Hàng lỗi (hỏng lại khi làm lại) → trả lại ô Hàng lỗi, cùng vụ.
+            //   Nguồn: KHÁCH 10/11 vòng 1 (docx câu 2, hỏi tiếp 2.1 A); HÙNG 10/11 19:22 OK thiết kế Gói 15.
+            if (pos.HeldCell == HandoverCell.Xl)
+            {
+                if (act != HandoverForm.AGiao) return (false, BadAct);
+                if (r.Qty <= 0) return (false, "Số lượng phải lớn hơn 0.");
+                if (r.CaseId is not long xv || xv <= 0 || !before.Cases.ContainsKey(xv))
+                    return (false, $"Chọn {NgCaseNo.Term} của hàng đã sửa (bước 2).");
+                if (to == null) return (false, "Chọn nhóm nhận.");
+                var xtc = r.Kind == HandoverForm.Tot ? HandoverCell.Xl : HandoverCell.Loi;
+                return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.RepairReturn, null, null, notes, null, HandoverCell.Xl, xtc, null, xv, ftx);
+            }
+
             // ── Hàng tốt ─────────────────────────────────────────────────────
             if (r.Kind == HandoverForm.Tot)
             {
@@ -266,7 +280,7 @@ namespace MES.Web.Services
                 return (null, raw == FormNewNc ? null : raw, notes);
             var def = HandoverForm.CaseNextNc(now, caseKey, r.Group);   // [GN-FORM1] vòng 2 C1: vụ 0 theo nhóm giữ
             var chosen = raw == null ? def : raw == FormNewNc ? null : raw;
-            var (err, add) = HandoverForm.CheckNextNc(now, def, chosen, r.NcReason, free: caseKey == 0);   // [GN-FORM1] vòng 3 C1b
+            var (err, add) = HandoverForm.CheckNextNc(now, def, chosen, r.NcReason, free: caseKey == 0, allowEarlier: !now.ApplyWorkflow);   // [GN-FORM1] vòng 3 C1b · [SUA-KHONG-LUI] ON: không làm lại NC trước
             if (err != null) return (err, null, notes);
             if (add != null) { notes = notes == null ? add : add + " | " + notes; if (notes.Length > 500) notes = notes[..500]; }
             return (null, chosen, notes);
@@ -282,7 +296,7 @@ namespace MES.Web.Services
                 else if (string.IsNullOrWhiteSpace(r.NcNext))
                 {
                     var now = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(r.KhPlanDetailId);   // sổ sau bước báo lỗi (vụ vừa sinh đã có)
-                    toNc = now == null ? null : HandoverForm.CaseNextNc(now, cs ?? 0, g);
+                    toNc = now == null ? null : HandoverForm.RepairTarget(now, cs ?? 0, g);   // [SUA-XL-GIU][SUA-OK-NC] đích theo vụ (dấu / NC); trước: CaseNextNc
                 }
                 else toNc = r.NcNext.Trim();
             }

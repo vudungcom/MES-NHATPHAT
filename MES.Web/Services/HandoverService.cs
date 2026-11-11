@@ -637,8 +637,10 @@ namespace MES.Web.Services
             }
             else if (!takesCase) ngCaseId = null;
             // [GN-CELL] Ô giao phải khớp loại phiếu (chặn gọi sai từ code)
-            if (fromCell != null && !HandoverCell.IssueCells.Contains(fromCell))
+            if (fromCell != null && !HandoverCell.IssueCellsXl.Contains(fromCell))   // [SUA-XL-GIU] + ô Hàng lỗi đã xử lý (chỉ phiếu Trả hàng đã sửa — kiểm ngay dưới)
                 return (false, "Phân loại hàng không hợp lệ."); // [GN-PLH] mục 36
+            if (fromCell == HandoverCell.Xl && toCell is not (HandoverCell.Xl or HandoverCell.Loi))   // [SUA-XL-GIU][XL-TRA-LAI]
+                return (false, "Hàng đã sửa (ô Hàng lỗi đã xử lý) chỉ giao vào ô Hàng lỗi đã xử lý (trả tiếp nơi phát hiện) hoặc trả lại vào ô Hàng lỗi.");
             if (fromCell != null && HandoverCell.IssueCellOf(purpose, fromCell) != fromCell)
                 return (false, $"Ô {HandoverCell.Label(fromCell)} không giao được theo kiểu {HandoverPurpose.Label(purpose)}.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
@@ -731,6 +733,16 @@ namespace MES.Web.Services
             //   Nguồn: CLAUDE (kiem trạm Gói 9 seed 23980 PO19, sổ dòng LAMHO-NHO-SUA); Hùng 08/11 11:24 OK Gói 10.
             if (row.ApplyWorkflow && takesCase && ngCaseId is long lhId2 && row.Cases.TryGetValue(lhId2, out var lhCase2) && lhCase2.IsLamHo && toGroupCode != "GC" && toCell == HandoverCell.Sua)   // [LAMHO-OFF] chỉ ON
                 return (false, LamHoNhoSuaMsg(lhId2, toGroupCode, lhCase2.LamHoTen));   // [LAMHO-NHAN-NG] chữ theo loại vụ
+            // [XL-VUOT-CHAN 2026-11-10] Workflow ON: hàng đã sửa chỉ giao xuôi về nơi phát hiện (nhóm nhận sau nhóm giữ, không sau nơi phát hiện).
+            //   Nguồn: KHÁCH 10/11 (docx câu 2 "trả bộ phận báo lỗi"; hỏi tiếp 2.1 A); HÙNG 10/11 19:22. OFF: lưu được (sổ tính như hàng đã xử lý thường).
+            if (row.ApplyWorkflow && fromCell == HandoverCell.Xl && toCell == HandoverCell.Xl && ngCaseId is long xvu && row.Cases.TryGetValue(xvu, out var xCase)
+                && !HandoverForm.XlToOk(fromGroupCode, toGroupCode, xCase.DetectGroup, row))   // [XL-HTSP-LAMHO] + PO HTSP chỉ làm hộ
+                return (false, HandoverForm.XlToMsg(xCase.DetectGroup, toGroupCode, row));
+            // [XL-TRA-NHOMSUA 2026-11-10] Workflow ON: hàng đã sửa bị hỏng lại (ô XL → ô Hàng lỗi) chỉ trả lại nhóm đã sửa (cùng vụ). OFF: lưu được.
+            //   Nguồn: KHÁCH 10/11 2.1 ("hỏng thì trả lại Gia công"); CLAUDE (rà độc lập Gói 15 Thấp 1).
+            if (row.ApplyWorkflow && fromCell == HandoverCell.Xl && toCell == HandoverCell.Loi && ngCaseId is long xtl && row.Cases.TryGetValue(xtl, out var xtlCase)
+                && HandoverForm.XlTraLaiGroups(xtlCase, fromGroupCode) is { Count: > 0 } xrg && !xrg.Contains(toGroupCode))
+                return (false, $"Hàng đã sửa bị hỏng lại chỉ trả lại ô Hàng lỗi của nhóm đã sửa ({string.Join(" / ", xrg.Select(HandoverLedgerService.GroupLabel))}), cùng vụ.");
             var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId, toNC);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ; [TARO-LAMHO-NC] + NC nhận (câu 1)
             if (qtyIssued > max)
                 return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể giao {qtyIssued:0.##}.");
@@ -944,7 +956,7 @@ namespace MES.Web.Services
                 return (false, "PO này HTSP chỉ làm Taro làm hộ (giao theo NC), không có công đoạn HTSP của mình — không nhận vào ô Hàng mới / Hàng lỗi đã xử lý.");
             var txFromCell = before != null && before.TxFromCell.TryGetValue(handoverTxId, out var tfc) ? tfc : null;
             bool autoTx  = txHead.SourceReceiveId != null;
-            bool carryTx = !autoTx && txFromCell is HandoverCell.Loi or HandoverCell.Sua;
+            bool carryTx = !autoTx && txFromCell is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;   // [SUA-XL-GIU] phiếu hàng đã sửa mang vụ
             // [TARO-LAMHO-NC] (rà vòng 3 T2) vụ hàng Taro làm hộ bị lỗi chỉ vào ô hàng đạt ở Gia công
             if (before != null && before.ApplyWorkflow && carryTx && tx.ToGroupCode != "GC" && effCell is HandoverCell.Moi or HandoverCell.Xl   // [LAMHO-OFF] chỉ ON
                 && tx.NgCaseId is long rlh && before.Cases.TryGetValue(rlh, out var rlhC) && rlhC.IsLamHo)
@@ -1087,7 +1099,7 @@ namespace MES.Web.Services
             // [KHO-NC-DAU 2026-11-10] Workflow ON: hàng Kho gửi (như hàng mới) nhận vào Gia công chỉ ở NC đầu (cả khi bên nhận đổi ô)
             if (before!.ApplyWorkflow && tx.FromGroupCode == "KHO" && def == null && chosen != null && !HandoverForm.KhoNcOk(before, chosen))
                 return (HandoverForm.KhoNcMsg(before), null, null);
-            var (err, add) = HandoverForm.CheckNextNc(before!, def, chosen, reason, free: caseKey == 0);
+            var (err, add) = HandoverForm.CheckNextNc(before!, def, chosen, reason, free: caseKey == 0, allowEarlier: !before!.ApplyWorkflow);   // [SUA-KHONG-LUI] ON: không làm lại NC trước
             if (err != null) return (err, null, null);
             return (null, chosen, add);
         }

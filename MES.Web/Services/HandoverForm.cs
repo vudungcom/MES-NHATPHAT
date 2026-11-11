@@ -34,7 +34,7 @@ namespace MES.Web.Services
         public bool    PrevOk { get; set; } = true;
         /// <summary>Đã làm xong NC cuối của Gia công (sửa đạt: làm lại NC cuối — câu chờ khách).</summary>
         public bool    IsLast { get; set; }
-        /// <summary>Ô đang giữ theo vụ: LOI | SUA.</summary>
+        /// <summary>Ô đang giữ theo vụ: LOI | SUA | XL ([SUA-XL-GIU] hàng đã sửa chờ trả nơi phát hiện).</summary>
         public string? HeldCell { get; set; }
         /// <summary>Hàng tốt: giao theo NC (làm hộ) từ NC này.</summary>
         public string? HelpFrom { get; set; }
@@ -133,6 +133,8 @@ namespace MES.Web.Services
         public const string TonSuaText = "Đang ở Tồn hàng sửa (nhóm khác gửi nhờ sửa)";
         public const string LamHoText  = "Đang giữ hàng Gia công giao theo NC (làm hộ)";
         public const string LamHoLoiText = "Hàng làm hộ bị lỗi (Taro làm hộ NG, đã có vụ)";   // [TARO-LAMHO-NC]
+        public const string TonXlText   = "Hàng đã sửa — chờ trả nơi phát hiện lỗi";          // [SUA-XL-GIU]
+        public const string TonXlLoiText = "Hàng đã sửa bị hỏng lại (đang giữ chờ trả)";       // [XL-TRA-LAI]
 
         static decimal Pos0(decimal v) => Math.Max(0, v);
 
@@ -177,6 +179,9 @@ namespace MES.Web.Services
                     list.Add(new FormPos { Id = "LAMHO", Label = LamHoText, Sub = "trả về Gia công, chọn NC nhận vào" + (defNc != null ? $" (Taro làm hộ xong bộ → {HandoverLedgerService.NcName(defNc)})" : ""),
                                            Have = Pos0(cap), LamHo = true });
                 }
+                if (G.XlGiu != 0)   // [SUA-XL-GIU] hàng đã sửa (KCS xác nhận) giữ vụ → giao tiếp về nơi phát hiện, vào ô Hàng lỗi đã xử lý
+                    list.Add(new FormPos { Id = "TONXL", Label = TonXlText, Sub = "không ghi WTS số lượng — giao về nơi phát hiện (hoặc nhóm cần làm lại công đoạn trước đó)",
+                                           Have = Pos0(G.XlGiu), HeldCell = HandoverCell.Xl });
                 return list;
             }
 
@@ -205,6 +210,8 @@ namespace MES.Web.Services
             }
             list.Add(new FormPos { Id = "TONLOI", Label = TonLoiText, Have = Pos0(G.LoiGiu), HeldCell = HandoverCell.Loi });
             list.Add(new FormPos { Id = "TONSUA", Label = TonSuaText, Have = Pos0(G.SuaGiu), HeldCell = HandoverCell.Sua });
+            if (G.XlGiu != 0)   // [XL-TRA-LAI] hàng đã sửa bị hỏng lại khi làm lại công đoạn: trả lại vào ô Hàng lỗi (cùng vụ) để sửa lại
+                list.Add(new FormPos { Id = "TONXL", Label = TonXlLoiText, Sub = "trả lại vào ô Hàng lỗi của nhóm sửa (cùng vụ)", Have = Pos0(G.XlGiu), HeldCell = HandoverCell.Xl });
             // [TARO-LAMHO-NC] chiếc làm hộ bị lỗi (vụ do nhóm làm hộ gây) nằm trong Tồn hàng giao theo NC → trả Gia công vào ô Hàng lỗi
             var lhNg = row.LamHoNgHeld(group);
             if (group != "GC" && lhNg != 0)
@@ -384,9 +391,86 @@ namespace MES.Web.Services
             }
         }
 
+        // ================================================================
+        // [SUA-XL-GIU 2026-11-10] ĐÍCH HÀNG SỬA ĐẠT (Kết quả sửa) — khách: sửa xong không quay lại NC, nhóm đã làm xong chiếc thì nhận là đã làm.
+        //   Nguồn: KHÁCH 10/11 vòng 1 (docx câu 2, hỏi lại 2.2 A, hỏi tiếp 2.1 A "mọi trường hợp sửa đều không quay lại NC"); HÙNG 10/11 19:22.
+        //   Trả: RepXong (nhóm sửa đã làm xong chiếc trước lúc phát hiện) · RepOk (Gia công làm hỏng ở NC k — [SUA-OK-NC]) · NC (Gia công: chờ NC đó, như K2)
+        //   · null (như hàng mới / nhóm khác: như cũ). Vụ làm hộ / hàng cũ chưa mã vụ / phát hiện ở Kho (N9 chưa chốt): như cũ.
+        // ================================================================
+        public static string? RepairTarget(LedgerRow row, long caseId, string group)
+        {
+            if (caseId <= 0 || !row.Cases.TryGetValue(caseId, out var cs) || cs.IsLamHo || !string.IsNullOrEmpty(cs.HelpFromNc))
+                return group == "GC" ? CaseNextNc(row, caseId, group) : null;
+            return RepairTarget(row, group, cs.DetectGroup, cs.DetectNc, cs.Origin, cs.Cause, cs.FromDa)
+                   ?? (group == "GC" ? CaseNextNc(row, caseId, group) : null);
+        }
+
+        /// <summary>[SUA-XL-GIU] Như trên cho vụ vừa sinh trong cùng lần lưu (báo lỗi trên form): null = theo luật NC cũ (CaseNextNc).</summary>
+        public static string? RepairTarget(LedgerRow row, string group, string? detectGroup, string? detectNc, string? origin, string? cause, bool fromDa)
+        {
+            int x = HandoverLedgerService.ProdIdx(group), d = HandoverLedgerService.ProdIdx(detectGroup);
+            if (x < 0 || d < 0) return null;   // Kho sửa / phát hiện ở Kho: như cũ
+            if (group == "GC")
+            {
+                if (NormalNcs(row).Count == 0) return null;
+                if (d > 1 || (d == 1 && string.IsNullOrWhiteSpace(detectNc) && (origin == NgOrigin.BaoLoi || cause is "HTSP" or "KCS" or "PKG")))
+                    return HandoverLedgerService.RepXong;   // chiếc đã xong Gia công (phát hiện sau Gia công / ở "đã làm xong NC cuối")
+                if (d == 1 && origin == NgOrigin.Wts && !string.IsNullOrWhiteSpace(detectNc)
+                    && NormalNcs(row).Any(c => string.Equals(c, MainNc(row, detectNc.Trim()), StringComparison.OrdinalIgnoreCase)))
+                    return HandoverLedgerService.RepOk;     // [SUA-OK-NC] làm hỏng ở NC k: sửa đạt = xong NC k
+                return null;
+            }
+            return x < d || (x == d && fromDa) ? HandoverLedgerService.RepXong : null;
+        }
+
+        /// <summary>[SUA-XL-GIU] Chữ cho người dùng: hàng sửa đạt (KCS xác nhận) đi đâu.</summary>
+        public static string RepairTargetText(LedgerRow row, string group, string? target, string? detectGroup)
+        {
+            if (target == HandoverLedgerService.RepOk) return "Sửa đạt (KCS xác nhận) tính là xong NC của chiếc lỗi — không ghi WTS lại, giờ sửa ghi \"Việc không làm ra SP\".";
+            if (target != HandoverLedgerService.RepXong) return "";
+            if (detectGroup == group)
+                return $"Sửa đạt (KCS xác nhận) tính là {HandoverLedgerService.GroupLabel(group)} đã làm xong — không làm lại công đoạn, không ghi WTS số lượng.";
+            return $"Sửa đạt (KCS xác nhận) vào Tồn hàng lỗi đã xử lý của {HandoverLedgerService.GroupLabel(group)} — không làm lại công đoạn; sau đó giao về nơi phát hiện ({HandoverLedgerService.GroupLabel(detectGroup)}).";
+        }
+
+        // ================================================================
+        // [XL-VUOT-CHAN 2026-11-10] Hàng đã sửa (ô Hàng lỗi đã xử lý) chỉ giao xuôi về nơi phát hiện: nhóm nhận đứng sau nhóm giữ và không sau nơi phát hiện.
+        //   Nguồn: KHÁCH 10/11 (docx câu 2 "sửa xong trả bộ phận báo lỗi"; hỏi tiếp 2.1 A "Gia công chọn giao sang HTSP hoặc giao thẳng KCS"); HÙNG 10/11 19:22.
+        //   Chỉ Workflow ON (OFF: sổ tính như hàng đã xử lý thường — vào Chưa làm bên nhận). Không đổi phép tính số.
+        // ================================================================
+        public static bool XlToOk(string from, string to, string? detectGroup, LedgerRow? row = null)
+        {
+            int f = HandoverLedgerService.ProdIdx(from), t = HandoverLedgerService.ProdIdx(to), d = HandoverLedgerService.ProdIdx(detectGroup);
+            return f > 0 && t > f && d > 0 && t <= d && !XlHtspLamHo(to, row);
+        }
+
+        /// <summary>[XL-TRA-LAI] Nhóm đã sửa chiếc của vụ (chặng Kết quả sửa gần nhất; không có thì nơi gây lỗi) — mặc định nơi trả lại hàng đã sửa bị hỏng lại.</summary>
+        public static string? XlRepairGroup(LedgerCase c)
+            => c.Hops.LastOrDefault(h => h.Kind == "SUA")?.Group is string g && g != "" ? g : (c.Cause is string cg && HandoverLedgerService.GroupCodes.Contains(cg) ? cg : null);
+
+        /// <summary>[XL-TRA-NHOMSUA 2026-11-10] Workflow ON: nhóm nhận được khi <paramref name="from"/> trả lại hàng đã sửa bị hỏng lại = các nhóm đã sửa ĐẠT
+        ///   chiếc của vụ (KCS xác nhận), trừ chính nhóm giữ. Rỗng (vd nhóm giữ là nhóm duy nhất đã sửa) = không giới hạn (như trước — sổ không theo từng chiếc).
+        ///   Rà độc lập Gói 15 vòng 1 Thấp 1 (trả sang nhóm không sửa) + vòng 2 Trung 1 (lấy 1 nhóm sửa cuối của vụ → kẹt / chặn oan khi vụ có 2 nhóm sửa
+        ///   hoặc nhóm giữ tự sửa). Nguồn: KHÁCH 10/11 2.1 ("hỏng thì trả lại Gia công"); CLAUDE (rà độc lập 10/11).</summary>
+        ///   Rà vòng 3 (Trung 1): chỉ nhóm sửa có hàng vào giữ ô XL (đích GIU — SuaDatBy) và đứng TRƯỚC nhóm giữ trong chuỗi (hàng đã sửa chỉ đi xuôi),
+        ///   nên Kho / nơi phát hiện tự sửa / nhóm sau nhóm giữ không lọt vào; nhóm giữ tự sửa → rỗng → không giới hạn.
+        public static List<string> XlTraLaiGroups(LedgerCase c, string from)
+            => HandoverLedgerService.GroupCodes.Where(g => g != from && c.SuaDatBy.Contains(g)
+                   && HandoverLedgerService.ProdIdx(g) > 0 && HandoverLedgerService.ProdIdx(g) < HandoverLedgerService.ProdIdx(from)).ToList();
+
+        /// <summary>[XL-HTSP-LAMHO 2026-11-10] Rà độc lập Gói 15 (Thấp 3): PO mà HTSP chỉ làm Taro làm hộ — HTSP không nhận được ô Hàng lỗi đã xử lý
+        ///   (HandoverService.ReceiveAsync chặn) nên không cho chọn HTSP làm nhóm giữa (trước: lập phiếu được rồi kẹt chờ nhận). Nguồn: CLAUDE (rà độc lập 10/11).</summary>
+        public static bool XlHtspLamHo(string to, LedgerRow? row) => row != null && to == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(row);
+
+        public static string XlToMsg(string? detectGroup, string? to = null, LedgerRow? row = null)
+            => to != null && XlHtspLamHo(to, row) ? "PO này HTSP chỉ làm Taro làm hộ (không có công đoạn HTSP của mình) — hàng đã sửa giao thẳng nơi phát hiện, không qua HTSP."
+             : $"Hàng đã sửa chỉ giao xuôi về nơi phát hiện lỗi ({HandoverLedgerService.GroupLabel(detectGroup)}) hoặc nhóm đứng giữa cần làm lại công đoạn — không giao ngược, không vượt qua nơi phát hiện. "
+             + "Hàng bị hỏng lại thì trả lại vào ô Hàng lỗi (Hàng lỗi → hàng đã sửa bị hỏng lại).";
+
         /// <summary>[K2] Các lựa chọn NC làm tiếp: mặc định + các NC đứng trước (làm lại, bắt lý do). Không có NC sau.</summary>
         /// <param name="free">[GN-FORM1] vòng 3 C1b: hàng lỗi cũ chưa có mã vụ (không có mốc) — thêm các NC sau, cũng bắt lý do.</param>
-        public static List<NcOpt> NcOptions(LedgerRow row, string? def, bool free = false)
+        /// <param name="allowEarlier">[SUA-KHONG-LUI 2026-11-10] false = không cho "Làm lại từ NC trước" (Workflow ON — khách 2.2 A).</param>
+        public static List<NcOpt> NcOptions(LedgerRow row, string? def, bool free = false, bool allowEarlier = true)
         {
             var ncs = NormalNcs(row);
             var list = new List<NcOpt>();
@@ -396,10 +480,13 @@ namespace MES.Web.Services
             string NewLabel() => "Như hàng mới (" + (vao ? HandoverLedgerService.VaoLabel : Nc(ncs[0])) + ")";
             // mặc định trước
             list.Add(new NcOpt(def, (def == null ? NewLabel() : Nc(def) + (def == ncs.Last() ? " (NC cuối)" : "")) + " — mặc định", true, false));
-            for (int i = Math.Min(di - 1, ncs.Count - 1); i >= 0; i--)
-                list.Add(new NcOpt(ncs[i], "Làm lại từ " + Nc(ncs[i]) + " (ghi lý do)", false, true));
-            if (def != null && vao && di >= 0)   // không có @VAO: "như hàng mới" = NC đầu (đã có trong danh sách)
-                list.Add(new NcOpt(null, NewLabel() + " — làm lại từ đầu (ghi lý do)", false, true));
+            if (allowEarlier || free)   // [SUA-KHONG-LUI] Workflow ON: không làm lại NC trước (khách 2.2 A); hàng cũ chưa mã vụ (không mốc) giữ như cũ
+            {
+                for (int i = Math.Min(di - 1, ncs.Count - 1); i >= 0; i--)
+                    list.Add(new NcOpt(ncs[i], "Làm lại từ " + Nc(ncs[i]) + " (ghi lý do)", false, true));
+                if (def != null && vao && di >= 0)   // không có @VAO: "như hàng mới" = NC đầu (đã có trong danh sách)
+                    list.Add(new NcOpt(null, NewLabel() + " — làm lại từ đầu (ghi lý do)", false, true));
+            }
             if (free)
                 for (int i = Math.Max(di + 1, 0); i < ncs.Count; i++)
                     if (ncs[i] != def)
@@ -407,11 +494,24 @@ namespace MES.Web.Services
             return list;
         }
 
+        // [SUA-OFF-LUI 2026-11-10] Rà độc lập Gói 15 (Trung T2): Workflow OFF mà đích hàng sửa đạt là dấu (@XONG / @OK) thì form chỉ hiện chữ,
+        //   không còn chọn "làm lại NC" — trái luật OFF "như cũ" (máy chủ OFF vẫn nhận NC + lý do). Nay OFF: mặc định = dấu (không làm lại NC,
+        //   khách chốt), kèm các lựa chọn cũ: NC mặc định cũ của vụ (CaseNextNc) + làm lại NC trước (ghi lý do). ON: không đổi (không có ô chọn).
+        //   Nguồn: KHÁCH 10/11 2.1 A / 2.2 A; HÙNG 09/11 08:21 ("off họ phải tự kiểm soát"); CLAUDE (rà độc lập 10/11).
+        /// <summary>[SUA-OFF-LUI] Lựa chọn NC khi đích là dấu và Workflow OFF: đầu = dấu (khoá ""), sau = NC cũ của vụ + NC trước (ghi lý do).</summary>
+        public static List<NcOpt> OffMarkOptions(LedgerRow row, string? oldDef)
+        {
+            var list = new List<NcOpt> { new NcOpt(null, "Không làm lại NC (mặc định — khách chốt)", true, false) };
+            foreach (var o in NcOptions(row, oldDef, free: false, allowEarlier: true))
+                list.Add(o.Default ? new NcOpt(o.Code, "Làm lại " + o.Label.Replace(" — mặc định", "") + " (như trước, Workflow OFF)", false, false) : o);
+            return list;
+        }
+
         /// <summary>
         /// [K2] Máy chủ kiểm NC làm tiếp: chỉ NC mặc định của vụ hoặc NC đứng trước; đứng trước thì lý do ≥ 3 ký tự.
         /// Trả (lỗi, chữ ghi kèm vào Ghi chú của Kết quả sửa).
         /// </summary>
-        public static (string? Error, string? NoteAdd) CheckNextNc(LedgerRow row, string? def, string? chosen, string? reason, bool free = false)
+        public static (string? Error, string? NoteAdd) CheckNextNc(LedgerRow row, string? def, string? chosen, string? reason, bool free = false, bool allowEarlier = true)
         {
             var ncs = NormalNcs(row);
             if (ncs.Count == 0) return (null, null);
@@ -429,11 +529,17 @@ namespace MES.Web.Services
             if (ci > di)
                 return ($"Không cho làm tiếp ở {Name(chosen)}: hàng sửa đạt của {NgCaseNo.Term} này làm tiếp ở {Name(def)} — chỉ được chọn NC đó hoặc NC đứng trước (làm lại), không bỏ qua NC.", null);
             if (ci == di) return (null, null);
+            if (!allowEarlier && !free)   // [SUA-KHONG-LUI 2026-11-10] Nguồn: KHÁCH 10/11 hỏi lại 2.2 A ("mọi trường hợp sửa đều không quay lại NC"); HÙNG 10/11 19:22. Chỉ Workflow ON.
+                return (SuaKhongLuiMsg(Name(def)), null);
             var r = (reason ?? "").Trim();
             if (r.Length < NcReasonMin)
                 return ($"Làm lại từ {Name(chosen)} (NC đứng trước {Name(def)}): ghi lý do ít nhất {NcReasonMin} ký tự.", null);
             return (null, $"Làm lại từ {Name(chosen)} thay vì {Name(def)}: {r}");
         }
+
+        /// <summary>[SUA-KHONG-LUI] Lời chặn chọn "Làm lại từ NC trước" (Workflow ON).</summary>
+        public static string SuaKhongLuiMsg(string def)
+            => $"Không làm lại NC trước: hàng sửa đạt đi tiếp ở {def} (khách chốt: sửa xong không quay lại NC — giờ chạy lại ghi \"Việc không làm ra SP\").";
 
         // ================================================================
         // Vụ lỗi trên form: chữ + nơi gửi nhờ sửa

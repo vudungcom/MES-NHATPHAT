@@ -51,7 +51,7 @@ namespace MES.Web.Services
         // Sau bước này
         public decimal   DangGiu    { get; set; }
         public decimal   DangChuyen { get; set; }
-        public List<(string Group, decimal Loi, decimal Sua)> GiuSau { get; set; } = new();
+        public List<(string Group, decimal Loi, decimal Sua, decimal Xl)> GiuSau { get; set; } = new();   // [XL-HIEN-LOI 2026-11-10] rà độc lập Gói 15 (Thấp 4): trang Hàng lỗi / bộ lọc tính cả hàng đã sửa chờ trả (Tồn hàng lỗi đã xử lý). Nguồn: CLAUDE
         public bool      Lech   { get; set; }
 
         public string Category => PhatSinh > 0 ? "PS" : PhatSinh < 0 ? "PS_BOT" : VeSx > 0 ? "XL" : Ra > 0 ? "RA" : "CHUYEN";
@@ -66,6 +66,8 @@ namespace MES.Web.Services
         public decimal GayRa    { get; set; }   // lỗi do nơi này gây ra (theo chứng từ)
         public decimal LoiGiu   { get; set; }   // ô Tồn hàng lỗi của sổ
         public decimal SuaGiu   { get; set; }   // ô Tồn hàng sửa của sổ
+        public decimal XlGiu    { get; set; }   // [XL-HIEN-LOI] ô Tồn hàng lỗi đã xử lý (hàng đã sửa chờ trả nơi phát hiện)
+        public LedgerExplain? XlExplain { get; set; }
         public decimal DaHuy    { get; set; }
         public decimal TraKhach { get; set; }
         public Dictionary<string, decimal> PhatHienTheoLoai { get; set; } = new();
@@ -152,6 +154,7 @@ namespace MES.Web.Services
             "TRA_KHACH"    => "Trả khách hàng lỗi",
             "KQ_SUA"       => "Kết quả sửa (đạt chờ KCS)",   // [GC-SUA-TAI-CHO]
             "KCS_XN"       => "KCS xác nhận hàng sửa",       // [GC-SUA-TAI-CHO]
+            "NHAN_XL"      => "Nhận hàng đã sửa (chờ trả nơi phát hiện)",   // [SUA-XL-GIU]
             _ => t
         };
 
@@ -172,7 +175,8 @@ namespace MES.Web.Services
             return false;
         }
 
-        static decimal Held(LedgerRow r) => r.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu + r.LamHoNgHeld(g.Code));   // [TARO-LAMHO-NC] + hàng làm hộ bị lỗi (nằm trong Tồn hàng giao theo NC)
+        static decimal Held(LedgerRow r) => r.Groups.Values.Sum(g => g.LoiGiu + g.SuaGiu + r.LamHoNgHeld(g.Code)   // [TARO-LAMHO-NC] + hàng làm hộ bị lỗi (nằm trong Tồn hàng giao theo NC)
+                                                                     + g.XlGiu);   // [SUA-XL-GIU 2026-11-10] + hàng đã sửa chưa về nơi phát hiện (vụ chưa xong) — Nguồn: KHÁCH 10/11 2.1 A / 2.2 A; HÙNG 10/11 19:22
 
         /// <summary>[VULOI] Tên chặng của 1 vụ (Kind của LedgerCaseHop).</summary>
         public static string HopLabel(LedgerCaseHop h) => h.Kind switch
@@ -204,7 +208,7 @@ namespace MES.Web.Services
                     => string.Join(" → ", d.Where(x => x.Value != 0).OrderBy(x => order.IndexOf(x.Key) < 0 ? 99 : order.IndexOf(x.Key))
                                            .Select(x => $"{GL(x.Key)} {x.Value:0.##}" + (suffix?.Invoke(x.Key) ?? "")));
                 var held = cs.Held.Where(x => x.Value != 0).OrderBy(x => order.IndexOf(x.Key.Split('|')[0]))
-                    .Select(x => { var p = x.Key.Split('|'); return $"{GL(p[0])} {x.Value:0.##}" + (p[1] == HandoverCell.Sua ? " (hàng sửa)" : ""); });
+                    .Select(x => { var p = x.Key.Split('|'); return $"{GL(p[0])} {x.Value:0.##}" + (p[1] == HandoverCell.Sua ? " (hàng sửa)" : p[1] == HandoverCell.Xl ? " (đã sửa, chờ trả)" : ""); });   // [SUA-XL-GIU]
                 var t = new NgCaseTrace
                 {
                     Id = cs.Id, No = cs.Id == 0 ? "—" : cs.No, Loai = cs.CatLabel,
@@ -258,6 +262,8 @@ namespace MES.Web.Services
 
             string? FromCell(InTx t) => final.TxFromCell.TryGetValue(t.Id, out var c) ? c : null;
             static bool IsLoiCell(string? c) => c is HandoverCell.Loi or HandoverCell.Sua;
+            static bool IsCarry(string? c) => c is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;   // [SUA-XL-GIU] phiếu mang vụ (gồm hàng đã sửa)
+            var fromDaCs = HandoverLedgerService.FromDaCases(inp);
 
             decimal transit = 0, pool = 0;
             foreach (var st in steps)
@@ -325,10 +331,11 @@ namespace MES.Web.Services
                             e.Code = t.FromNC; e.Reason = t.NgReason; e.Who = who; e.PhatSinh = q0; e.DetectedAt = t.From; e.CausedBy = t.To;
                             transit += q0;
                         }
-                        else if (IsLoiCell(fc))
+                        else if (IsCarry(fc))
                         {
                             var desig = HandoverLedgerService.DesigCellOf(t, purpose);
-                            var viec = fc == HandoverCell.Sua ? "sửa hộ xong, trả"
+                            var viec = fc == HandoverCell.Xl ? (desig == HandoverCell.Loi ? "hàng đã sửa bị hỏng lại, trả lại" : "hàng đã sửa, trả tiếp nơi phát hiện")   // [SUA-XL-GIU]
+                                     : fc == HandoverCell.Sua ? "sửa hộ xong, trả"
                                      : desig == HandoverCell.Sua ? "gửi nhờ sửa"
                                      : desig == HandoverCell.Loi ? "chuyển hàng lỗi"
                                      : "tự sửa xong, trả";
@@ -355,7 +362,9 @@ namespace MES.Web.Services
                         var (r, c) = rc;
                         var e = New("KCS_XN", r.Group, "KCS", c.Ok + c.Ng, $"Kết quả sửa #{r.Id}", c.Id,
                             $"KCS xác nhận hàng {GL(r.Group)} sửa: đạt {c.Ok:0.##} (làm tiếp)" + (c.Ng != 0 ? $", loại {c.Ng:0.##} → ô Hàng lỗi {GL(r.Group)}" : ""));
-                        e.Who = c.Who; e.VeSx = c.Ok; e.Code = r.ToNC;
+                        e.Who = c.Who; e.Code = r.ToNC;
+                        e.VeSx = HandoverLedgerService.RepairDest(inp, r) == "GIU" ? 0 : c.Ok;   // [SUA-XL-GIU] chưa về nơi phát hiện: vẫn là hàng của vụ (Tồn hàng lỗi đã xử lý)
+                        if (e.VeSx == 0 && c.Ok != 0) e.Text += $" → Tồn hàng lỗi đã xử lý {GL(r.Group)} (chờ trả nơi phát hiện)";
                         transit -= c.Ok + c.Ng;
                         break;
                     }
@@ -363,7 +372,7 @@ namespace MES.Web.Services
                     {
                         if (!txById.TryGetValue(st.RefId, out var t)) { tr.Problems.Add($"B{st.Index}: không thấy phiếu #{st.RefId}"); break; }
                         var fc = FromCell(t);
-                        if (!IsLoiCell(fc) || HandoverPurpose.IsOut(t.Purpose)) break;
+                        if (!IsCarry(fc) || HandoverPurpose.IsOut(t.Purpose)) break;   // [SUA-XL-GIU] + phiếu hàng đã sửa
                         var purpose = HandoverLedgerService.Classify(t, gcLastNc);
                         var cq = -st.Qty;   // [K5-CLOSE-NHIEU 2026-11-06] số của LẦN huỷ này (mỗi lần 1 bước); trước: t.Closed = tổng mọi lần → 2 lần huỷ trừ đôi
                         transit -= cq;
@@ -410,10 +419,17 @@ namespace MES.Web.Services
                         var desig = HandoverLedgerService.DesigCellOf(t, purpose);
                         var cell = HandoverCell.IsReceiveCell(r.Cell) ? r.Cell! : (desig ?? HandoverCell.Moi);   // giống Compute
                         var all = r.Ok + r.Ng;
-                        if (IsLoiCell(fc))
+                        if (IsCarry(fc))   // [SUA-XL-GIU] + phiếu hàng đã sửa
                         {
                             transit -= all;
-                            if (IsLoiCell(cell))
+                            if (fc == HandoverCell.Xl && cell == HandoverCell.Xl && HandoverLedgerService.XlRecvDest(inp, t, cell, fromDaCs) == "GIU")
+                            {   // [SUA-XL-GIU] nhóm đứng trước nơi phát hiện: giữ ở Tồn hàng lỗi đã xử lý (vụ chưa xong)
+                                var e = New("NHAN_XL", t.To, t.From, all, doc, r.Id,
+                                    $"{GL(t.To)} nhận {r.Ok:0.##} hàng đã sửa vào Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện) · từ {GL(t.From)}"
+                                    + (r.Ng > 0 ? $" · {r.Ng:0.##} vẫn lỗi{AutoNote(r)}" : ""));
+                                e.Who = who; e.Reason = r.Ng > 0 ? r.NgReason : null;
+                            }
+                            else if (IsLoiCell(cell))
                             {
                                 var e = New("NHAN_LOI", t.To, t.From, all, doc, r.Id,
                                     $"{GL(t.To)} nhận {all:0.##} vào ô {HandoverCell.Label(cell)} · từ {GL(t.From)}"
@@ -458,8 +474,8 @@ namespace MES.Web.Services
                     continue;
                 }
                 var giu = HandoverLedgerService.GroupCodes
-                    .Select(g => (g, st.Row.G(g).LoiGiu, st.Row.G(g).SuaGiu))
-                    .Where(x => x.Item2 != 0 || x.Item3 != 0).ToList();
+                    .Select(g => (g, st.Row.G(g).LoiGiu, st.Row.G(g).SuaGiu, st.Row.G(g).XlGiu))   // [XL-HIEN-LOI] + hàng đã sửa chờ trả
+                    .Where(x => x.Item2 != 0 || x.Item3 != 0 || x.Item4 != 0).ToList();
                 var lech = pool != held + transit;
                 if (lech) tr.Problems.Add($"B{st.Index}: tổng hàng lỗi theo chứng từ {pool:0.##} ≠ đang giữ {held:0.##} + đang chuyển {transit:0.##}");
                 foreach (var e in evs)
@@ -483,7 +499,7 @@ namespace MES.Web.Services
             foreach (var t in inp.Txs)
             {
                 if (HandoverPurpose.IsOut(t.Purpose) || t.Status == "COMPLETED") continue;
-                if (!IsLoiCell(FromCell(t))) continue;
+                if (!IsCarry(FromCell(t))) continue;   // [SUA-XL-GIU] + phiếu hàng đã sửa
                 if (t.SourceReceiveId != null && !recvIds.Contains(t.SourceReceiveId.Value)) continue;
                 transitDoc += Math.Max(0, t.Issued - t.Receives.Sum(x => x.Ok + x.Ng));
             }
@@ -501,6 +517,7 @@ namespace MES.Web.Services
                     Code = code, Label = GL(code), LoiGiu = G.LoiGiu, SuaGiu = G.SuaGiu,
                     LoiExplain = G.Explains.TryGetValue("LoiGiu", out var le) ? le : null,
                     SuaExplain = G.Explains.TryGetValue("SuaGiu", out var se) ? se : null,
+                    XlGiu = G.XlGiu, XlExplain = G.Explains.TryGetValue("XlGiu", out var xe) ? xe : null,   // [XL-HIEN-LOI]
                     DaHuy    = tr.Events.Where(e => e.Type == "HUY" && e.Group == code).Sum(e => e.Ra),
                     TraKhach = tr.Events.Where(e => e.Type == "TRA_KHACH" && e.Group == code).Sum(e => e.Ra),
                 };

@@ -98,12 +98,15 @@ namespace MES.Web.Services
         public const string Moi = "MOI";   // Hàng mới
         public const string Loi = "LOI";   // Hàng lỗi
         public const string Sua = "SUA";   // Hàng sửa
-        public const string Xl  = "XL";    // Hàng lỗi đã xử lý (chỉ là ô NHẬN — không giao từ ô này)
+        public const string Xl  = "XL";    // Hàng lỗi đã xử lý. [SUA-XL-GIU] từ 10/11 cũng là ô GIAO: hàng đã sửa (KCS xác nhận), giữ vụ, chờ trả nơi phát hiện
         /// <summary>[TARO-LAMHO-NC] Ô giữ của VỤ LỖI (chỉ trong sổ, không ghi DB): hàng làm hộ bị lỗi (WTS Taro làm hộ NG) vẫn nằm trong
         ///   Tồn hàng giao theo NC của nhóm làm hộ tới khi trả Gia công vào ô Hàng lỗi (phiếu Trả về Gia công theo NC, FromCell = LOI, mang vụ).</summary>
         public const string LamHo = "LAMHO";
 
         public static readonly string[] IssueCells = { Moi, Loi, Sua };
+        /// <summary>[SUA-XL-GIU 2026-11-10] Ô giao được của phiếu (IssueCells + ô Hàng lỗi đã xử lý — chỉ phiếu Trả hàng đã sửa, mang vụ).
+        ///   Nguồn: KHÁCH 10/11 vòng 1 (hỏi lại 2.2 A, hỏi tiếp 2.1 A); HÙNG 10/11 19:22 OK thiết kế Gói 15.</summary>
+        public static readonly string[] IssueCellsXl = { Moi, Loi, Sua, Xl };
 
         public static string Label(string? c) => c switch
         {
@@ -116,7 +119,7 @@ namespace MES.Web.Services
             HandoverPurpose.New          => Moi,
             HandoverPurpose.NgReturn     => Loi,
             HandoverPurpose.RepairSend   => Loi,
-            HandoverPurpose.RepairReturn => fromCell == Loi ? Loi : Sua,   // TH2: nơi gây lỗi tự sửa xong → giao từ ô Hàng lỗi
+            HandoverPurpose.RepairReturn => fromCell == Loi ? Loi : fromCell == Xl ? Xl : Sua,   // TH2: nơi gây lỗi tự sửa xong → giao từ ô Hàng lỗi · [SUA-XL-GIU] hàng đã sửa giữ ô Hàng lỗi đã xử lý
             HandoverPurpose.Scrap        => Loi,
             HandoverPurpose.CustReturn   => Loi,
             HandoverPurpose.HelpReturn   => fromCell == Loi ? Loi : null,   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ (mang vụ) về Gia công ô Hàng lỗi
@@ -189,6 +192,8 @@ namespace MES.Web.Services
                     if (prevStageNg) return (HandoverPurpose.NgReturn, null);
                     return (toCell is Xl or Moi ? HandoverPurpose.RepairReturn : HandoverPurpose.RepairSend, null);
                 case Sua: return (HandoverPurpose.RepairReturn, null);
+                case Xl:  return toCell is Xl or Loi ? (HandoverPurpose.RepairReturn, null)   // [SUA-XL-GIU] hàng đã sửa: trả tiếp nơi phát hiện (ô Hàng lỗi đã xử lý) / trả lại ô Hàng lỗi [XL-TRA-LAI]
+                                                     : (null, "Hàng đã sửa (ô Hàng lỗi đã xử lý) chỉ giao vào ô Hàng lỗi đã xử lý (trả tiếp nơi phát hiện) hoặc trả lại vào ô Hàng lỗi.");
                 default:  return (null, "Phân loại hàng không hợp lệ (chỉ Hàng mới / Hàng lỗi / Hàng sửa).");
             }
         }
@@ -258,6 +263,9 @@ namespace MES.Web.Services
         public decimal? In       { get; set; }
         public decimal Ok        { get; set; }
         public decimal Ng        { get; set; }
+        /// <summary>[SUA-OK-NC 2026-11-10] Gia công: hàng sửa đạt (KCS xác nhận) tính là xong NC này — không có dòng WTS (Ok chỉ là WTS).
+        ///   Đi tiếp NC sau / giao theo NC như hàng OK. Nguồn: KHÁCH 10/11 hỏi tiếp ("mọi trường hợp sửa không quay lại NC"); HÙNG 10/11 19:22.</summary>
+        public decimal OkSua     { get; set; }
         public decimal? Waiting  { get; set; }
         /// <summary>GC: đã gửi làm hộ từ NC này.</summary>
         public decimal HelpOut   { get; set; }
@@ -347,6 +355,11 @@ namespace MES.Web.Services
         /// <summary>[GC-SUA-TAI-CHO 2026-11-04] Hàng nhóm đã sửa xong (Kết quả sửa — đạt), chờ KCS xác nhận. Tính vào Tồn, KHÔNG vào Chưa làm
         /// (chưa xác nhận đạt thì chưa nhập WTS được). KCS xác nhận đạt → ô Hàng lỗi đã xử lý; KCS loại → ô Hàng lỗi của nhóm.</summary>
         public decimal ChoKcs   { get; set; }
+        /// <summary>[SUA-XL-GIU 2026-11-10] Tồn hàng lỗi đã xử lý = hàng ĐÃ SỬA (KCS xác nhận đạt), nhóm đã làm xong chiếc đó trước lúc phát hiện lỗi,
+        ///   giữ vụ, chờ trả tiếp về nơi phát hiện. Không vào Chưa làm (không ghi WTS số lượng), không vào Đã làm chưa giao. Tính vào Tồn.
+        ///   Nguồn: KHÁCH 10/11 vòng 1 (hỏi lại 2.2 A "mọi trường hợp sửa không quay lại NC", hỏi tiếp 2.1 A "nhận ô Hàng lỗi đã xử lý = đã làm");
+        ///   HÙNG 10/11 19:22 OK thiết kế Gói 15.</summary>
+        public decimal XlGiu    { get; set; }
         /// <summary>Tồn = ΣNhận − ΣGiao + Chờ nhận + Chờ KCS. [GN-RECV-NG] trước: ΣNhận − ΣGiao (hàng chờ nhận nằm ngoài, ở dòng Đang giao). [GC-SUA-TAI-CHO] + Chờ KCS.</summary>
         public decimal Ton      { get; set; }
 
@@ -406,7 +419,7 @@ namespace MES.Web.Services
 
         public List<string> Warnings => Groups.Values.SelectMany(g => g.Warnings).ToList();
         public bool HasWarning => Warnings.Count > 0 || !Balanced;
-        public bool HasLoiGiu  => Groups.Values.Any(g => g.LoiGiu > 0 || g.SuaGiu > 0);   // [GN-CELL] cả 2 ô đang giữ
+        public bool HasLoiGiu  => Groups.Values.Any(g => g.LoiGiu > 0 || g.SuaGiu > 0 || g.XlGiu > 0);   // [GN-CELL] cả 2 ô đang giữ · [XL-HIEN-LOI] + hàng đã sửa chờ trả
         /// <summary>[GN-NG-TRACE 2026-10-28] Ô bên giao lấy hàng của từng phiếu (MOI / LOI / SUA; null = phiếu theo NC) — đúng ô Compute() đã dùng để trừ.
         /// Chỉ ghi lại để khung "Hàng lỗi" đọc, không dùng để tính số nào.</summary>
         public Dictionary<long, string?> TxFromCell { get; set; } = new();
@@ -472,6 +485,9 @@ namespace MES.Web.Services
         ///   Trước: vụ thường → nhóm làm hộ sửa tại chỗ (KCS xác nhận) hoặc giao KCS ô Hàng lỗi đã xử lý → chiếc vào hàng sản xuất nhóm đó, bỏ qua các NC sau
         ///   (số PO vẫn cân, sai đường đi). Nguồn: CLAUDE (sổ LAMHO-NHAN-NG, đo bằng kịch bản 08/11 trên 5d42247); Hùng 08/11 16:37 OK (cả làm hộ Taro lẫn N3 nhóm khác).</summary>
         public bool LamHoNhan { get; set; }
+        /// <summary>[SUA-XL-GIU 2026-11-10] Vụ sinh từ báo lỗi lấy ở "đã làm xong chưa giao" (nơi phát hiện đã làm xong chiếc đó): hàng sửa đạt trả về
+        ///   nơi phát hiện tính là đã làm (không làm lại). Chỉ để chọn ô, không tính số. Nguồn: KHÁCH 10/11 hỏi tiếp 2.1 A; HÙNG 10/11 19:22.</summary>
+        public bool FromDa { get; set; }
         /// <summary>[LAMHO-NHAN-NG] Tên loại vụ làm hộ trong lời báo (vụ Taro làm hộ NG giữ chữ cũ).</summary>
         public string LamHoTen => Hops.Any(h => h.Kind == "PS" && h.Cell == HandoverCell.LamHo) ? "hàng Taro làm hộ bị lỗi" : "hàng làm hộ bị lỗi — NG lúc nhận hàng giao / trả theo NC";
         public DateTime? At      { get; set; }
@@ -494,6 +510,9 @@ namespace MES.Web.Services
         public Dictionary<string, decimal> NhanSua { get; set; } = new();
         /// <summary>Nhóm tự xử lý (giao từ ô Hàng lỗi thẳng về ô Hàng lỗi đã xử lý / Hàng mới).</summary>
         public HashSet<string> TuXuLy { get; set; } = new();
+        /// <summary>[XL-TRA-NHOMSUA] Nhóm có Kết quả sửa của vụ được KCS xác nhận ĐẠT (≥ 1 chiếc) vào giữ ô Tồn hàng lỗi đã xử lý (đích "GIU") — nơi trả lại được
+        ///   hàng đã sửa bị hỏng lại. Chỉ ghi lại, không tính số.</summary>
+        public HashSet<string> SuaDatBy { get; set; } = new();
         public List<LedgerCaseHop> Hops { get; set; } = new();
 
         public decimal HeldAt(string g, string cell) => Held.TryGetValue(g + "|" + cell, out var v) ? v : 0m;
@@ -1045,13 +1064,17 @@ namespace MES.Web.Services
         //   chứng từ dùng hàng chỉ lưu được sau lần nhận cấp hàng (trần L3 / L4 lúc lưu) nên ảnh sổ vẫn khớp ([K5-VONG-HO-NHAN], sua S25).
         //   Nguồn: CLAUDE (lỗi ngầm kiem 04/11 21:59 seed 31983); Hùng 05/11 10:28 OK coi là sửa ruột, không cần hỏi khách.
         // =====================================================================
-        /// <summary>[K5-VONG-SUA] Lần nhận này là hàng sửa trả về (phiếu lấy từ ô Hàng lỗi / Hàng sửa, nhận vào ô Hàng lỗi đã xử lý / Hàng mới)?</summary>
+        // [K5-VONG-XL 2026-11-10] Rà độc lập Gói 15 (Trung T1): hàng sửa đạt kiểu mới (@XONG / @OK ở NC cuối / phiếu từ ô Hàng lỗi đã xử lý về nơi
+        //   phát hiện) vào thẳng "Đã làm chưa giao" — ô này trước chỉ xét cho Kho, lần nhận phiếu từ ô XL không thành mốc → xoá dòng WTS / huỷ chứng từ
+        //   nguồn để chiếc sửa "thế chỗ" chính nó vẫn lưu được (cùng loại K5-VONG-SUA). Nay: phiếu từ ô XL là mốc + xét ô Đã làm chưa giao mọi nhóm.
+        //   Nguồn: CLAUDE (rà độc lập 10/11, ca RV1 / RV2 / RV9); Hùng 05/11 10:28 OK K5 theo thời gian là sửa ruột.
+        /// <summary>[K5-VONG-SUA] Lần nhận này là hàng sửa trả về (phiếu lấy từ ô Hàng lỗi / Hàng sửa / Hàng lỗi đã xử lý, nhận vào ô Hàng lỗi đã xử lý / Hàng mới)?</summary>
         public static bool IsRepairedReturn(InTx t, InRecv r)
         {
             var pu = Classify(t, null);
             if (pu is HandoverPurpose.NgReturn or HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn || HandoverPurpose.IsOut(pu) || t.SourceReceiveId != null) return false;
             var from = HandoverCell.IssueCellOf(pu, t.FromCell);
-            if (from is not (HandoverCell.Loi or HandoverCell.Sua)) return false;
+            if (from is not (HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl)) return false;   // [K5-VONG-XL 2026-11-10] + hàng đã sửa (phiếu từ ô Hàng lỗi đã xử lý)
             var cell = HandoverCell.IsReceiveCell(r.Cell) ? r.Cell : DesigCellOf(t, pu);
             return cell is (HandoverCell.Xl or HandoverCell.Moi) && r.Ok > 0;
         }
@@ -1064,6 +1087,7 @@ namespace MES.Web.Services
             {
                 if (G.IsKho) { d["KHO|ConGiao"] = (G.ConGiao, "Kho: phôi còn giao"); continue; }
                 d[G.Code + "|ChuaLam"] = (G.ChuaLam, $"{G.Label}: Chưa làm");
+                d[G.Code + "|ConGiao"] = (G.ConGiao, $"{G.Label}: Đã làm chưa giao");   // [K5-VONG-XL] hàng sửa đạt từ 10/11 về thẳng Đã làm (@XONG / @OK NC cuối)
                 foreach (var st in G.Steps.Where(st => st.Waiting.HasValue && !st.IsExcluded && !st.IsPrep))
                     d[$"{G.Code}|{st.Pg}|{st.Code}"] = (st.Waiting!.Value, st.Pg == "GC"
                         ? (IsVao(st.Code) ? $"{G.Label} {VaoLabel}" : $"{G.Label} {NcName(st.Code)}: chưa làm")
@@ -1553,6 +1577,7 @@ namespace MES.Web.Services
                 autoBySrc.TryAdd(a.SourceReceiveId!.Value, a);
             var recvIds = inp.Txs.SelectMany(x => x.Receives).Select(r => r.Id).ToHashSet();
             var orphanAuto = new List<InTx>();
+            var fromDaCs = FromDaCases(inp);   // [SUA-XL-GIU] vụ báo lỗi lấy từ "đã làm xong chưa giao"
 
             // ── [VULOI 2026-10-28] Sổ theo từng vụ lỗi — chạy song song, đúng các chứng từ góp vào ô Tồn hàng lỗi / Tồn hàng sửa ──
             //   Vụ = 1 lần phát sinh lỗi; khoá 0 = hàng lỗi cũ chưa có mã. Không đổi bất kỳ ô nào của sổ hiện có.
@@ -1699,7 +1724,7 @@ namespace MES.Web.Services
                 // Thành phẩm: Đóng gói → Kho hàng mới — không vào phôi Kho. [GN-CELL2] chỉ phần Kho nhận vào ô Hàng mới mới là thành phẩm.
                 bool isTpTx = t.From == "PKG" && t.To == "KHO" && fromCell == HandoverCell.Moi;
                 // [VULOI] Phiếu lấy từ ô Hàng lỗi / Hàng sửa = phiếu MANG VỤ (1 phiếu = 1 vụ). Phiếu Hàng mới / theo NC: không mang vụ.
-                bool carry = !isHelp && fromCell is HandoverCell.Loi or HandoverCell.Sua;
+                bool carry = !isHelp && fromCell is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;   // [SUA-XL-GIU] + hàng đã sửa (ô Hàng lỗi đã xử lý) mang vụ
                 LedgerCase? csT = carry ? Cs(t.NgCaseId) : null;
                 string txDocName = $"Phiếu #{t.Id}";
 
@@ -1763,6 +1788,11 @@ namespace MES.Web.Services
                             CHop(csT, "GIAO", t.From, t.To, HandoverCell.Loi, giao, txDocName, t.Id, t.At);
                         }
                         break;
+                    case HandoverCell.Xl:   // [SUA-XL-GIU] hàng đã sửa (KCS xác nhận) rời ô Tồn hàng lỗi đã xử lý, đang chuyển (cùng vụ)
+                        Add(t.From, "gx", "Giao Hàng lỗi đã xử lý (hàng đã sửa, trả tiếp nơi phát hiện)", giao, txDoc);
+                        CHold(csT!, t.From, HandoverCell.Xl, -giao, t.At); csT!.Transit += giao;
+                        CHop(csT, "GIAO", t.From, t.To, HandoverCell.Xl, giao, txDocName, t.Id, t.At);
+                        break;
                     case HandoverCell.Sua:
                         Add(t.From, "gs", "Giao Hàng sửa (sửa hộ xong, trả nơi phát hiện)", giao, txDoc);
                         suaRunning[t.From] -= giao;
@@ -1820,12 +1850,17 @@ namespace MES.Web.Services
                         Text = TxText(t, purpose) + $" · nhận {r.Ok + r.Ng:0.##} vào ô {HandoverCell.Label(cell)}" + CellChangeNote(desig, r)
                     };
                     bool tpHere = isTpTx && cell == HandoverCell.Moi;
+                    // [SUA-XL-GIU] hàng đã sửa (phiếu từ ô Hàng lỗi đã xử lý) nhận vào ô Hàng lỗi đã xử lý: giữ ô / đã làm / như cũ (XlDest)
+                    var xd = carry && fromCell == HandoverCell.Xl && cell == HandoverCell.Xl && t.NgCaseId is long xid && inp.CaseInfo.TryGetValue(xid, out var xci)
+                        ? XlDest(t.To, xci.DetectGroup, fromDaCs.Contains(xid)) : "";
                     if (tpHere) row.TpNhap += r.Ok;
                     else
                     {
                         AddRecvCell(t.To, cell, r.Ok + r.Ng, rDoc);
+                        if (xd == "GIU") Add(t.To, "nxGiu", "Nhận hàng đã sửa vào Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện)", r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text });
+                        else if (xd == "XONG") Add(t.To, "nxDa", "Hàng đã sửa về nơi phát hiện — tính là đã làm (không WTS)", r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text });
                         var rNc = !string.IsNullOrEmpty(r.ToNC) ? r.ToNC : t.ToNC;   // [NHAN-DOI-O-NC 2026-11-06] NC của lần nhận (đổi ô, phiếu không có NC) trước NC phiếu
-                        if (t.To == "GC" && !string.IsNullOrEmpty(rNc) && cell is HandoverCell.Moi or HandoverCell.Xl)
+                        if (t.To == "GC" && xd == "" && !string.IsNullOrEmpty(rNc) && cell is HandoverCell.Moi or HandoverCell.Xl)
                             Add("GC", "in:" + rNc, "Nhận vào NC " + rNc, r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text }); // chỉ phần OK
                         if (cell == HandoverCell.Sua) suaRunning[t.To] += r.Ok; // [GN-CELL] phần NG đếm lúc nhận trả ngay, không vào ô Hàng sửa
                     }
@@ -1840,6 +1875,7 @@ namespace MES.Web.Services
                         csT!.Transit -= q;
                         if (cell == HandoverCell.Loi) { CHold(csT, t.To, HandoverCell.Loi, q, r.At); CAdd(csT.NhanLoi, t.To, q); }
                         else if (cell == HandoverCell.Sua) { CHold(csT, t.To, HandoverCell.Sua, q - r.Ng, r.At); CAdd(csT.NhanSua, t.To, q - r.Ng); }
+                        else if (xd == "GIU") CHold(csT, t.To, HandoverCell.Xl, q - r.Ng, r.At);   // [SUA-XL-GIU] chưa về nơi phát hiện: vụ vẫn giữ
                         else CAdd(csT.DaXuLy, t.To, q - r.Ng);
                         CHop(csT, "NHAN", t.To, t.From, cell, q, txDocName, t.Id, r.At);
                         ngCs = csT;
@@ -1897,6 +1933,7 @@ namespace MES.Web.Services
                 Add(nr.Group, "bl", "Báo hàng lỗi phát hiện sau khi nhận", nr.Qty, BDoc());
                 {   // [VULOI] vụ sinh ra, nhóm báo giữ ở ô Hàng lỗi
                     var csB = Cs(nr.NgCaseId);
+                    if (nr.Source == HandoverNgSource.Da && nr.NgCaseId != null) csB.FromDa = true;   // [SUA-XL-GIU] chỉ ghi lại, không tính
                     csB.SinhRa += nr.Qty; CHold(csB, nr.Group, HandoverCell.Loi, nr.Qty, nr.At); CAdd(csB.NhanLoi, nr.Group, nr.Qty);
                     CHop(csB, "PS", nr.Group, nr.Cause, HandoverCell.Loi, nr.Qty, $"Báo lỗi #{nr.Id}", nr.Id, nr.At);
                 }
@@ -1943,16 +1980,45 @@ namespace MES.Web.Services
                 }
                 csR.Transit += rp.Pass;
                 CHop(csR, "SUA", g, null, rp.Cell, rp.Pass + rp.Fail, $"Kết quả sửa #{rp.Id}", rp.Id, rp.At);
+                // [SUA-XL-GIU][SUA-OK-NC] Kết quả sửa có dấu (chứng từ từ 10/11): đích của hàng đạt khi KCS xác nhận
+                var rdest = RepairDest(inp, rp);
+                string? okNc = null;   // Gia công: NC tính là đã xong (vào NC + OK NC, không WTS)
+                if (g == "GC" && (rdest == "OK" || rdest == "XONG"))
+                {
+                    var raw = rdest == "XONG" ? gcLastNc
+                            : rp.NgCaseId is long okId && inp.CaseInfo.TryGetValue(okId, out var okCi) && !string.IsNullOrWhiteSpace(okCi.DetectNc)
+                              ? (row.CodeMain.TryGetValue("GC|" + okCi.DetectNc!.Trim(), out var mn) ? mn : okCi.DetectNc!.Trim()) : null;
+                    okNc = raw != null && gcChain.Any(x => string.Equals(x.NC, raw, StringComparison.OrdinalIgnoreCase))
+                         ? gcChain.First(x => string.Equals(x.NC, raw, StringComparison.OrdinalIgnoreCase)).NC : null;   // không còn trong quy trình → như cũ (dữ liệu lạ)
+                    if (okNc == null) rdest = "";
+                }
                 foreach (var c in rp.Checks.OrderBy(x => x.At).ThenBy(x => x.Id))
                 {
                     var cText = RepairCheckText(rp, c);
                     if (c.Ok != 0)
                     {
-                        Add(g, "nx", "Nhận Hàng lỗi đã xử lý", c.Ok, new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText });
-                        if (g == "GC" && !string.IsNullOrEmpty(rp.ToNC))
-                            Add("GC", "in:" + rp.ToNC, "Nhận vào NC " + rp.ToNC, c.Ok, new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText });
-                        CAdd(csR.DaXuLy, g, c.Ok);
-                        if (rp.Cell == HandoverCell.Loi) csR.TuXuLy.Add(g);   // nhóm tự xử lý hàng lỗi của mình — chỉ khi KCS đã xác nhận đạt (rà độc lập T2)
+                        if (rdest == "GIU") csR.SuaDatBy.Add(g);   // [XL-TRA-NHOMSUA] nhóm đã sửa đạt chiếc của vụ mà hàng vào giữ ô Hàng lỗi đã xử lý (rà vòng 3: chỉ nhóm này mới là người sửa chiếc đang ở ô XL)
+                        LedgerDoc XD() => new LedgerDoc { Kind = "XNSUA", RefId = c.Id, At = c.At, Text = cText };
+                        Add(g, "nx", "Nhận Hàng lỗi đã xử lý", c.Ok, XD());
+                        if (rdest == "GIU")
+                        {   // [SUA-XL-GIU] nhóm sửa đứng trước nơi phát hiện: giữ ô Tồn hàng lỗi đã xử lý (vụ chưa xong), chờ trả tiếp
+                            Add(g, "nxGiu", "Hàng đã sửa (KCS xác nhận) vào Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện)", c.Ok, XD());
+                            CHold(csR, g, HandoverCell.Xl, c.Ok, c.At);
+                        }
+                        else
+                        {
+                            if (okNc != null)
+                            {   // [SUA-OK-NC] / [SUA-XL-GIU] Gia công: hàng đạt tính là xong NC (vào NC + OK NC) — không ghi WTS lại
+                                Add("GC", "in:" + okNc, "Nhận vào NC " + okNc + " (hàng sửa đạt)", c.Ok, XD());
+                                Add("GC", "okSua:" + okNc, "Sửa đạt tính là xong " + NcName(okNc) + " (không WTS)", c.Ok, XD());
+                            }
+                            else if (rdest == "XONG")   // [SUA-XL-GIU] nhóm sửa là nơi phát hiện, đã làm xong chiếc trước lúc phát hiện → Đã làm
+                                Add(g, "nxDa", "Hàng đã sửa (KCS xác nhận) — tính là đã làm (không WTS)", c.Ok, XD());
+                            else if (g == "GC" && !string.IsNullOrEmpty(rp.ToNC) && !IsRepMark(rp.ToNC))
+                                Add("GC", "in:" + rp.ToNC, "Nhận vào NC " + rp.ToNC, c.Ok, XD());
+                            CAdd(csR.DaXuLy, g, c.Ok);
+                            if (rp.Cell == HandoverCell.Loi) csR.TuXuLy.Add(g);   // nhóm tự xử lý hàng lỗi của mình — chỉ khi KCS đã xác nhận đạt (rà độc lập T2)
+                        }
                     }
                     if (c.Ng != 0)
                     {
@@ -1969,6 +2035,16 @@ namespace MES.Web.Services
             ComputeGcOk(inp, gcChain, row, T);
             foreach (var g in new[] { "HTSP", "KCS", "PKG" })
                 ComputeCodeOk(inp, g, row, T);
+            // [SUA-XL-GIU][SUA-OK-NC] Đã làm + hàng sửa đạt tính là đã làm (không WTS): Gia công = sửa đạt xong NC cuối; nhóm khác = hàng đã sửa về nơi phát hiện
+            foreach (var g in new[] { "GC", "HTSP", "KCS", "PKG" })
+            {
+                var k = g == "GC" ? (gcLastNc == null ? null : "okSua:" + gcLastNc) : "nxDa";
+                if (k == null || !acc.TryGetValue((g, k), out var extra) || extra.Value == 0) continue;
+                var okT = T(g, "ok", "Đã làm");
+                okT.Value += extra.Value;
+                okT.Docs.AddRange(extra.Docs);
+                okT.Label += " + hàng sửa đạt tính là đã làm";
+            }
 
             // ── Ráp số từng nhóm ─────────────────────────────────────────
             foreach (var code in GroupCodes)
@@ -1990,7 +2066,8 @@ namespace MES.Web.Services
                 G.GiaoMoi   = V("gm");
                 G.GiaoLoi   = V("glTra") + V("glGui") + V("glTu") + V("glChuyen") /* [GN-CELL2] */ + V("glSuaNg") + V("glLamHo") + V("glHuy") + V("glKhach"); // [GN-NG-OUT] + huỷ / trả khách; [GN-CELL] + tự sửa trả, + trả lại hàng nhờ sửa NG
                 G.GiaoSua   = V("gs");
-                G.GiaoLoiXl = 0; // [GN-LEDGER] Excel có cột này nhưng cả 3 tình huống không dùng (hàng đã xử lý chỉ NHẬN, không GIAO từ ô này)
+                G.GiaoLoiXl = V("gx"); // [GN-LEDGER] trước 10/11 luôn 0 · [SUA-XL-GIU] hàng đã sửa giao tiếp từ ô Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện)
+                G.XlGiu     = V("nxGiu") - V("gx");   // [SUA-XL-GIU] Tồn hàng lỗi đã xử lý (hàng đã sửa, giữ vụ)
                 G.GiaoLamHo = V("ghSend") + V("ghRet");
                 G.ChoNhan   = V("cn");                              // [GN-RECV-NG] mục 37
                 G.ChoKcs    = V("ckcs");                            // [GC-SUA-TAI-CHO] hàng sửa đạt chờ KCS xác nhận
@@ -2016,11 +2093,16 @@ namespace MES.Web.Services
                 ListExplain("GiaoLoi",   "Giao · Hàng lỗi",          ("glTra", "Hàng lỗi công đoạn trước — trả nơi gây lỗi"), ("glGui", "Gửi hàng lỗi đi nhờ sửa"), ("glTu", "Tự sửa xong, trả nơi phát hiện"), ("glChuyen", "Chuyển sang ô Hàng lỗi nhóm khác"), ("glSuaNg", "Trả lại hàng nhờ sửa bị NG lúc nhận"), ("glLamHo", "Trả lỗi từ hàng giao theo NC"), ("glHuy", "Huỷ hàng lỗi"), ("glKhach", "Trả khách hàng lỗi")); // [GN-NG-OUT][GN-CELL]
                 ListExplain("GiaoSua",   "Giao · Hàng sửa",          ("gs", "Sửa hộ xong, trả nơi phát hiện"));
                 ListExplain("GiaoLamHo", "Giao · Giao theo NC",     ("ghSend", "Giao theo NC (máy loại trừ)"), ("ghRet", "Trả về Gia công theo NC"));
-                G.Explains["GiaoLoiXl"] = new LedgerExplain
+                // [SUA-XL-GIU 2026-11-10] trước: cột luôn trống (hàng đã xử lý chỉ NHẬN). Nay = hàng đã sửa giao tiếp về nơi phát hiện (khách 10/11 2.1 A / 2.2 A).
+                ListExplain("GiaoLoiXl", "Giao · Hàng lỗi đã xử lý", ("gx", "Hàng đã sửa (KCS xác nhận) giao tiếp về nơi phát hiện"));
                 {
-                    Title = $"{G.Label} · Giao · Hàng lỗi đã xử lý", Formula = "—",
-                    Note = "Cột có trong Excel của xưởng nhưng cả 3 tình huống đều không ghi vào đây: hàng đã xử lý chỉ NHẬN về nơi phát hiện rồi làm tiếp (WTS), không giao đi từ ô này. Cột để trống cho đúng Excel."
-                };
+                    var xe = new LedgerExplain { Title = $"{G.Label} · Tồn hàng lỗi đã xử lý", Formula = "Hàng đã sửa nhận vào giữ − Giao Hàng lỗi đã xử lý", Rule = "SUA-XL-GIU", Result = G.XlGiu,
+                        Note = "Hàng đã sửa xong, KCS đã xác nhận đạt, nhóm này đã làm xong chiếc đó trước lúc phát hiện lỗi: không ghi WTS số lượng, chờ giao tiếp về nơi phát hiện lỗi (giữ vụ). Giờ làm lại ghi \"Việc không làm ra SP\"." };
+                    xe.Terms.Add(Tm("nxGiu", "Hàng đã sửa nhận vào giữ", 1)); xe.Terms.Add(Tm("gx", "Giao Hàng lỗi đã xử lý", -1));
+                    xe.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Hàng đã sửa nhận vào giữ");
+                    G.Explains["XlGiu"] = xe;
+                    if (G.XlGiu < 0) G.Warnings.Add($"{G.Label}: giao hàng đã sửa nhiều hơn Tồn hàng lỗi đã xử lý ({G.XlGiu:0.##}) — K1");
+                }
 
                 // Tổng Nhận / Tổng Giao (cột gọn trên bảng chính)
                 {
@@ -2127,7 +2209,8 @@ namespace MES.Web.Services
                     G.DaLam = daLamTerm.Value;
 
                     // Chưa làm = Nhận mới + Nhận lỗi đã XL + Làm hộ trả về − Đã làm − NG làm hỏng − Trả lỗi − Gửi làm hộ
-                    G.ChuaLam = G.NhanMoi + G.NhanLoiXl + V("nhRet") - G.DaLam - G.NgCuoi - V("glTra") - V("ghSend") - V("blChua");   // [GN-NG-AFTER] − báo lỗi lấy từ hàng chưa làm
+                    G.ChuaLam = G.NhanMoi + G.NhanLoiXl + V("nhRet") - G.DaLam - G.NgCuoi - V("glTra") - V("ghSend") - V("blChua")   // [GN-NG-AFTER] − báo lỗi lấy từ hàng chưa làm
+                              - V("nxGiu");   // [SUA-XL-GIU] hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý: không vào Chưa làm
                     G.ConGiao = G.DaLam - G.GiaoMoi - V("blDa");   // [GN-NG-AFTER] − báo lỗi lấy từ hàng đã làm chưa giao
                     // [GN-CELL] Tách 2 ô đang giữ theo Excel: Hàng lỗi (của mình: bị trả về + NG làm hỏng) / Hàng sửa (nhóm khác gửi nhờ)
                     G.LoiGiu  = G.NhanLoi + G.NgCuoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
@@ -2149,6 +2232,7 @@ namespace MES.Web.Services
                     e.Terms.Add(Tm("glTra", "Trả hàng lỗi", -1));
                     e.Terms.Add(Tm("ghSend", "Giao theo NC", -1));
                     e.Terms.Add(Tm("blChua", "Báo hàng lỗi (phát hiện sau khi nhận)", -1));   // [GN-NG-AFTER]
+                    e.Terms.Add(Tm("nxGiu", "Hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý", -1));   // [SUA-XL-GIU]
                     e.Terms.RemoveAll(x => x.Value == 0 && !(x.Label == "Nhận Hàng mới" || x.Label == daLamTerm.Label));
                     G.Explains["ChuaLam"] = e;
 
@@ -2233,6 +2317,7 @@ namespace MES.Web.Services
                 var parts = code == "KHO" ? G.ConGiao + G.LoiGiu + G.SuaGiu + G.LamHoGiu /* [GN-ROUTE-FREE] */ : G.ChuaLam + G.ConGiao + G.LoiGiu + G.SuaGiu + G.LamHoGiu;
                 parts += G.ChoNhan;   // [GN-RECV-NG] mục 37: Tồn gồm cả phần chờ nhận
                 parts += G.ChoKcs;    // [GC-SUA-TAI-CHO] + hàng sửa chờ KCS xác nhận
+                parts += G.XlGiu;     // [SUA-XL-GIU] + hàng đã sửa chờ trả nơi phát hiện
                 if (parts != G.Ton) G.Warnings.Add($"{G.Label}: Tồn {G.Ton:0.##} khác tổng các phần {parts:0.##} — báo lại để kiểm");
             }
 
@@ -2490,7 +2575,7 @@ namespace MES.Web.Services
                             : purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn
                             ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} giao theo NC" + (r.Ng > 0 ? (back != null ? $" (NG {r.Ng:0.##} → phiếu trả #{back.Id})" : $" (NG {r.Ng:0.##} trả ngay)") : "") + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
                             : $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} · ô {HandoverCell.Label(recCell)}"
-                              + (recCell is HandoverCell.Xl ? " (SP đã OK, nhập WTS được)" : "")
+                              + (recCell is HandoverCell.Xl ? XlStepNote(XlRecvDest(inp, t, recCell)) : "")   // [XL-CHU-B] hàng đã sửa: giữ / đã làm — không WTS
                               + CellChangeNote(desigCell, r)   // [GN-CELL2]
                               + (!string.IsNullOrEmpty(r.ToNC) ? $" · vào {NcText(r.ToNC)}" : "")   // [NHAN-DOI-O-NC] NC của lần nhận
                               + (r.Ng > 0 && recCell != HandoverCell.Loi ? (back != null   // [GN-RECV-NG2][GN-CELL2] nhận vào ô Hàng lỗi: số ở ô NG là hàng lỗi nhận, không phải "NG lúc nhận"
@@ -2552,8 +2637,8 @@ namespace MES.Web.Services
                     events.Add((c.At, 6, c.Id, () => RCopy(rr0).Checks.Add(cc), new LedgerStepRow
                     {
                         Kind = "XNSUA", Group = r.Group, Other = "KCS", Cell = HandoverCell.Xl, Qty = c.Ok + c.Ng, Ng = c.Ng, RefId = c.Id,
-                        Text = $"KCS xác nhận hàng {GroupLabel(r.Group)} sửa: đạt {c.Ok:0.##} → ô Hàng lỗi đã xử lý (SP đã OK, nhập WTS được)"
-                               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && c.Ok != 0 ? $" vào {NcText(r.ToNC)}" : "")
+                        Text = $"KCS xác nhận hàng {GroupLabel(r.Group)} sửa: đạt {c.Ok:0.##} → ô Hàng lỗi đã xử lý" + XlStepNote(RepairDest(inp, r))   // [XL-CHU-B]
+                               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && !IsRepMark(r.ToNC) && c.Ok != 0 ? $" vào {NcText(r.ToNC)}" : "")   // [XL-CHU-B] dấu không in "vào NC @XONG"
                                + (c.Ng != 0 ? $" · loại {c.Ng:0.##} → ô Hàng lỗi" : "")
                                + (string.IsNullOrEmpty(c.Who) ? "" : $" · {c.Who}") + $" · Kết quả sửa #{r.Id}"
                     }));
@@ -2793,7 +2878,8 @@ namespace MES.Web.Services
             if (!all.Any()) return;
 
             // Hàng vào NC đầu = mọi hàng vào sản xuất GC không chỉ định NC − trả hàng lỗi (phát hiện trước khi làm)
-            var targeted = chain.Sum(s => V("in:" + s.NC));
+            var targeted = chain.Sum(s => V("in:" + s.NC))
+                         + V("nxGiu");   // [SUA-XL-GIU] hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý (không vào NC nào)
             decimal prevOk = 0, prevHelpOut = 0;
             bool first = true;
             bool afterExcluded = false; // [GN-WTS-CAP][N3] vừa đi qua 1 NC máy loại trừ
@@ -2837,11 +2923,12 @@ namespace MES.Web.Services
                 var codes = NcCodes(inp, s.NC);
                 var ok = logs.Where(w => codes.Contains(w.NC ?? "")).Sum(w => w.Ok);
                 var ng = logs.Where(w => codes.Contains(w.NC ?? "")).Sum(w => w.Ng);
+                var okSua = s.IsExcluded ? 0 : V("okSua:" + s.NC);   // [SUA-OK-NC] hàng sửa đạt tính là xong NC này (đã vào NC qua "in:") — không WTS; Ok của dòng giữ = WTS
                 var line = new LedgerStepLine
                 {
                     Pg = "GC", // [GN-WTS-CAP]
                     SubGroup = "GC", Code = s.NC, StepOrder = s.StepOrder, Machine = s.Machine,
-                    IsExcluded = s.IsExcluded, Ok = ok, Ng = ng, IsLast = chain.Count > 0 && s.NC == chain.Last().NC,
+                    IsExcluded = s.IsExcluded, Ok = ok, Ng = ng, IsLast = chain.Count > 0 && s.NC == chain.Last().NC, OkSua = okSua,   // [SUA-OK-NC]
                     HelpOut = V("helpOut:" + s.NC)
                 };
                 if (s.IsExcluded)
@@ -2874,6 +2961,7 @@ namespace MES.Web.Services
                 }
                 var tin = V("in:" + s.NC);
                 if (tin != 0) { input += tin; line.Note += " + hàng chỉ định vào NC này"; }
+                if (okSua != 0) line.Note += $"; OK gồm {okSua:0.##} chiếc sửa đạt tính là xong NC này (không WTS)";   // [SUA-OK-NC]
                 var pin = V("rrNc:" + s.NC);   // [GN-NC-PIN]
                 if (pin != 0) { input -= pin; line.Note += $" − trả hàng lỗi phát hiện ở NC này {pin:0.##}"; }
                 var bpin = V("blNc:" + s.NC);   // [GN-NG-AFTER] báo hàng lỗi phát hiện sau khi nhận ở NC này
@@ -2885,11 +2973,11 @@ namespace MES.Web.Services
                 }
                 line.In = input;
                 lastLine = line;
-                line.Waiting = input - ok - ng;
+                line.Waiting = input - ok - okSua - ng;   // [SUA-OK-NC] − hàng sửa đạt tính là xong NC này
                 if (line.Waiting < 0)
                     G.Warnings.Add($"Gia công NC {s.NC}: OK + NG ({ok + ng:0.##}) nhiều hơn số nhận vào NC ({input:0.##}) — WTS nhập vượt (L3, N1)");
                 G.Steps.Add(line);
-                prevOk = ok;
+                prevOk = ok + okSua;   // [SUA-OK-NC] hàng sửa đạt xong NC này đi tiếp NC sau như hàng OK
                 prevHelpOut = V("helpOut:" + s.NC);
             }
             // Trả hàng lỗi nhiều hơn mọi hàng đang chờ (dữ liệu cũ) → ghi vào NC cuối để lộ ra ô âm
@@ -2916,7 +3004,8 @@ namespace MES.Web.Services
             FillLamHoWaiting(row, G);
             var mains = G.Steps.Where(s => !s.IsPrep && s.LamHoNc == null).ToList();
             if (!mains.Any()) return;
-            var gnet  = G.NhanMoi + G.NhanLoiXl + V("nhRet") - recvNg - V("ghSend");
+            var gnet  = G.NhanMoi + G.NhanLoiXl + V("nhRet") - recvNg - V("ghSend")
+                      - V("nxGiu") - V("nxDa");   // [SUA-XL-GIU] hàng đã sửa giữ ô / tính đã làm: không vào hàng của từng mã CV
             var rr    = V("glTra") - recvNg + V("blChua");   // [GN-NG-AFTER] báo lỗi lấy từ hàng chưa làm = chiếc đã rời Chưa làm (như trả hàng lỗi)
             FillWaitLines(G, mains, gnet, rr, G.ChuaLam, "");
         }
@@ -3066,6 +3155,7 @@ namespace MES.Web.Services
             ex.Terms.Add(new LedgerTerm { Label = "Nhận vào", Value = line.In ?? 0, Sign = 1 });
             ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS OK", Value = line.Ok, Sign = -1 });
             ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS NG", Value = line.Ng, Sign = -1 });
+            if (line.OkSua != 0) ex.Terms.Add(new LedgerTerm { Label = "hàng sửa đạt tính là xong NC này (không WTS)", Value = line.OkSua, Sign = -1 });   // [SUA-OK-NC]
             return new WtsCapInfo { Max = line.Waiting ?? 0, Locked = (line.In ?? 0) <= 0, Code = main, Explain = ex };
         }
 
@@ -3085,14 +3175,24 @@ namespace MES.Web.Services
             => $"Kết quả sửa #{r.Id} · {GroupLabel(r.Group)} sửa {r.Pass + r.Fail:0.##} lấy từ ô {HandoverCell.Label(r.Cell)}"
                + (r.NgCaseId is long v && v > 0 ? $" · {NgCaseNo.Format(v)}" : "")
                + $" · đạt {r.Pass:0.##} (chờ KCS)" + (r.Fail != 0 ? $" · không đạt {r.Fail:0.##} → ô Hàng lỗi" : "")
-               + (string.IsNullOrEmpty(r.ToNC) ? "" : $" · làm tiếp {NcText(r.ToNC)}")
+               + (string.IsNullOrEmpty(r.ToNC) ? "" : " · " + RepMarkText(r.ToNC))   // [SUA-XL-GIU][SUA-OK-NC] chữ dấu
                + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}");
+
+        /// <summary>[SUA-XL-GIU][SUA-OK-NC] Chữ cột ToNC của Kết quả sửa: dấu → chữ cho người đọc; NC thường → "làm tiếp NC x".</summary>
+        public static string RepMarkText(string? toNc) => toNc switch
+        {
+            RepXong => "không làm lại NC (đã làm xong trước lúc phát hiện)",
+            RepOk   => "tính là xong NC của vụ (không làm lại NC)",
+            null or "" => "",
+            _ => $"làm tiếp {NcText(toNc)}"
+        };
 
         /// <summary>[GC-SUA-TAI-CHO] Chữ 1 lần KCS xác nhận.</summary>
         public static string RepairCheckText(InRepair r, InRepairCheck c)
             => $"KCS xác nhận #{c.Id} (Kết quả sửa #{r.Id} · {GroupLabel(r.Group)}) · đạt {c.Ok:0.##}"
                + (c.Ng != 0 ? $" · loại {c.Ng:0.##} → ô Hàng lỗi {GroupLabel(r.Group)}" : "")
-               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && c.Ok != 0 ? $" · vào {NcText(r.ToNC)}" : "")
+               + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && !IsRepMark(r.ToNC) && c.Ok != 0 ? $" · vào {NcText(r.ToNC)}" : "")
+               + (IsRepMark(r.ToNC) && c.Ok != 0 ? " · " + RepMarkText(r.ToNC) : "")   // [SUA-XL-GIU]
                + (string.IsNullOrEmpty(c.Who) ? "" : $" · {c.Who}");
 
         /// <summary>
@@ -3225,6 +3325,7 @@ namespace MES.Web.Services
                 Put(code, "LOI", "hàng lỗi", G.LoiGiu, "tồn hàng lỗi của nhóm (chờ chuyển / sửa / huỷ / trả khách)");
                 Put(code, "SUA", "hàng nhờ sửa", G.SuaGiu, "nhóm khác gửi nhờ sửa, chưa trả");
                 Put(code, "THEO_NC", "hàng giao theo NC", G.LamHoGiu, "hàng Gia công giao theo NC (máy loại trừ), chưa trả về");
+                Put(code, "XL", "hàng đã sửa chờ trả nơi phát hiện", G.XlGiu, "đã sửa xong, KCS xác nhận đạt — chờ giao về nơi phát hiện lỗi");   // [SUA-XL-GIU]
                 w.Loi += G.LoiGiu + G.SuaGiu;
             }
             Put("RA", "TP_CHO", "thành phẩm chờ Kho nhận", r.DangGiao);
@@ -3247,6 +3348,7 @@ namespace MES.Web.Services
                     Put("KHO|SuaGiu",  G.SuaGiu,  "Kho: tồn hàng sửa");   // [GN-CELL]
                     Put("KHO|LamHoGiu", G.LamHoGiu, "Kho: Tồn hàng giao theo NC");   // [GN-ROUTE-FREE]
                     Put("KHO|ChoKcs", G.ChoKcs, "Kho: hàng sửa chờ KCS");   // [GC-SUA-TAI-CHO]
+                    Put("KHO|XlGiu", G.XlGiu, "Kho: tồn hàng lỗi đã xử lý");   // [SUA-XL-GIU]
                     continue;
                 }
                 Put(G.Code + "|ChuaLam",  G.ChuaLam,  $"{G.Label}: Chưa làm");
@@ -3255,6 +3357,7 @@ namespace MES.Web.Services
                 Put(G.Code + "|SuaGiu",   G.SuaGiu,   $"{G.Label}: tồn hàng sửa");   // [GN-CELL]
                 Put(G.Code + "|LamHoGiu", G.LamHoGiu, $"{G.Label}: Tồn hàng giao theo NC");
                 Put(G.Code + "|ChoKcs", G.ChoKcs, $"{G.Label}: hàng sửa chờ KCS");   // [GC-SUA-TAI-CHO]
+                Put(G.Code + "|XlGiu", G.XlGiu, $"{G.Label}: tồn hàng lỗi đã xử lý (hàng đã sửa chờ trả)");   // [SUA-XL-GIU]
                 // [TARO-LAMHO-NC] hàng làm hộ còn tốt (Tồn hàng giao theo NC − chiếc làm hộ bị lỗi đang giữ) + câu 1: trả về ≤ OK bộ Taro đoạn
                 Put(G.Code + "|LamHoTot", G.LamHoGiu - r.LamHoNgHeld(G.Code), $"{G.Label}: hàng giao theo NC còn tốt (trừ chiếc làm hộ bị lỗi)");
                 if (G.Code == "HTSP" && r.LamHoRuns.Any(x => x.HasTaro))
@@ -3279,7 +3382,7 @@ namespace MES.Web.Services
                         if (IsVao(s.Code)) continue;   // [N3-FIRST] dòng @VAO không có OK (WTS): đã canh bằng ô GC|GC|@VAO (còn chờ = Nhận vào − đã giao theo NC)
                         var next = i + 1 < G.Steps.Count ? G.Steps[i + 1] : null;
                         if (next != null && !next.IsExcluded) continue;
-                        Put($"GC|helpOut|{s.Code}", s.Ok - s.HelpOut, $"{G.Label} {NcName(s.Code)}: đã giao theo NC nhiều hơn OK của NC (WTS)");
+                        Put($"GC|helpOut|{s.Code}", s.Ok + s.OkSua - s.HelpOut, $"{G.Label} {NcName(s.Code)}: đã giao theo NC nhiều hơn OK của NC (WTS + sửa đạt)");   // [SUA-OK-NC] + sửa đạt
                     }
                 // [GN-VOID-RULE] Ô theo mã CV (HTSP/KCS/PKG) cũng canh (K5): huỷ lần nhận / huỷ phiếu mà làm WTS một mã vượt số hàng thật nhận
                 //   → chặn, phải xoá / sửa WTS mã đó trước. Trước: không canh, nhóm vẫn cân (OK nhóm = min các mã) nhưng WTS mã lệch hàng thật.
@@ -3296,7 +3399,7 @@ namespace MES.Web.Services
                     var hp = hkey.Split('|');
                     var fin = cs.Held.TryGetValue(hkey, out var hv) ? hv : 0m;
                     var low = cs.MinHeld.TryGetValue(hkey, out var mv) ? Math.Min(mv, fin) : fin;
-                    Put($"VU|{cs.Id}|{hkey}", low, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : hp[1] == HandoverCell.LamHo ? "hàng làm hộ bị lỗi (Tồn hàng giao theo NC)" : "tồn hàng lỗi")}"
+                    Put($"VU|{cs.Id}|{hkey}", low, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)} ở {GroupLabel(hp[0])} · {(hp[1] == HandoverCell.Sua ? "tồn hàng sửa" : hp[1] == HandoverCell.LamHo ? "hàng làm hộ bị lỗi (Tồn hàng giao theo NC)" : hp[1] == HandoverCell.Xl ? "tồn hàng lỗi đã xử lý (hàng đã sửa chờ trả)" : "tồn hàng lỗi")}"
                         + (low < fin ? " (theo thứ tự thời gian: hàng của vụ đã giao đi trước khi có chứng từ nguồn)" : ""));
                 }
                 Put($"VU|{cs.Id}|CHUYEN", cs.Transit, $"{(cs.Id == 0 ? "Hàng lỗi cũ chưa có mã" : cs.No)}: đang chuyển");
@@ -3313,6 +3416,69 @@ namespace MES.Web.Services
         //   thiết kế @VAO duyệt 04/11). Mã "@VAO" không bao giờ là NC thật (Part Master không cho ký tự @ đầu mã NC? — không dựa vào đó:
         //   máy chủ chặn WTS / phiếu nhận vào NC "@VAO", chỉ cho làm NC nguồn của Giao theo NC / Trả hàng lỗi / Báo lỗi).
         public const string VaoCode  = "@VAO";
+
+        // ================================================================
+        // [SUA-XL-GIU 2026-11-10] HÀNG SỬA ĐẠT KHÔNG QUAY LẠI NC / NHÓM ĐÃ LÀM XONG NHẬN LÀ ĐÃ LÀM
+        //   Nguồn: KHÁCH 10/11 vòng 1 (docx câu 2 "sửa xong trả bộ phận báo lỗi, giờ sửa ghi tab việc không làm ra SP"; hỏi lại 2.2 A;
+        //   hỏi tiếp 2.1 A "chiếc sửa vào HTSP ô Hàng lỗi đã xử lý, tính là đã làm xong, không ghi WTS số lượng"); HÙNG 10/11 19:22 OK thiết kế Gói 15.
+        //   Đánh dấu ở cột ToNC của Kết quả sửa (chứng từ mới; chứng từ cũ giữ nghĩa cũ — sổ PO cũ không đổi):
+        //     "@XONG" = nhóm sửa đã làm xong chiếc trước lúc phát hiện → KCS xác nhận đạt: nhóm sửa là nơi phát hiện → Đã làm (Gia công: OK NC cuối);
+        //               nhóm sửa đứng trước nơi phát hiện → ô Tồn hàng lỗi đã xử lý (giữ vụ) rồi giao tiếp phiếu "Hàng lỗi đã xử lý" (FromCell XL).
+        //     "@OK"   = [SUA-OK-NC] Gia công làm hỏng ở NC k (WTS NG) → sửa đạt tính là xong NC k (vào NC k + OK NC k, không ghi WTS lại).
+        //   Bên nhận phiếu FromCell XL vào ô Hàng lỗi đã xử lý (XlDest): đứng trước nơi phát hiện → giữ ô; là nơi phát hiện và (là KCS hoặc đã làm
+        //   chiếc lúc phát hiện) → Đã làm; còn lại → như cũ (vào Chưa làm, đã xử lý).
+        // ================================================================
+        public const string RepXong = "@XONG";
+        /// <summary>[SUA-OK-NC 2026-11-10] Kết quả sửa Gia công: sửa đạt tính là xong NC của vụ (vụ WTS NG ở NC k).
+        ///   Nguồn: KHÁCH 10/11 hỏi tiếp ("mọi trường hợp sửa đều không quay lại NC"); HÙNG 10/11 19:22.</summary>
+        public const string RepOk   = "@OK";
+        public static bool IsRepMark(string? toNc) => toNc == RepXong || toNc == RepOk;
+
+        /// <summary>[SUA-XL-GIU] Thứ tự nhóm sản xuất (Kho không tính): Gia công 1 · HTSP 2 · KCS 3 · Đóng gói 4; khác −1.</summary>
+        public static int ProdIdx(string? g) => g switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+
+        /// <summary>[SUA-XL-GIU] Hàng đã sửa (phiếu FromCell XL) nhận vào ô Hàng lỗi đã xử lý của <paramref name="to"/>:
+        ///   "GIU" = giữ ô Tồn hàng lỗi đã xử lý (nhóm đứng trước nơi phát hiện) · "XONG" = Đã làm (nơi phát hiện là KCS — KCS đã xác nhận,
+        ///   hoặc nơi phát hiện đã làm xong chiếc lúc phát hiện) · "" = như cũ (vào Chưa làm, đã xử lý).</summary>
+        public static string XlDest(string to, string? detectGroup, bool fromDa)
+        {
+            int ti = ProdIdx(to), di = ProdIdx(detectGroup);
+            if (ti < 0 || di < 0) return "";
+            if (ti < di) return "GIU";
+            if (ti == di && (to == "KCS" || fromDa)) return "XONG";
+            return "";
+        }
+
+        /// <summary>[SUA-XL-GIU] Lần KCS xác nhận đạt của Kết quả sửa có dấu: "GIU" (ô Tồn hàng lỗi đã xử lý) · "XONG" (Đã làm) · "OK" (Gia công: xong NC của vụ)
+        ///   · "" (như cũ). Dùng chung Compute + đường đi hàng lỗi.</summary>
+        public static string RepairDest(LedgerInput inp, InRepair rp)
+        {
+            if (rp.ToNC == RepOk) return rp.Group == "GC" ? "OK" : "";
+            if (rp.ToNC != RepXong || rp.NgCaseId is not long id || !inp.CaseInfo.TryGetValue(id, out var ci)) return "";
+            return ci.DetectGroup == rp.Group ? "XONG" : ProdIdx(rp.Group) > 0 && ProdIdx(rp.Group) < ProdIdx(ci.DetectGroup) ? "GIU" : "";
+        }
+
+        /// <summary>[XL-CHU-B 2026-11-10] Chữ dòng B khi hàng vào ô Hàng lỗi đã xử lý theo đích (XlDest / RepairDest). Rà độc lập Gói 15 (Thấp 5):
+        ///   trước luôn ghi "(SP đã OK, nhập WTS được)" kể cả hàng giữ ô / tính đã làm (không WTS). Nguồn: CLAUDE (rà độc lập 10/11).</summary>
+        public static string XlStepNote(string dest) => dest switch
+        {
+            "GIU"  => " (hàng đã sửa — giữ chờ trả nơi phát hiện, không ghi WTS số lượng)",
+            "XONG" => " (hàng đã sửa — tính là đã làm, không ghi WTS số lượng)",
+            "OK"   => " (hàng đã sửa — tính là xong NC của chiếc lỗi, không ghi WTS lại)",
+            _      => " (SP đã OK, nhập WTS được)",
+        };
+
+        /// <summary>[SUA-XL-GIU] Vụ báo lỗi lấy từ "đã làm xong chưa giao" (dùng cho XlDest).</summary>
+        public static HashSet<long> FromDaCases(LedgerInput inp)
+            => inp.NgReps.Where(b => b.Source == HandoverNgSource.Da && b.NgCaseId is long).Select(b => b.NgCaseId!.Value).ToHashSet();
+
+        /// <summary>[SUA-XL-GIU] Phiếu hàng đã sửa (FromCell XL) nhận vào ô Hàng lỗi đã xử lý: đích theo XlDest.</summary>
+        public static string XlRecvDest(LedgerInput inp, InTx t, string cell, HashSet<long>? fromDa = null)
+        {
+            if (t.FromCell != HandoverCell.Xl || cell != HandoverCell.Xl || t.NgCaseId is not long id || !inp.CaseInfo.TryGetValue(id, out var ci)) return "";
+            fromDa ??= FromDaCases(inp);
+            return XlDest(t.To, ci.DetectGroup, fromDa.Contains(id));
+        }
         public const string VaoLabel = "Nhận vào (chưa qua NC)";
         /// <summary>[N3-FIRST] Mã là dòng ảo @VAO? Bỏ khoảng trắng, không phân biệt hoa thường (rà độc lập 04/11 M1: "@vao" lọt WTS khi Workflow OFF).</summary>
         public static bool IsVao(string? code) => code != null && string.Equals(code.Trim(), VaoCode, StringComparison.OrdinalIgnoreCase);
@@ -3369,7 +3535,7 @@ namespace MES.Web.Services
                         var ex = new LedgerExplain { Title = $"Gia công · {NcText(fromNC)} chưa làm", Rule = "N10", Formula = $"Nhận vào {NcText(fromNC)} − OK − NG",   // [N3-FIRST] chữ @VAO
                             Note = "Chiếc lỗi phát hiện ở NC này, lấy từ hàng đang chờ của NC (chưa làm).", Result = Math.Min(w, G.ChuaLam) };
                         ex.Terms.Add(new LedgerTerm { Label = $"Nhận vào {NcText(fromNC)}", Value = ln.In ?? 0, Sign = 1 });
-                        ex.Terms.Add(new LedgerTerm { Label = "OK + NG đã làm", Value = ln.Ok + ln.Ng, Sign = -1 });
+                        ex.Terms.Add(new LedgerTerm { Label = "OK + NG đã làm", Value = ln.Ok + ln.OkSua + ln.Ng, Sign = -1 });   // [SUA-OK-NC] + sửa đạt xong NC
                         return (Math.Max(0, Math.Min(w, G.ChuaLam)), ex);
                     }
                     return (Math.Max(0, G.ChuaLam), Pick("ChuaLam"));
@@ -3381,6 +3547,7 @@ namespace MES.Web.Services
                     // [GN-CELL] ô Hàng sửa (sửa hộ xong) hay ô Hàng lỗi (tự sửa xong)
                     return fromCell == HandoverCell.Loi
                         ? (Math.Max(0, G.LoiGiu), Pick("LoiGiu"))
+                        : fromCell == HandoverCell.Xl ? (Math.Max(0, G.XlGiu), Pick("XlGiu"))   // [SUA-XL-GIU] hàng đã sửa chờ trả
                         : (Math.Max(0, G.SuaGiu), Pick("SuaGiu"));
                 case HandoverPurpose.HelpReturn:
                 {
@@ -3472,9 +3639,10 @@ namespace MES.Web.Services
                         Formula = $"OK NC {fromNC} − đã giao từ NC {fromNC}" + (usedNext > 0 ? $" − NC sau ({next!.Code}) đã làm" : ""),
                     };
                     e.Terms.Add(new LedgerTerm { Label = $"OK NC {fromNC}", Value = line.Ok, Sign = 1 });
+                    if (line.OkSua != 0) e.Terms.Add(new LedgerTerm { Label = $"Sửa đạt tính là xong NC {fromNC}", Value = line.OkSua, Sign = 1 });   // [SUA-OK-NC]
                     e.Terms.Add(new LedgerTerm { Label = "Đã giao theo NC", Value = line.HelpOut, Sign = -1 });
                     if (usedNext > 0) e.Terms.Add(new LedgerTerm { Label = $"NC {next!.Code} đã làm (OK + NG)", Value = usedNext, Sign = -1 });
-                    e.Result = line.Ok - line.HelpOut - usedNext;
+                    e.Result = line.Ok + line.OkSua - line.HelpOut - usedNext;
                     return (Math.Max(0, e.Result), e);
                 }
             }
@@ -3484,7 +3652,7 @@ namespace MES.Web.Services
         /// <summary>[VULOI] Phiếu này lấy hàng từ ô Hàng lỗi / Hàng sửa đang giữ (phải chọn vụ)? Hàng lỗi công đoạn trước: không (vụ sinh mới).</summary>
         public static bool TakesHeldCase(string purpose, string? fromCell)
             => (purpose is HandoverPurpose.RepairSend or HandoverPurpose.RepairReturn or HandoverPurpose.Scrap or HandoverPurpose.CustReturn
-                && (fromCell ?? HandoverCell.IssueCellOf(purpose, null)) is HandoverCell.Loi or HandoverCell.Sua)
+                && (fromCell ?? HandoverCell.IssueCellOf(purpose, null)) is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl)   // [SUA-XL-GIU] + hàng đã sửa (mang vụ)
                || HandoverCell.IsLamHoLoi(purpose, fromCell);   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ: vụ đang giữ ô LAMHO
 
         /// <summary>[VULOI] Ô giữ của vụ mà phiếu lấy hàng ([TARO-LAMHO-NC] trả lỗi hàng làm hộ: ô LAMHO — chỉ trong sổ).</summary>

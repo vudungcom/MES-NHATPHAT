@@ -125,6 +125,103 @@ public static class FormHelp
         }
     }
 
+    /// <summary>[SUA-XL-GIU][SUA-OK-NC 2026-11-10] Đáp án độc lập (đọc thẳng NgCases / báo lỗi / snapshot, không gọi HandoverForm): đích hàng sửa đạt của vụ ở nhóm sửa
+    ///   <paramref name="g"/>: "@XONG" (nhóm đã làm xong chiếc trước lúc phát hiện) · "@OK" (Gia công làm hỏng ở NC k) · Gia công khác: ExpectNextNc · nhóm khác: null.
+    ///   Vụ làm hộ (cờ của sổ — kiểm độc lập ở bất biến LAMHO-NHAN-NG) → như cũ. Nguồn: KHÁCH 10/11 vòng 1 (2.1 A, 2.2 A); HÙNG 10/11 19:22.</summary>
+    public static string? ExpectRepairTarget(AppDbContext db, int id, long caseId, string g, bool lamHo)
+    {
+        var legacy = g == "GC" ? ExpectNextNc(db, id, caseId, g) : null;
+        if (caseId <= 0 || lamHo) return legacy;
+        var c = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId);
+        if (c == null) return legacy;
+        static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+        int gi = I(g), di = I(c.DetectGroupCode);
+        if (gi < 0 || di < 0) return legacy;
+        if (g == "GC")
+        {
+            var (ncs, _) = Chain(db, id);
+            if (ncs.Count == 0) return legacy;
+            if (di > 1 || (di == 1 && string.IsNullOrWhiteSpace(c.DetectNC) && (c.OriginKind == NgOrigin.BaoLoi || c.CauseGroupCode is "HTSP" or "KCS" or "PKG"))) return "@XONG";
+            if (di == 1 && c.OriginKind == NgOrigin.Wts && !string.IsNullOrWhiteSpace(c.DetectNC))
+            {
+                var d = c.DetectNC!.Trim();
+                var bk = db.KhPlanRouteSnapshotMachining.List.FirstOrDefault(s => s.KhPlanDetailId == id && s.IsBackup && s.NC.Trim().Equals(d, IC) && !string.IsNullOrWhiteSpace(s.ParentNC));
+                if (bk != null) d = bk.ParentNC!.Trim();
+                if (ncs.Any(x => x.Equals(d, IC))) return "@OK";
+            }
+            return legacy;
+        }
+        bool fromDa = db.HandoverNgReports.List.Any(b => b.NgCaseId == caseId && !b.IsVoided && b.SourceCell == HandoverNgSource.Da);
+        return gi < di || (gi == di && fromDa) ? "@XONG" : null;
+    }
+
+    /// <summary>[SUA-XL-GIU] Đích hàng sửa đạt cho vụ SẼ sinh khi báo lỗi ở dòng <paramref name="pos"/> rồi sửa tại nhóm (đáp án độc lập):
+    ///   "đã làm xong" (DA) → "@XONG" (Gia công / nhóm khác: nơi phát hiện đã làm xong chiếc); Gia công chờ NC → ExpectFreshNc; nhóm khác chưa làm / Kho → null.</summary>
+    public static string? ExpectFreshTarget(AppDbContext db, int id, string g, string pos)
+    {
+        if (g == "KHO") return null;
+        if (g == "GC") { var (ncs, _) = Chain(db, id); return ncs.Count > 0 && pos == "DA" ? "@XONG" : ExpectFreshNc(db, id, g, pos); }
+        return pos == "DA" ? "@XONG" : null;
+    }
+
+    /// <summary>[SUA-XL-GIU 2026-11-10] Đáp án độc lập (đọc chứng từ DB): Tồn hàng lỗi đã xử lý của <paramref name="group"/> = hàng đã sửa vào giữ
+    ///   (KCS xác nhận đạt Kết quả sửa "@XONG" khi nhóm sửa đứng trước nơi phát hiện + lần nhận phiếu FromCell XL vào ô XL khi nhóm nhận đứng trước nơi phát hiện)
+    ///   − phiếu giao từ ô XL (số giao: đủ = đã nhận, chưa đủ = max(phiếu, đã nhận)). Và phần "đã làm do sửa" của nhóm (nơi phát hiện).</summary>
+    public static (decimal XlGiu, decimal DaSua) ExpectXl(AppDbContext db, int id, string group)
+    {
+        static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+        string? D(long? cid) => cid == null ? null : db.NgCases.List.FirstOrDefault(x => x.NgCaseId == cid)?.DetectGroupCode;
+        bool FromDa(long? cid) => cid != null && db.HandoverNgReports.List.Any(b => b.NgCaseId == cid && !b.IsVoided && b.SourceCell == HandoverNgSource.Da);
+        decimal giu = 0, da = 0;
+        foreach (var rp in db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == id && !r.IsVoided && r.GroupCode == group && r.ToNC == "@XONG"))
+        {
+            var ok = db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == rp.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk);
+            var d = D(rp.NgCaseId);
+            if (d == group) da += ok;
+            else if (I(group) > 0 && I(group) < I(d)) giu += ok;
+        }
+        foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided && t.FromCell == HandoverCell.Xl))
+        {
+            var recs = t.Receives.Where(r => !r.IsVoided).ToList();
+            if (t.FromGroupCode == group)
+            {
+                var rv = recs.Sum(r => r.QtyOk + r.QtyNg);
+                giu -= t.Status == "COMPLETED" ? rv : Math.Max(t.QtyIssued, rv);
+            }
+            if (t.ToGroupCode == group)
+            {
+                var d = D(t.NgCaseId);
+                foreach (var r in recs.Where(r => (r.ToCell ?? t.ToCell) == HandoverCell.Xl))
+                {
+                    if (I(group) > 0 && I(group) < I(d)) giu += r.QtyOk;
+                    else if (I(group) > 0 && group == d && (group == "KCS" || FromDa(t.NgCaseId))) da += r.QtyOk;
+                }
+            }
+        }
+        return (giu, da);
+    }
+
+    /// <summary>[XL-VUOT-CHAN] Đáp án độc lập: hàng đã sửa giao xuôi về nơi phát hiện (nhóm nhận sau nhóm giữ, không sau nơi phát hiện).</summary>
+    public static bool XlDung(AppDbContext db, long caseId, string from, string to, bool htspOnlyLamHo = false)
+    {
+        static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+        var d = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId)?.DetectGroupCode;
+        return I(from) > 0 && I(to) > I(from) && I(d) > 0 && I(to) <= I(d) && !(htspOnlyLamHo && to == "HTSP");   // [XL-HTSP-LAMHO]
+    }
+
+    /// <summary>[XL-TRA-NHOMSUA 2026-11-10] Đáp án độc lập (đọc DB, theo vị trí trong chuỗi): nhóm trả lại được hàng đã sửa bị hỏng lại (Workflow ON) =
+    ///   nhóm có Kết quả sửa còn hiệu lực của vụ ghi dấu "@XONG" mà đứng TRƯỚC nơi phát hiện (hàng vào giữ ô XL), có lần KCS xác nhận còn hiệu lực ĐẠT &gt; 0,
+    ///   và đứng trước nhóm giữ <paramref name="from"/>; rỗng = không giới hạn.</summary>
+    public static List<string> XlNhomSua(AppDbContext db, long caseId, string from)
+    {
+        static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+        var det = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId)?.DetectGroupCode;
+        var reps = db.HandoverRepairResults.List.Where(r => r.NgCaseId == caseId && !r.IsVoided && r.ToNC == "@XONG"
+                                                           && I(r.GroupCode) > 0 && I(r.GroupCode) < I(det) && I(r.GroupCode) < I(from)).ToList();
+        return reps.Where(r => db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == r.HandoverRepairResultId && !c.IsVoided && c.QtyOk > 0))
+                   .Select(r => r.GroupCode).Distinct().ToList();
+    }
+
     /// <summary>Mặc định cho vụ SẼ sinh khi báo lỗi ở dòng <paramref name="pos"/> của nhóm <paramref name="g"/> (đáp án độc lập).</summary>
     public static string? ExpectFreshNc(AppDbContext db, int id, string g, string pos)
     {
@@ -152,6 +249,7 @@ public static class FormHelp
             var G = r.G(g);
             d[g + ".Chua"] = G.ChuaLam; d[g + ".Da"] = G.ConGiao; d[g + ".Loi"] = G.LoiGiu; d[g + ".Sua"] = G.SuaGiu;
             d[g + ".ChoNhan"] = G.ChoNhan; d[g + ".ChoKcs"] = G.ChoKcs; d[g + ".LamHo"] = G.LamHoGiu; d[g + ".Ton"] = G.Ton;
+            d[g + ".Xl"] = G.XlGiu;   // [SUA-XL-GIU]
         }
         foreach (var s in r.G("GC").Steps.Where(s => !s.IsExcluded && s.Waiting != null)) d["GC.w." + s.Code] = s.Waiting!.Value;
         d["DaHuy"] = r.DaHuy; d["TraKhach"] = r.TraKhach; d["DangGiao"] = r.DangGiao; d["TpNhap"] = r.TpNhap;
@@ -182,6 +280,13 @@ public static class FormHelp
             if (g == "PKG" && to == "KHO" && cellTo == HandoverCell.Moi && r.Kind == HandoverForm.Tot) e.Add("DangGiao", n);   // thành phẩm chờ Kho nhận
             else { e.Add(to + ".ChoNhan", n); e.Add(to + ".Ton", n); }
             e.Add(g + ".Ton", -n);
+        }
+        if (pos == "TONXL")
+        {   // [SUA-XL-GIU][XL-TRA-LAI] hàng đã sửa (vụ) → phiếu Trả hàng đã sửa từ ô Hàng lỗi đã xử lý: hàng tốt → ô Hàng lỗi đã xử lý, hàng lỗi → ô Hàng lỗi
+            e.Tx = 1; e.Purpose = HandoverPurpose.RepairReturn; e.FromCell = HandoverCell.Xl;
+            e.ToCell = r.Kind == HandoverForm.Tot ? HandoverCell.Xl : HandoverCell.Loi;
+            e.Add(g + ".Xl", -n); ToRecv(e.ToCell);
+            return e;
         }
         if (r.Kind == HandoverForm.Tot)
         {

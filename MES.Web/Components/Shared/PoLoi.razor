@@ -22,7 +22,7 @@
                 <span title="Hàng lỗi sửa xong, nhận về ô Hàng lỗi đã xử lý / Hàng mới (làm tiếp)"><strong>Đã xử lý</strong> @Trace.VeSx.ToString("0.##")</span>
                 <span><strong>Đã huỷ</strong> @Trace.DaHuy.ToString("0.##")</span>
                 <span><strong>Trả khách</strong> @Trace.TraKhach.ToString("0.##")</span>
-                <span title="Tồn hàng lỗi + Tồn hàng sửa của mọi nhóm (đúng ô trên trang Giao nhận)"><strong>Đang giữ</strong> <span class="@HeldClass(Trace.DangGiu)">@Trace.DangGiu.ToString("0.##")</span></span>
+                <span title="Tồn hàng lỗi + Tồn hàng sửa + hàng đã sửa chờ trả (Tồn hàng lỗi đã xử lý) của mọi nhóm (đúng ô trên trang Giao nhận)">@* [XL-HIEN-LOI 2026-11-10] *@<strong>Đang giữ</strong> <span class="@HeldClass(Trace.DangGiu)">@Trace.DangGiu.ToString("0.##")</span></span>
                 <span title="Phiếu giao hàng lỗi / hàng sửa đã lập, bên nhận chưa bấm Nhận"><strong>Đang chuyển</strong> @Trace.DangChuyen.ToString("0.##")</span>
                 @if (Trace.GioSuaPo > 0)
                 {
@@ -82,6 +82,7 @@
                         <th class="text-center" title="Lỗi do nơi này gây ra: NG (WTS) của nơi này, hàng lỗi nơi khác trả về / báo là lỗi đầu vào do nơi này">Do nơi này gây ra</th>
                         <th class="text-center" title="Ô Tồn hàng lỗi (sổ Giao nhận)">Đang giữ · Hàng lỗi</th>
                         <th class="text-center" title="Ô Tồn hàng sửa (sổ Giao nhận) — hàng nơi khác gửi nhờ sửa">Đang giữ · Hàng sửa</th>
+                        <th class="text-center" title="Ô Tồn hàng lỗi đã xử lý (sổ Giao nhận) — hàng đã sửa (KCS xác nhận), chờ trả nơi phát hiện">Đang giữ · Đã sửa chờ trả</th>@* [XL-HIEN-LOI] *@
                         <th class="text-center">Đã huỷ</th>
                         <th class="text-center">Trả khách</th>
                         <th style="width:90px"></th>
@@ -257,11 +258,12 @@
     static string AfterText(NgTraceEvent e)
     {
         var parts = new List<string>();
-        foreach (var (g, loi, sua) in e.GiuSau)
+        foreach (var (g, loi, sua, xl) in e.GiuSau)
         {
             var s = HandoverLedgerService.GroupLabel(g) + " " + loi.ToString("0.##");
             if (sua != 0) s += $" (+sửa {sua:0.##})";
             if (loi == 0 && sua != 0) s = HandoverLedgerService.GroupLabel(g) + $" sửa {sua:0.##}";
+            if (xl != 0) s = (loi == 0 && sua == 0 ? HandoverLedgerService.GroupLabel(g) : s + " ·") + $" đã sửa chờ trả {xl:0.##}";   // [XL-HIEN-LOI]
             parts.Add(s);
         }
         if (e.DangChuyen != 0) parts.Add($"đang chuyển {e.DangChuyen:0.##}");
@@ -285,6 +287,7 @@
             <td class="@NumClass(g.GayRa)">@Num(g.GayRa)</td>
             <td class="@NumClass(g.LoiGiu)" title="@ExplainTip(g.LoiExplain)">@Num(g.LoiGiu)</td>
             <td class="@NumClass(g.SuaGiu)" title="@ExplainTip(g.SuaExplain)">@Num(g.SuaGiu)</td>
+            <td class="@NumClass(g.XlGiu)" title="@ExplainTip(g.XlExplain)">@Num(g.XlGiu)</td>@* [XL-HIEN-LOI] *@
             <td class="@NumClass(g.DaHuy)">@Num(g.DaHuy)</td>
             <td class="@NumClass(g.TraKhach)">@Num(g.TraKhach)</td>
             <td class="text-center">

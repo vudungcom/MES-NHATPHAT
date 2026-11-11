@@ -522,6 +522,8 @@ namespace MES.Web.Services
                                        || (vcell == HandoverCell.LamHo && HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell))   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ lấy từ ô vụ LAMHO
                                        || (t.Purpose != HandoverPurpose.NgReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell) && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == vcell)));   // rà gói 6 mục 13
                         AddRepair(r => r.Group == vg && r.NgCaseId == want && r.Cell == vcell);   // [GC-SUA-TAI-CHO]
+                        if (vcell == HandoverCell.Xl)   // [SUA-XL-GIU 2026-11-10] hàng đã sửa giữ vụ: lần KCS xác nhận đưa hàng vào ô này (Nguồn: KHÁCH 10/11 2.1 A / 2.2 A; HÙNG 10/11 19:22)
+                            AddRepair(r => r.Group == vg && r.NgCaseId == want && r.ToNC == HandoverLedgerService.RepXong && r.Checks.Any(x => x.Id > 0));
                     }
                     continue;
                 }
@@ -549,6 +551,10 @@ namespace MES.Web.Services
                             break;
                         case "LamHoGiu":
                             AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
+                            break;
+                        case "XlGiu":   // [SUA-XL-GIU] tồn hàng lỗi đã xử lý âm: phiếu giao hàng đã sửa từ nhóm đó (mới nhất gỡ trước)
+                            AddTx(t => t.From == g && t.FromCell == HandoverCell.Xl);
+                            AddRepair(r => r.Group == g && r.ToNC == HandoverLedgerService.RepXong && r.Checks.Any(x => x.Id > 0));
                             break;
                         case "ChoKcs":   // [GOI8-THAP-D 2026-11-08] hàng sửa chờ KCS âm (đạt − đã xác nhận): gỡ lần KCS xác nhận mới nhất của Kết quả sửa nhóm đó (trước: không ứng viên)
                             AddRepair(r => r.Group == g && r.Checks.Any(x => x.Id > 0));

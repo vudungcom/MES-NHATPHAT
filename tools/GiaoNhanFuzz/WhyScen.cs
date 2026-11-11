@@ -185,7 +185,10 @@ public static class WhyScen
         var w2 = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC02", null, 1, 1, U, 1);
         var vu = db.WtsProductionLogs.List.Single(x => x.WtsLogId == w2.LogId).NgCaseId;
         await Task.Delay(20);
+        // [SUA-OK-NC 2026-11-10] Kết quả sửa kiểu cũ (về chờ NC02, làm lại NC02) chỉ còn ở dữ liệu cũ / Workflow OFF → dựng lúc OFF rồi bật lại (ca K5 theo thời gian giữ nguyên)
+        var plY = db.KhPlans.List.Single(x => x.KhPlanId == db.KhPlanDetails.List.Single(d0 => d0.KhPlanDetailId == det).KhPlanId); plY.ApplyWorkflow = false;
         var kq = await svc.CreateRepairResultAsync(det, "GC", HandoverCell.Loi, vu, 1, 0, "NC02", null, U);
+        plY.ApplyWorkflow = true;
         var repId = db.HandoverRepairResults.List.Last().HandoverRepairResultId;
         await Task.Delay(20);
         var xn = await svc.ConfirmRepairAsync(repId, 1, 0, null, Kcs);

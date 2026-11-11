@@ -122,9 +122,24 @@ namespace MES.Web.Services
             if (ngCaseId == null && row.CaseHeld(0, groupCode, sourceCell) <= 0)
                 return (false, $"Chọn {NgCaseNo.Term} đang giữ ở ô {HandoverCell.Label(sourceCell)} của {HandoverLedgerService.GroupLabel(groupCode)}.");
 
-            // Gia công: NC làm tiếp cho hàng đạt — NC thường có trong quy trình PO (như phiếu vào Gia công [N3-TONC]); trống = như hàng mới
-            if (groupCode != "GC" || qtyPass <= 0) toNC = null;
-            if (toNC != null)
+            // [SUA-XL-GIU][SUA-OK-NC][SUA-KHONG-LUI 2026-11-10] Đích hàng đạt theo vụ (HandoverForm.RepairTarget): nhóm sửa đã làm xong chiếc trước lúc phát hiện
+            //   → "@XONG" (KCS xác nhận: nơi phát hiện = Đã làm; nhóm đứng trước nơi phát hiện = Tồn hàng lỗi đã xử lý); Gia công làm hỏng ở NC k → "@OK" (xong NC k).
+            //   Workflow ON: không chọn khác đích (không làm lại NC trước); OFF: vẫn cho chọn NC như cũ (K2, lùi + lý do).
+            //   Nguồn: KHÁCH 10/11 vòng 1 (hỏi lại 2.2 A, hỏi tiếp 2.1 A); HÙNG 10/11 19:22 OK thiết kế Gói 15.
+            var tgt = qtyPass > 0 ? HandoverForm.RepairTarget(row, ngCaseId ?? 0, groupCode) : null;
+            bool markOk = false;
+            if (groupCode != "GC" || qtyPass <= 0)
+                toNC = qtyPass > 0 && tgt == HandoverLedgerService.RepXong ? HandoverLedgerService.RepXong : null;   // nhóm khác: chỉ có dấu, không chọn NC
+            else if (HandoverLedgerService.IsRepMark(tgt))
+            {
+                if (toNC == tgt) markOk = true;
+                else if (row.ApplyWorkflow)
+                    return (false, HandoverForm.SuaKhongLuiMsg(tgt == HandoverLedgerService.RepOk ? "NC của chiếc lỗi (tính là đã xong NC đó)" : "Gia công đã làm xong (không làm lại NC)"));
+            }
+            if (markOk || HandoverLedgerService.IsRepMark(toNC) && groupCode != "GC") { }   // dấu: không kiểm NC
+            else if (HandoverLedgerService.IsRepMark(toNC))
+                return (false, "Đích hàng sửa đạt không hợp lệ cho vụ này — chọn lại.");   // dấu gửi sai vụ (vd vụ đổi) — rà độc lập
+            else if (toNC != null)
             {
                 var gcSteps = row.G("GC").Steps;
                 if (HandoverLedgerService.IsVao(toNC) || !gcSteps.Any(s => !s.IsExcluded && s.Code == toNC))
@@ -135,10 +150,11 @@ namespace MES.Web.Services
             // [GN-FORM1][K2 2026-11-05] Nguồn: KHÁCH 05/11 15:39 ("sửa xong làm tiếp NC2 chứ không phải NC1 hay NC3"), HÙNG 17:35 duyệt.
             //   NC làm tiếp của hàng đạt = NC của vụ (chiếc đang chờ NC nào thì làm tiếp NC đó); chỉ cho làm lại từ NC ĐỨNG TRƯỚC + lý do
             //   (ghi vào Ghi chú để truy); NC sau bị chặn (bỏ qua NC = mất truy vết công đoạn). Trước: chọn NC nào cũng lưu.
-            if (groupCode == "GC" && qtyPass > 0)
+            if (groupCode == "GC" && qtyPass > 0 && !markOk)
             {
-                var defNc = HandoverForm.CaseNextNc(row, ngCaseId ?? 0, groupCode);   // [GN-FORM1] vòng 2 C1: nhóm giữ (vụ 0)
-                var (ncErr, ncNote) = HandoverForm.CheckNextNc(row, defNc, toNC, ncReason, free: (ngCaseId ?? 0) == 0);   // [GN-FORM1] vòng 3 C1b: hàng cũ chưa mã vụ
+                var defNc = HandoverForm.CaseNextNc(row, ngCaseId ?? 0, groupCode);   // [GN-FORM1] vòng 2 C1: nhóm giữ (vụ 0) · [SUA-XL-GIU] dấu chỉ khi Workflow OFF chọn NC khác
+                var (ncErr, ncNote) = HandoverForm.CheckNextNc(row, defNc, toNC, ncReason, free: (ngCaseId ?? 0) == 0,
+                    allowEarlier: !row.ApplyWorkflow);   // [SUA-KHONG-LUI] ON: không làm lại NC trước
                 if (ncErr != null) return (false, ncErr);
                 if (ncNote != null)
                 {

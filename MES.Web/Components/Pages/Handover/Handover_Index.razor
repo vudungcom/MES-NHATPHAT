@@ -1064,10 +1064,10 @@ else
         new("GiaoMoi",   "Hàng Mới",          "Giao", "Phiếu Hàng mới đã lập (tính cả phiếu chờ nhận)", "", g => g.GiaoMoi, ""),
         new("GiaoLoi",   "Hàng lỗi",          "Giao", "Phân loại Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""), // [GN-PLH] mục 36
         new("GiaoSua",   "Hàng Sửa",          "Giao", "Sửa hộ xong, trả về nơi phát hiện", "", g => g.GiaoSua, ""),
-        new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Có trong Excel nhưng cả 3 tình huống không ghi vào đây (hàng đã xử lý chỉ nhận về rồi làm tiếp)", "", g => g.GiaoLoiXl, ""),
+        new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Hàng đã sửa (KCS xác nhận) giao tiếp về nơi phát hiện lỗi — không ghi WTS số lượng", "", g => g.GiaoLoiXl, ""),   // [SUA-XL-GIU 2026-11-10] trước: cột luôn trống
         new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG (WTS) − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
         new("DaLam",     "Đã làm",   "", "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, ""),
-        new("Ton",       "Tồn",      "", "Hàng thuộc nhóm, gồm cả hàng đã giao tới mà nhóm chưa bấm Nhận (chờ nhận) và hàng sửa chờ KCS xác nhận", "Σ Nhận − Σ Giao + Chờ nhận + Chờ KCS", g => g.Ton, "gn-ton"), // [GN-RECV-NG] mục 37; [GC-SUA-TAI-CHO] + Chờ KCS
+        new("Ton",       "Tồn",      "", "Hàng thuộc nhóm, gồm cả hàng đã giao tới mà nhóm chưa bấm Nhận (chờ nhận), hàng sửa chờ KCS xác nhận và hàng đã sửa chờ trả nơi phát hiện", "Σ Nhận − Σ Giao + Chờ nhận + Chờ KCS", g => g.Ton, "gn-ton"),   // [SUA-XL-GIU] chữ // [GN-RECV-NG] mục 37; [GC-SUA-TAI-CHO] + Chờ KCS
     };
 
     static List<ColDef> ColsFor(string group)
@@ -1105,6 +1105,11 @@ else
                 @* [GC-SUA-TAI-CHO] hàng nhóm đã sửa đạt, chờ KCS xác nhận *@
                 <span class="d-block text-nowrap" style="font-size:9.5px;color:#15803d" title="Nhóm đã sửa xong (đạt), chờ KCS xác nhận: tính vào Tồn nhưng chưa nhập WTS được">chờ KCS @g.ChoKcs.ToString("0.##")</span>
             }
+            @if (c.Key == "Ton" && g.XlGiu > 0)
+            {
+                @* [SUA-XL-GIU 2026-11-10] hàng đã sửa (KCS xác nhận) chờ giao về nơi phát hiện — không ghi WTS số lượng *@
+                <span class="d-block text-nowrap" style="font-size:9.5px;color:#0e7490" title="Hàng đã sửa xong (KCS xác nhận đạt), nhóm đã làm xong chiếc này trước lúc phát hiện lỗi: không ghi WTS, chờ giao về nơi phát hiện">đã sửa chờ trả @g.XlGiu.ToString("0.##")</span>
+            }
             @if (c.Key == "Ton" && prev == null)
             {
                 <div class="d-flex gap-1 justify-content-center flex-wrap">
@@ -1127,10 +1132,10 @@ else
 
     /// <summary>[GN-TEXT] Ô Excel mà theo đúng các bước trong file Excel khách, quy trình không bao giờ ghi vào (bộ thử ngẫu nhiên xác nhận).</summary>
     static bool IsDeadCell(string grp, string key)
-        => key == "GiaoLoiXl" || (grp == "KHO" && key is "NhanSua" or "GiaoSua");
+        => (grp == "KHO" && key == "GiaoLoiXl") || (grp == "KHO" && key is "NhanSua" or "GiaoSua");   // [SUA-XL-GIU] từ 10/11 nhóm sản xuất giao được hàng đã sửa từ ô này (Kho thì không)
 
     static string DeadCellTip(string grp, string key) => key == "GiaoLoiXl"
-        ? "Excel có cột này nhưng cả 3 tình huống không ghi vào: hàng lỗi đã xử lý chỉ NHẬN về nơi phát hiện rồi làm tiếp (WTS), không giao đi từ ô này."
+        ? "Kho không giữ hàng đã sửa chờ trả: hàng lỗi đã xử lý về Kho tính là phôi còn."
         : "Theo quy trình Excel Kho không nhận / giao Hàng Sửa (ô có số khi có nhóm gửi Kho sửa). Phôi lỗi ở Kho đi bằng ô Hàng lỗi (gửi nhờ sửa, huỷ, trả khách)."; // [GN-ROUTE-FREE]
 
     static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", _ => k };   // [GN-VOID-RULE] + DONG; [GN-NG-AFTER] + BAOLOI; [GC-SUA-TAI-CHO] + KQSUA / XNSUA
@@ -1168,7 +1173,7 @@ else
                 <div class="border rounded p-2 bg-white" style="min-width:360px">
                     <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Tồn theo loại hàng (trần khi lập phiếu)</div>
                     <table class="table table-sm mb-0" style="font-size:10.5px">
-                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th><th class="text-end" style="color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận — tính vào Tồn, chưa nhập WTS được">Chờ nhận</th><th class="text-end" style="color:#15803d" title="Hàng nhóm đã sửa xong (đạt), chờ KCS xác nhận — tính vào Tồn, chưa nhập WTS được">Chờ KCS</th></tr></thead> @* [GN-RECV-NG] mục 37: + cột Chờ nhận; [GC-SUA-TAI-CHO] + Chờ KCS *@
+                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th><th class="text-end" style="color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận — tính vào Tồn, chưa nhập WTS được">Chờ nhận</th><th class="text-end" style="color:#15803d" title="Hàng nhóm đã sửa xong (đạt), chờ KCS xác nhận — tính vào Tồn, chưa nhập WTS được">Chờ KCS</th><th class="text-end" style="color:#0e7490" title="Hàng đã sửa (KCS xác nhận), chờ giao về nơi phát hiện — không ghi WTS số lượng">Đã sửa chờ trả</th></tr></thead> @* [SUA-XL-GIU] + cột *@ @* [GN-RECV-NG] mục 37: + cột Chờ nhận; [GC-SUA-TAI-CHO] + Chờ KCS *@
                         <tbody>
                             @foreach (var code in HandoverLedgerService.GroupCodes)
                             {
@@ -1182,6 +1187,7 @@ else
                                     <td class="text-end text-danger @(_showFormula ? "gn-click" : "")" @onclick='() => OpenExplain(row, g, "NgCuoi")'>@(g.IsKho ? "·" : g.NgCuoi.ToString("0.##"))</td>
                                     <td class="text-end @(_showFormula ? "gn-click" : "")" style="color:#b45309" @onclick='() => OpenExplain(row, g, "ChoNhan")'>@g.ChoNhan.ToString("0.##")</td>
                                     <td class="text-end @(_showFormula ? "gn-click" : "") @(g.ChoKcs < 0 ? "gn-neg" : "")" style="color:#15803d" @onclick='() => OpenExplain(row, g, "ChoKcs")'>@g.ChoKcs.ToString("0.##")</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "") @(g.XlGiu < 0 ? "gn-neg" : "")" style="color:#0e7490" @onclick='() => OpenExplain(row, g, "XlGiu")'>@g.XlGiu.ToString("0.##")</td>
                                 </tr>
                             }
                         </tbody>
@@ -1629,7 +1635,7 @@ else
         HandoverCell.Moi => "vào Chưa làm, nhập WTS được (Kho: như phôi; Đóng gói → Kho: nhập thành phẩm).",
         HandoverCell.Loi => "giữ ở Tồn hàng lỗi của bên nhận (gửi sửa / tự sửa / huỷ / trả khách).",
         HandoverCell.Sua => "hàng nhờ sửa, không tính vào sản xuất của nhóm sửa; sửa xong trả lại.",
-        HandoverCell.Xl  => "SP đã OK, vào Chưa làm, nhân viên nhập WTS tiếp được.",
+        HandoverCell.Xl  => "SP đã OK. Hàng đã sửa (KCS xác nhận) về nơi phát hiện: tính là đã làm; nhóm đứng trước nơi phát hiện: giữ chờ trả tiếp (không WTS). Hàng sửa khác: vào Chưa làm, nhập WTS tiếp.",   // [SUA-XL-GIU]
         _ => ""
     };
 
@@ -1773,7 +1779,7 @@ else
 
     static string RepairCellText(HandoverRepairItem r)
         => $"lấy từ ô {HandoverCell.Label(r.SourceCell)} · đạt {r.QtyPass:0.##}" + (r.QtyFail != 0 ? $" · không đạt {r.QtyFail:0.##} → ô Hàng lỗi" : "")
-           + (string.IsNullOrEmpty(r.ToNC) ? "" : $" · làm tiếp {HandoverLedgerService.NcText(r.ToNC)}");
+           + (string.IsNullOrEmpty(r.ToNC) ? "" : " · " + HandoverLedgerService.RepMarkText(r.ToNC));   // [SUA-XL-GIU] dấu → chữ
 
     /// <summary>[GC-SUA-TAI-CHO] Mục "Hàng sửa chờ KCS xác nhận" trong modal Nhận (nhóm KCS).</summary>
     RenderFragment KcsRepairSection() => __builder =>
@@ -1805,7 +1811,7 @@ else
                             <div class="col-6">
                                 <label class="form-label form-label-sm fw-semibold text-success">KCS xác nhận đạt</label>
                                 <input type="number" class="form-control form-control-sm border-success" @bind="_kcsOk" min="0" />
-                                <div class="text-muted" style="font-size:10px">Vào ô Hàng lỗi đã xử lý của @HandoverLedgerService.GroupLabel(r.GroupCode)@(string.IsNullOrEmpty(r.ToNC) ? "" : " · " + HandoverLedgerService.NcText(r.ToNC))</div>
+                                <div class="text-muted" style="font-size:10px">Vào ô Hàng lỗi đã xử lý của @HandoverLedgerService.GroupLabel(r.GroupCode)@(string.IsNullOrEmpty(r.ToNC) ? "" : " · " + HandoverLedgerService.RepMarkText(r.ToNC))</div>   @* [SUA-XL-GIU] *@
                             </div>
                             <div class="col-6">
                                 <label class="form-label form-label-sm fw-semibold text-danger">KCS loại (chưa đạt)</label>
@@ -1989,7 +1995,7 @@ else
     long RecvNcCase(HandoverTxPending p) => RecvCarry(p) ? (p.NgCaseId ?? 0) : 0;
     List<HandoverForm.NcOpt> RecvNcOpts(HandoverTxPending p)
         => !RecvNcApplies(p) ? new()
-           : HandoverForm.NcOptions(_selectedRow!, HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC"), free: RecvNcCase(p) == 0)
+           : HandoverForm.NcOptions(_selectedRow!, HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC"), free: RecvNcCase(p) == 0, allowEarlier: !_selectedRow!.ApplyWorkflow)   // [SUA-KHONG-LUI] ON: không làm lại NC trước
                // [KHO-NC-DAU 2026-11-10] (rà độc lập Gói 13 T2) phiếu Kho, hàng như hàng mới: chỉ NC đầu — cùng luật máy chủ ReceiveNc
                .Where(o => !(p.FromGroupCode == "KHO" && _selectedRow!.ApplyWorkflow && HandoverForm.CaseNextNc(_selectedRow!, RecvNcCase(p), "GC") == null) || HandoverForm.KhoNcOk(_selectedRow!, o.Code)).ToList();
     static string RecvNcKey(HandoverForm.NcOpt o) => o.Default ? "" : o.Code ?? HandoverService.FormNewNc;
