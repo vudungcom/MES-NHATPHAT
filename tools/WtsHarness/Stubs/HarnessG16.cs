@@ -73,6 +73,36 @@ public static class HarnessG16
         return new { g16 = Id(db, "PO-G16"), g16b = Id(db, "PO-G16B") };
     }
 
+    // [G16-NHAN-CHONSAN 2026-11-12] PO-G16C (drive_g16 Y7): Workflow OFF lúc lập phiếu — GC WTS NC01 NG 2 (vụ GC), GC giao HTSP từ ô Hàng lỗi chỉ định
+    //   ô Hàng lỗi đã xử lý ("tự sửa xong", OFF cho lập) → bật Workflow ON: trang Nhận HTSP phải chọn sẵn ô Hàng lỗi.
+    //   Nguồn: CLAUDE (sổ G16-NHAN-CHONSAN); HÙNG 12/11 08:11. Riêng endpoint (không đổi dữ liệu Y1–Y6).
+    //   PO-G16D (Y8): như PO-G16C nhưng phiếu xoá FromCell (giả phiếu "Trả hàng đã sửa" rất cũ không ghi ô bên giao — sổ suy ô Hàng lỗi).
+    public static async Task<object> SeedCAsync(AppDbContext db, string po = "PO-G16C")
+    {
+        bool oldTx = po == "PO-G16D";
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-" + po[3..]))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            var t0 = DateTime.Now.AddHours(-2);
+            var cat = db.NgCategories.List.First(c => c.IsActive);
+            var svc = new HandoverService(db);
+            async Task Must(Task<(bool Ok, string Error)> t, string what) { var r = await t; if (!r.Ok) throw new Exception("g16c-seed " + what + ": " + r.Error); db.Fixup(); }
+            long Last() => db.HandoverTransactions.List.Max(x => x.HandoverTxId);
+            var e = await NewPo(db, "KH-" + po[3..], po, admin, t0);
+            await Must(svc.IssueByCellAsync(e.KhPlanDetailId, "KHO", "GC", 10, admin.UserId, "MOI", false, "MOI"), "C: Kho giao GC 10");
+            await Must(svc.ReceiveAsync(Last(), 10, 0, null, admin.UserId), "C: GC nhận 10");
+            var vu = await NgCaseService.CreateCaseAsync(db, e.KhPlanDetailId, cat, NgOrigin.Wts, "GC", "NC01", "GC", admin.UserId);
+            db.WtsProductionLogs.Add(new WtsProductionLog { KhPlanDetailId = e.KhPlanDetailId, ProcessGroup = "GC", NC = "NC01", QtyDone = 10, QtyOk = 8, QtyNg = 2, NgCaseId = vu.NgCaseId,
+                StartTime = t0.AddMinutes(10), EndTime = t0.AddMinutes(15), WorkerId = admin.UserId, CreatedAt = t0.AddMinutes(15) });
+            await db.SaveChangesAsync(); db.Fixup();
+            await WorkflowAsync(db, po, false);
+            await Must(svc.IssueByCellAsync(e.KhPlanDetailId, "GC", "HTSP", 2, admin.UserId, "LOI", false, "XL", ngCaseId: vu.NgCaseId), "C: OFF GC giao HTSP 2 ô Hàng lỗi → Hàng lỗi đã xử lý");
+            if (oldTx) { var tx = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == e.KhPlanDetailId).OrderBy(t => t.HandoverTxId).Last(); tx.FromCell = null; await db.SaveChangesAsync(); db.Fixup(); }
+            if (po != "PO-G16E") await WorkflowAsync(db, po, true);   // PO-G16E (Y9): giữ Workflow OFF — trang Nhận giữ ô bên giao chỉ định, không cảnh báo
+        }
+        return new { id = Id(db, po) };
+    }
+
     static int Id(AppDbContext db, string po) => db.KhPlanDetails.List.First(x => x.PurchaseOrder == po).KhPlanDetailId;
 
     /// <summary>KCS xác nhận Kết quả sửa mới nhất của PO (đạt hết) — người KCS khác người ghi (admin).</summary>

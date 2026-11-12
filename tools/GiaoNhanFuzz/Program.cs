@@ -1345,6 +1345,12 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var b = bs[rnd.Next(bs.Count)];
                     var bid = b.ReplacementId; var by = b.ReceivedBy; var bq = b.Qty;
                     var con = row.G("KHO").ConGiao;
+                    // [G14-KIEM-THEM 2026-11-12] đáp án độc lập: Kho phôi còn đọc THẲNG bảng (phôi + bù − phiếu Hàng mới Kho giao − báo phôi lỗi) khi PO chưa có
+                    //   hàng về Kho / Kho sửa tại chỗ (đường đơn giản — luôn có ở đầu mỗi PO); lệch sổ = SAI. Đường phức tạp: dùng sổ (đếm g14.vbu.dapan.so).
+                    //   Nguồn: CLAUDE (rà độc lập Gói 14 L5, sổ G14-KIEM-THEM); HÙNG 12/11 08:11 OK làm.
+                    var conTb = KhoConFromTables(db);
+                    if (conTb != null) { checks++; if (conTb.Value != con) fails.Add($"[G14-KIEM-THEM Kho phôi còn sổ ≠ bảng] PO{po} op{op}: sổ {con} ≠ bảng {conTb}"); con = conTb.Value; }
+                    Inc(conTb != null ? "g14.vbu.dapan.bang" : "g14.vbu.dapan.so");
                     bool must = row.ApplyWorkflow && con - bq < 0;   // đáp án: phôi bù đã giao đi (Kho phôi còn không đủ) → K5 phải chặn
                     desc = $"vbu #{bid} vu={b.NgCaseId} q={bq} phoicon={con} phaichan={must}";
                     var deny = await svc.VoidReplacementAsync(bid, "huy thu", FuzzPerm.GcOnlyUser(db));   // chỉ Sửa Gia công, không phải người nhập (L5)
@@ -1957,6 +1963,26 @@ static bool LamHoVuDoc(MES.Web.Data.AppDbContext db, LedgerCase x)
 // [KHACH-GUI-LAI 2026-11-11] đáp án độc lập (đọc thẳng bảng): Σ phiếu Trả khách / Huỷ chưa huỷ của vụ · Σ phiếu bù chưa huỷ của vụ (PO 1)
 static decimal BuOutOf(AppDbContext db, long c) => db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.NgCaseId == c
     && (t.Purpose == HandoverPurpose.Scrap || t.Purpose == HandoverPurpose.CustReturn)).Sum(t => t.QtyIssued);
+// [G14-KIEM-THEM 2026-11-12] Kho phôi còn tính thẳng từ bảng — chỉ khi PO chưa có phiếu vào Kho, Kết quả sửa ở Kho, phiếu Kho lấy ô khác Hàng mới
+//   (khi đó sổ: ConGiao = Phôi nhận + Khách gửi bù − Giao Hàng mới − Báo phôi lỗi). Phiếu giao: đã nhận đủ / huỷ phần chưa nhận = số đã nhận; còn chờ = max(số giao, đã nhận).
+//   null = đường phức tạp (đáp án dùng sổ). Nguồn: CLAUDE (rà độc lập Gói 14 L5); HÙNG 12/11 08:11.
+static decimal? KhoConFromTables(AppDbContext db)
+{
+    var txs = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided).ToList();
+    if (txs.Any(t => t.ToGroupCode == "KHO")) return null;
+    if (db.HandoverRepairResults.List.Any(r => r.KhPlanDetailId == 1 && !r.IsVoided && r.GroupCode == "KHO")) return null;
+    var kho = txs.Where(t => t.FromGroupCode == "KHO").ToList();
+    string? Cell(HandoverTransaction t) => t.Purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn ? "NC"
+        : t.FromCell ?? HandoverCell.IssueCellOf(t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New), null);
+    if (kho.Any(t => Cell(t) is not (HandoverCell.Moi or HandoverCell.Loi or HandoverCell.Sua))) return null;   // ô Hàng lỗi đã xử lý / theo NC / lạ: đường phức tạp
+    decimal Rec(long id) => db.HandoverReceives.List.Where(r => r.HandoverTxId == id && !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg);
+    decimal giao = kho.Where(t => Cell(t) == HandoverCell.Moi)
+                      .Sum(t => t.Status == "COMPLETED" ? Rec(t.HandoverTxId) : Math.Max(t.QtyIssued, Rec(t.HandoverTxId)));
+    var phoi = db.KhoVatLieus.List.Where(k => k.PlanDetailId == 1 && k.IsActive).Sum(k => (decimal)(k.SoLuongThucNhan ?? 0));
+    var bu = db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided).Sum(b => b.Qty);
+    var bl = db.HandoverNgReports.List.Where(n => n.KhPlanDetailId == 1 && !n.IsVoided && n.GroupCode == "KHO" && n.SourceCell != HandoverNgSource.Chua).Sum(n => n.Qty);
+    return phoi + bu - giao - bl;
+}
 static decimal BuOf(AppDbContext db, long c) => db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided && b.NgCaseId == c).Sum(b => b.Qty);
 static int Uid(string g) => g switch { "KHO" => 1, "GC" => 2, "HTSP" => 3, "KCS" => 4, "PKG" => 5, _ => 6 };
 static T Pick<T>(Random r, params (T v, int w)[] xs)

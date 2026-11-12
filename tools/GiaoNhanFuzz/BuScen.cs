@@ -349,6 +349,28 @@ public static class BuScen
             await Check(db, "U8 cuối");
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // [G14-KIEM-THEM 2026-11-12] Xoá / tách PO THẬT (KhPlanService) khi PO có phiếu khách gửi bù: bị chặn, lời báo kể phiếu bù, không mất dòng nào.
+        //   Trước chỉ kiểm PoGuard.CountDocsAsync (U4). Nguồn: CLAUDE (rà độc lập Gói 14 L5, sổ G14-KIEM-THEM); HÙNG 12/11 08:11 OK làm.
+        Console.WriteLine("[U9] Xoá / tách PO thật (KhPlanService) khi PO có phiếu bù: chặn, lời báo có phiếu bù, không mất dữ liệu");
+        {
+            var (db, svc, vA, _, _, _) = await Base();
+            var u1 = await svc.ReceiveReplacementAsync(1, vA, 2, null, Kho);
+            var vb = await svc.VoidReplacementAsync(LastBu(db), "bu thu huy", Kho);   // phiếu bù đã huỷ vẫn giữ PO (lịch sử)
+            var sig0 = Sig((await new HandoverLedgerService(db).GetLedgerForDetailAsync(1))!);
+            int nBu = db.HandoverReplacements.List.Count, nTx = db.HandoverTransactions.List.Count, nDet = db.KhPlanDetails.List.Count;
+            var kh = new KhPlanService(db);
+            var del = await kh.DeleteDetailAsync(1, 1, "tao nham PO");
+            string? errS = null; try { await kh.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 10 }, new() { PurchaseOrder = "PO1B", Quantity = 10 } }, 1, "tach PO"); } catch (Exception ex) { errS = ex.Message; }
+            var cnt = await PoGuard.CountDocsAsync(db, 1);
+            Ok(u1.Ok && vb.Ok && cnt.BuAll == 1, "Dựng: 1 phiếu bù đã huỷ (PoGuard đếm cả phiếu đã huỷ)", u1.Error + vb.Error + " BuAll=" + cnt.BuAll);
+            Ok(!del.Success && del.Error != null && del.Error.Contains("phiếu khách gửi bù"), "Xoá PO: chặn, lời báo kể phiếu khách gửi bù", del.Error);
+            Ok(errS != null && errS.Contains("phiếu khách gửi bù") && errS.Contains("không tách được"), "Tách PO: chặn, lời báo kể phiếu khách gửi bù", errS);
+            var r = await Check(db, "U9 sau xoá / tách bị chặn");
+            Ok(db.HandoverReplacements.List.Count == nBu && db.HandoverTransactions.List.Count == nTx && db.KhPlanDetails.List.Count == nDet && Sig(r) == sig0,
+               "Không mất / thêm dòng nào (phiếu bù, phiếu giao nhận, PO), sổ không đổi");
+        }
+
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

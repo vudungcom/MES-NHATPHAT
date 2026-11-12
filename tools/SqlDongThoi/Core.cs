@@ -325,6 +325,38 @@ public static class Core
             }
         }
 
+        // ── S9 [G14-KIEM-THEM 2026-11-12] nhiều người Kho CÙNG LÚC nhận phôi khách gửi bù cho 1 lần lỗi đã trả khách 4 → tổng bù đúng 4, không vượt trần ───
+        //   Trần đọc lại dưới khoá MES_PO_ (HandoverService.KhachBu.cs). Nguồn: CLAUDE (rà độc lập Gói 14 L5, sổ G14-KIEM-THEM); HÙNG 12/11 08:11 OK (Hùng chạy trên SQL thật).
+        Log("\n[S9] 8 người Kho CÙNG LÚC nhận 1 phôi khách gửi bù cho cùng 1 lần lỗi đã trả khách 4");
+        {
+            int cat9;
+            await using (var w = new Who())
+                cat9 = await w.Db.NgCategories.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.NgCategoryId).Select(x => x.NgCategoryId).FirstOrDefaultAsync();
+            if (cat9 == 0) Log("  BỎ QUA S9: DS Lỗi chưa có loại lỗi đang dùng");
+            else
+            {
+                var p9 = (await NewPosAsync(1, 20, "S9"))[0];
+                long vu9;
+                await using (var w = new Who())
+                {
+                    var all = new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" };
+                    var b = await w.Gn.ReportNgAfterReceiveAsync(p9.Id, "KHO", HandoverNgSource.Phoi, null, 4, HandoverNgSource.DauVao, "KHACH", "T1 S9 phoi nut", null, _admin, all, cat9);
+                    w.Db.ChangeTracker.Clear();
+                    vu9 = await w.Db.NgCases.AsNoTracking().Where(v => v.KhPlanDetailId == p9.Id).OrderByDescending(v => v.NgCaseId).Select(v => v.NgCaseId).FirstAsync();
+                    var k = await w.Gn.IssueSpecialAsync(p9.Id, "KHO", "KHACH", 4, _admin, HandoverPurpose.CustReturn, reason: "T1 S9", ngCaseId: vu9);
+                    if (!b.Ok || !k.Ok) throw new Exception($"S9 chuẩn bị lỗi: {b.Error} | {k.Error}");
+                }
+                var r9 = await AllAtOnce(8, (i, w) => Run("Kho nhận bù cùng lúc", async () => { var x = await w.Gn.ReceiveReplacementAsync(p9.Id, vu9, 1, "T1 S9", _admin); return (x.Ok, x.Error); }));
+                decimal bu9;
+                await using (var w = new Who())
+                    bu9 = (await w.Db.HandoverReplacements.AsNoTracking().Where(x => x.KhPlanDetailId == p9.Id && !x.IsVoided).Select(x => x.Qty).ToListAsync()).Sum();
+                Ok(r9.Count(x => x.Ok) == 4 && bu9 == 4, "Đúng 4 lần nhận bù lưu được (= trần trả khách 4), tổng bù trong DB 4 — không vượt",
+                   $"lưu được {r9.Count(x => x.Ok)} · DB {bu9} · {string.Join(" | ", r9.Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
+                var e9 = await CheckPoAsync(p9.Id, p9.Po);
+                Ok(e9 == null, "Sổ PO S9 cân (phôi + bù), không ô âm sau nhận bù", e9);
+            }
+        }
+
         // ── S7 [PM-NC-DUP-THAP K4 05/11] nhiều người CÙNG LÚC thêm cùng 1 mã chính vào Part Master (khoá MES_PM_STEPS_<Part>) → đúng 1 dòng ───
         Log("\n[S7] 6 người CÙNG LÚC thêm Đóng gói P9 (và 6 người thêm KCS K9) vào cùng 1 Part");
         {
