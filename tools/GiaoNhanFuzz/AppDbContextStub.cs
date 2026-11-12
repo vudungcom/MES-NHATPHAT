@@ -20,6 +20,7 @@ namespace MES.Web.Data
         public DbSet<HandoverRepairResult> HandoverRepairResults => Set<HandoverRepairResult>();   // [GC-SUA-TAI-CHO]
         public DbSet<HandoverRepairCheck> HandoverRepairChecks => Set<HandoverRepairCheck>();      // [GC-SUA-TAI-CHO]
         public DbSet<HandoverTxClose> HandoverTxCloses => Set<HandoverTxClose>();                 // [K5-CLOSE-NHIEU 2026-11-06]
+        public DbSet<HandoverReplacement> HandoverReplacements => Set<HandoverReplacement>();     // [KHACH-GUI-LAI 2026-11-11] Gói 14 phôi bù
         public DbSet<KhPlanDeletedDetail> KhPlanDeletedDetails => Set<KhPlanDeletedDetail>();       // [KHE-5 2026-11-06]
         public DbSet<NgCategory> NgCategories => Set<NgCategory>();                   // [VULOI]
         public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
@@ -83,6 +84,7 @@ namespace MES.Web.Data
             _ = NgCategories; _ = NgCategoryChangeLogs; _ = NgCases;   // [VULOI]
             _ = HandoverRepairResults; _ = HandoverRepairChecks;   // [GC-SUA-TAI-CHO]
             _ = StandardWtsTaskGops; _ = KhPlanRouteSnapshotWtsGops;   // [TARO-3T-GOP] 06/11 — giao dịch quay lại phải thấy 2 bảng
+            _ = HandoverReplacements;   // [KHACH-GUI-LAI] giao dịch quay lại phải thấy bảng phiếu bù
             _ = HandoverTxCloses; _ = KhPlanDeletedDetails; _ = CaLamViecChangeLogs;   // [K5-CLOSE-NHIEU][KHE-5][CA-LOG] 06/11 — giao dịch quay lại phải thấy cả 3 bảng
             _ = HandoverTransactions; _ = HandoverNgReports; _ = HandoverReceives; _ = KhPlanRouteSnapshotMachining; _ = KhPlanRouteSnapshotTaro;
             _ = KhPlanRouteSnapshotBavia; _ = KhPlanRouteSnapshotWashing; _ = KhPlanRouteSnapshotInspection;

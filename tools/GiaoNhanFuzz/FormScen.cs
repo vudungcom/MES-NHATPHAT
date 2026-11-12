@@ -301,7 +301,11 @@ public static class FormScen
             var rr = await Row(db);
             Ok(HandoverForm.CaseSender(rr.Cases[vk.NgCaseId], "GC") == "KHO", "Nơi gửi nhờ sửa = Kho (mặc định nhóm nhận khi trả lại)");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ATraLai, 1, "KHO", caseId: vk.NgCaseId), "GC trả lại Kho 1 (chưa sửa được)");
-            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASuaXong, 1, "KHO", caseId: vk.NgCaseId), "GC sửa xong trả Kho 1");
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON: "Sửa xong, trả nơi gửi" ẩn + máy chủ chặn (Hùng 11/11 15:21) — đường này chỉ còn khi OFF
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASuaXong, 1, "KHO", caseId: vk.NgCaseId), "[SUA-QUA-KCS] GC sửa xong trả Kho 1 (Workflow ON)", false, "Workflow ON: hàng lỗi / hàng sửa không giao thẳng");
+            WorkflowSet(db, false);
+            await Save(db, Req("GC", Gc, HandoverForm.Loi, "TONSUA", HandoverForm.ASuaXong, 1, "KHO", caseId: vk.NgCaseId), "GC sửa xong trả Kho 1 (Workflow OFF)");
+            WorkflowSet(db, true);
             await svc.ReceiveAsync(LastTx(db) - 1, 0, 1, null, Kho);
             await svc.ReceiveAsync(LastTx(db), 1, 0, null, Kho);
             await Check(db, "F7 Kho nhận");
@@ -407,14 +411,14 @@ public static class FormScen
             Ok(vuA.DetectGroupCode == "HTSP" && HandoverForm.CaseNextNc(r, vuA.NgCaseId) == "NC3" && FormHelp.ExpectNextNc(d5, 1, vuA.NgCaseId) == "NC3", "Vụ HTSP nhận lỗi: NC làm tiếp mặc định NC3 (NC cuối)");
             Ok(new[] { "KHO", "GC", "HTSP", "KCS", "PKG" }.All(h => HandoverForm.CaseNextNc(r, 0, h) == null && FormHelp.ExpectNextNc(d5, 1, 0, h) == null),
                "V2 + vòng 3 C1b + vòng 4 V1: hàng lỗi cũ chưa có mã vụ, nhóm nào giữ cũng → như hàng mới (chọn NC khác + lý do)");
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON: giao từ Tồn hàng lỗi vào ô Hàng lỗi đã xử lý bên nhận (= coi như đã sửa) bị chặn (Hùng 11/11 15:34 B1) —
+            //   luật NC theo vụ của đường này (V3, [SUA-KHONG-LUI]) nay chỉ còn khi Workflow OFF
             await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl),
-                       "V3: HTSP giao 1 chiếc của vụ vào Gia công ô Hàng lỗi đã xử lý (mặc định)");
+                       "[SUA-QUA-KCS] V3: HTSP giao chiếc của vụ vào Gia công ô Hàng lỗi đã xử lý (Workflow ON)", false, "Workflow ON: hàng lỗi / hàng sửa không giao thẳng");
+            WorkflowSet(d5, false);
+            await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl),
+                       "V3: Workflow OFF: HTSP giao 1 chiếc của vụ vào Gia công ô Hàng lỗi đã xử lý (mặc định)");
             Ok(d5.HandoverTransactions.List.Last().ToNC == "NC3", "V3: phiếu mang NC3 theo vụ (trước: không NC → nhận vào như hàng mới)", d5.HandoverTransactions.List.Last().ToNC);
-            await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1"),
-                       "[SUA-KHONG-LUI] V3: lùi NC1 không lý do (Workflow ON)", false, "Không làm lại NC");
-            await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1", ncReason: "ren hong lam lai"),
-                       "[SUA-KHONG-LUI] V3: lùi NC1 có lý do (Workflow ON)", false, "Không làm lại NC");
-            WorkflowSet(d5, false);   // [SUA-KHONG-LUI] lùi NC chỉ còn khi Workflow OFF
             await Save(d5, Req("HTSP", Htsp, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vuA.NgCaseId, toCell: HandoverCell.Xl, toNc: "NC1", ncReason: "ren hong lam lai"),
                        "V3: Workflow OFF lùi NC1 có lý do");
             WorkflowSet(d5, true);
@@ -494,11 +498,16 @@ public static class FormScen
             Ok(r8.CaseHeld(0, "KHO", HandoverCell.Loi) == 2, "Kho giữ 2 phôi lỗi cũ (vụ 0)", r8.CaseHeld(0, "KHO", HandoverCell.Loi).ToString());
             Ok(HandoverForm.CaseNextNc(r8, 0, "KHO") == null && HandoverForm.CaseNextNc(r8, 0, "GC") == null && HandoverForm.CaseNextNc(r8, 0, "KCS") == null,
                "C1/C1b/vòng 4 V1: vụ 0 ở Kho / Gia công / KCS → như hàng mới");
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON chặn giao Tồn hàng lỗi vào ô Hàng mới bên nhận — luật NC (C1) chỉ còn khi OFF
             await Save(d8, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: 0, toCell: HandoverCell.Moi),
-                       "C1: Kho giao 1 phôi lỗi cũ vào Gia công ô Hàng mới (mặc định)");
+                       "[SUA-QUA-KCS] C1: Kho giao phôi lỗi cũ vào Gia công ô Hàng mới (Workflow ON)", false, "Workflow ON: hàng lỗi / hàng sửa không giao thẳng");
+            WorkflowSet(d8, false);
+            await Save(d8, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: 0, toCell: HandoverCell.Moi),
+                       "C1: Workflow OFF: Kho giao 1 phôi lỗi cũ vào Gia công ô Hàng mới (mặc định)");
             Ok(d8.HandoverTransactions.List.Last().ToNC == null, "C1: phiếu không NC (như hàng mới, chờ NC1) — trước: NC3 bỏ qua NC1/NC2", d8.HandoverTransactions.List.Last().ToNC);
             await Save(d8, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: 0, toCell: HandoverCell.Moi, toNc: "NC3"),
                        "C1: phôi lỗi cũ vào NC3 không lý do", false, "lý do");
+            WorkflowSet(d8, true);
             // C1b: phôi lỗi cũ Kho gửi Gia công nhờ sửa → Gia công sửa đạt: mặc định như hàng mới; chọn NC3 phải ghi lý do (không có mốc nên không chặn hẳn)
             await Save(d8, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: 0), "C1b: Kho gửi 1 phôi lỗi cũ cho Gia công sửa");
             await s8.ReceiveAsync(LastTx(d8), 1, 0, null, Gc);
@@ -554,7 +563,10 @@ public static class FormScen
                                          $"Kho → Gia công ô Hàng lỗi đã xử lý, vụ {bad}, NC {nc ?? "mặc định"}", false, "không thuộc PO này");
                     Ok(!res.Error.Contains("lý do") && !res.Error.Contains("NC làm tiếp"), $"vụ {bad} NC {nc ?? "mặc định"}: không báo lời K2", res.Error);
                 }
-            await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vu9, toCell: HandoverCell.Xl), "Đúng vụ: Kho giao Gia công ô Hàng lỗi đã xử lý (NC theo vụ)");
+            await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vu9, toCell: HandoverCell.Xl), "[SUA-QUA-KCS] Đúng vụ: Kho giao Gia công ô Hàng lỗi đã xử lý (Workflow ON)", false, "Workflow ON: hàng lỗi / hàng sửa không giao thẳng");
+            WorkflowSet(d9, false);
+            await Save(d9, Req("KHO", Kho, HandoverForm.Loi, "TONLOI", HandoverForm.AGiao, 1, "GC", HandoverForm.PNho, caseId: vu9, toCell: HandoverCell.Xl), "Đúng vụ: Workflow OFF: Kho giao Gia công ô Hàng lỗi đã xử lý (NC theo vụ)");
+            WorkflowSet(d9, true);
         }
 
         // [KHACH-GUI-LAI 06/11] Câu khách 06/11 (qua Hùng): Kho nhận phôi → phát hiện 1 chiếc lỗi bề mặt (phôi khách) → Trả khách; khách gửi lại
@@ -598,10 +610,13 @@ public static class FormScen
             // nhận đổi ô: Kho gửi nhờ sửa phôi lỗi (ô Hàng sửa) → Gia công nhận đổi sang Hàng mới, chọn NC2 → chặn; mặc định / NC1 được
             await Save(dk, Req("KHO", Kho, HandoverForm.Loi, "PHOI", HandoverForm.AGiao, 2, "GC", HandoverForm.PNho, prev: true, cat: 1), "Kho: 2 phôi lỗi có sẵn → gửi Gia công nhờ sửa");
             var tS = LastTx(dk);
-            var rv = await sk.ReceiveAsync(tS, 1, 0, null, Gc, null, HandoverCell.Moi, "phoi dung duoc", null, "NC2", "da lam ngoai");
-            Ok(!rv.Ok && rv.Error.Contains("NC đầu"), "[KHO-NC-DAU] Gia công nhận đổi ô phiếu Kho sang Hàng mới vào NC2 → chặn", rv.Error);
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON: nhận đổi ô Hàng sửa → Hàng mới bị chặn trước (Hùng 11/11 15:34 B1); luật KHO-NC-DAU của đường này: OFF không áp (N7)
+            var rvOn = await sk.ReceiveAsync(tS, 1, 0, null, Gc, null, HandoverCell.Moi, "phoi dung duoc");
+            Ok(!rvOn.Ok && rvOn.Error.Contains("Workflow ON: không đổi ô"), "[SUA-QUA-KCS] Gia công nhận đổi ô phiếu Kho (Hàng sửa) sang Hàng mới (Workflow ON) → chặn", rvOn.Error);
+            WorkflowSet(dk, false);
             var rv1 = await sk.ReceiveAsync(tS, 1, 0, null, Gc, null, HandoverCell.Moi, "phoi dung duoc");
-            Ok(rv1.Ok, "Gia công nhận đổi ô phiếu Kho sang Hàng mới (mặc định NC đầu) → được", rv1.Error);
+            WorkflowSet(dk, true);
+            Ok(rv1.Ok, "Workflow OFF: Gia công nhận đổi ô phiếu Kho sang Hàng mới (mặc định NC đầu) → được", rv1.Error);
             await Check(dk, "F18 nhận đổi ô");
             WorkflowSet(dk, false);
             var off = await sk.IssueByCellAsync(1, "KHO", "GC", 1, Kho, "MOI", false, "MOI", null, "NC3");

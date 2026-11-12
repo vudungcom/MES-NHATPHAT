@@ -57,6 +57,7 @@
                             <th title="Nơi nhận lại hàng đã xử lý (ô Hàng lỗi đã xử lý / Hàng mới) — làm tiếp">Hàng đã xử lý</th>
                             <th style="width:56px" class="text-center">Huỷ</th>
                             <th style="width:62px" class="text-center">Trả khách</th>
+                            <th style="width:52px" class="text-center" title="Phôi khách đã gửi bù cho vụ này (Kho nhận vào phôi còn, chưa huỷ) — không vào cân vụ; tối đa = trả khách + huỷ">Đã bù</th>@* [KHACH-GUI-LAI 2026-11-11] *@
                             <th title="Còn nằm ở đâu (ô Hàng lỗi / Hàng sửa) · phiếu chưa nhận">Đang giữ / chuyển</th>
                             <th style="width:46px" class="text-center" title="Sinh ra = đã xử lý + huỷ + trả khách + đang giữ + đang chuyển">Cân</th>
                             <th style="width:56px" class="text-center" title="Phút &quot;Việc không ra sản phẩm&quot; ghi vụ này trên WTS (giờ sửa hàng) — chỉ để tra, không vào số lượng">Giờ sửa</th>
@@ -199,6 +200,7 @@
             <td>@Txt(v.DaXuLy)</td>
             <td class="@NumClass(v.Huy)" title="@v.HuyText">@Num(v.Huy)</td>
             <td class="@NumClass(v.TraKhach)" title="@v.KhachText">@Num(v.TraKhach)</td>
+            <td class="@NumClass(v.DaBu)" title="@v.DaBuText">@Num(v.DaBu)</td>   @* [KHACH-GUI-LAI 2026-11-11] *@
             <td class="@HeldClass(v.DangGiuQty + v.DangChuyen)">@HeldText(v)</td>
             <td class="text-center">@(v.Balanced ? "✓" : "lệch")</td>
             <td class="@NumClass(v.GioSua)" title="@v.GioSuaText">@(v.GioSua > 0 ? v.GioSua + " ph" : "—")</td>   @* [ML16-ACT] *@
@@ -206,7 +208,7 @@
         @if (_openCases.Contains(v.Id))
         {
             <tr @key="-v.Id - 1">
-                <td colspan="12" class="bg-light">
+                <td colspan="13" class="bg-light">   @* [KHACH-GUI-LAI] + cột Đã bù *@
                     @foreach (var h in v.Hops)
                     {
                         <div><span class="text-muted">@(h.At?.ToString("dd/MM HH:mm") ?? "—")</span> · @HopText(h) <span class="text-muted font-monospace">@h.Doc</span></div>

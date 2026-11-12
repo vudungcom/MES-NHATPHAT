@@ -420,7 +420,11 @@ namespace MES.Web.Services
                     return HandoverLedgerService.RepOk;     // [SUA-OK-NC] làm hỏng ở NC k: sửa đạt = xong NC k
                 return null;
             }
-            return x < d || (x == d && fromDa) ? HandoverLedgerService.RepXong : null;
+            // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa hộ đứng SAU nơi phát hiện (vd HTSP phát hiện, KCS sửa hộ): cũng đánh dấu @XONG → KCS xác nhận đạt
+            //   vào ô Tồn hàng lỗi đã xử lý của nhóm sửa (RepairDest "GIU"), rồi trả NGƯỢC đúng nơi phát hiện (XlToOk). Trước: không dấu → hàng sửa đạt
+            //   vào Chưa làm của nhóm sửa (sai đường đi, số vẫn cân). Nguồn: KHÁCH 11/11 ("bộ phận khác sửa hộ xong thì chuyển trả thẳng bộ phận báo lỗi");
+            //   HÙNG 11/11 15:34 OK. Chứng từ cũ không dấu giữ nghĩa cũ.
+            return x < d || x > d || fromDa ? HandoverLedgerService.RepXong : null;
         }
 
         /// <summary>[SUA-XL-GIU] Chữ cho người dùng: hàng sửa đạt (KCS xác nhận) đi đâu.</summary>
@@ -434,6 +438,21 @@ namespace MES.Web.Services
         }
 
         // ================================================================
+        // [SUA-QUA-KCS 2026-11-11] Workflow ON: mọi hàng sửa qua Kết quả sửa + KCS xác nhận — không giao / nhận thẳng hàng lỗi, hàng sửa vào ô hàng đạt.
+        //   Nguồn: KHÁCH 11/11 ("KCS chỉ là trung gian đánh giá tạm hàng sửa" · "OK trả bộ phận báo lỗi"); HÙNG 11/11 15:21 (ẩn "Sửa xong, trả nơi gửi")
+        //   + 15:34 (B1: chặn cả giao từ Tồn hàng lỗi / Tồn hàng sửa chọn ô Hàng lỗi đã xử lý / Hàng mới, và bên nhận đổi sang 2 ô đó). OFF như cũ.
+        // ================================================================
+        public static bool SuaQuaKcsBlocked(string? fromCell, string? toCell)
+            => fromCell is HandoverCell.Loi or HandoverCell.Sua && toCell is HandoverCell.Xl or HandoverCell.Moi;
+
+        public const string SuaQuaKcsMsg = "Workflow ON: hàng lỗi / hàng sửa không giao thẳng vào ô Hàng lỗi đã xử lý / Hàng mới của bên nhận. "
+            + "Sửa xong thì chọn \"Sửa tại nhóm\" (ghi Kết quả sửa) để KCS xác nhận, rồi giao hàng đã sửa về nơi phát hiện lỗi.";
+
+        public static string SuaQuaKcsRecvMsg(string desig, string eff)
+            => $"Workflow ON: không đổi ô {HandoverCell.Label(desig)} sang {HandoverCell.Label(eff)} lúc nhận (= coi như đã sửa đạt, chưa qua KCS xác nhận). "
+             + "Nhận vào ô bên giao chỉ định (hoặc ô Hàng lỗi / Hàng sửa); sửa xong ghi Kết quả sửa để KCS xác nhận.";
+
+        // ================================================================
         // [XL-VUOT-CHAN 2026-11-10] Hàng đã sửa (ô Hàng lỗi đã xử lý) chỉ giao xuôi về nơi phát hiện: nhóm nhận đứng sau nhóm giữ và không sau nơi phát hiện.
         //   Nguồn: KHÁCH 10/11 (docx câu 2 "sửa xong trả bộ phận báo lỗi"; hỏi tiếp 2.1 A "Gia công chọn giao sang HTSP hoặc giao thẳng KCS"); HÙNG 10/11 19:22.
         //   Chỉ Workflow ON (OFF: sổ tính như hàng đã xử lý thường — vào Chưa làm bên nhận). Không đổi phép tính số.
@@ -441,12 +460,15 @@ namespace MES.Web.Services
         public static bool XlToOk(string from, string to, string? detectGroup, LedgerRow? row = null)
         {
             int f = HandoverLedgerService.ProdIdx(from), t = HandoverLedgerService.ProdIdx(to), d = HandoverLedgerService.ProdIdx(detectGroup);
+            if (f > 0 && d > 0 && f > d) return t == d;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa hộ đứng sau nơi phát hiện: chỉ trả ngược đúng nơi phát hiện
             return f > 0 && t > f && d > 0 && t <= d && !XlHtspLamHo(to, row);
         }
 
         /// <summary>[XL-TRA-LAI] Nhóm đã sửa chiếc của vụ (chặng Kết quả sửa gần nhất; không có thì nơi gây lỗi) — mặc định nơi trả lại hàng đã sửa bị hỏng lại.</summary>
+        ///   [XL-TRA-NOILOI 2026-11-11] mặc định = bộ phận làm lỗi (luật chung khách 11/11 "NG trả bộ phận làm lỗi"); không có thì nhóm sửa gần nhất (như trước).
         public static string? XlRepairGroup(LedgerCase c)
-            => c.Hops.LastOrDefault(h => h.Kind == "SUA")?.Group is string g && g != "" ? g : (c.Cause is string cg && HandoverLedgerService.GroupCodes.Contains(cg) ? cg : null);
+            => c.Cause is string cg && HandoverLedgerService.GroupCodes.Contains(cg) ? cg
+             : c.Hops.LastOrDefault(h => h.Kind == "SUA")?.Group is string g && g != "" ? g : null;
 
         /// <summary>[XL-TRA-NHOMSUA 2026-11-10] Workflow ON: nhóm nhận được khi <paramref name="from"/> trả lại hàng đã sửa bị hỏng lại = các nhóm đã sửa ĐẠT
         ///   chiếc của vụ (KCS xác nhận), trừ chính nhóm giữ. Rỗng (vd nhóm giữ là nhóm duy nhất đã sửa) = không giới hạn (như trước — sổ không theo từng chiếc).
@@ -454,9 +476,11 @@ namespace MES.Web.Services
         ///   hoặc nhóm giữ tự sửa). Nguồn: KHÁCH 10/11 2.1 ("hỏng thì trả lại Gia công"); CLAUDE (rà độc lập 10/11).</summary>
         ///   Rà vòng 3 (Trung 1): chỉ nhóm sửa có hàng vào giữ ô XL (đích GIU — SuaDatBy) và đứng TRƯỚC nhóm giữ trong chuỗi (hàng đã sửa chỉ đi xuôi),
         ///   nên Kho / nơi phát hiện tự sửa / nhóm sau nhóm giữ không lọt vào; nhóm giữ tự sửa → rỗng → không giới hạn.
+        ///   [XL-TRA-NOILOI 2026-11-11] + bộ phận làm lỗi của vụ (Cause là nhóm, khác nhóm giữ) — khách 11/11: "NG thì trả bộ phận làm lỗi" (câu 1 A: cùng vụ).
+        ///   Nguồn: KHÁCH 11/11; HÙNG 11/11 15:34 OK. Rỗng (nơi gây lỗi là khách / chính nhóm giữ và không có nhóm sửa khác) = không giới hạn như trước.
         public static List<string> XlTraLaiGroups(LedgerCase c, string from)
-            => HandoverLedgerService.GroupCodes.Where(g => g != from && c.SuaDatBy.Contains(g)
-                   && HandoverLedgerService.ProdIdx(g) > 0 && HandoverLedgerService.ProdIdx(g) < HandoverLedgerService.ProdIdx(from)).ToList();
+            => HandoverLedgerService.GroupCodes.Where(g => g != from && ((c.SuaDatBy.Contains(g)
+                   && HandoverLedgerService.ProdIdx(g) > 0 && HandoverLedgerService.ProdIdx(g) < HandoverLedgerService.ProdIdx(from)) || g == c.Cause)).ToList();
 
         /// <summary>[XL-HTSP-LAMHO 2026-11-10] Rà độc lập Gói 15 (Thấp 3): PO mà HTSP chỉ làm Taro làm hộ — HTSP không nhận được ô Hàng lỗi đã xử lý
         ///   (HandoverService.ReceiveAsync chặn) nên không cho chọn HTSP làm nhóm giữa (trước: lập phiếu được rồi kẹt chờ nhận). Nguồn: CLAUDE (rà độc lập 10/11).</summary>
@@ -464,7 +488,8 @@ namespace MES.Web.Services
 
         public static string XlToMsg(string? detectGroup, string? to = null, LedgerRow? row = null)
             => to != null && XlHtspLamHo(to, row) ? "PO này HTSP chỉ làm Taro làm hộ (không có công đoạn HTSP của mình) — hàng đã sửa giao thẳng nơi phát hiện, không qua HTSP."
-             : $"Hàng đã sửa chỉ giao xuôi về nơi phát hiện lỗi ({HandoverLedgerService.GroupLabel(detectGroup)}) hoặc nhóm đứng giữa cần làm lại công đoạn — không giao ngược, không vượt qua nơi phát hiện. "
+             : $"Hàng đã sửa chỉ giao xuôi về nơi phát hiện lỗi ({HandoverLedgerService.GroupLabel(detectGroup)}) hoặc nhóm đứng giữa cần làm lại công đoạn — không giao ngược, không vượt qua nơi phát hiện "
+             + "(nhóm sửa hộ đứng sau nơi phát hiện: trả thẳng về nơi phát hiện). "   // [SUA-HO-TRA-NGUOC]
              + "Hàng bị hỏng lại thì trả lại vào ô Hàng lỗi (Hàng lỗi → hàng đã sửa bị hỏng lại).";
 
         /// <summary>[K2] Các lựa chọn NC làm tiếp: mặc định + các NC đứng trước (làm lại, bắt lý do). Không có NC sau.</summary>

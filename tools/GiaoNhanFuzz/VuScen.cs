@@ -82,8 +82,8 @@ public static class VuScen
             Ok(rk.Ok && db.HandoverReceives.List.Last().NgCaseId == 1, "Kho nhận ô Hàng lỗi: không chọn lỗi, lần nhận theo vụ phiếu", rk.Error);
             var row = await Row();
             Ok(row.CasesHeldAt("KHO", HandoverCell.Loi).Select(x => x.Id).SequenceEqual(new long[] { 1 }), "Form Giao của Kho: chỉ 1 vụ đang giữ (VL000001) → tự chọn");
-            var tu = await svc.IssueByCellAsync(1, "KHO", "GC", 2, 1, "LOI", false, "XL", ngCaseId: 1);
-            await svc.ReceiveAsync(LastTx(db), 2, 0, null, 2);
+            var tu = await VuHelp.Off(db, () => svc.IssueByCellAsync(1, "KHO", "GC", 2, 1, "LOI", false, "XL", ngCaseId: 1))   /* [SUA-QUA-KCS] đường cũ — chỉ còn Workflow OFF */;
+            await VuHelp.Off(db, () => svc.ReceiveAsync(LastTx(db), 2, 0, null, 2));   /* [SUA-QUA-KCS] nhận phiếu kiểu cũ cũng lúc OFF (rà độc lập T3) */
             var a = (await Row()).Cases[1];
             Ok(tu.Ok && a.SinhRa == 2 && a.NhanLoi.GetValueOrDefault("KHO") == 2 && a.TuXuLy.Contains("KHO") && a.DaXuLy.GetValueOrDefault("GC") == 2 && a.HeldTotal == 0 && a.Transit == 0 && a.Lech == 0,
                "Lỗi A: GC → Kho (tự xử lý) → GC: sinh 2 · nhận lỗi Kho 2 · đã xử lý GC 2", Info(a));
@@ -98,8 +98,8 @@ public static class VuScen
             var mid = (await Row()).Cases[2];
             Ok(g1.Ok && mid.Transit == 3 && mid.HeldTotal == 0, "Đã gửi HTSP chưa nhận: vụ đang chuyển 3", Info(mid));
             await svc.ReceiveAsync(LastTx(db), 3, 0, null, 3);
-            var g2 = await svc.IssueByCellAsync(1, "HTSP", "GC", 3, 3, "SUA", false, "XL", ngCaseId: 2);
-            await svc.ReceiveAsync(LastTx(db), 3, 0, null, 2);
+            var g2 = await VuHelp.Off(db, () => svc.IssueByCellAsync(1, "HTSP", "GC", 3, 3, "SUA", false, "XL", ngCaseId: 2))   /* [SUA-QUA-KCS] đường cũ — chỉ còn Workflow OFF */;
+            await VuHelp.Off(db, () => svc.ReceiveAsync(LastTx(db), 3, 0, null, 2));   /* [SUA-QUA-KCS] nhận phiếu kiểu cũ cũng lúc OFF (rà độc lập T3) */
             var b = (await Row()).Cases[2];
             Ok(g2.Ok && b.NhanLoi.GetValueOrDefault("KHO") == 3 && b.NhanSua.GetValueOrDefault("HTSP") == 3 && b.DaXuLy.GetValueOrDefault("GC") == 3 && !b.TuXuLy.Any() && b.Lech == 0,
                "Lỗi B: GC → Kho → HTSP (sửa) → GC: nhận lỗi Kho 3 · sửa HTSP 3 · đã xử lý GC 3", Info(b));
@@ -121,8 +121,8 @@ public static class VuScen
             Ok(!none.Ok, "Không chọn vụ (không có hàng lỗi cũ chưa có mã): chặn", none.Error);
             await svc.IssueByCellAsync(1, "GC", "HTSP", 2, 2, "LOI", false, "SUA", ngCaseId: 3);
             await svc.ReceiveAsync(LastTx(db), 2, 0, null, 3);
-            await svc.IssueByCellAsync(1, "HTSP", "GC", 2, 3, "SUA", false, "XL", ngCaseId: 3);
-            await svc.ReceiveAsync(LastTx(db), 2, 0, null, 2);
+            await VuHelp.Off(db, () => svc.IssueByCellAsync(1, "HTSP", "GC", 2, 3, "SUA", false, "XL", ngCaseId: 3))   /* [SUA-QUA-KCS] đường cũ — chỉ còn Workflow OFF */;
+            await VuHelp.Off(db, () => svc.ReceiveAsync(LastTx(db), 2, 0, null, 2));   /* [SUA-QUA-KCS] nhận phiếu kiểu cũ cũng lúc OFF (rà độc lập T3) */
             var h = await svc.IssueSpecialAsync(1, "GC", "HUY", 1, 2, HandoverPurpose.Scrap, ngCaseId: 3);
             var c = (await Row()).Cases[3];
             Ok(h.Ok && c.SinhRa == 3 && c.NhanSua.GetValueOrDefault("HTSP") == 2 && c.DaXuLy.GetValueOrDefault("GC") == 2 && c.Huy == 1 && c.HuyBy.GetValueOrDefault("GC") == 1 && c.HeldTotal == 0 && c.Lech == 0,
@@ -253,7 +253,7 @@ public static class VuScen
             var k1 = await svc.ReceiveAsync(back1.HandoverTxId, 0, 1, null, 1);
             var kRcv1 = db.HandoverReceives.List.Last();
             Ok(k1.Ok, "Kho nhận phiếu trả vào ô Hàng lỗi", k1.Error);
-            var g2 = await svc.IssueByCellAsync(1, "KHO", "PKG", 1, 1, "LOI", false, "MOI", ngCaseId: vu);
+            var g2 = await VuHelp.Off(db, () => svc.IssueByCellAsync(1, "KHO", "PKG", 1, 1, "LOI", false, "MOI", ngCaseId: vu))   /* [SUA-QUA-KCS] đường cũ — chỉ còn Workflow OFF */;
             var t2 = LastTx(db);
             Ok(g2.Ok, "Kho giao 1 hàng lỗi (đã xử lý) sang Đóng gói", g2.Error);
             var p2 = await svc.ReceiveAsync(t2, 0, 1, null, 5);   // Đóng gói đếm NG → vụ quay về Kho bằng phiếu trả tự lập

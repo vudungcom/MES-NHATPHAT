@@ -738,11 +738,38 @@ namespace MES.Web.Services
             if (row.ApplyWorkflow && fromCell == HandoverCell.Xl && toCell == HandoverCell.Xl && ngCaseId is long xvu && row.Cases.TryGetValue(xvu, out var xCase)
                 && !HandoverForm.XlToOk(fromGroupCode, toGroupCode, xCase.DetectGroup, row))   // [XL-HTSP-LAMHO] + PO HTSP chỉ làm hộ
                 return (false, HandoverForm.XlToMsg(xCase.DetectGroup, toGroupCode, row));
+            // [SUA-HO-TRA-NGUOC 2026-11-11] Hàng đã sửa trả NGƯỢC về Gia công (Gia công là nơi phát hiện, nhóm sửa hộ đứng sau): chiếc lỗi lúc phát hiện đang chờ NC k
+            //   → về lại chờ NC k (NC của vụ — khách 10/11 "mọi trường hợp sửa không quay lại NC"), máy chủ tự điền; đã làm xong NC cuối lúc phát hiện / Gia công
+            //   làm hỏng ở NC k (WTS NG) → tính là xong NC đó (sổ: HandoverLedgerService.GcXlBack, như Gia công tự sửa — RepairTarget), không có NC nhận. Workflow ON: NC khác NC của vụ bị chặn; OFF: chọn được, bỏ trống = NC của vụ.
+            //   Nguồn: KHÁCH 11/11 ("bộ phận khác sửa hộ xong thì chuyển trả thẳng bộ phận báo lỗi"); HÙNG 11/11 15:34 OK.
+            if (fromCell == HandoverCell.Xl && toCell == HandoverCell.Xl && toGroupCode == "GC" && gcHasNc && ngCaseId is long xgc && row.Cases.TryGetValue(xgc, out var xgcCase))
+            {
+                var xTgt = xgcCase.DetectGroup == "GC" ? HandoverForm.RepairTarget(row, xgc, "GC") : HandoverForm.CaseNextNc(row, xgc, fromGroupCode);   // cùng đích như Gia công tự sửa
+                if (HandoverLedgerService.IsRepMark(xTgt))
+                {   // xong NC cuối / xong NC k (sổ: GcXlBack) — không chọn NC; Workflow ON gửi NC → chặn (không làm lại / bỏ qua NC), OFF bỏ qua NC gửi lên
+                    if (row.ApplyWorkflow && !string.IsNullOrEmpty(toNC))
+                        return (false, "Hàng đã sửa trả về Gia công tính là đã xong NC của chiếc lỗi (không ghi WTS lại) — không chọn NC nhận.");
+                    toNC = null;
+                }
+                else
+                {
+                    var xDef = xTgt;
+                    if (string.IsNullOrEmpty(toNC)) toNC = xDef;
+                    else if (row.ApplyWorkflow && !string.Equals(toNC, xDef, StringComparison.OrdinalIgnoreCase))
+                        return (false, $"Hàng đã sửa trả về Gia công vào đúng NC của chiếc lỗi ({(xDef == null ? "như hàng mới" : HandoverLedgerService.NcName(xDef))}) — không làm lại / bỏ qua NC.");
+                }
+            }
             // [XL-TRA-NHOMSUA 2026-11-10] Workflow ON: hàng đã sửa bị hỏng lại (ô XL → ô Hàng lỗi) chỉ trả lại nhóm đã sửa (cùng vụ). OFF: lưu được.
             //   Nguồn: KHÁCH 10/11 2.1 ("hỏng thì trả lại Gia công"); CLAUDE (rà độc lập Gói 15 Thấp 1).
             if (row.ApplyWorkflow && fromCell == HandoverCell.Xl && toCell == HandoverCell.Loi && ngCaseId is long xtl && row.Cases.TryGetValue(xtl, out var xtlCase)
                 && HandoverForm.XlTraLaiGroups(xtlCase, fromGroupCode) is { Count: > 0 } xrg && !xrg.Contains(toGroupCode))
                 return (false, $"Hàng đã sửa bị hỏng lại chỉ trả lại ô Hàng lỗi của nhóm đã sửa ({string.Join(" / ", xrg.Select(HandoverLedgerService.GroupLabel))}), cùng vụ.");
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON: hàng lỗi / hàng sửa không giao thẳng vào ô hàng đạt bên nhận (Hàng lỗi đã xử lý / Hàng mới) —
+            //   mọi hàng sửa phải ghi Kết quả sửa ("Sửa tại nhóm") để KCS xác nhận rồi mới trả (ô Tồn hàng lỗi đã xử lý). Gồm nút "Sửa xong, trả nơi gửi"
+            //   (Tồn hàng sửa → ô Hàng lỗi đã xử lý bên gửi) và cặp ô "tự sửa xong" (Tồn hàng lỗi → ô Hàng lỗi đã xử lý / Hàng mới). OFF: như cũ (N7).
+            //   Nguồn: KHÁCH 11/11 ("KCS là trung gian đánh giá tạm hàng sửa" · "OK trả bộ phận báo lỗi"); HÙNG 11/11 15:21 (ẩn nút) + 15:34 (B1: chặn cả 2 đường).
+            if (row.ApplyWorkflow && HandoverForm.SuaQuaKcsBlocked(fromCell, toCell))
+                return (false, HandoverForm.SuaQuaKcsMsg);
             var (max, ex) = HandoverLedgerService.IssueCapCase(row, fromGroupCode, purpose, fromNC, fromCell, ngCaseId, toNC);   // [GN-CELL] trần theo ô; [VULOI] + theo vụ; [TARO-LAMHO-NC] + NC nhận (câu 1)
             if (qtyIssued > max)
                 return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể giao {qtyIssued:0.##}.");
@@ -966,6 +993,20 @@ namespace MES.Web.Services
             if (before != null && before.ApplyWorkflow && carryTx && tx.ToGroupCode != "GC" && effCell == HandoverCell.Sua   // [LAMHO-OFF] chỉ ON
                 && tx.NgCaseId is long rlh2 && before.Cases.TryGetValue(rlh2, out var rlhC2) && rlhC2.IsLamHo)
                 return (false, LamHoNhoSuaMsg(rlh2, tx.ToGroupCode, rlhC2.LamHoTen) + " Phiếu này: nhận vào ô Hàng lỗi (ghi lý do đổi ô) rồi trả về Gia công, hoặc bên giao huỷ phiếu.");
+            // [SUA-QUA-KCS 2026-11-11] Workflow ON: bên nhận không đổi ô Hàng lỗi / Hàng sửa (bên giao chỉ định) sang ô hàng đạt (Hàng lỗi đã xử lý / Hàng mới) —
+            //   như coi hàng đã sửa đạt mà chưa qua KCS xác nhận. Thay Q3 = B (Hùng 04/11: cho + cảnh báo) khi ON; OFF giữ như cũ (cảnh báo).
+            //   Nguồn: KHÁCH 11/11; HÙNG 11/11 15:34 (B1). Đặt sau 2 chặn vụ làm hộ (rà độc lập Gói 16 vòng 2 L3: lời báo riêng vụ làm hộ hiện trước).
+            if (before != null && before.ApplyWorkflow && cellChanged && desigCell is HandoverCell.Loi or HandoverCell.Sua && effCell is HandoverCell.Xl or HandoverCell.Moi)
+                return (false, HandoverForm.SuaQuaKcsRecvMsg(desigCell!, effCell!));
+            // [SUA-QUA-KCS 2026-11-11] (đặt sau 2 chặn vụ làm hộ — lời báo riêng của vụ làm hộ hiện trước) rà độc lập Gói 16 (Trung T3): Workflow ON, phiếu lấy từ ô Hàng lỗi / Hàng sửa mà bên giao đã chỉ định ô hàng đạt (phiếu lập lúc
+            //   OFF / trước Gói 16) cũng không nhận vào ô đạt — nhận vào ô Hàng lỗi, hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa. (Trung T2): phiếu hàng đã sửa
+            //   (ô Hàng lỗi đã xử lý) chỉ nhận vào ô Hàng lỗi đã xử lý hoặc ô Hàng lỗi — đổi sang Hàng mới / Hàng sửa = thoát luật "sửa không quay lại NC" / ô giữ.
+            //   Nguồn: CLAUDE (rà độc lập Gói 16 11/11); HÙNG 11/11 15:34 (B1).
+            if (before != null && before.ApplyWorkflow && txHead.SourceReceiveId == null && qtyOk > 0 && txFromCell is HandoverCell.Loi or HandoverCell.Sua && effCell is HandoverCell.Xl or HandoverCell.Moi)   // cả phiếu đếm NG lúc nhận (trả về ngay) thì không chặn
+                return (false, $"Workflow ON: phiếu này lấy từ ô {HandoverCell.Label(txFromCell)} (chưa qua KCS xác nhận) — không nhận vào ô {HandoverCell.Label(effCell)}. "
+                             + "Nhận vào ô Hàng lỗi (ghi lý do đổi ô), hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa để KCS xác nhận.");
+            if (before != null && before.ApplyWorkflow && txFromCell == HandoverCell.Xl && effCell is not (HandoverCell.Xl or HandoverCell.Loi))
+                return (false, "Workflow ON: phiếu hàng đã sửa chỉ nhận vào ô Hàng lỗi đã xử lý (hoặc ô Hàng lỗi nếu hỏng lại) — không đổi sang ô khác.");
             bool newCase = !autoTx && !carryTx && (effCell is HandoverCell.Loi or HandoverCell.Sua || qtyNg > 0);
             long? rcvCaseId = autoTx || carryTx ? tx.NgCaseId : null;
             NgCategory? rcvCat = null;
@@ -1336,6 +1377,11 @@ namespace MES.Web.Services
             // [GN-RECV-NG] Phiếu trả tự lập không huỷ riêng (huỷ lần nhận gốc thì phiếu này huỷ theo)
             if (tx.SourceReceiveId != null)
                 return (false, $"Phiếu #{tx.HandoverTxId} do phần mềm tự lập khi nhận hàng có NG. Muốn huỷ thì huỷ lần nhận gốc.");
+
+            // [KHACH-GUI-LAI 2026-11-11] Phiếu Trả khách / Huỷ của vụ đã được khách gửi bù: huỷ phiếu làm đã bù > trả khách + huỷ → chặn (cả Workflow OFF —
+            //   trần bù chặn cả OFF, Hùng 11/11 14:39). Nguồn: KHÁCH 10/11 vòng 1 câu 1b A.
+            if (HandoverPurpose.IsOut(tx.Purpose) && HandoverService.BuVoidOutBlock(before, tx.NgCaseId, tx.QtyIssued, tx.HandoverTxId) is string buErr)
+                return (false, buErr);
 
             tx.IsVoided   = true;
 

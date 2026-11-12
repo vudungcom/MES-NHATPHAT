@@ -11,7 +11,8 @@
     <Compile Include="../../MES.Web/Data/Entities/*.cs" />
     <Compile Include="../../MES.Web/Services/HandoverService.cs" />
     <Compile Include="../../MES.Web/Services/HandoverService.KetQuaSua.cs" />   <!-- [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận -->
-    <Compile Include="../../MES.Web/Services/HandoverService.GiaoXuLy.cs" />   <!-- [GN-FORM1] form Giao / xử lý hàng (SaveFormAsync) -->
+    <Compile Include="../../MES.Web/Services/HandoverService.GiaoXuLy.cs" />
+    <Compile Include="../../MES.Web/Services/HandoverService.KhachBu.cs" />   <!-- [KHACH-GUI-LAI 2026-11-11] Gói 14 khách gửi bù phôi -->   <!-- [GN-FORM1] form Giao / xử lý hàng (SaveFormAsync) -->
     <Compile Include="../../MES.Web/Services/HandoverForm.cs" />   <!-- [GN-FORM1] dòng bước 2 + NC làm tiếp (K2) -->
     <Compile Include="../../MES.Web/Services/HandoverLedgerService.cs" />
     <Compile Include="../../MES.Web/Services/HandoverChangeNotifier.cs" />

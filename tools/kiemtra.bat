@@ -46,8 +46,10 @@ powershell -NoProfile -Command "$c=(Get-CimInstance Win32_Processor | Measure-Ob
 rem [KIEM-NHAN] ten CPU + so nhan THAT (vat ly) / luong. Mac dinh chay cung luc = so nhan that (do 01/11 13:30: 19 tien trinh tren 20 luong CHAM hon 10)
 for /f %%c in ('powershell -NoProfile -Command "Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum | Select-Object -ExpandProperty Sum"') do set NHAN_THAT=%%c
 powershell -NoProfile -Command "Get-CimInstance Win32_Processor | ForEach-Object { 'CPU: ' + $_.Name + ' | nhan that ' + $_.NumberOfCores + ' | luong ' + $_.NumberOfLogicalProcessors + ' | xung toi da ' + $_.MaxClockSpeed + ' MHz' }; $m=Get-CimInstance Win32_OperatingSystem; 'RAM trong: ' + [math]::Round($m.FreePhysicalMemory/1MB,1) + ' / ' + [math]::Round($m.TotalVisibleMemorySize/1MB,1) + ' GB'" >> "%OUT%" 2>&1
-if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set "SONG_SONG=%NHAN_THAT%"
-echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; mac dinh = so nhan that %NHAN_THAT%)>> "%OUT%"
+rem [KIEM-75 2026-11-11] Hung 11/11 15:34: chay khoang 75%% so nhan that thi may khong giat, chay duoc ca gio lam viec (truoc: 100%% nhan that).
+if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT*3/4
+if "%SONG_SONG%"=="0" set "SONG_SONG=1"
+echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; mac dinh = 75%% so nhan that %NHAN_THAT% [KIEM-75])>> "%OUT%"
 echo [1/2] Bien dich bo kiem...
 dotnet build GiaoNhanFuzz.csproj -c Release -o bin2 -v q -nologo >> "%OUT%" 2>&1
 if errorlevel 1 ( echo BIEN DICH LOI - xem %OUT% & echo KET QUA: BIEN DICH LOI>> "%OUT%" & exit /b 2 )

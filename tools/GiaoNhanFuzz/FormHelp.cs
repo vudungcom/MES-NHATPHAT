@@ -152,7 +152,8 @@ public static class FormHelp
             return legacy;
         }
         bool fromDa = db.HandoverNgReports.List.Any(b => b.NgCaseId == caseId && !b.IsVoided && b.SourceCell == HandoverNgSource.Da);
-        return gi < di || (gi == di && fromDa) ? "@XONG" : null;
+        // [SUA-HO-TRA-NGUOC 2026-11-11] + nhóm sửa hộ đứng SAU nơi phát hiện (gi > di) cũng @XONG (giữ ô XL rồi trả ngược nơi phát hiện) — khách 11/11
+        return gi != di || fromDa ? "@XONG" : null;
     }
 
     /// <summary>[SUA-XL-GIU] Đích hàng sửa đạt cho vụ SẼ sinh khi báo lỗi ở dòng <paramref name="pos"/> rồi sửa tại nhóm (đáp án độc lập):
@@ -178,7 +179,7 @@ public static class FormHelp
             var ok = db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == rp.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk);
             var d = D(rp.NgCaseId);
             if (d == group) da += ok;
-            else if (I(group) > 0 && I(group) < I(d)) giu += ok;
+            else if (I(group) > 0 && I(d) > 0) giu += ok;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa đứng trước HOẶC sau nơi phát hiện đều giữ ô XL (trước: chỉ đứng trước)
         }
         foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided && t.FromCell == HandoverCell.Xl))
         {
@@ -206,7 +207,26 @@ public static class FormHelp
     {
         static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
         var d = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId)?.DetectGroupCode;
+        if (I(from) > 0 && I(d) > 0 && I(from) > I(d)) return to == d;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa hộ đứng sau nơi phát hiện: chỉ trả ngược đúng nơi phát hiện
         return I(from) > 0 && I(to) > I(from) && I(d) > 0 && I(to) <= I(d) && !(htspOnlyLamHo && to == "HTSP");   // [XL-HTSP-LAMHO]
+    }
+
+    /// <summary>[SUA-HO-TRA-NGUOC 2026-11-11] Đáp án độc lập (đọc NgCases + snapshot, rà độc lập Gói 16 L3): NC phiếu hàng đã sửa trả NGƯỢC về Gia công
+    ///   (Gia công là nơi phát hiện) — null khi tính là xong NC (đã làm xong NC cuối lúc phát hiện / lỗi từ nhóm sau / WTS NG ở NC thường), còn lại = NC của vụ (ExpectNextNc).</summary>
+    public static string? ExpectGcBack(AppDbContext db, int id, long caseId)
+    {
+        var c = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId);
+        var (ncs, _) = Chain(db, id);
+        if (c == null || c.DetectGroupCode != "GC" || ncs.Count == 0) return ExpectNextNc(db, id, caseId, "GC");
+        if (string.IsNullOrWhiteSpace(c.DetectNC) && (c.OriginKind == NgOrigin.BaoLoi || c.CauseGroupCode is "HTSP" or "KCS" or "PKG")) return null;
+        if (c.OriginKind == NgOrigin.Wts && !string.IsNullOrWhiteSpace(c.DetectNC))
+        {
+            var d = c.DetectNC!.Trim();
+            var bk = db.KhPlanRouteSnapshotMachining.List.FirstOrDefault(s => s.KhPlanDetailId == id && s.IsBackup && s.NC.Trim().Equals(d, IC) && !string.IsNullOrWhiteSpace(s.ParentNC));
+            if (bk != null) d = bk.ParentNC!.Trim();
+            if (ncs.Any(x => x.Equals(d, IC))) return null;
+        }
+        return ExpectNextNc(db, id, caseId, "GC");
     }
 
     /// <summary>[XL-TRA-NHOMSUA 2026-11-10] Đáp án độc lập (đọc DB, theo vị trí trong chuỗi): nhóm trả lại được hàng đã sửa bị hỏng lại (Workflow ON) =
@@ -215,11 +235,17 @@ public static class FormHelp
     public static List<string> XlNhomSua(AppDbContext db, long caseId, string from)
     {
         static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
-        var det = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId)?.DetectGroupCode;
+        var vu = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId);
+        var det = vu?.DetectGroupCode;
+        // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa đứng SAU nơi phát hiện cũng giữ ô XL (dấu @XONG) → điều kiện: khác nơi phát hiện (trước: đứng trước nơi phát hiện)
         var reps = db.HandoverRepairResults.List.Where(r => r.NgCaseId == caseId && !r.IsVoided && r.ToNC == "@XONG"
-                                                           && I(r.GroupCode) > 0 && I(r.GroupCode) < I(det) && I(r.GroupCode) < I(from)).ToList();
-        return reps.Where(r => db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == r.HandoverRepairResultId && !c.IsVoided && c.QtyOk > 0))
+                                                           && I(r.GroupCode) > 0 && I(det) > 0 && r.GroupCode != det && I(r.GroupCode) < I(from)).ToList();
+        var list = reps.Where(r => db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == r.HandoverRepairResultId && !c.IsVoided && c.QtyOk > 0))
                    .Select(r => r.GroupCode).Distinct().ToList();
+        // [XL-TRA-NOILOI 2026-11-11] + bộ phận làm lỗi (nơi gây lỗi là nhóm, khác nhóm giữ) — khách 11/11 "NG trả bộ phận làm lỗi"
+        var cause = vu?.CauseGroupCode;
+        if (cause is "KHO" or "GC" or "HTSP" or "KCS" or "PKG" && cause != from && !list.Contains(cause)) list.Add(cause);
+        return list;
     }
 
     /// <summary>Mặc định cho vụ SẼ sinh khi báo lỗi ở dòng <paramref name="pos"/> của nhóm <paramref name="g"/> (đáp án độc lập).</summary>

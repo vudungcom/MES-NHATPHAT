@@ -120,6 +120,9 @@ namespace MES.Web.Services
         public string   HuyText   { get; set; } = "";
         public decimal  TraKhach  { get; set; }
         public string   KhachText { get; set; } = "";
+        /// <summary>[KHACH-GUI-LAI 2026-11-11] Phôi khách đã gửi bù cho vụ (LedgerCase.DaBu) — chỉ hiện, không vào cân vụ.</summary>
+        public decimal  DaBu      { get; set; }
+        public string   DaBuText  { get; set; } = "";
         public string   DangGiu   { get; set; } = "";   // "Gia công 1" / "HTSP 2 (hàng sửa)"
         public decimal  DangGiuQty { get; set; }
         public decimal  DangChuyen { get; set; }
@@ -221,6 +224,7 @@ namespace MES.Web.Services
                     DaXuLy = Join(cs.DaXuLy), DaXuLyQty = cs.DaXuLyTotal,
                     Huy = cs.Huy, HuyText = Join(cs.HuyBy),
                     TraKhach = cs.TraKhach, KhachText = Join(cs.KhachBy),
+                    DaBu = cs.DaBu, DaBuText = string.Join(", ", cs.BuDocs.Select(b => $"phiếu bù #{b.Id}: {b.Qty:0.##}")),   // [KHACH-GUI-LAI]
                     DangGiu = string.Join(" · ", held), DangGiuQty = cs.HeldTotal, DangChuyen = cs.Transit,
                     Balanced = cs.Lech == 0,
                     Hops = cs.Hops.ToList(),

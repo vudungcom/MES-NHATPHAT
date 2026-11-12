@@ -111,6 +111,30 @@ namespace MES.Web.Services
             }).ToList();
         };
 
+        /// <summary>[WHY-WTSV-TRAN 2026-11-11] Bước "sửa dòng WTS về số trước lần sửa" làm được thật trên trang WTS? Máy chủ (WtsSaveService, Workflow ON)
+        ///   kiểm số mới (OK + NG) ≤ trần nhập của NC / mã (HandoverLedgerService.WtsCap) trên sổ KHÔNG có dòng đang sửa — trước đây tìm đường chỉ kiểm K5
+        ///   nên gợi ý được bước bị trần chặn (số bản trước lớn hơn hàng đang có, vd hàng vào nhóm đã giảm). Cùng cách tính khoá như máy chủ (KeyOf: Gia công = NC,
+        ///   nhóm khác = mã CV ?? NC, Taro nhiều NC = khoá (mã, NC)). Nguồn: CLAUDE (kiem trạm Gói 15 11/11 13:42, loi_phoi seed 20337 PO33 op115 vrecv #6 → WTSV #7
+        ///   "nhập 2 vượt Chưa làm 1"; 86dc606 cũng SAI — có từ Gói 10); Hùng 11/11 15:34 OK làm trong Gói 16.</summary>
+        public static bool WtsRevertCapOk(LedgerInput s, long id, Func<LedgerInput, LedgerRow>? calc = null)
+        {
+            var w = s.Wts.FirstOrDefault(x => x.Id == id);
+            if (w == null || !CanRevertWts(w)) return false;
+            if (!s.ApplyWorkflow) return true;   // N7: OFF máy chủ không kiểm trần (chỉ dòng ≤ PO)
+            var p = w.Vers![^2];
+            var basis = Clone(s); basis.Wts = basis.Wts.Where(x => x.Id != id).ToList();
+            var row = (calc ?? HandoverLedgerService.Compute)(basis);
+            var code = w.ProcessGroup == "GC" ? w.NC : (w.WtsCode ?? w.NC);
+            var key = row == null || string.IsNullOrEmpty(code) ? code : HandoverLedgerService.WtsKey(row, w.ProcessGroup, code, w.StepNC) ?? code;
+            var cap = HandoverLedgerService.WtsCap(row!, w.ProcessGroup, key);
+            if (cap.Max == null) return true;   // mã chuẩn bị
+            return !cap.Locked && p.Ok + p.Ng <= cap.Max.Value;
+        }
+
+        /// <summary>[WHY-WTSV-TRAN] Bước gợi ý làm được trên trạng thái <paramref name="s"/> (hiện chỉ bước WTSV cần kiểm thêm trần nhập WTS).</summary>
+        static bool StepAllowed(LedgerInput s, WhyStep d, Func<LedgerInput, LedgerRow> calc)
+            => d.Kind != "WTSV" || WtsRevertCapOk(s, d.Id, calc);
+
         /// <summary>[KH-GUARD] Kho sửa SL phôi thực nhận của 1 dòng Kho (khoVatLieuId = 0: dòng Kho mới chưa có).
         /// Gán danh sách mới (không sửa list cũ — bản sao Clone dùng chung list Phoi).</summary>
         public static Action<LedgerInput> OpSetPhoi(long khoVatLieuId, decimal qty) => s =>
@@ -124,6 +148,11 @@ namespace MES.Web.Services
         public static Action<LedgerInput> OpVoidNgRep(long id) => s =>
         {
             s.NgReps = s.NgReps.Where(b => b.Id != id).ToList();
+        };
+        /// <summary>[KHACH-GUI-LAI 2026-11-11] Huỷ 1 phiếu khách gửi bù (phôi bù ra khỏi Kho phôi còn).</summary>
+        public static Action<LedgerInput> OpVoidBu(long id) => s =>
+        {
+            s.Bu = s.Bu.Where(b => b.Id != id).ToList();
         };
         /// <summary>[GC-SUA-TAI-CHO] Huỷ 1 Kết quả sửa (cùng mọi lần KCS xác nhận của nó — service chỉ cho huỷ khi đã huỷ hết xác nhận).</summary>
         public static Action<LedgerInput> OpVoidRepair(long id) => s =>
@@ -156,6 +185,7 @@ namespace MES.Web.Services
             NgReps = new List<InNgRep>(i.NgReps),   // [GN-NG-AFTER]
             Repairs = i.Repairs.Select(r => r.CloneRep()).ToList(),   // [GC-SUA-TAI-CHO]
             CaseInfo = i.CaseInfo,                  // [VULOI] nhãn vụ lỗi (không góp số)
+            Bu = i.Bu,                              // [KHACH-GUI-LAI 2026-11-11] phôi khách gửi bù (thiếu → sổ thử thiếu phôi còn, gợi ý sai). OpVoidBu gán danh sách mới
             TaroGops = i.TaroGops,                  // [TARO-3T-GOP 2026-11-06] rà độc lập 06/11 mục 2: thiếu → tìm đường gỡ tính trên sổ KHÔNG có bộ gộp (ô âm sẵn, gợi ý rỗng)
         };
 
@@ -236,6 +266,14 @@ namespace MES.Web.Services
                         tried.Add(Key(d));
                         continue;
                     }
+                    if (!StepAllowed(S, d, Calc))
+                    {   // [WHY-WTSV-TRAN 2026-11-11] sửa dòng về số trước bị trần nhập WTS chặn (sau các bước con) → như gỡ không được: lùi, thử ứng viên kế
+                        S = keepS; sRow = keepRow; sTl = keepTl;
+                        plan.Steps.RemoveRange(keepN, plan.Steps.Count - keepN);
+                        if (Over() || ++lui > LuiMax || ++luiTong > LuiTongMax) return false;
+                        tried.Add(Key(d));
+                        continue;
+                    }
                     removeD(S); sRow = null; sTl = null;
                     plan.Steps.Add(d);
                 }
@@ -310,7 +348,7 @@ namespace MES.Web.Services
                                            .OrderByDescending(a => a.At ?? DateTime.MinValue).ThenByDescending(a => a.Id).ThenBy(a => a.Kind == "WTSV" ? 0 : 1))   // [H10-KET-WHY-3] cùng dòng: sửa về số trước trước khi xoá
                     {
                         if (POver()) return false;
-                        if (Bad(StepOp(a), LoopKind(a)).Count == 0) { pick = a; break; }
+                        if (StepAllowed(S, a, Calc) && Bad(StepOp(a), LoopKind(a)).Count == 0) { pick = a; break; }   // [WHY-WTSV-TRAN] + trần nhập WTS
                     }
                     if (pick == null) return false;
                     StepOp(pick)(S); sRow = null; sTl = null;
@@ -335,8 +373,9 @@ namespace MES.Web.Services
                     {
                         if (GonOver()) return false;
                         // làm được thật như trên trang: huỷ phiếu chỉ khi phiếu không còn lần nhận; huỷ Kết quả sửa chỉ khi không còn lần KCS xác nhận
-                        if (st.Kind is not ("WTS" or "WTSV" or "NHAN" or "BAOLOI" or "KQSUA" or "XNSUA") && sim.Txs.Any(t => t.Id == st.Id && t.Receives.Any())) return false;   // [H10-KET-WHY-3] + WTSV
+                        if (st.Kind is not ("WTS" or "WTSV" or "NHAN" or "BAOLOI" or "KQSUA" or "XNSUA" or "BU") && sim.Txs.Any(t => t.Id == st.Id && t.Receives.Any())) return false;   // [H10-KET-WHY-3] + WTSV
                         if (st.Kind == "WTSV" && !sim.Wts.Any(w => w.Id == st.Id && CanRevertWts(w))) return false;   // [H10-KET-WHY-3] dòng đã xoá / đã sửa về
+                        if (!StepAllowed(sim, st, Calc)) return false;   // [WHY-WTSV-TRAN 2026-11-11] bỏ bước trước làm bước WTSV sau vượt trần nhập WTS
                         if (st.Kind == "KQSUA" && sim.Repairs.Any(r => r.Id == st.Id && r.Checks.Any(c => c.Id > 0))) return false;
                         // huỷ lần nhận có phiếu trả tự lập đã được nhận lại: tìm đường luôn gợi ý huỷ lần nhận phiếu trả trước (Actionable) → không bỏ bước đó
                         //   (bỏ thì máy chủ chỉ cho làm theo dây chuyền H10, cần quyền cả 2 nhóm, lời gợi ý không nói) — rà độc lập gói 5 vòng 2 mục 1
@@ -394,13 +433,14 @@ namespace MES.Web.Services
             "BAOLOI" => OpVoidNgRep(d.Id),
             "KQSUA"  => OpVoidRepair(d.Id),
             "XNSUA"  => OpVoidRepairCheck(d.Id),
+            "BU"     => OpVoidBu(d.Id),   // [KHACH-GUI-LAI 2026-11-11]
             _        => OpVoidIssue(d.Id),
         };
         /// <summary>[H10-KET-WHY-3] Cho bộ kiểm làm theo gợi ý trên bản sao (cùng thao tác Plan dùng).</summary>
         public static Action<LedgerInput> StepOpOf(WhyStep d) => StepOp(d);
         /// <summary>Bước gỡ là huỷ chứng từ nguồn → xét thêm K5 theo thời gian hàng sửa trả về như máy chủ ([K5-VONG-SUA][K5-VONG-HO-WTS]).
         ///   [H10-KET-WHY-3] + WTSV: sửa dòng WTS cũng là huỷ chứng từ nguồn (WtsSaveService kiểm theo thời gian khi sửa — [WTS-SUA-PHAN]).</summary>
-        public static bool LoopKind(WhyStep d) => d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS" or "WTSV";
+        public static bool LoopKind(WhyStep d) => d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS" or "WTSV" or "BU";   // [KHACH-GUI-LAI 2026-11-11] + BU: huỷ phiếu bù = huỷ chứng từ nguồn, máy chủ kiểm cả theo thời gian (rà độc lập Gói 14 T1)
         /// <summary>[H10-KET-WHY-3] Bước thuộc tập bỏ qua (chứng từ của chính thao tác): WTSV của dòng thao tác gốc xoá / sửa cũng bỏ.</summary>
         static bool InSkip(WhyStep d, ICollection<string> skip) => skip.Contains(Key(d)) || (d.Kind == "WTSV" && skip.Contains("W:" + d.Id));
 
@@ -416,7 +456,7 @@ namespace MES.Web.Services
         };
 
         static string Key(WhyStep d) => (d.Kind == "WTS" ? "W:" : d.Kind == "WTSV" ? "V:" : d.Kind == "NHAN" ? "R:" : d.Kind == "BAOLOI" ? "B:"
-                                         : d.Kind == "KQSUA" ? "K:" : d.Kind == "XNSUA" ? "X:" : "T:") + d.Id;   // [H10-KET-WHY-3] + V:   // [GN-NG-AFTER] + B:; [GC-SUA-TAI-CHO] + K: / X:
+                                         : d.Kind == "KQSUA" ? "K:" : d.Kind == "XNSUA" ? "X:" : d.Kind == "BU" ? "U:" : "T:") + d.Id;   // [KHACH-GUI-LAI] + U:   // [H10-KET-WHY-3] + V:   // [GN-NG-AFTER] + B:; [GC-SUA-TAI-CHO] + K: / X:
 
         /// <summary>Chứng từ mới nhất đang trừ vào một trong các ô sắp âm (đã quy về việc làm được ngay: phiếu có lần nhận → lần nhận mới nhất trước).</summary>
         static WhyStep? NextCandidate(LedgerInput s, LedgerRow row, List<string> badKeys, HashSet<string> skip)
@@ -494,6 +534,14 @@ namespace MES.Web.Services
                         AddRep(b => b.Group == "KHO");
                         continue;
                     }
+                }
+                // [KHACH-GUI-LAI 2026-11-11] "BU|<vụ>" âm = đã bù vượt trả khách + huỷ (vd gỡ phiếu Trả khách / Huỷ của vụ đã được bù):
+                //   gỡ phiếu khách gửi bù của vụ đó (mới nhất trước). Nguồn: KHÁCH 10/11 vòng 1 câu 1b A; HÙNG 11/11 14:39.
+                if (g == "BU" && p.Length == 2 && long.TryParse(p[1], out var buCase))
+                {
+                    foreach (var b in s.Bu.Where(b => b.Id > 0 && b.NgCaseId == buCase))
+                    { c.Add(StepBu(b)); units?.Add("U:" + b.Id); }
+                    continue;
                 }
                 // [VULOI 2026-10-28] Ô vụ lỗi âm ("VU|<id>|<nhóm>|<ô>"): phiếu đang lấy hàng của vụ đó từ nhóm đó (mới nhất gỡ trước)
                 if (g == "VU")
@@ -639,6 +687,11 @@ namespace MES.Web.Services
         static WhyStep StepRep(InNgRep b) => new() { Kind = "BAOLOI", Id = b.Id, At = b.At,
             Text = $"Báo lỗi #{b.Id} · {HandoverLedgerService.GroupLabel(b.Group)} · {b.Qty:0.##} chiếc · lấy từ {HandoverNgSource.SourceLabel(b.Source, b.Group)}"
                  + (string.IsNullOrEmpty(b.NC) ? "" : $" {HandoverLedgerService.NcText(b.NC)}") + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" };
+        /// <summary>[KHACH-GUI-LAI 2026-11-11] Bước gỡ "huỷ phiếu khách gửi bù" (ô "BU|&lt;vụ&gt;": đã bù vượt trả khách + huỷ).</summary>
+        static WhyStep StepBu(InBu b)
+            => new WhyStep { Kind = "BU", Id = b.Id, At = b.At,
+                Text = $"Phiếu khách gửi bù #{b.Id} · {MES.Web.Data.Entities.NgCaseNo.Format(b.NgCaseId)} · {b.Qty:0.##} phôi" + (string.IsNullOrEmpty(b.Who) ? "" : $" · {b.Who}") + $" · {b.At:dd/MM HH:mm}" };
+
         static WhyStep StepRepair(InRepair r)
         {
             var c0 = r.Checks.Where(x => x.Id > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
@@ -663,6 +716,7 @@ namespace MES.Web.Services
                 case 'V': { var w = s.Wts.FirstOrDefault(x => x.Id == id); return w == null || !CanRevertWts(w) ? null : StepWtsRevert(w); }   // [H10-KET-WHY-3]
                 case 'B': { var b = s.NgReps.FirstOrDefault(x => x.Id == id); return b == null ? null : StepRep(b); }
                 case 'K': { var r = s.Repairs.FirstOrDefault(x => x.Id == id); return r == null ? null : StepRepair(r); }
+                case 'U': { var b = s.Bu.FirstOrDefault(x => x.Id == id); return b == null ? null : StepBu(b); }   // [KHACH-GUI-LAI]
             }
             return null;
         }
@@ -678,6 +732,7 @@ namespace MES.Web.Services
                 'W' => OpWts(new[] { id }),
                 'V' => OpWtsRevert(id),   // [H10-KET-WHY-3]
                 'B' => OpVoidNgRep(id),
+                'U' => OpVoidBu(id),   // [KHACH-GUI-LAI]
                 _   => OpVoidRepair(id),
             };
         }
@@ -751,6 +806,7 @@ namespace MES.Web.Services
                         "BAOLOI" => "nếu báo sai thì huỷ phiếu báo lỗi này ở Lịch sử phiếu",   // [GN-NG-AFTER]
                         "KQSUA"  => "nếu ghi sai thì huỷ Kết quả sửa này ở Lịch sử phiếu",              // [GC-SUA-TAI-CHO]
                         "XNSUA"  => "nếu xác nhận sai thì huỷ lần KCS xác nhận này ở Lịch sử phiếu",     // [GC-SUA-TAI-CHO]
+                        "BU"     => "nếu nhập sai thì huỷ phiếu khách gửi bù này ở Lịch sử phiếu",        // [KHACH-GUI-LAI]
                         _      => "nếu giao sai thì huỷ phiếu này ở Lịch sử phiếu",
                     };
                     // [H10-KET-WHY-3] bước xoá / sửa lại CHÍNH dòng đã sửa ở bước trên: sửa dòng WTS = huỷ dòng cũ + dòng mới (số hiệu mới) → nói rõ để người dùng tìm đúng dòng

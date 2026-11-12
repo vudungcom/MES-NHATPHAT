@@ -10,6 +10,41 @@ using MES.Web.Data.Entities;
 public static class WhyScen
 {
     static int fails = 0;
+
+    // [WHY-WTSV-TRAN 2026-11-11] Bước gợi ý "sửa dòng WTS về số trước lần sửa" phải qua trần nhập WTS như máy chủ (WtsSaveService) — kiem trạm Gói 15 seed 20337 PO33.
+    //   Ca: Gia công nhận 2 lần (1 + 1), WTS NC01 OK 2 → sửa OK 1 → huỷ lần nhận thứ 2 (còn vào 1). Sửa dòng về OK 2 = vượt Chưa làm 1 → máy chủ chặn
+    //   → hàm kiểm của tìm đường phải trả "không làm được"; ca đối chứng (vào 2) phải trả "làm được" và máy chủ cũng lưu được. Bản fc55777: chưa có hàm → SAI.
+    static async Task Y13()
+    {
+        Console.WriteLine("[Y13] [WHY-WTSV-TRAN] sửa dòng WTS về số trước: kiểm trần nhập WTS như máy chủ (số bản trước lớn hơn hàng đang có → không gợi ý)");
+        var fn = typeof(HandoverWhy).GetMethod("WtsRevertCapOk");
+        foreach (var huy in new[] { true, false })
+        {
+            const int U = ChuoiHelp.Admin;
+            var db = new MES.Web.Data.AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false); WtsSvcHelp.Reset();
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-Y13", new ChuoiHelp.Shape { Gc = 1, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });
+            var det = (await ChuoiHelp.CreateKhAsync(db, pid, "P-Y13", new decimal[] { 2 }, "PO-Y13"))[0];
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(det, DateTime.Now, 2, "OVL", "A1", null, null, null, "phoi", U);
+            await svc.IssueByCellAsync(det, "KHO", "GC", 1, U, "MOI", false, "MOI");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            await svc.IssueByCellAsync(det, "KHO", "GC", 1, U, "MOI", false, "MOI");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            var rid2 = db.HandoverReceives.List.Last().ReceiveId;
+            var w = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 2, 0, U);
+            await Task.Delay(20);
+            var we = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 1, 0, U, editLogId: w.LogId);
+            var v = huy ? await svc.VoidReceiveAsync(rid2, "y13", U, new List<string> { "KHO", "GC" }) : (true, "");
+            var input = (await led.GetInputForDetailAsync(det))!;
+            var line = input.Wts.Single(x => x.Id == we.LogId);
+            Ok(w.Ok && we.Ok && v.Item1 && HandoverWhy.CanRevertWts(line), $"Y13{(huy ? "a" : "b")} tiền đề: dòng NC01 OK 2 → 1{(huy ? ", huỷ lần nhận 2 (Gia công còn vào 1)" : " (Gia công vào 2)")}", $"{w.Err}|{we.Err}|{v.Item2}");
+            var capOk = fn == null ? (bool?)null : (bool)fn.Invoke(null, new object?[] { input, line.Id, null })!;
+            var srv = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 2, 0, U, editLogId: we.LogId);   // máy chủ thật: sửa về OK 2
+            Ok(capOk == !huy && srv.Ok == !huy,
+               huy ? "Y13a vào 1: tìm đường coi 'sửa về OK 2' là không làm được — khớp máy chủ (chặn vượt Chưa làm)" : "Y13b vào 2: tìm đường coi 'sửa về OK 2' làm được — khớp máy chủ (lưu được)",
+               $"hàm {(capOk?.ToString() ?? "chưa có (bản cũ)")} · máy chủ {(srv.Ok ? "lưu" : srv.Err)}");
+        }
+    }
     static void Ok(bool cond, string name, string? info = null)
     {
         Console.WriteLine((cond ? "  ĐẠT  " : "  SAI  ") + name + (info != null ? "\n         → " + info.Replace("\n", "\n           ") : ""));
@@ -118,6 +153,7 @@ public static class WhyScen
         Y9().GetAwaiter().GetResult();   // [H10-KET-WHY-3]
         Y11().GetAwaiter().GetResult();  // [H10-KET-WHY-3] đột biến M5 / M6
         Y12().GetAwaiter().GetResult();  // [H10-WHY-NGAYCU] dòng WTS ca qua đêm
+        Y13().GetAwaiter().GetResult();  // [WHY-WTSV-TRAN] bước sửa dòng WTS về số trước phải qua trần nhập WTS
         // [Y10] [GOI8-THAP-D 2026-11-08] ô "HTSP|ChoKcs" + "VU|5|CHUYEN" âm: thao tác thật không làm 2 ô này mới âm (phân tích ở HandoverWhy) → dựng thử trên sổ Y8
         //   bằng thao tác giả "Kết quả sửa #2 còn đạt 0" (KCS đã xác nhận 1). Gợi ý phải ra lần KCS xác nhận #1 (trước: không ứng viên, "chưa lần ra").
         //   Bản a32c59a: Y10a SAI. Nguồn: CLAUDE (sổ GOI8-THAP (d)); Hùng 08/11 11:24 OK Gói 10.

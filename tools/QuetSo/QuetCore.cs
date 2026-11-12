@@ -72,7 +72,7 @@ public static class QuetCore
         foreach (var r in rows)
         {
             if (!r.Balanced)
-                Add(r, KhongCan, $"Phôi {r.Phoi:0.##} ≠ tồn {r.TonTong:0.##} + đang giao {r.DangGiao:0.##} + thành phẩm {r.TpNhap:0.##} + huỷ {r.DaHuy:0.##} + trả khách {r.TraKhach:0.##}");
+                Add(r, KhongCan, $"Phôi {r.Phoi:0.##}" + (r.Bu != 0 ? $" + khách gửi bù {r.Bu:0.##}" : "") + $" ≠ tồn {r.TonTong:0.##} + đang giao {r.DangGiao:0.##} + thành phẩm {r.TpNhap:0.##} + huỷ {r.DaHuy:0.##} + trả khách {r.TraKhach:0.##}");
             foreach (var kv in HandoverLedgerService.NegativeCells(r))
                 Add(r, OAm, $"{kv.Value.Text} = {kv.Value.Value:0.##}");
             foreach (var G in r.Groups.Values)
@@ -80,7 +80,7 @@ public static class QuetCore
                     Add(r, WtsVuot, $"{G.Label} {(HandoverLedgerService.IsVao(s.Code) ? HandoverLedgerService.VaoLabel : (s.Pg == "GC" ? "NC " : s.SubGroup + " ") + s.Code)}: nhận vào {(s.In ?? 0):0.##} − đã ghi WTS OK {s.Ok:0.##} − đã ghi WTS NG {s.Ng:0.##} = {s.Waiting:0.##}");
             var w = HandoverLedgerService.WhereIs(r);
             if (!w.Balanced)
-                Add(r, DangODau, $"cộng các ô {w.Total:0.##} ≠ phôi {w.Phoi:0.##}");
+                Add(r, DangODau, $"cộng các ô {w.Total:0.##} ≠ phôi {w.Phoi:0.##}" + (w.Bu != 0 ? $" + khách gửi bù {w.Bu:0.##}" : ""));   // [KHACH-GUI-LAI 2026-11-11] Nguồn: CLAUDE (Gói 14 cân phôi + bù)
             foreach (var lr in r.LamHoRuns.Where(x => x.HasTaro))   // [TARO-LAMHO-NC] chỉ để biết
                 Add(r, LamHoTaro, $"Taro làm hộ {string.Join(", ", lr.Ncs.Select(HandoverLedgerService.NcName))} ({HandoverLedgerService.NcName(lr.FromNc)} → {HandoverLedgerService.NcName(lr.NextNc)}): HTSP nhận theo NC {lr.In:0.##} · OK bộ Taro {lr.Done:0.##} · đã trả về {lr.Ret:0.##} · chiếc làm hộ bị lỗi đang giữ {r.LamHoNgHeld("HTSP"):0.##}"
                     + $" · mã: {string.Join(", ", r.G("HTSP").Steps.Where(s => s.LamHoNc != null && !s.IsPrep && lr.Ncs.Contains(s.LamHoNc)).Select(s => $"{s.Code} OK {s.Ok:0.##} NG {s.Ng:0.##} chờ {s.Waiting:0.##}"))}");

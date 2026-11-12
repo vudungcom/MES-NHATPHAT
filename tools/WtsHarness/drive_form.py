@@ -138,8 +138,9 @@ async def main():
         m = await open_form(pg, "Gia công")
         await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng sửa")
         bt = await btn_texts(m)
-        ok(any(x == "Trả lại nơi gửi (chưa sửa được)" for x in bt) and any(x == "Sửa xong, trả nơi gửi" for x in bt) and any(x.startswith("Sửa tại nhóm") for x in bt),
-           "D51 Tồn hàng sửa: Sửa tại nhóm · Trả lại nơi gửi (chưa sửa được) · Sửa xong, trả nơi gửi", bt)
+        # [SUA-QUA-KCS 2026-11-11] Workflow ON ẩn "Sửa xong, trả nơi gửi" (Hùng 11/11 15:21) — mọi hàng sửa qua Kết quả sửa + KCS xác nhận
+        ok(any(x == "Trả lại nơi gửi (chưa sửa được)" for x in bt) and not any(x == "Sửa xong, trả nơi gửi" for x in bt) and any(x.startswith("Sửa tại nhóm") for x in bt),
+           "D51 [SUA-QUA-KCS] Tồn hàng sửa: Sửa tại nhóm · Trả lại nơi gửi (chưa sửa được) — không có 'Sửa xong, trả nơi gửi' (Workflow ON)", bt)
         await click(m, pg, "Trả lại nơi gửi")
         dsel = m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first
         cur = await dsel.evaluate("s => s.options[s.selectedIndex].text")
@@ -172,11 +173,25 @@ async def main():
         t0 = await m.inner_text()
         ok("Gia công nhận vào NC (theo vụ)" not in t0, "D63 ô Hàng lỗi (mặc định): không hỏi NC", t0[-400:])
         await m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')").click(); await pg.wait_for_timeout(500)
+        # [SUA-QUA-KCS 2026-11-11] Workflow ON: không có ô Hàng lỗi đã xử lý / Hàng mới bên nhận (Hùng 11/11 15:34 B1) — luật NC theo vụ (D64–D65) kiểm lúc Workflow OFF
+        cells_on = [(await x.inner_text()).strip() for x in await m.locator("button.gn-cellbtn").all()]
+        ok("Hàng lỗi đã xử lý" not in cells_on and "Hàng mới" not in cells_on, "D63b [SUA-QUA-KCS] Workflow ON: ô bên nhận không có Hàng lỗi đã xử lý / Hàng mới", cells_on)
+        await close_modal(pg)
+        post("/harness/g16-wf?po=PO-SUA&on=0")
+        await pg.reload(); await pg.wait_for_timeout(4000)
+        m = await open_form(pg, "Kho")
+        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi")
+        cbs = m.locator("button.gn-cellbtn", has_text="Gia công")
+        if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
+        await click(m, pg, "Giao cho nhóm khác")
+        dsel = m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first
+        await dsel.select_option(label="Gia công"); await pg.wait_for_timeout(800)
+        await m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')").click(); await pg.wait_for_timeout(500)
         await m.locator("button.gn-cellbtn", has_text="Hàng lỗi đã xử lý").first.click(); await pg.wait_for_timeout(800)
         nsel = m.locator("select", has=pg.locator("option", has_text="mặc định")).last
         opts = await nsel.evaluate("s => Array.from(s.options).map(o => o.text)") if await nsel.count() else []
         t1 = await m.inner_text()
-        ok("Gia công nhận vào NC (theo vụ)" in t1 and opts[:1] == ["NC01 — mặc định"], "D64 đổi sang Hàng lỗi đã xử lý: hiện 'Gia công nhận vào NC (theo vụ)' mặc định NC01", opts)
+        ok("Gia công nhận vào NC (theo vụ)" in t1 and opts[:1] == ["NC01 — mặc định"], "D64 Workflow OFF: đổi sang Hàng lỗi đã xử lý: hiện 'Gia công nhận vào NC (theo vụ)' mặc định NC01", opts)
         q = m.locator("input[type=number]").first; await q.fill("1"); await q.dispatch_event("change"); await pg.wait_for_timeout(400)
         sent = await confirm(m, pg)
         d6 = get("/harness/form")

@@ -45,15 +45,28 @@ async def main():
         opened = await hdr.count() > 0
         if opened:
             await hdr.click(); await pg.wait_for_timeout(900)
+        # [SUA-QUA-KCS 2026-11-11] Workflow ON: không đổi ô Hàng lỗi → Hàng lỗi đã xử lý lúc nhận (Hùng 11/11 15:34 B1) — luật NC theo vụ (NHAN-DOI-O-NC) chỉ còn khi OFF
+        xl0 = m.locator("button.gn-cellbtn", has_text="Hàng lỗi đã xử lý")
+        ok(opened and await xl0.count() == 0, "N10 [SUA-QUA-KCS] Workflow ON: phiếu ô Hàng lỗi không có nút ô 'Hàng lỗi đã xử lý'", (await m.inner_text())[:500])
+        await close_modal(pg)
+        post("/harness/g16-wf?po=PO-NNC&on=0")
+        await pg.reload(); await pg.wait_for_timeout(4000)
+        await row(pg).locator("button:has-text('Nhận')").click(); await pg.wait_for_timeout(1500)
+        m = modal(pg)
+        if await m.locator("select").count():
+            await m.locator("select").first.select_option(label="Gia công"); await pg.wait_for_timeout(1500)
+        hdr = m.locator("div[style*='cursor:pointer']").first
+        if await hdr.count():
+            await hdr.click(); await pg.wait_for_timeout(900)
         xl = m.locator("button.gn-cellbtn", has_text="Hàng lỗi đã xử lý").first
-        ok(opened and await xl.count() == 1, "N11 mở phiếu Kho → Gia công ô Hàng lỗi, có nút ô 'Hàng lỗi đã xử lý'", (await m.inner_text())[:500])
+        ok(opened and await xl.count() == 1, "N11 Workflow OFF: mở phiếu Kho → Gia công ô Hàng lỗi, có nút ô 'Hàng lỗi đã xử lý'", (await m.inner_text())[:500])
         if await xl.count():
             await xl.click(); await pg.wait_for_timeout(900)
             await m.locator("input[type=text].border-warning").first.fill("da sua xong")
             sel = m.locator("select", has=pg.locator("option", has_text="mặc định")).first
             opts = [(await o.inner_text()).strip() for o in await sel.locator("option").all()] if await sel.count() else []
             # [SUA-KHONG-LUI 2026-11-10] Workflow ON: hàng sửa đạt không làm lại NC trước — chỉ NC theo vụ. Nguồn: KHÁCH 10/11 vòng 1 câu 2.1 A; HÙNG 10/11 19:22
-            ok(len(opts) == 1 and opts[0].startswith("NC02") and "mặc định" in opts[0], "N12 [SUA-KHONG-LUI] ô 'Nhận vào NC': chỉ NC02 mặc định (theo vụ), không còn 'Làm lại từ NC01' (Workflow ON)", opts)
+            ok(len(opts) >= 1 and opts[0].startswith("NC02") and "mặc định" in opts[0] and not any("NC03" in o for o in opts), "N12 Workflow OFF: ô 'Nhận vào NC': NC02 mặc định (theo vụ), không có NC sau", opts)
             print("[N3] nhận vào NC02 (theo vụ)")
             nums = m.locator("input[type=number]")
             if await nums.count():

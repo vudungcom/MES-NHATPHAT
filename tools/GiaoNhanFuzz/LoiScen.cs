@@ -94,8 +94,8 @@ public static class LoiScen
             await svc.ReceiveAsync(LastTx(db), 3, 0, null, 3);
             t = await Tr();
             Ok(t.Groups.Single(g => g.Code == "HTSP").SuaGiu == 3 && t.DangChuyen == 0 && t.Balanced, "HTSP nhận: HTSP giữ hàng sửa 3", Info(t));
-            await svc.IssueByCellAsync(1, "HTSP", "GC", 3, 3, "SUA", false, "XL", ngCaseId: vuNc1);
-            await svc.ReceiveAsync(LastTx(db), 3, 0, null, 2);
+            await VuHelp.Off(db, () => svc.IssueByCellAsync(1, "HTSP", "GC", 3, 3, "SUA", false, "XL", ngCaseId: vuNc1))   /* [SUA-QUA-KCS] đường cũ — chỉ còn Workflow OFF */;
+            await VuHelp.Off(db, () => svc.ReceiveAsync(LastTx(db), 3, 0, null, 2));   /* [SUA-QUA-KCS] nhận phiếu kiểu cũ cũng lúc OFF (rà độc lập T3) */
             t = await Tr();
             var xl = t.Events.LastOrDefault(x => x.Type == "VE_SX");
             Ok(xl != null && xl.Qty == 3 && xl.Group == "GC" && t.VeSx == 3, "GC nhận 3 ô Hàng lỗi đã xử lý: dòng 'đã xử lý' 3", Info(t));

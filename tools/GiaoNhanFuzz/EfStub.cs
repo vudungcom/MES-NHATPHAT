@@ -105,6 +105,7 @@ namespace Microsoft.EntityFrameworkCore
             ["WtsProductionLog"]    = "WtsLogId",
             ["KhoVatLieu"]          = "KhoVatLieuId",
             ["HandoverNgReport"]    = "HandoverNgReportId",   // [GN-NG-AFTER]
+            ["HandoverReplacement"] = "ReplacementId",        // [KHACH-GUI-LAI 2026-11-11]
             ["NgCategory"]          = "NgCategoryId",         // [VULOI]
             ["NgCase"]              = "NgCaseId",
             ["NgCategoryChangeLog"] = "ChangeId",

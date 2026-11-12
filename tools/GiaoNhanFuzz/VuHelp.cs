@@ -14,6 +14,15 @@ public static class VuHelp
         db.NgCategories.List.Add(new NgCategory { NgCategoryId = 6, Code = "CU", Name = "Loại cũ đã ngưng", SortOrder = 9, IsActive = false, CreatedBy = 1, CreatedAt = DateTime.Now });
     }
 
+    /// <summary>[SUA-QUA-KCS 2026-11-11] Chạy 1 thao tác lúc Workflow OFF (dựng chứng từ kiểu cũ — vd "tự sửa xong / sửa hộ xong giao thẳng ô Hàng lỗi đã xử lý"
+    ///   mà Workflow ON nay chặn, Hùng 11/11 15:34 B1). Kịch bản cũ kiểm sổ vụ lỗi trên các chứng từ đó vẫn giữ nguyên đáp án.</summary>
+    public static async Task<T> Off<T>(AppDbContext db, Func<Task<T>> f)
+    {
+        var ps = db.KhPlans.List.ToList(); var keep = ps.Select(p => p.ApplyWorkflow).ToList();
+        foreach (var p in ps) p.ApplyWorkflow = false;
+        try { return await f(); } finally { for (int i = 0; i < ps.Count; i++) ps[i].ApplyWorkflow = keep[i]; }
+    }
+
     public static string Label(AppDbContext db, int catId) => db.NgCategories.List.First(x => x.NgCategoryId == catId).Label;
 
     /// <summary>Thêm dòng WTS (như trang WTS): NG &gt; 0 thì tạo vụ lỗi (hoặc giữ vụ cũ khi sửa dòng).</summary>

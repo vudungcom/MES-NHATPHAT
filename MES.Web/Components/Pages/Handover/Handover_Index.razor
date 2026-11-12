@@ -380,7 +380,7 @@ else
                                 {
                                     @* [GN-TEXT] Mặc định chỉ hiện như Excel (các dòng B) + dòng cân bằng; chi tiết để kiểm số khi bật Hiện công thức *@
                                     <div class="small d-flex flex-wrap gap-3 align-items-center">
-                                        <span><strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") = Σ Tồn @row.TonTong.ToString("0.##") + thành phẩm chờ Kho nhận @row.DangGiao.ToString("0.##") @* [GN-RECV-NG] trước: đang giao *@ + thành phẩm nhập kho @row.TpNhap.ToString("0.##") + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
+                                        <span><strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##")@(row.Bu != 0 ? " + khách gửi bù " + row.Bu.ToString("0.##") : "") @* [KHACH-GUI-LAI 2026-11-11] *@ = Σ Tồn @row.TonTong.ToString("0.##") + thành phẩm chờ Kho nhận @row.DangGiao.ToString("0.##") @* [GN-RECV-NG] trước: đang giao *@ + thành phẩm nhập kho @row.TpNhap.ToString("0.##") + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
                                             @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }</span>
                                         <span class="text-muted">Bật <strong>Hiện công thức</strong> để xem chi tiết từng NC / mã CV.</span>
                                     </div>
@@ -556,6 +556,11 @@ else
                                         <div style="font-size:11px;color:#666;margin-top:2px">
                                             <i class="bi bi-person me-1"></i>@p.IssuedByName
                                             <span class="ms-2 text-success"><i class="bi bi-arrow-return-right me-1"></i>bên giao chỉ định vào ô <strong>@(recvCell != null ? HandoverCell.Label(recvCell) : "theo NC (ngoài 8 ô Excel)")</strong></span>
+                                            @if (PendingXlNote(p) is string xlN)
+                                            {
+                                                @* [XL-CHU-KCS 2026-11-11] phiếu hàng đã sửa: bên nhận tính thế nào (KCS: kiểm lại, giờ ghi Việc không làm ra SP) *@
+                                                <span class="ms-2" style="color:#0e7490">@xlN</span>
+                                            }
                                             @if (PendingTailNote(p) is string tailN)
                                             {
                                                 @* [GC-HTSP-NC-HIEN 2026-11-10] Gia công → HTSP Hàng mới, sau NC cuối còn NC máy loại trừ: "để làm NC5 (Taro)" (chỉ hiển thị) *@
@@ -580,7 +585,7 @@ else
                                             @* [GN-CELL2] Bên nhận duyệt lại phân loại: mặc định ô bên giao chỉ định, đổi thì bắt buộc lý do *@
                                             <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào ô</label>
                                             <div class="d-flex gap-1 mb-1 flex-wrap">
-                                                @foreach (var c in HandoverCell.ReceiveCells)
+                                                @foreach (var c in RecvCellOpts(p))
                                                 {
                                                     <button type="button" class="gn-cellbtn @(RecvCellOf(p) == c ? "on" : "")" style="flex:1;min-width:92px;padding:4px 6px" @onclick="() => SelectRecvCell(p, c)" title="@ToCellTitle(c)">
                                                         <div class="fw-semibold small">@HandoverCell.Label(c)</div>
@@ -706,9 +711,35 @@ else
             </div>
             <div class="mes-modal-body p-0">
                 @PageErrorBanner()   @* [PAGE-ERR2] *@
-                @if (!_logItems.Any() && !_ngLogs.Any() && !_repairLogs.Any())   @* [GC-SUA-TAI-CHO] + Kết quả sửa *@
+                @if (!_logItems.Any() && !_ngLogs.Any() && !_repairLogs.Any() && !_buLogs.Any())   @* [GC-SUA-TAI-CHO] + Kết quả sửa · [KHACH-GUI-LAI] + phiếu bù *@
                 {
                     <p class="text-muted text-center py-4">Chưa có lịch sử giao nhận.</p>
+                }
+                @* [KHACH-GUI-LAI 2026-11-11] Phiếu khách gửi bù (Kho nhận phôi bù cho lần lỗi đã trả khách / huỷ) *@
+                @foreach (var bu in _buLogs)
+                {
+                    <div class="border-bottom p-3 @(bu.IsVoided ? "bg-light" : "")" style="border-left:3px solid #f59e0b">
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <span class="small text-muted">Phiếu bù #@bu.Id</span>
+                            <span class="badge @(bu.IsVoided ? "bg-secondary" : "bg-warning text-dark")">Kho · khách gửi bù</span>
+                            <span class="small text-muted">@bu.ReceivedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                            <span class="small text-muted">by @bu.ReceivedByName</span>
+                            @if (bu.IsVoided) { <span class="badge bg-secondary" title="@bu.VoidReason">ĐÃ HUỶ</span> }
+                            @if (ShowVoidBuBtn(bu))
+                            {
+                                <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px" @onclick="() => VoidBuFromLog(bu.Id)">
+                                    <i class="bi bi-trash me-1"></i>Huỷ phiếu bù
+                                </button>
+                            }
+                        </div>
+                        <div class="small">
+                            <strong>@bu.Qty.ToString("0.##") phôi</strong> bù cho @CaseChip(bu.NgCaseId) → Kho ô Hàng lỗi đã xử lý (phôi còn)@(string.IsNullOrEmpty(bu.Notes) ? "" : " · " + bu.Notes)
+                        </div>
+                        @if (bu.IsVoided)
+                        {
+                            <div class="small text-muted">Huỷ: @bu.VoidReason · @bu.VoidedByName · @(bu.VoidedAt?.ToString("dd/MM HH:mm"))</div>
+                        }
+                    </div>
                 }
                 @* [GC-SUA-TAI-CHO] Kết quả sửa + lần KCS xác nhận *@
                 @foreach (var rp in _repairLogs)
@@ -1030,6 +1061,8 @@ else
 
     // [GC-SUA-TAI-CHO] KCS xác nhận hàng sửa (ghi Kết quả sửa: GiaoXuLyModal [GN-FORM1])
     List<HandoverRepairItem> _repairLogs = new();
+    List<HandoverReplacementItem> _buLogs = new();   // [KHACH-GUI-LAI 2026-11-11] phiếu khách gửi bù
+    long    _voidingBuId;                              // [KHACH-GUI-LAI]
     List<HandoverRepairItem> _kcsRepairs = new();
     long    _expandedRepairId;
     decimal _kcsOk;
@@ -1138,8 +1171,8 @@ else
         ? "Kho không giữ hàng đã sửa chờ trả: hàng lỗi đã xử lý về Kho tính là phôi còn."
         : "Theo quy trình Excel Kho không nhận / giao Hàng Sửa (ô có số khi có nhóm gửi Kho sửa). Phôi lỗi ở Kho đi bằng ô Hàng lỗi (gửi nhờ sửa, huỷ, trả khách)."; // [GN-ROUTE-FREE]
 
-    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", _ => k };   // [GN-VOID-RULE] + DONG; [GN-NG-AFTER] + BAOLOI; [GC-SUA-TAI-CHO] + KQSUA / XNSUA
-    static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", "KQSUA" => "bg-success", "XNSUA" => "bg-success", _ => "bg-secondary" };
+    static string StepKind(string k) => k switch { "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", "BU" => "Khách gửi bù", _ => k };   // [KHACH-GUI-LAI 2026-11-11] + BU   // [GN-VOID-RULE] + DONG; [GN-NG-AFTER] + BAOLOI; [GC-SUA-TAI-CHO] + KQSUA / XNSUA
+    static string StepBadge(string k) => k switch { "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", "KQSUA" => "bg-success", "XNSUA" => "bg-success", "BU" => "bg-warning text-dark", _ => "bg-secondary" };
 
     // =================================================================
     // Chi tiết 1 PO (dưới các dòng B): ô đang giữ, làm hộ, NC, mã CV, cân bằng, cảnh báo
@@ -1149,7 +1182,7 @@ else
         <div class="d-flex flex-column gap-2">
             <div class="d-flex flex-wrap gap-3 align-items-center small">
                 <span class="@(_showFormula ? "gn-click" : "")" @onclick="() => OpenBalance(row)">
-                    <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##") =
+                    <strong>Cân bằng PO:</strong> phôi @row.Phoi.ToString("0.##")@(row.Bu != 0 ? " + khách gửi bù " + row.Bu.ToString("0.##") : "") = @* [KHACH-GUI-LAI 2026-11-11] *@
                     Σ Tồn @row.TonTong.ToString("0.##") + thành phẩm chờ Kho nhận @row.DangGiao.ToString("0.##") + thành phẩm nhập kho @row.TpNhap.ToString("0.##") @* [GN-RECV-NG] trước: đang giao *@
                     + đã huỷ @row.DaHuy.ToString("0.##") + đã trả khách @row.TraKhach.ToString("0.##")
                     @if (row.Balanced) { <span class="badge bg-success ms-1">cân</span> } else { <span class="badge bg-danger ms-1">lệch</span> }
@@ -1697,6 +1730,17 @@ else
         _showVoidConfirm = true;
     }
 
+    // ── [KHACH-GUI-LAI 2026-11-11] Huỷ phiếu khách gửi bù (Lịch sử): người nhập hoặc quyền Sửa Kho (máy chủ kiểm lại) ──
+    bool ShowVoidBuBtn(HandoverReplacementItem b)
+        => !b.IsVoided && HandoverService.CanVoidBu(b.ReceivedBy, _currentUserId, _myEditGroups);
+
+    void VoidBuFromLog(long id)
+    {
+        _voidMode = "BU"; _voidingBuId = id;
+        _voidingTxId = 0; _voidingReceiveId = 0; _voidingNgId = 0; _voidingRepairId = 0; _voidingRepairCheckId = 0;
+        _voidReason = ""; _modalError = ""; _showVoidConfirm = true;
+    }
+
     // ── [GC-SUA-TAI-CHO 2026-11-04] KCS xác nhận hàng sửa (modal Nhận · KCS) + huỷ trong Lịch sử. Ghi Kết quả sửa gộp vào GiaoXuLyModal [GN-FORM1]. ──
     async Task LoadKcsRepairsAsync()
     {
@@ -2021,6 +2065,34 @@ else
         </div>
     };
 
+    /// <summary>[SUA-QUA-KCS 2026-11-11] Ô nhận chọn được: Workflow ON, phiếu chỉ định ô Hàng lỗi / Hàng sửa không đổi sang ô Hàng lỗi đã xử lý / Hàng mới
+    ///   (coi như đã sửa đạt mà chưa qua KCS xác nhận — máy chủ cũng chặn, HandoverService.ReceiveOnceAsync). OFF như cũ. Nguồn: HÙNG 11/11 15:34 (B1).</summary>
+    IEnumerable<string> RecvCellOpts(HandoverTxPending p)
+        => HandoverCell.ReceiveCells.Where(c => c == p.ToCell || !(_selectedRow?.ApplyWorkflow == true
+               && (HandoverForm.SuaQuaKcsBlocked(p.ToCell, c) || HandoverForm.SuaQuaKcsBlocked(p.IsAutoReturn ? null : p.FromCell, c)   // rà độc lập T3: theo cả ô bên giao lấy
+                   || (p.FromCell == HandoverCell.Xl && c is not (HandoverCell.Xl or HandoverCell.Loi)))));   // rà độc lập T2: phiếu hàng đã sửa
+
+    /// <summary>[XL-CHU-KCS 2026-11-11] Chữ cho phiếu hàng đã sửa (ô Hàng lỗi đã xử lý, mang vụ): giữ ô / đã làm / KCS kiểm lại (cùng hàm sổ XlDest).
+    ///   Nguồn: KHÁCH 11/11 ("KCS nhận hàng đã sửa vẫn kiểm lại nhưng WTS ghi Việc không làm ra SP").</summary>
+    string? PendingXlNote(HandoverTxPending p)
+    {
+        if (p.FromCell != HandoverCell.Xl || p.ToCell != HandoverCell.Xl || p.NgCaseId is not long id || _selectedRow == null
+            || !_selectedRow.Cases.TryGetValue(id, out var cs) || string.IsNullOrEmpty(_receiveToGroup)) return null;
+        // rà độc lập Gói 16 (Trung T1): Gia công là nơi phát hiện → cùng đích như sổ (RepairTarget ≡ HandoverLedgerService.GcXlBack), không chỉ XlDest
+        string note;
+        if (_receiveToGroup == "GC")
+        {
+            var tg = cs.DetectGroup == "GC" ? HandoverForm.RepairTarget(_selectedRow, id, "GC") : null;
+            note = tg == HandoverLedgerService.RepXong ? "hàng đã sửa — tính là xong NC cuối, không ghi WTS số lượng"
+                 : tg == HandoverLedgerService.RepOk ? "hàng đã sửa — tính là xong NC của chiếc lỗi, không ghi WTS lại"
+                 : null!;
+            if (note != null) return note;   // rà vòng 2 L1: không phải dấu → theo XlDest như sổ (giữ ô / đã làm / chữ thường)
+        }
+        var d = HandoverLedgerService.XlDest(_receiveToGroup, cs.DetectGroup, cs.FromDa);
+        note = HandoverLedgerService.XlStepNote(d, _receiveToGroup).Trim();
+        return note.Length > 2 ? note[1..^1] : null;
+    }
+
     string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn ? HandoverCell.Loi
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : p.ToCell;
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
@@ -2076,6 +2148,7 @@ else
         _logItems     = await HandoverSvc.GetLogsAsync(khPlanDetailId);
         _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
         _repairLogs   = await HandoverSvc.GetRepairsAsync(khPlanDetailId);     // [GC-SUA-TAI-CHO]
+        _buLogs       = await HandoverSvc.GetReplacementsAsync(khPlanDetailId); // [KHACH-GUI-LAI]
         _logPartNo    = _rows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.PartNo ?? "";
         _showLogModal = true;
     }
@@ -2127,7 +2200,9 @@ else
         {
         // [GN-VOID-RULE] 3 kiểu huỷ; máy chủ kiểm quyền (người lập/nhận hoặc nhóm) + K5 (huỷ xong ô nào âm, kể cả WTS từng mã CV, thì không lưu)
         (bool ok, string err) result;
-        if (_voidMode == "NG")   // [GN-NG-AFTER]
+        if (_voidMode == "BU")   // [KHACH-GUI-LAI 2026-11-11]
+            result = await HandoverSvc.VoidReplacementAsync(_voidingBuId, _voidReason.Trim(), _currentUserId);
+        else if (_voidMode == "NG")   // [GN-NG-AFTER]
             result = await HandoverSvc.VoidNgReportAsync(_voidingNgId, _voidReason.Trim(), _currentUserId, _myEditGroups);
         else if (_voidMode == "KQ")   // [GC-SUA-TAI-CHO]
             result = await HandoverSvc.VoidRepairResultAsync(_voidingRepairId, _voidReason.Trim(), _currentUserId);
@@ -2148,11 +2223,13 @@ else
         _modalError      = "";
         _voidingNgId     = 0;   // [GN-NG-AFTER]
         _voidingRepairId = 0; _voidingRepairCheckId = 0;   // [GC-SUA-TAI-CHO]
+        _voidingBuId = 0;   // [KHACH-GUI-LAI]
         await ReloadAfterSaveAsync(async () =>   // [PAGE-ERR2] đã huỷ xong: lỗi tải lại báo ở đầu trang + trong cửa sổ Lịch sử (PageErrorBanner)
         {
             _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
             _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
             _repairLogs = await HandoverSvc.GetRepairsAsync(_logDetailId);   // [GC-SUA-TAI-CHO]
+            _buLogs = await HandoverSvc.GetReplacementsAsync(_logDetailId);   // [KHACH-GUI-LAI]
             await ReloadRowAsync(_logDetailId);
         });
         }
@@ -2208,10 +2285,16 @@ else
         if (back == null || ActiveRecv(back) <= 0) return "";
         return $"; {HandoverLedgerService.GroupLabel(back.ToGroupCode)} đã nhận lại {ActiveRecv(back):0.##} chiếc ở phiếu trả #{back.HandoverTxId} — lần nhận đó huỷ kèm (cần quyền {HandoverLedgerService.GroupLabel(back.ToGroupCode)})";
     }
-    string VoidTitle => _voidMode switch { "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", "NG" => "Huỷ báo lỗi", "KQ" => "Huỷ Kết quả sửa", "XN" => "Huỷ KCS xác nhận", _ => "Huỷ phiếu giao" };   // [GN-NG-AFTER] + NG; [GC-SUA-TAI-CHO] + KQ / XN
+    string VoidTitle => _voidMode switch { "BU" => "Huỷ phiếu khách gửi bù", "RECV" => "Huỷ lần nhận", "CLOSE" => "Huỷ phần chưa nhận", "NG" => "Huỷ báo lỗi", "KQ" => "Huỷ Kết quả sửa", "XN" => "Huỷ KCS xác nhận", _ => "Huỷ phiếu giao" };   // [GN-NG-AFTER] + NG; [GC-SUA-TAI-CHO] + KQ / XN
     string VoidNote()
     {
         if (_voidMode is "KQ" or "XN") return RepairVoidNote();   // [GC-SUA-TAI-CHO]
+        if (_voidMode == "BU")   // [KHACH-GUI-LAI 2026-11-11]
+        {
+            var bu = _buLogs.FirstOrDefault(x => x.Id == _voidingBuId);
+            return bu == null ? "" : $"Huỷ phiếu bù #{bu.Id} ({bu.Qty:0.##} phôi cho {NgCaseNo.Format(bu.NgCaseId)}): Kho bớt {bu.Qty:0.##} phôi còn. "
+                + "Nếu phôi bù đã giao Gia công thì phần mềm chặn — huỷ phiếu giao đó trước.";
+        }
         if (_voidMode == "NG")   // [GN-NG-AFTER]
         {
             var b = _ngLogs.FirstOrDefault(x => x.Id == _voidingNgId);

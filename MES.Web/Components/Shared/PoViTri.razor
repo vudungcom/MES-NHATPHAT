@@ -12,6 +12,11 @@
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:6px;font-size:12px">
             <span><strong>SL PO</strong> @Row.PlanQty.ToString("0.##")</span>
             <span><strong>Phôi nhận</strong> @w.Phoi.ToString("0.##")</span>
+            @if (w.Bu != 0)
+            {
+                @* [KHACH-GUI-LAI 2026-11-11] phôi khách gửi bù (cho hàng lỗi đã trả khách / huỷ) — nằm trong "phôi còn" của Kho *@
+                <span title="Phôi khách gửi bù cho hàng lỗi đã trả khách / huỷ (Kho nhận vào phôi còn)"><strong>Khách gửi bù</strong> @w.Bu.ToString("0.##")</span>
+            }
             @if (w.ChuaCoPhoi > 0)
             {
                 <span class="text-warning-emphasis" title="SL PO − phôi Kho đã nhận (chưa vào xưởng, không nằm trong tổng bên dưới)">chưa có phôi @w.ChuaCoPhoi.ToString("0.##")</span>
@@ -19,11 +24,11 @@
             <span><strong>Thành phẩm nhập kho</strong> @w.TpNhap.ToString("0.##")</span>
             @if (w.Balanced)
             {
-                <span class="badge bg-success" title="Cộng mọi ô bên dưới = phôi nhận">cân: @w.Total.ToString("0.##") = phôi @w.Phoi.ToString("0.##")</span>
+                <span class="badge bg-success" title="Cộng mọi ô bên dưới = phôi nhận (+ khách gửi bù)">cân: @w.Total.ToString("0.##") = phôi @w.Phoi.ToString("0.##")@(w.Bu != 0 ? " + bù " + w.Bu.ToString("0.##") : "")</span>
             }
             else
             {
-                <span class="badge bg-danger" title="Cộng mọi ô bên dưới khác phôi nhận — báo lại để kiểm">lệch: @w.Total.ToString("0.##") ≠ phôi @w.Phoi.ToString("0.##")</span>
+                <span class="badge bg-danger" title="Cộng mọi ô bên dưới khác phôi nhận — báo lại để kiểm">lệch: @w.Total.ToString("0.##") ≠ phôi @w.Phoi.ToString("0.##")@(w.Bu != 0 ? " + bù " + w.Bu.ToString("0.##") : "")</span>
             }
             @if (w.HasNegative)
             {
@@ -85,12 +90,12 @@
 
     static string KindLabel(string k) => k switch
     {
-        "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", _ => k   // [GC-SUA-TAI-CHO]
+        "PHOI" => "Phôi", "GIAO" => "Giao", "NHAN" => "Nhận", "WTS" => "WTS", "DONG" => "Huỷ phần còn", "BAOLOI" => "Báo lỗi", "KQSUA" => "Kết quả sửa", "XNSUA" => "KCS xác nhận", "BU" => "Khách gửi bù", _ => k   // [GC-SUA-TAI-CHO] · [KHACH-GUI-LAI] + BU (rà độc lập Gói 14 L1)
     };
 
     static string KindBadge(string k) => k switch
     {
-        "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", "KQSUA" => "bg-success", "XNSUA" => "bg-success", _ => "bg-secondary"
+        "PHOI" => "bg-warning text-dark", "GIAO" => "bg-primary", "NHAN" => "bg-success", "WTS" => "bg-info text-dark", "BAOLOI" => "bg-danger", "KQSUA" => "bg-success", "XNSUA" => "bg-success", "BU" => "bg-warning text-dark", _ => "bg-secondary"
     };
 
     private RenderFragment PlaceBox(HandoverLedgerService.WhereSummary w, string place) => __builder =>

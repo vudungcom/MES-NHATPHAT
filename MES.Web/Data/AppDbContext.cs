@@ -96,6 +96,7 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
     public DbSet<StandardWtsTaskGop> StandardWtsTaskGops => Set<StandardWtsTaskGop>();                       // [TARO-3T-GOP 2026-11-06] mã gộp WTS tiêu chuẩn (SQL 07)
     public DbSet<KhPlanRouteSnapshotWtsGop> KhPlanRouteSnapshotWtsGops => Set<KhPlanRouteSnapshotWtsGop>();   // [TARO-3T-GOP 2026-11-06] mã gộp chụp vào PO (SQL 07)
     public DbSet<HandoverTxClose> HandoverTxCloses => Set<HandoverTxClose>();                 // [K5-CLOSE-NHIEU 2026-11-06] mỗi lần huỷ phần chưa nhận 1 dòng (SQL 10)
+    public DbSet<HandoverReplacement> HandoverReplacements => Set<HandoverReplacement>();     // [KHACH-GUI-LAI 2026-11-11] khách gửi bù phôi cho lần lỗi đã trả khách / huỷ (SQL 15_KHBU)
     // [DS-LOI][VULOI 2026-10-28] Danh mục lỗi + vụ lỗi (nhãn, không lưu số)
     public DbSet<NgCategory> NgCategories => Set<NgCategory>();
     public DbSet<NgCategoryChangeLog> NgCategoryChangeLogs => Set<NgCategoryChangeLog>();
@@ -726,6 +727,27 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
             .HasOne<HandoverTransaction>().WithMany()
             .HasForeignKey(x => x.HandoverTxId)
             .HasConstraintName("FK_HandoverTxCloses_HandoverTransactions")
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // ==== [KHACH-GUI-LAI 2026-11-11] Khách gửi bù phôi (SQL 15_KHBU_HandoverReplacements.sql, Hùng chạy 11/11) ====
+        //   Nguồn: KHÁCH 10/11 vòng 1 câu 1a A + 1b A; HÙNG 11/11 14:39 duyệt. Khoá ngoại NO ACTION như các bảng con khác của PO.
+        mb.Entity<HandoverReplacement>().ToTable("HandoverReplacements");
+        mb.Entity<HandoverReplacement>().HasKey(x => x.ReplacementId);
+        mb.Entity<HandoverReplacement>().Property(x => x.Qty).HasPrecision(10, 2);
+        mb.Entity<HandoverReplacement>().Property(x => x.Notes).HasMaxLength(500);
+        mb.Entity<HandoverReplacement>().Property(x => x.VoidReason).HasMaxLength(200);
+        mb.Entity<HandoverReplacement>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIME()");
+        mb.Entity<HandoverReplacement>().HasIndex(x => new { x.KhPlanDetailId, x.ReceivedAt }).HasDatabaseName("IX_HandoverReplacements_Detail");
+        mb.Entity<HandoverReplacement>().HasIndex(x => x.NgCaseId).HasDatabaseName("IX_HandoverReplacements_Case");
+        mb.Entity<HandoverReplacement>()
+            .HasOne<KhPlanDetail>().WithMany()
+            .HasForeignKey(x => x.KhPlanDetailId)
+            .HasConstraintName("FK_HandoverReplacements_KhPlanDetails")
+            .OnDelete(DeleteBehavior.NoAction);
+        mb.Entity<HandoverReplacement>()
+            .HasOne<NgCase>().WithMany()
+            .HasForeignKey(x => x.NgCaseId)
+            .HasConstraintName("FK_HandoverReplacements_NgCases")
             .OnDelete(DeleteBehavior.NoAction);
 
         // ==== [TARO-NC-MA][TARO-3T-GOP 2026-11-06] SQL 07_TARO_NC_3TGOP.sql (Hùng chạy 06/11 21:45) ====
