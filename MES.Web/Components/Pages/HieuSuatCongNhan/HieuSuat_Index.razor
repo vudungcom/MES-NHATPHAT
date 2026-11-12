@@ -62,6 +62,32 @@
 
 <PageTitle>Nhập WTS - MES</PageTitle>
 
+@* ── [WTS-VITRI 2026-11-12] Khung "Hàng đang ở đâu" của PO (cùng khung trang Giao nhận / Kế hoạch — PoViTri, đọc sổ). Nguồn: KHÁCH 12/11; HÙNG 12/11 17:50 ── *@
+@if (_viTriErr != null)
+{
+    <div class="alert alert-warning small py-2 d-flex align-items-center gap-2" style="position:fixed;top:70px;right:20px;z-index:2000;max-width:480px">
+        <i class="bi bi-exclamation-triangle"></i><span>@_viTriErr</span>
+        <button type="button" class="btn-close btn-sm ms-auto" @onclick="CloseViTriErr"></button>
+    </div>
+}
+@if (_viTriRow != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:960px;max-width:96vw;max-height:84vh;overflow-y:auto">
+            <div class="mes-modal-header">
+                <h6 class="mb-0"><i class="bi bi-geo-alt me-2"></i>Hàng đang ở đâu — PO @_viTriPo</h6>
+                <button class="btn-close btn-sm" @onclick="CloseViTri"></button>
+            </div>
+            <div class="mes-modal-body">
+                <PoViTri Row="_viTriRow" Steps="_viTriSteps" />
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseViTri">Đóng</button>
+            </div>
+        </div>
+    </div>
+}
+
 @* ── Modal confirm xóa WTS ── *@
 
 @if (_voidConfirmRow != null)
@@ -1158,6 +1184,8 @@ else
                                         </datalist>
                                         @* [ML35-PO-CAP 2026-10-30] Master list 35: số chưa làm / nhận của CHÍNH PO dòng này (theo NC nhóm / mã CV dòng) — đọc sổ Giao nhận *@
                                         <div class="@RowCapCls(grp, sub)" style="font-size:10px;line-height:1.2" title="@RowCapTip(grp, sub)">@RowCapText(grp, sub)</div>
+                                        @* [WTS-VITRI] khách 12/11 (test giao nhận): nhập WTS xem được hàng của PO đang ở đâu — mở khung "Đang ở đâu" (chỉ xem, đọc sổ) *@
+                                        @if (sub.KhPlanDetailId.HasValue) { <button type="button" class="btn btn-link p-0 text-decoration-none" style="font-size:10px;line-height:1.2" @onclick="() => OpenViTri(sub)"><i class="bi bi-geo-alt"></i> hàng đang ở đâu</button> }
 
                                     </td>
 
@@ -5661,6 +5689,31 @@ else
         }
     }
 
+    // [WTS-VITRI] Khung "Hàng đang ở đâu" (chỉ đọc sổ)
+    private LedgerRow? _viTriRow;
+    private List<LedgerStepRow>? _viTriSteps;
+    private string _viTriPo = "";
+    private bool _viTriBusy;
+    private string? _viTriErr;
+    // rà độc lập Gói 19 (Trung 1): bấm 2 lần / bấm lúc trang đang đọc DB → không chạy chồng (DbContext dùng chung), lỗi đọc không làm hỏng phiên trang;
+    //   chỉ gán PO + sổ khi đọc xong cả 2 (khung không hiện tên PO này với số PO khác)
+    private async Task OpenViTri(WtsRow sub)
+    {
+        if (sub.KhPlanDetailId is not int id || _viTriBusy) return;
+        _viTriBusy = true; _viTriErr = null;
+        try
+        {
+            var steps = await LedgerSvc.GetStepsForDetailAsync(id);
+            var row = await LedgerSvc.GetLedgerForDetailAsync(id);
+            if (row == null) { _viTriErr = $"Không tìm thấy PO {sub.PO} trong sổ Giao nhận."; return; }
+            _viTriPo = sub.PO ?? ""; _viTriSteps = steps; _viTriRow = row;
+        }
+        catch (Exception) { _viTriErr = "Chưa mở được khung Hàng đang ở đâu — bấm lại sau vài giây."; }   // không hiện chữ kỹ thuật cho công nhân (rà Gói 19 vòng 2 Thấp 2)
+        finally { _viTriBusy = false; }
+    }
+    private void CloseViTri() { _viTriRow = null; _viTriSteps = null; }
+    private void CloseViTriErr() => _viTriErr = null;
+
     // [ML35-PO-CAP 2026-10-30] Số chưa làm / nhận của PO dòng này — cùng sổ / cùng trần với lúc Lưu (GetWtsCap)
     private HandoverLedgerService.WtsCapInfo? RowCap(WtsGroup grp, WtsRow sub)
         => sub.KhPlanDetailId.HasValue ? GetWtsCap(sub.KhPlanDetailId, CurrentPg(grp), CapCode(grp, sub)) : null;   // [TARO-NC-MA] khoá (mã, NC)
@@ -6485,6 +6538,9 @@ else
 
         => $"{n.NghiBatDau.ToString("HH:mm")}–{n.NghiKetThuc.ToString("HH:mm")}";
 
+    // [WTS-BAO-CU] rà độc lập Gói 19 (Thấp 4): giữ câu báo không thuộc mã CV (PO nhiều dòng Kế hoạch, giờ ngoài ca) khi đổi nhóm nhỏ
+    private static bool KeepMsgOnSubChange(string? m) => m != null && (m.Contains("dòng trong Kế hoạch") || m.Contains("ngoài ca") || m.Contains("vượt ca"));
+
     private static string HtspSubLabel(string sub) => sub == "Rua" ? "Rửa" : sub;
 
     private void OnGroupHtspSubChanged(WtsGroup grp, string? subGroup)
@@ -6497,7 +6553,8 @@ else
 
         // Reset WtsCode cũ
 
-        foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; s.StepNC = null; }   // [TARO-NC-MA] + NC Taro
+        grp.ErrorMsg = null;   // [WTS-BAO-CU] câu báo lần lưu trước (mã cũ) cũng bỏ
+        foreach (var s in grp.SubRows) { s.WtsCode = null; s.WtsName = null; s.StepNC = null; if (!KeepMsgOnSubChange(s.ErrorMsg)) s.ErrorMsg = null; }   // [TARO-NC-MA] + NC Taro · [WTS-BAO-CU 2026-11-12] xoá câu báo của mã cũ (khách test TH9: dòng Rửa còn báo "mã 3T"). Nguồn: KHÁCH 12/11 (ảnh TH9); HÙNG 12/11 17:50
         // [RA-CASCADE 2026-11-01] Đổi nhóm nhỏ Taro / Bavia / Rửa: mã CV đã xoá → xoá luôn T.Thực tế/pc + T.Chuẩn/pc của mã cũ
         //   (trước: giữ → Dự kiến + chia giờ theo mã cũ). Sửa dòng đã lưu (EditSavedRow) tự khôi phục mã + T.Thực tế sau bước này.
         foreach (var s in grp.SubRows) { s.ActualTimePerPc = null; s.StandardTimePerPc = null; }

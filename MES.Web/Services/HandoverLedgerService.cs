@@ -277,6 +277,8 @@ namespace MES.Web.Services
         public string? GopUnit   { get; set; }
         /// <summary>[TARO-3T-GOP] true = dòng là mã gộp (vd 3T); false = mã thành phần (vd 3T1). Chỉ có nghĩa khi GopUnit khác null.</summary>
         public bool    IsGop     { get; set; }
+        /// <summary>[WTS-3T-BAO] Chỉ dòng mã gộp: số chiếc đã vào bộ theo mã lẻ (max OK + NG các mã thành phần) — chỉ để hiện câu báo, không dùng tính số.</summary>
+        public decimal GopDone   { get; set; }
         /// <summary>[TARO-LAMHO-NC] Mã Taro ở NC máy loại trừ GIỮA chuỗi Gia công (HTSP làm hộ): NC đó. null = mã thường.
         ///   Vào = hàng Gia công giao theo NC cho HTSP làm NC này; không tính vào OK nhỏ nhất / Chưa làm / NG của HTSP.</summary>
         public string? LamHoNc   { get; set; }
@@ -3166,6 +3168,7 @@ namespace MES.Web.Services
                     var pLs = uLines.Where(x => !x.IsGop).ToList();
                     if (gL != null && pLs.Count > 0)
                     {
+                        if (s.IsGop) s.GopDone = pLs.Max(p => p.Ok + p.Ng);   // [WTS-3T-BAO] chỉ hiện chữ
                         var goneU = (ngAll - uLines.Sum(x => x.Ng)) + rr;
                         var doneG = gL.Ok + gL.Ng;
                         perm = s.IsGop
@@ -3227,6 +3230,8 @@ namespace MES.Web.Services
             /// <summary>Mã chính (máy đồng dạng / mã dự phòng đã gộp về mã chính — N2).</summary>
             public string   Code    { get; set; } = "";
             public LedgerExplain Explain { get; set; } = new();
+            /// <summary>[WTS-3T-BAO] Câu giải thích thêm (mã gộp: chiếc đã làm mã lẻ thì ghi tiếp mã lẻ). "" = không có.</summary>
+            public string Hint { get; set; } = "";
             /// <summary>Dòng ngắn để hiện trên form: "còn chờ làm 45 = 100 − 50 − 5".</summary>
             public string Text => Max == null ? "" : $"chưa làm {Max.Value:0.##} ({Explain.Arithmetic})";
         }
@@ -3290,11 +3295,29 @@ namespace MES.Web.Services
                 Result = line.Waiting ?? 0
             };
             // [WTS-CAP-TEXT 2026-10-31] chỉ đổi chữ (số giữ nguyên): "OK" / "NG" dễ hiểu nhầm là số đang nhập → "đã ghi WTS OK / NG"
-            ex.Terms.Add(new LedgerTerm { Label = "Nhận vào", Value = line.In ?? 0, Sign = 1 });
+            // [WTS-3T-BAO 2026-11-12] mã gộp (vd 3T thay cả bộ 3T1 + 3T2 + 3T3): chiếc đã làm mã lẻ trong bộ không ghi mã gộp được — trước câu báo
+            //   "chưa nhận hàng (Nhận vào 0 …)" dù nhóm đã nhận (khách test 12/11 TH9, PO 0002416654). Chỉ đổi chữ: số trần (Waiting) giữ nguyên.
+            //   Nguồn: KHÁCH 12/11 (sheet test giao nhận TH9); HÙNG 12/11 17:50.
+            bool gop = line.IsGop && line.GopUnit != null && line.GopDone > 0;
+            ex.Terms.Add(new LedgerTerm { Label = gop ? "Nhận vào bộ" : "Nhận vào", Value = (line.In ?? 0) + (gop ? line.GopDone : 0), Sign = 1 });
             ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS OK", Value = line.Ok, Sign = -1 });
             ex.Terms.Add(new LedgerTerm { Label = "đã ghi WTS NG", Value = line.Ng, Sign = -1 });
+            if (gop) ex.Terms.Add(new LedgerTerm { Label = "chiếc đã làm mã lẻ trong bộ", Value = line.GopDone, Sign = -1 });
+            if (gop) ex.Formula = "Nhận vào bộ − đã ghi WTS OK − đã ghi WTS NG − chiếc đã làm mã lẻ trong bộ";   // rà độc lập Gói 19 (Thấp 5): công thức khớp số hạng
             if (line.OkSua != 0) ex.Terms.Add(new LedgerTerm { Label = "hàng sửa đạt tính là xong NC này (không WTS)", Value = line.OkSua, Sign = -1 });   // [SUA-OK-NC]
-            return new WtsCapInfo { Max = line.Waiting ?? 0, Locked = (line.In ?? 0) <= 0, Code = main, Explain = ex };
+            var hint = "";
+            if (gop)
+            {
+                var parts = G.Steps.Where(x => x.Pg == pg && x.GopUnit == line.GopUnit && !x.IsGop && x.LamHoNc == line.LamHoNc).ToList();
+                static string Bare(string k) { var i = k.IndexOf(" (NC ", StringComparison.Ordinal); return i > 0 ? k[..i] : k; }   // cùng NC với mã gộp — bỏ "(NC x)" cho gọn
+                // rà độc lập Gói 19 (Trung 2): "thiếu" = chiếc đã vào bộ (GopDone) − chiếc mã lẻ đó đã ghi (OK + NG); chỉ nêu mã lẻ còn thiếu (> 0)
+                var miss = parts.Select(x => (Code: Bare(x.Code), Thieu: line.GopDone - (x.Ok + x.Ng))).Where(x => x.Thieu > 0).ToList();
+                hint = $"Mã {line.Code} làm cả bộ {string.Join(" + ", parts.Select(x => Bare(x.Code)))} một lần — chỉ ghi cho chiếc chưa làm mã lẻ nào trong bộ; "
+                     + (miss.Count > 0
+                        ? $"{line.GopDone:0.##} chiếc đã làm mã lẻ thì ghi tiếp mã lẻ còn thiếu ({string.Join(", ", miss.Select(x => $"{x.Code} thiếu {x.Thieu:0.##}"))})."
+                        : $"{line.GopDone:0.##} chiếc đã làm đủ các mã lẻ trong bộ.");
+            }
+            return new WtsCapInfo { Max = line.Waiting ?? 0, Locked = (line.In ?? 0) + (gop ? line.GopDone : 0) <= 0, Code = main, Explain = ex, Hint = hint };
         }
 
         /// <summary>[GN-WTS-CAP][K5][K8] Các ô đang âm của 1 PO (key → giá trị, mô tả).</summary>

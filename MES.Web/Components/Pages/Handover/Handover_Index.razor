@@ -536,7 +536,7 @@ else
                                     <div style="flex:1">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @HandoverLedgerService.GroupLabel(p.FromGroupCode)</span>
-                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell)</span>
+                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell, p.ToCell)</span>
                                             @if (p.IsAutoReturn)
                                             {
                                                 @* [GN-RECV-NG] mục 38: phiếu trả tự lập khi bên kia đếm NG lúc nhận *@
@@ -719,10 +719,25 @@ else
                 {
                     <p class="text-muted text-center py-4">Chưa có lịch sử giao nhận.</p>
                 }
+                @* [LS-THOIGIAN 2026-11-12] Khách 12/11 (sheet test giao nhận TH4, TH6 ý 2): lịch sử theo dòng thời gian + lọc theo mã vụ. Chỉ đổi cách hiện:
+                     4 loại chứng từ (phiếu bù, Kết quả sửa, báo lỗi, phiếu giao nhận) xếp chung theo giờ (CSS order), không đổi số. Nguồn: KHÁCH 12/11; HÙNG 12/11 17:50. *@
+                <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom bg-light small flex-wrap">
+                    <span class="text-muted">Xếp theo giờ:</span>
+                    <button class="btn btn-xs btn-outline-secondary" style="font-size:11px;padding:1px 8px" @onclick="ToggleLogOrder">@LogOrderText</button>
+                    <span class="text-muted ms-2">Mã vụ lỗi:</span>
+                    <select class="form-select form-select-sm" style="width:auto;font-size:12px" @onchange="OnLogCaseChanged">
+                        <option value="" selected="@(_logCase == null)">Tất cả</option>
+                        @foreach (var cid in _logCaseIds)
+                        {
+                            <option value="@cid" selected="@(_logCase == cid)">@NgCaseNo.Format(cid)</option>
+                        }
+                    </select>
+                </div>
+                <div style="display:flex;flex-direction:column">
                 @* [KHACH-GUI-LAI 2026-11-11] Phiếu khách gửi bù (Kho nhận phôi bù cho lần lỗi đã trả khách / huỷ) *@
-                @foreach (var bu in _buLogs)
+                @foreach (var bu in _buLogs.Where(x => LogCaseOk(x.NgCaseId)))
                 {
-                    <div class="border-bottom p-3 @(bu.IsVoided ? "bg-light" : "")" style="border-left:3px solid #f59e0b">
+                    <div class="border-bottom p-3 @(bu.IsVoided ? "bg-light" : "")" style="border-left:3px solid #f59e0b;order:@OrdBu(bu.Id)">
                         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                             <span class="small text-muted">Phiếu bù #@bu.Id</span>
                             <span class="badge @(bu.IsVoided ? "bg-secondary" : "bg-warning text-dark")">Kho · khách gửi bù</span>
@@ -746,14 +761,14 @@ else
                     </div>
                 }
                 @* [GC-SUA-TAI-CHO] Kết quả sửa + lần KCS xác nhận *@
-                @foreach (var rp in _repairLogs)
+                @foreach (var rp in _repairLogs.Where(x => LogCaseOk(x.NgCaseId)))
                 {
                     @RepairLogBlock(rp)
                 }
                 @* [GN-NG-AFTER] Phiếu báo hàng lỗi phát hiện sau khi nhận *@
-                @foreach (var b in _ngLogs)
+                @foreach (var b in _ngLogs.Where(x => LogCaseOk(x.NgCaseId)))
                 {
-                    <div class="border-bottom p-3 @(b.IsVoided ? "bg-light" : "")" style="border-left:3px solid #dc3545">
+                    <div class="border-bottom p-3 @(b.IsVoided ? "bg-light" : "")" style="border-left:3px solid #dc3545;order:@OrdNg(b.Id)">
                         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                             <span class="small text-muted">Báo lỗi #@b.Id</span>
                             <span class="badge @(b.IsVoided ? "bg-secondary" : "bg-danger")">@HandoverLedgerService.GroupLabel(b.GroupCode) · báo hàng lỗi sau khi nhận</span>
@@ -778,18 +793,18 @@ else
                         }
                     </div>
                 }
-                @foreach (var tx in _logItems)
+                @foreach (var tx in _logItems.Where(TxCaseOk))
                 {
                     var lp = LogPurpose(tx);
                     var sc = HandoverCell.IssueCellOf(lp, tx.FromCell);
-                    var rcl = HandoverCell.ReceiveCellOf(lp);
-                    <div class="border-bottom p-3 @(tx.IsVoided ? "bg-light" : "")">
+                    var rcl = tx.ToCell ?? HandoverCell.ReceiveCellOf(lp);   // [LS-THOIGIAN] ô bên giao chỉ định (phiếu trả lại chưa sửa được: Hàng lỗi — trước luôn ghi Hàng lỗi đã xử lý)
+                    <div class="border-bottom p-3 @(tx.IsVoided ? "bg-light" : "")" style="order:@OrdTx(tx.HandoverTxId)">
                         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                             <span class="small text-muted">#@tx.HandoverTxId</span>
                             <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
                                 @HandoverLedgerService.GroupLabel(tx.FromGroupCode) → @HandoverLedgerService.GroupLabel(tx.ToGroupCode)
                             </span>
-                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc)</span>
+                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.ToCell)</span>
                             @if (rcl != null && !HandoverPurpose.IsOut(lp))
                             {
                                 <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
@@ -897,6 +912,7 @@ else
                         }
                     </div>
                 }
+                </div>   @* [LS-THOIGIAN] hết khung xếp theo giờ *@
             </div>
             <div class="mes-modal-footer">
                 <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Đóng</button>
@@ -1662,6 +1678,35 @@ else
         => p.IsAutoReturn || p.NgCaseId != null || HandoverCell.IssueCellOf(PendingPurpose(p), p.FromCell) is HandoverCell.Loi or HandoverCell.Sua;
 
     /// <summary>[VULOI] Nhãn mã vụ nhỏ trong Lịch sử phiếu.</summary>
+    // ── [LS-THOIGIAN 2026-11-12] Lịch sử phiếu xếp theo giờ (cũ → mới / mới → cũ) + lọc theo mã vụ — chỉ hiển thị. Nguồn: KHÁCH 12/11 (test giao nhận TH4, TH6); HÙNG 12/11 17:50 ──
+    bool _logAsc = true;
+    long? _logCase;
+    List<long> _logCaseIds = new();
+    Dictionary<string, int> _logOrd = new();
+    string LogOrderText => _logAsc ? "Cũ → mới" : "Mới → cũ";
+    int OrdBu(long id) => _logOrd.TryGetValue("U" + id, out var o) ? o : 0;
+    int OrdNg(long id) => _logOrd.TryGetValue("B" + id, out var o) ? o : 0;
+    int OrdRp(long id) => _logOrd.TryGetValue("R" + id, out var o) ? o : 0;
+    int OrdTx(long id) => _logOrd.TryGetValue("T" + id, out var o) ? o : 0;
+    bool LogCaseOk(long? caseId) => _logCase == null || caseId == _logCase;
+    bool TxCaseOk(HandoverLogItem t) => _logCase == null || t.NgCaseId == _logCase || t.Receives.Any(r => r.NgCaseId == _logCase);
+    void RebuildLogOrder()
+    {
+        var all = new List<(string Key, DateTime At)>();
+        all.AddRange(_buLogs.Select(x => ("U" + x.Id, x.ReceivedAt)));
+        all.AddRange(_ngLogs.Select(x => ("B" + x.Id, x.CreatedAt)));
+        all.AddRange(_repairLogs.Select(x => ("R" + x.Id, x.CreatedAt)));
+        all.AddRange(_logItems.Select(x => ("T" + x.HandoverTxId, x.IssuedAt)));
+        var sorted = _logAsc ? all.OrderBy(x => x.At).ThenBy(x => x.Key).ToList() : all.OrderByDescending(x => x.At).ThenByDescending(x => x.Key).ToList();
+        _logOrd = sorted.Select((x, i) => (x.Key, i)).ToDictionary(x => x.Key, x => x.i);
+        _logCaseIds = _buLogs.Select(x => (long?)x.NgCaseId).Concat(_ngLogs.Select(x => x.NgCaseId)).Concat(_repairLogs.Select(x => x.NgCaseId))
+            .Concat(_logItems.Select(x => x.NgCaseId)).Concat(_logItems.SelectMany(x => x.Receives).Select(r => r.NgCaseId))
+            .Where(x => x is > 0).Select(x => x!.Value).Distinct().OrderBy(x => x).ToList();
+        if (_logCase is long lc && !_logCaseIds.Contains(lc)) _logCase = null;
+    }
+    void ToggleLogOrder() { _logAsc = !_logAsc; RebuildLogOrder(); }
+    void OnLogCaseChanged(ChangeEventArgs e) => _logCase = long.TryParse(e.Value?.ToString(), out var v) ? v : null;
+
     RenderFragment CaseChip(long? id) => __builder =>
     {
         if (id != null)
@@ -1898,7 +1943,7 @@ else
     /// <summary>[GC-SUA-TAI-CHO] 1 Kết quả sửa + các lần KCS xác nhận trong Lịch sử phiếu.</summary>
     RenderFragment RepairLogBlock(HandoverRepairItem r) => __builder =>
     {
-        <div class="border-bottom p-3 @(r.IsVoided ? "bg-light" : "")" style="border-left:3px solid #15803d" @key="r.Id">
+        <div class="border-bottom p-3 @(r.IsVoided ? "bg-light" : "")" style="border-left:3px solid #15803d;order:@OrdRp(r.Id)" @key="r.Id">
             <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                 <span class="small text-muted">Kết quả sửa #@r.Id</span>
                 <span class="badge @(r.IsVoided ? "bg-secondary" : "bg-success")">@HandoverLedgerService.GroupLabel(r.GroupCode) · sửa tại nhóm</span>
@@ -2149,14 +2194,17 @@ else
         => t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);
 
     /// <summary>Nhãn theo ô Excel: "Giao · Hàng lỗi ☑ công đoạn trước", "Giao · Hàng Sửa", "Gửi làm hộ"…</summary>
-    static string CellFlow(string purpose, string? sendCell)
+    static string CellFlow(string purpose, string? sendCell, string? toCell = null)
     {
         var c = sendCell ?? HandoverCell.IssueCellOf(purpose, null);
         return purpose switch
         {
             HandoverPurpose.NgReturn     => "Giao · Hàng lỗi ☑ công đoạn trước",
             HandoverPurpose.RepairSend   => "Giao · Hàng lỗi (gửi nhờ sửa)",
-            HandoverPurpose.RepairReturn => c == HandoverCell.Loi ? "Giao · Hàng lỗi (tự sửa xong)" : "Giao · Hàng Sửa (sửa hộ xong)",
+            HandoverPurpose.RepairReturn => c == HandoverCell.Loi ? "Giao · Hàng lỗi (tự sửa xong)"
+                                          : toCell == HandoverCell.Loi ? (c == HandoverCell.Xl ? "Giao · Hàng lỗi đã xử lý (trả lại — chưa đạt)" : "Giao · Hàng Sửa (trả lại — chưa sửa được)")   // [LS-THOIGIAN] khách TH6 ý 2: ghi rõ sửa đạt / chưa đạt ([XL-TRA-LAI] hàng đã xử lý trả lại ô Hàng lỗi)
+                                          : c == HandoverCell.Xl ? "Giao · Hàng lỗi đã xử lý (đã sửa đạt)"
+                                          : "Giao · Hàng Sửa (sửa hộ xong — đạt)",
             HandoverPurpose.New          => "Giao · Hàng Mới",
             HandoverPurpose.HelpSend when c == HandoverCell.Moi => HandoverLedgerService.KhoTaroLabel,   // [KHO-TARO-THANG 2026-11-12] chỉ phiếu Kho giao thẳng Taro có ô Hàng mới
             _ => HandoverPurpose.Label(purpose)
@@ -2182,6 +2230,7 @@ else
         _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
         _repairLogs   = await HandoverSvc.GetRepairsAsync(khPlanDetailId);     // [GC-SUA-TAI-CHO]
         _buLogs       = await HandoverSvc.GetReplacementsAsync(khPlanDetailId); // [KHACH-GUI-LAI]
+        RebuildLogOrder();   // [LS-THOIGIAN]
         _logPartNo    = _rows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.PartNo ?? "";
         _showLogModal = true;
     }
@@ -2263,6 +2312,7 @@ else
             _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
             _repairLogs = await HandoverSvc.GetRepairsAsync(_logDetailId);   // [GC-SUA-TAI-CHO]
             _buLogs = await HandoverSvc.GetReplacementsAsync(_logDetailId);   // [KHACH-GUI-LAI]
+            RebuildLogOrder();   // [LS-THOIGIAN]
             await ReloadRowAsync(_logDetailId);
         });
         }

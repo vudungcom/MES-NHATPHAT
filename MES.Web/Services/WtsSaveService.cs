@@ -267,6 +267,7 @@ namespace MES.Web.Services
                 ? string.Join(" ", e.Terms.Select((t, i) => (i == 0 ? "" : (t.Sign < 0 ? "− " : "+ ")) + $"{t.Label} {t.Value:0.##}")) + $" = còn {e.Result:0.##}"   // [WTS-CAP-TEXT 2026-10-31] "= còn", chỉ đổi chữ
                 : $"{e.Result:0.##}";
             // [GN-TEXT] bỏ phần ghi chú công thức (chữ kỹ thuật) — xem đủ ở trang Giao nhận, nút Hiện công thức
+            if (!string.IsNullOrEmpty(cap.Hint)) detail += " — " + cap.Hint;   // [WTS-3T-BAO] mã gộp: câu giải thích (khách test TH9)
             return detail;
         }
 

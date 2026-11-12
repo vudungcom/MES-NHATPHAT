@@ -400,6 +400,7 @@ public static class TaroScen
         await NcKeyTrung();     // [T26] [LAMHO-NCKEY]
         await LamHoOff();       // [T27] [LAMHO-OFF]
         await OkBoNgCheo();     // [T24] [OKBO-NG-CHEO] ghi nhớ hành vi hiện tại
+        await GopBao();         // [T28] [WTS-3T-BAO]
 
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
@@ -1118,6 +1119,53 @@ public static class TaroScen
                 Ok(b2.Ok && g2.DaLam == 1 && g2.NgCuoi == 2 && g2.ChuaLam == -1,
                    "T24b Workflow OFF: dòng B 3T NG 1 lưu được → OK HTSP 1 · NG 2 · Chưa làm −1 (ô âm, họ tự cân)", $"{b2.Err} · {g2.DaLam}/{g2.NgCuoi}/{g2.ChuaLam}");
         }
+    }
+
+    // [T28] [WTS-3T-BAO 2026-11-12] mã gộp đã hết chỗ vì các chiếc đã làm mã lẻ trong bộ: trước báo "chưa nhận hàng" (Locked, Nhận vào 0) dù HTSP đã nhận
+    //   (khách test 12/11 TH9). Nay: không khoá, báo "vượt Chưa làm 0" + câu giải thích ghi tiếp mã lẻ còn thiếu; số trần giữ nguyên.
+    //   Nguồn: KHÁCH 12/11 (sheet test giao nhận TH9); HÙNG 12/11 17:50.
+    static async Task GopBao()
+    {
+        Console.WriteLine("[T28] [WTS-3T-BAO] mã gộp 3T: chiếc đã làm mã lẻ → báo đúng (không \"chưa nhận hàng\"), số trần giữ nguyên");
+        var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false); SeedGop(db); WtsSvcHelp.Reset();
+        var pid = await BuildPart(db, "P-T28");
+        var d = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 10 }, "PO-T28"))[0];
+        await Feed(db, d, 10);
+        var led = new HandoverLedgerService(db);
+        var s1 = await Taro(db, d, "3T1", "3", 10); var s2 = await Taro(db, d, "3T2", "3", 10); var s3 = await Taro(db, d, "3T3", "3", 7);
+        var row = (await led.GetLedgerForDetailAsync(d))!;
+        var g3 = L(row, "3T (NC 3)")!;
+        var cap = HandoverLedgerService.WtsCap(row, "TARO", "3T (NC 3)");
+        // tay: vào 10, 3T OK 0 · mã lẻ đã làm max(10, 10, 7) = 10 → 3T chờ 0; In dòng gộp = 0 (trước: Locked) · GopDone 10 · 3T3 còn 3
+        Ok(s1.Ok && s2.Ok && s3.Ok && g3.Waiting == 0 && g3.GopDone == 10 && cap.Max == 0 && !cap.Locked && cap.Hint.Contains("3T1 + 3T2 + 3T3") && cap.Hint.Contains("10 chiếc đã làm mã lẻ") && cap.Hint.Contains("(3T3 thiếu 3)"),
+           "T28a 3T1 = 10, 3T2 = 10, 3T3 = 7: trần 3T (NC 3) = 0 (giữ), KHÔNG khoá, câu giải thích nêu bộ + chỉ 3T3 thiếu 3",
+           $"{s1.Err} {s2.Err} {s3.Err} · chờ {g3.Waiting} · GopDone {g3.GopDone} · Max {cap.Max} Locked {cap.Locked} · {cap.Hint}");
+        var terms = string.Join(" | ", cap.Explain.Terms.Select(t => $"{t.Label}:{t.Sign * t.Value}"));
+        Ok(cap.Explain.Terms.Sum(t => t.Sign * t.Value) == cap.Explain.Result && cap.Explain.Result == 0 && terms.Contains("Nhận vào bộ:10") && terms.Contains("chiếc đã làm mã lẻ trong bộ:-10"),
+           "T28b phép tính: Nhận vào bộ 10 − đã ghi OK 0 − NG 0 − chiếc đã làm mã lẻ 10 = còn 0 (cộng đúng)", terms);
+        int n0 = db.WtsProductionLogs.List.Count;
+        var x = await Taro(db, d, "3T", "3", 1);
+        Ok(!x.Ok && db.WtsProductionLogs.List.Count == n0 && (x.Err ?? "").Contains("vượt Chưa làm 0") && !(x.Err ?? "").Contains("chưa nhận hàng") && (x.Err ?? "").Contains("ghi tiếp mã lẻ còn thiếu"),
+           "T28c ghi 3T NC 3 = 1 → vẫn chặn (số giữ), lời báo \"vượt Chưa làm 0 … ghi tiếp mã lẻ còn thiếu\" (trước: \"chưa nhận hàng\")", x.Err);
+        var y = await Taro(db, d, "3T3", "3", 3);
+        row = (await led.GetLedgerForDetailAsync(d))!;
+        Ok(y.Ok && L(row, "3T (NC 3)")!.GopDone == 10 && L(row, "3T3 (NC 3)")!.Waiting == 0 && row.Balanced, "T28d ghi tiếp 3T3 = 3 (mã lẻ còn thiếu) → lưu được, cân", y.Err);
+        var cd = HandoverLedgerService.WtsCap(row, "TARO", "3T (NC 3)");
+        Ok(cd.Hint.Contains("10 chiếc đã làm đủ các mã lẻ trong bộ") && !cd.Hint.Contains("thiếu"), "T28d2 bộ đã đủ → câu giải thích nói đã làm đủ, không nêu mã thiếu", cd.Hint);
+        // T28f (rà độc lập Gói 19 Trung 2): HTSP nhận 20, mới 10 chiếc vào bộ — "thiếu" tính trên chiếc đã vào bộ, không phải Chờ của mã lẻ
+        var d3 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 20 }, "PO-T28C"))[0];
+        await Feed(db, d3, 20);
+        var f1 = await Taro(db, d3, "3T1", "3", 10); var f2 = await Taro(db, d3, "3T2", "3", 10); var f3 = await Taro(db, d3, "3T3", "3", 7);
+        var c3 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d3))!, "TARO", "3T (NC 3)");
+        // tay: 3T chờ = 20 − 0 − max(10, 10, 7) = 10 · thiếu: 3T1 10 − 10 = 0, 3T2 0, 3T3 10 − 7 = 3
+        Ok(f1.Ok && f2.Ok && f3.Ok && c3.Max == 10 && !c3.Locked && c3.Hint.Contains("(3T3 thiếu 3)") && !c3.Hint.Contains("3T1 thiếu") && !c3.Hint.Contains("3T2 thiếu"),
+           "T28f HTSP nhận 20, bộ đã làm 10 (3T3 = 7): trần 3T 10, câu giải thích chỉ \"3T3 thiếu 3\" (không lấy Chờ 10 / 10 / 13 của mã lẻ)", $"{c3.Max} {c3.Locked} · {c3.Hint}");
+        // PO mới chưa làm gì: dòng gộp không có câu thêm, phép tính như cũ (Nhận vào, không "Nhận vào bộ")
+        var d2 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 5 }, "PO-T28B"))[0];
+        await Feed(db, d2, 5);
+        var c2 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d2))!, "TARO", "3T (NC 3)");
+        Ok(c2.Max == 5 && !c2.Locked && c2.Hint == "" && c2.Explain.Terms[0].Label == "Nhận vào" && !c2.Explain.Terms.Any(t => t.Label.Contains("mã lẻ")),
+           "T28e PO chưa làm mã lẻ: 3T trần 5, không câu thêm, phép tính như cũ", $"{c2.Max} {c2.Locked} '{c2.Hint}' {c2.Explain.Terms[0].Label}");
     }
 
     // [T26] [LAMHO-NCKEY 2026-11-08] NC Taro so với NC Gia công bằng NcKey (bỏ chữ "NC" + số 0 đầu). 2 NC Gia công KHÁC CHỮ cùng khoá ("NC03" máy loại trừ và "3"
