@@ -330,9 +330,12 @@ namespace MES.Web.Services
                         if (purpose == HandoverPurpose.NgReturn && fc == HandoverCell.Loi)
                         {
                             var e = New("TRA_TRUOC", t.From, t.To, q0, $"Phiếu #{t.Id}", t.Id,
-                                $"{GL(t.From)} phát hiện {q0:0.##} lỗi công đoạn trước" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ở {HandoverLedgerService.NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
+                                $"{GL(t.From)} phát hiện {q0:0.##} lỗi công đoạn trước" + (string.IsNullOrEmpty(t.FromNC) ? ""
+                                    : HandoverLedgerService.IsTaroPhoiLoi(t, purpose) ? " (phôi lỗi — Taro phát hiện khi đang làm hàng giao theo NC)"   // [KTT-PHOILOI]
+                                    : $" ở {HandoverLedgerService.NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
                                 + $" → giao trả {GL(t.To)} ô {HandoverCell.Label(HandoverLedgerService.DesigCellOf(t, purpose))}");
-                            e.Code = t.FromNC; e.Reason = t.NgReason; e.Who = who; e.PhatSinh = q0; e.DetectedAt = t.From; e.CausedBy = t.To;
+                            e.Code = t.FromNC; e.Reason = t.NgReason; e.Who = who; e.PhatSinh = q0; e.DetectedAt = t.From;
+                            e.CausedBy = HandoverLedgerService.IsTaroPhoiLoi(t, purpose) ? "KHACH" : t.To;   // [KTT-PHOILOI 2026-11-12] phôi lỗi: nơi gây lỗi Khách hàng (như vụ — khách 12/11 a = A)
                             transit += q0;
                         }
                         else if (IsCarry(fc))
@@ -383,8 +386,9 @@ namespace MES.Web.Services
                         var prev = purpose == HandoverPurpose.NgReturn;
                         var e = New("DONG", t.From, t.To, cq, $"Phiếu #{t.Id}", t.Id,
                             $"{GL(t.From)} huỷ phần chưa nhận {cq:0.##} của phiếu hàng lỗi #{t.Id} → "
-                            + (prev ? "hàng về lại chưa làm (không còn tính là lỗi)" : $"hàng lỗi về lại {GL(t.From)}"));
-                        if (prev) { e.PhatSinh = -cq; e.DetectedAt = t.From; e.CausedBy = t.To; }
+                            + (prev ? (HandoverLedgerService.IsTaroPhoiLoi(t, purpose) ? "hàng về lại Tồn hàng giao theo NC (Taro chưa làm — không còn tính là lỗi)"   // [KTT-PHOILOI] rà độc lập Gói 18 Thấp 2 (chỉ chữ)
+                                     : "hàng về lại chưa làm (không còn tính là lỗi)") : $"hàng lỗi về lại {GL(t.From)}"));
+                        if (prev) { e.PhatSinh = -cq; e.DetectedAt = t.From; e.CausedBy = HandoverLedgerService.IsTaroPhoiLoi(t, purpose) ? "KHACH" : t.To; }   // [KTT-PHOILOI] cùng nơi gây lỗi lúc phát sinh
                         break;
                     }
                     case "NHAN":
@@ -412,7 +416,7 @@ namespace MES.Web.Services
                             if (r.Ng > 0)
                             {
                                 var e = New("NHAN_NG", t.To, t.From, r.Ng, doc, r.Id,
-                                    $"{GL(t.To)} nhận hàng giao theo NC từ {GL(t.From)}, đếm thấy {r.Ng:0.##} lỗi{AutoNote(r)}");
+                                    $"{GL(t.To)} nhận " + (t.From == "KHO" ? "phôi Kho giao thẳng Taro" : $"hàng giao theo NC từ {GL(t.From)}") + $", đếm thấy {r.Ng:0.##} lỗi{AutoNote(r)}");   // [KHO-TARO-THANG] chữ
                                 e.Reason = r.NgReason; e.Who = who; e.PhatSinh = r.Ng; e.DetectedAt = t.To; e.CausedBy = t.From;
                                 e.Code = t.FromNC ?? t.ToNC;
                                 NgBackTransit(r);

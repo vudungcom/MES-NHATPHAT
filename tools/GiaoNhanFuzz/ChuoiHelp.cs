@@ -70,6 +70,14 @@ public static class ChuoiHelp
                 if (k == 2) { if (s.Gc < 5) s.Gc = 5; if (s.ExclAt + 3 < s.Gc) s.ExclAt2 = s.ExclAt + 2; }
                 if (s.ExclAt2 >= 0) s.TaroNc2 = true;
             }
+            // [KHO-TARO-THANG 2026-11-12] lượt nang chuoi_ktt (KTTPO=1): NC đầu Gia công là máy loại trừ (có Taro — ExclTaro), 30% đoạn đầu 2 NC liền nhau.
+            //   Chỉ rút số ngẫu nhiên khi KTTPO=1 → các lượt khác giữ nguyên chuỗi thao tác cũ.
+            if (Environment.GetEnvironmentVariable("KTTPO") == "1")
+            {
+                if (s.Gc < 2) s.Gc = 2;
+                s.ExclAt = 0; s.ExclAt2 = s.Gc >= 3 && rnd.NextDouble() < 0.3 ? 1 : -1; s.TaroLamHo = false;
+                s.Kcs = Math.Max(s.Kcs, 1);
+            }
             return s;
         }
         static T Pick<T>(Random r, params (T v, int w)[] xs)

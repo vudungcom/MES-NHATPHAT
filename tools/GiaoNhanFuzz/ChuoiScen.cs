@@ -470,11 +470,14 @@ public static class ChuoiScen
         // [N3-FIRST 2026-11-04] Các hình quy trình khác: chỉ dòng @VAO khi NC ĐẦU là máy loại trừ VÀ sau nó còn NC thường.
         Console.WriteLine("[C16] [N3-FIRST] Dòng \"Nhận vào (chưa qua NC)\" chỉ có khi NC đầu là máy loại trừ; máy loại trừ giữa / cuối chuỗi y như cũ");
         {
-            async Task<LedgerRow> Mk(int gc, int exclAt, string name)
+            // [KHO-TARO-THANG 2026-11-12] legacy = PO cũ (NC loại trừ không Taro): Part có Taro ở NC đầu loại trừ thì Workflow ON Kho không giao Gia công nữa
+            //   (khách 12/11 3.3 b = A — ca mới ở kịch bản ktt) → ca "2 NC, NC01 máy loại trừ" dựng PO cũ để giữ đúng ý kiểm dòng "Nhận vào".
+            async Task<LedgerRow> Mk(int gc, int exclAt, string name, bool legacy = false)
             {
                 var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: true);
                 var pid = await ChuoiHelp.BuildPartAsync(db, name, new ChuoiHelp.Shape { Gc = gc, ExclAt = exclAt, DongDang = false, DuPhong = false, Taro = 1, Bavia = 0, Rua = 0, Kcs = 0, Pkg = 0, Prep = false, TaroTaskCode = false });
-                await ChuoiHelp.CreateKhAsync(db, pid, name, new decimal[] { 6 }, "PO-" + name);
+                if (legacy) await ChuoiHelp.CreateKhLegacyAsync(db, pid, name, new decimal[] { 6 }, "PO-" + name);
+                else await ChuoiHelp.CreateKhAsync(db, pid, name, new decimal[] { 6 }, "PO-" + name);
                 await new KhoVatLieuService(db, new UserService(null)).SaveKhoInputAsync(1, DateTime.Now, 6, "OVL", "A1", null, null, null, "nhan phoi", 1);
                 var svc = new HandoverService(db);
                 await svc.IssueByCellAsync(1, "KHO", "GC", 6, 1, "MOI", false, "MOI");
@@ -489,7 +492,7 @@ public static class ChuoiScen
             Ok(!last.G("GC").Steps.Any(s => HandoverLedgerService.IsVao(s.Code)) && last.G("GC").Steps[0].In == 6, "Máy loại trừ CUỐI chuỗi: không có dòng \"Nhận vào\", NC01 nhận 6 như cũ", Sh(last));
             var only = await Mk(1, 0, "P-163");
             Ok(!only.G("GC").Steps.Any(s => HandoverLedgerService.IsVao(s.Code)) && only.Balanced, "Chỉ 1 NC và là máy loại trừ (HL-X): không thêm dòng \"Nhận vào\", sổ vẫn cân", Sh(only));
-            var two = await Mk(2, 0, "P-164");
+            var two = await Mk(2, 0, "P-164", legacy: true);   // [KHO-TARO-THANG] PO cũ (NC01 máy loại trừ không Taro)
             var v = two.G("GC").Steps.FirstOrDefault();
             Ok(v != null && HandoverLedgerService.IsVao(v.Code) && v.In == 6 && v.Waiting == 6 && two.G("GC").Steps[2].In == 0 && two.Balanced
                && HandoverLedgerService.NegativeCells(two).Count == 0,

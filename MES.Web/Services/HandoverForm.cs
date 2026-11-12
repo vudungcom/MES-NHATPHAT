@@ -40,6 +40,8 @@ namespace MES.Web.Services
         public string? HelpFrom { get; set; }
         /// <summary>Hàng tốt: hàng Gia công giao theo NC đang giữ → trả về Gia công.</summary>
         public bool    LamHo  { get; set; }
+        /// <summary>[KTT-PHOILOI 2026-11-12] HTSP hàng lỗi: phôi lỗi Taro phát hiện khi đang làm hàng đoạn đầu chuỗi (Kho giao thẳng) → chỉ trả Kho.</summary>
+        public bool    TaroPhoi { get; set; }
     }
 
     public static class HandoverForm
@@ -208,6 +210,13 @@ namespace MES.Web.Services
                                        Fresh = true, NgSource = HandoverNgSource.Chua, Unworked = true });
                 list.Add(new FormPos { Id = "DA", Label = da, Have = Pos0(G.ConGiao), Fresh = true, NgSource = HandoverNgSource.Da, IsLast = group == "GC" });
             }
+            // [KTT-PHOILOI 2026-11-12] HTSP, PO có đoạn Taro đầu chuỗi (Kho giao thẳng Taro): phôi lỗi Taro phát hiện khi đang làm (chưa xong bộ Taro)
+            //   → tích "Lỗi công đoạn trước" (nơi gây lỗi Khách hàng, tự điền) → 1 phiếu trả thẳng Kho ô Hàng lỗi. Chiếc Taro làm hỏng: ghi NG ở WTS Taro (như cũ).
+            //   Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00 (B2: chỉ trả Kho).
+            if (group == "HTSP" && HandoverLedgerService.KhoTaroRun(row) is { } kr)
+                list.Add(new FormPos { Id = "LHKHO", Label = TaroPhoiText(row, kr), Sub = "phôi lỗi (lỗi có sẵn) — trả thẳng Kho ô Hàng lỗi, nơi gây lỗi Khách hàng; chiếc Taro làm hỏng ghi NG ở WTS Taro",
+                                       Have = Pos0(HandoverLedgerService.IssueCap(row, "HTSP", HandoverPurpose.NgReturn, HandoverLedgerService.VaoCode).Max),
+                                       Unworked = true, PrevOk = true, TaroPhoi = true });
             list.Add(new FormPos { Id = "TONLOI", Label = TonLoiText, Have = Pos0(G.LoiGiu), HeldCell = HandoverCell.Loi });
             list.Add(new FormPos { Id = "TONSUA", Label = TonSuaText, Have = Pos0(G.SuaGiu), HeldCell = HandoverCell.Sua });
             if (G.XlGiu != 0)   // [XL-TRA-LAI] hàng đã sửa bị hỏng lại khi làm lại công đoạn: trả lại vào ô Hàng lỗi (cùng vụ) để sửa lại
@@ -297,6 +306,30 @@ namespace MES.Web.Services
             var ncs = NormalNcs(row);
             return ncs.Count > 0 && string.Equals(ncs[0], toNc.Trim(), StringComparison.OrdinalIgnoreCase);
         }
+
+        // ================================================================
+        // [KHO-TARO-THANG 2026-11-12] NC đầu Gia công là máy loại trừ có Taro: Kho giao phôi THẲNG cho Taro (HTSP), chọn sẵn Taro NC đầu.
+        //   Nguồn: KHÁCH 10/11 (hỏi lại 3.3 B) + 12/11 file Word (b = A: Kho chỉ giao Taro); HÙNG 12/11 14:00 (B1: Workflow OFF Kho vẫn giao Gia công
+        //   "Nhận vào" được — form cảnh báo). Chữ chỉ để hiện; máy chủ: HandoverService [KHO-TARO-THANG][KTT-CHI-TARO].
+        // ================================================================
+        static string TaroRunNcs(LedgerRow row, LedgerLamHoRun kr)
+            => string.Join(", ", kr.Ncs.Select(n => Nc(n) + (row.G("GC").Steps.FirstOrDefault(s => s.Code == n)?.Machine is { Length: > 0 } m ? $" (máy loại trừ {m})" : " (máy loại trừ)")));
+
+        /// <summary>[KHO-TARO-THANG] Chữ nhóm nhận khi Kho giao thẳng Taro: "Taro — làm NC01 (máy loại trừ H04)".</summary>
+        public static string KhoTaroText(LedgerRow row)
+            => HandoverLedgerService.KhoTaroRun(row) is { } kr ? "Taro — làm " + TaroRunNcs(row, kr) : "Taro";
+
+        /// <summary>[KTT-PHOILOI] Chữ dòng bước 2 của HTSP: hàng Kho giao thẳng chưa làm xong Taro.</summary>
+        static string TaroPhoiText(LedgerRow row, LedgerLamHoRun kr) => "Hàng giao theo NC chưa làm xong Taro " + string.Join(", ", kr.Ncs.Select(Nc)) + " (NC đầu)";
+
+        /// <summary>[KTT-CHI-TARO] Lời chặn Kho → Gia công / HTSP Hàng mới khi NC đầu là Taro (Workflow ON).</summary>
+        public static string KhoTaroOnlyMsg(LedgerRow row)
+            => "NC đầu Gia công là Taro (" + (HandoverLedgerService.KhoTaroRun(row) is { } kr ? TaroRunNcs(row, kr) : "máy loại trừ")
+             + "): Kho giao phôi thẳng cho Taro (nhóm nhận HTSP — \"" + HandoverLedgerService.KhoTaroLabel + "\"), không giao Gia công / giao HTSP Hàng mới (Workflow ON).";
+
+        /// <summary>[KHO-TARO-THANG] Cảnh báo trên form khi Workflow OFF mà Kho chọn giao Gia công (đường cũ "Nhận vào").</summary>
+        public static string KhoTaroOffWarn(LedgerRow row)
+            => "NC đầu Gia công là Taro: nên giao thẳng Taro (nhóm nhận HTSP). Workflow OFF vẫn lưu được — phôi vào Gia công \"" + HandoverLedgerService.VaoLabel + "\", Gia công phải giao theo NC cho Taro.";
 
         public static string KhoNcMsg(LedgerRow row)
             => "Kho giao phôi cho Gia công luôn vào NC đầu theo Part Master"
@@ -619,7 +652,8 @@ namespace MES.Web.Services
             || (!row.G("HTSP").Steps.Any(s => !s.IsPrep) && row.G("HTSP").NhanSanXuat <= 0);
         /// <summary>[GOI8-THAP-E 2026-11-08] Nhóm kế tiếp theo PO: Gia công → KCS khi HTSP không có công đoạn của mình (mặc định nhóm nhận Hàng mới trên form).</summary>
         public static string NextGroup(string from, LedgerRow? row)
-            => from == "GC" && row != null && HtspNoOwnWork(row) && row.G("HTSP").ChoNhan <= 0 ? "KCS" : NextGroup(from);
+            => from == "KHO" && row != null && HandoverLedgerService.KhoTaroRun(row) != null ? "HTSP"   // [KHO-TARO-THANG] NC đầu Taro: Kho giao thẳng Taro
+             : from == "GC" && row != null && HtspNoOwnWork(row) && row.G("HTSP").ChoNhan <= 0 ? "KCS" : NextGroup(from);
         //   [GOI8-THAP-E rà độc lập Gói 10 vòng 2] HTSP đang có phiếu chờ nhận (PO chưa snapshot HTSP, Gia công vừa giao HTSP) → phiếu sau vẫn mặc định HTSP.
         //   Nguồn: CLAUDE (rà độc lập Gói 10 vòng 2, ca RV2-B → TaroScen T23d).
     }

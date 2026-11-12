@@ -826,7 +826,10 @@ else
                         </div>
                         <div class="small mb-1 text-muted">
                             Giao: <strong class="text-dark">@tx.QtyIssued.ToString("0.##") chiếc</strong>
-                            @if (!string.IsNullOrEmpty(tx.FromNC)) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">từ @HandoverLedgerService.NcText(tx.FromNC)</span> }
+                            @* [KHO-TARO-THANG][KTT-PHOILOI] chữ như sổ: Kho giao thẳng Taro / phôi lỗi Taro trả Kho không hiện "từ Nhận vào (chưa qua NC)" (rà độc lập Gói 18 Thấp 2) *@
+                            @if (tx.FromGroupCode == "KHO" && tx.Purpose == HandoverPurpose.HelpSend) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">Kho giao thẳng Taro</span> }
+                            else if (tx.FromGroupCode == "HTSP" && tx.Purpose == HandoverPurpose.NgReturn && HandoverLedgerService.IsVao(tx.FromNC)) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">phôi lỗi Taro phát hiện khi đang làm</span> }
+                            else if (!string.IsNullOrEmpty(tx.FromNC)) { <span class="badge bg-warning text-dark ms-1" style="font-size:10px">từ @HandoverLedgerService.NcText(tx.FromNC)</span> }
                             @if (!string.IsNullOrEmpty(tx.ToNC)) { <span class="badge bg-info text-dark ms-1" style="font-size:10px">vào NC @tx.ToNC</span> }
                             @if (!string.IsNullOrEmpty(tx.Notes)) { <span class="ms-1"> — @tx.Notes</span> }
                         </div>
@@ -2155,6 +2158,7 @@ else
             HandoverPurpose.RepairSend   => "Giao · Hàng lỗi (gửi nhờ sửa)",
             HandoverPurpose.RepairReturn => c == HandoverCell.Loi ? "Giao · Hàng lỗi (tự sửa xong)" : "Giao · Hàng Sửa (sửa hộ xong)",
             HandoverPurpose.New          => "Giao · Hàng Mới",
+            HandoverPurpose.HelpSend when c == HandoverCell.Moi => HandoverLedgerService.KhoTaroLabel,   // [KHO-TARO-THANG 2026-11-12] chỉ phiếu Kho giao thẳng Taro có ô Hàng mới
             _ => HandoverPurpose.Label(purpose)
         };
     }

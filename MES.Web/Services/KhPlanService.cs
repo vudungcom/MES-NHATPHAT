@@ -1096,11 +1096,16 @@ public class KhPlanService
             .Where(t => t.KhPlanDetailId == khPlanDetailId && !t.IsVoided)
             .Select(t => new { t.HandoverTxId, t.FromGroupCode, t.ToGroupCode, t.Purpose, t.FromCell, t.ToCell, t.ToNC, t.FromNC })
             .ToListAsync();
+        // [KHO-TARO-THANG 2026-11-12] + phiếu Kho giao thẳng Taro (cấp phôi khi NC đầu là Taro — Workflow ON chỉ còn đường này): vẫn "chưa chạy" như Kho → GC
+        //   (luật K6-NOTRUN của khách: chưa có WTS). Sau khi chép lại, GcWaitingMovedAsync kiểm đoạn Taro đầu chuỗi còn y (cùng NC, cùng số).
+        //   Nguồn: KHÁCH 30/10 (K6-NOTRUN) + 12/11 (3.3 b = A); CLAUDE rà độc lập Gói 18 Trung 2.
         var other = txs.FirstOrDefault(t => !(t.FromGroupCode == "KHO" && t.ToGroupCode == "GC" && t.Purpose == HandoverPurpose.New
                                               && string.IsNullOrEmpty(t.FromNC)
-                                              && (t.ToCell == null || t.ToCell == HandoverCell.Moi)));
+                                              && (t.ToCell == null || t.ToCell == HandoverCell.Moi))
+                                            && !(t.FromGroupCode == "KHO" && t.ToGroupCode == "HTSP" && t.Purpose == HandoverPurpose.HelpSend
+                                              && t.FromCell == HandoverCell.Moi && HandoverLedgerService.IsVao(t.FromNC) && t.ToCell == null));
         if (other != null)
-            return $"PO đã có phiếu giao nhận #{other.HandoverTxId} ({HandoverLedgerService.GroupLabel(other.FromGroupCode)} → {HandoverLedgerService.GroupLabel(other.ToGroupCode)}) ngoài phiếu Kho → Gia công cấp phôi";
+            return $"PO đã có phiếu giao nhận #{other.HandoverTxId} ({HandoverLedgerService.GroupLabel(other.FromGroupCode)} → {HandoverLedgerService.GroupLabel(other.ToGroupCode)}) ngoài phiếu Kho cấp phôi (Kho → Gia công / Kho giao thẳng Taro)";
         if (txs.Count == 0) return null;
         var txIds = txs.Select(t => t.HandoverTxId).ToList();
         var badRecv = await _db.HandoverReceives.AsNoTracking()
@@ -1161,6 +1166,15 @@ public class KhPlanService
         }
         if ((gb.ChuaLam > 0 || gb.ChoNhan > 0) && !ga.Steps.Any(s => s.Pg == "GC" && !s.IsExcluded))
             return "quy trình mới không còn NC Gia công thường nào để nhận hàng — giữ quy trình cũ";
+        // [KHO-TARO-THANG 2026-11-12] PO đã có phiếu Kho giao thẳng Taro: quy trình mới phải còn đoạn Taro đầu chuỗi y như cũ (cùng NC, trả về cùng NC sau)
+        //   và số của Taro không đổi (hàng giao theo NC, chờ nhận, đoạn vào) — không thì hàng Taro đang giữ thành "lạ". (rà độc lập Gói 18 Trung 2)
+        {
+            var kb = HandoverLedgerService.KhoTaroRun(before); var ka = HandoverLedgerService.KhoTaroRun(after);
+            var hb = before.G("HTSP"); var ha = after.G("HTSP");
+            if (kb != null && (kb.In != 0 || hb.LamHoGiu != 0 || hb.ChoNhan != 0) && (ka == null || !ka.Ncs.SequenceEqual(kb.Ncs, StringComparer.OrdinalIgnoreCase) || ka.NextNc != kb.NextNc || ka.In != kb.In
+                               || ha.LamHoGiu != hb.LamHoGiu || ha.ChoNhan != hb.ChoNhan))
+                return "PO đã có phiếu Kho giao thẳng Taro; quy trình mới " + (ka == null ? "không còn Taro làm NC đầu" : "đổi đoạn Taro đầu chuỗi / số của Taro") + " — giữ quy trình cũ";
+        }
         return null;
     }
 
@@ -1384,7 +1398,7 @@ public class KhPlanService
                 var k5 = await PoGuard.CheckNoNewNegativeAsync(_db, khPlanDetailId, ledgerBefore);
                 if (k5 != null) throw new InvalidOperationException(k5);
                 var moved = await GcWaitingMovedAsync(khPlanDetailId, ledgerBefore);
-                if (moved != null) throw new InvalidOperationException("PO đã cấp phôi cho Gia công — " + moved);
+                if (moved != null) throw new InvalidOperationException((HandoverLedgerService.KhoTaroRun(ledgerBefore) != null ? "PO đã cấp phôi — " : "PO đã cấp phôi cho Gia công — ") + moved);   // [KHO-TARO-THANG] chữ: PO Kho giao thẳng Taro (rà độc lập Gói 18 vòng 2 Thấp 1)
             }
 
             // 4. Đếm snapshot mới

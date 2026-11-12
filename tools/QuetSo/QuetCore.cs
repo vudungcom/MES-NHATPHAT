@@ -49,6 +49,10 @@ public static class QuetCore
     // [LAMHO-NCKEY 2026-11-08] NC Taro khớp 2 NC Gia công khác chữ (vd "3" / "NC003" — so bỏ chữ NC + số 0 đầu): sổ không ghép làm hộ (tính như HTSP thường),
     //   cảnh báo trên sổ. Chỉ để biết — sửa tên NC ở Part Master. Nguồn: CLAUDE (sổ LAMHO-NCKEY); Hùng 08/11 16:37 OK.
     public const string TaroNcLech = "TARO_NC_LECH";
+    // [KHO-TARO-THANG 2026-11-12] Phiếu Kho giao thẳng Taro (HELP_SEND từ Kho) / Taro trả phôi lỗi về Kho (NG_RETURN HTSP có FromNC) LẠ: PO không có đoạn
+    //   Taro đầu chuỗi, NC nguồn không phải @VAO, Kho → nhóm khác HTSP, ô giao khác Hàng mới, trả phôi lỗi không về Kho. Máy chủ không cho lập những phiếu này
+    //   → phải 0 (dữ liệu trước Gói 18 cũng phải 0: trước đó máy chủ chặn Kho giao theo NC). Nguồn: CLAUDE (kế hoạch KHO-TARO-THANG, Hùng 12/11 14:00 OK).
+    public const string KhoTaroLa = "KHO_TARO_LA";
 
     public sealed class Result
     {
@@ -269,6 +273,23 @@ public static class QuetCore
         foreach (var t in txAll.Where(t => Le(t.QtyIssued) || Le(t.NgQty) || LeN(t.QtyClosed)))
             AddLe(t.KhPlanDetailId, $"phiếu #{t.HandoverTxId}{(t.IsVoided ? " (đã huỷ)" : "")}: giao {t.QtyIssued:0.####} · NG {t.NgQty:0.####} · huỷ phần chưa nhận {t.QtyClosed:0.####}");
         var txDet = txAll.ToDictionary(t => t.HandoverTxId, t => t.KhPlanDetailId);
+        // [KHO-TARO-THANG 2026-11-12] phiếu Kho giao thẳng Taro / Taro trả phôi lỗi về Kho lạ (chỉ phiếu còn hiệu lực)
+        foreach (var t in txAll.Where(t => !t.IsVoided && ((t.FromGroupCode == "KHO" && t.Purpose == HandoverPurpose.HelpSend)
+                                                          || (t.FromGroupCode == "HTSP" && t.Purpose == HandoverPurpose.NgReturn && !string.IsNullOrWhiteSpace(t.FromNC) && t.SourceReceiveId == null))))
+        {
+            plans.TryGetValue(t.KhPlanDetailId, out var rk);
+            var run = rk == null ? null : HandoverLedgerService.KhoTaroRun(rk);
+            var la = new List<string>();
+            if (run == null) la.Add("PO không có đoạn Taro đầu chuỗi (NC đầu Gia công không phải máy loại trừ có Taro)");
+            if (!HandoverLedgerService.IsVao(t.FromNC)) la.Add($"NC nguồn \"{t.FromNC}\" không phải {HandoverLedgerService.VaoCode}");
+            if (t.Purpose == HandoverPurpose.HelpSend && t.ToGroupCode != "HTSP") la.Add($"nhóm nhận {t.ToGroupCode} (phải HTSP)");
+            if (t.Purpose == HandoverPurpose.HelpSend && t.FromCell != HandoverCell.Moi) la.Add($"ô giao \"{t.FromCell}\" (phải Hàng mới)");
+            if (t.Purpose == HandoverPurpose.NgReturn && t.ToGroupCode != "KHO") la.Add($"trả phôi lỗi về {t.ToGroupCode} (phải Kho)");
+            if (la.Count == 0) continue;
+            var what = $"phiếu #{t.HandoverTxId} {(t.Purpose == HandoverPurpose.HelpSend ? "Kho giao thẳng Taro" : "Taro trả phôi lỗi")}: {string.Join("; ", la)}";
+            if (rk != null) Add(rk, KhoTaroLa, what);
+            else res.Findings.Add(new Finding { DetailId = t.KhPlanDetailId, Po = $"(KhPlanDetailId {t.KhPlanDetailId})", Kind = KhoTaroLa, Detail = what });
+        }
         // [K5-CLOSE-NHIEU 2026-11-06] dòng từng lần huỷ phần chưa nhận khớp bộ cột cũ
         var closeSum = db.HandoverTxCloses.ToList().GroupBy(c => c.HandoverTxId).ToDictionary(g => g.Key, g => (Sum: g.Sum(c => c.Qty), N: g.Count()));
         foreach (var t in txAll)
@@ -311,6 +332,7 @@ public static class QuetCore
         o.WriteLine($"  Vụ lỗi cân ({VuLech}): {(res.Findings.Any(f => f.Kind == VuLech) ? "CÓ LỆCH — xem từng PO" : "mọi vụ cân, khớp ô sổ + khung lỗi")}");
         o.WriteLine($"  Huỷ phần chưa nhận từng lần ({CloseLech}): {(res.Findings.Any(f => f.Kind == CloseLech) ? "CÓ LỆCH — xem từng PO" : "bảng HandoverTxCloses khớp mọi phiếu")}");   // [K5-CLOSE-NHIEU]
         o.WriteLine($"  NC Taro khớp nhiều NC Gia công ({TaroNcLech}, chỉ để biết — sửa Part Master): {res.Findings.Count(f => f.Kind == TaroNcLech)} · {res.Findings.Where(f => f.Kind == TaroNcLech).Select(f => f.DetailId).Distinct().Count()} PO");   // [LAMHO-NCKEY]
+        o.WriteLine($"  Phiếu Kho giao thẳng Taro / Taro trả phôi lỗi lạ ({KhoTaroLa}): {(res.Findings.Any(f => f.Kind == KhoTaroLa) ? "CÓ — báo Claude" : "không có")}");   // [KHO-TARO-THANG]
         o.WriteLine($"  Taro làm hộ ({LamHoTaro}, chỉ để biết): {res.Findings.Count(f => f.Kind == LamHoTaro)} đoạn · {res.Findings.Where(f => f.Kind == LamHoTaro).Select(f => f.DetailId).Distinct().Count()} PO");   // [TARO-LAMHO-NC]
         o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");
         o.WriteLine();

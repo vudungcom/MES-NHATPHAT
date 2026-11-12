@@ -581,7 +581,8 @@ namespace MES.Web.Services
                     {
                         case "ChuaLam":
                             AddWts(w => GroupOfPg(w.ProcessGroup) == g);
-                            AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.NgReturn || t.Purpose == HandoverPurpose.HelpSend));
+                            AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.NgReturn || t.Purpose == HandoverPurpose.HelpSend)
+                                       && !HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? ""));   // [KTT-PHOILOI] phiếu Taro trả phôi lỗi Kho không trừ Chưa làm HTSP (lấy từ hàng giao theo NC)
                             AddRep(b => b.Group == g && b.Source == HandoverNgSource.Chua);   // [GN-NG-AFTER]
                             break;
                         case "ConGiao":
@@ -598,7 +599,7 @@ namespace MES.Web.Services
                             AddRepair(r => r.Group == g && r.Cell == HandoverCell.Sua);   // [GC-SUA-TAI-CHO]
                             break;
                         case "LamHoGiu":
-                            AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
+                            AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.HelpReturn || HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? "")));   // [KTT-PHOILOI] + Taro trả phôi lỗi Kho
                             break;
                         case "XlGiu":   // [SUA-XL-GIU] tồn hàng lỗi đã xử lý âm: phiếu giao hàng đã sửa từ nhóm đó (mới nhất gỡ trước)
                             AddTx(t => t.From == g && t.FromCell == HandoverCell.Xl);
@@ -609,7 +610,7 @@ namespace MES.Web.Services
                             break;
                         case "LamHoTot":   // [TARO-LAMHO-NC] hàng làm hộ còn tốt: phiếu trả về Gia công + WTS Taro làm hộ có NG (chiếc bị lỗi)
                         {
-                            AddTx(t => t.From == g && t.Purpose == HandoverPurpose.HelpReturn);
+                            AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.HelpReturn || HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? "")));   // [KTT-PHOILOI] + Taro trả phôi lỗi Kho
                             var lh = row.G(g).Steps.Where(x => x.LamHoNc != null).Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
                             AddWts(w => w.Ng > 0 && w.ProcessGroup == "TARO" && lh.Contains(Main("TARO", WtsKeyOf(w))));
                             break;
@@ -625,6 +626,8 @@ namespace MES.Web.Services
                         if (run != null)
                         {
                             AddTx(t => t.From == "HTSP" && t.Purpose == HandoverPurpose.HelpReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell) && string.Equals(t.ToNC, run.NextNc, StringComparison.OrdinalIgnoreCase));
+                            if (HandoverLedgerService.IsVao(run.FromNc))   // [KTT-PHOILOI 2026-11-12] đoạn đầu chuỗi: phiếu Taro trả phôi lỗi Kho cũng trừ số dư đoạn
+                                AddTx(t => HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? ""));
                             var lh = row.G("HTSP").Steps.Where(x => x.LamHoNc != null && run.Ncs.Contains(x.LamHoNc, StringComparer.OrdinalIgnoreCase)).Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
                             AddWts(w => w.Ng > 0 && w.ProcessGroup == "TARO" && lh.Contains(Main("TARO", WtsKeyOf(w))));
                         }

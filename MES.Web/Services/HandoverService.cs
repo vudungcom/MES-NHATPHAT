@@ -608,6 +608,24 @@ namespace MES.Web.Services
             //   Nguồn: HÙNG 07/11 10:18 OK kế hoạch câu 2 (chiếc làm hộ bị lỗi nằm trong Tồn hàng giao theo NC tới khi trả Gia công dạng hàng lỗi).
             bool lhLoi = HandoverCell.IsLamHoLoi(purpose, fromCell);
             if (lhLoi) { toCell = HandoverCell.Loi; toNC = null; }
+            // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro = phiếu giao theo NC do Kho lập: lấy từ ô phôi còn (FromCell MOI), NC nguồn = dòng "Nhận vào"
+            //   (@VAO, đoạn Taro đầu chuỗi), không NC nhận. Nguồn: KHÁCH 12/11 (3.3 b = A); HÙNG 12/11 14:00 OK kế hoạch.
+            bool khoTaro = purpose == HandoverPurpose.HelpSend && fromGroupCode == "KHO";
+            if (khoTaro)
+            {
+                if (toGroupCode != "HTSP") return (false, "Kho giao thẳng Taro: nhóm nhận là HTSP (Taro).");   // trước kiểm NC nguồn (fuzz KTT seed 7 PO18: Kho → KCS báo sai lời)
+                if (!HandoverLedgerService.IsVao(fromNC)) return (false, $"Kho giao thẳng Taro: NC nguồn phải là \"{HandoverLedgerService.VaoLabel}\" (đoạn Taro đầu chuỗi).");
+                fromNC = HandoverLedgerService.VaoCode; fromCell = HandoverCell.Moi; toNC = null;
+            }
+            // [KTT-PHOILOI 2026-11-12] Taro (HTSP) trả phôi lỗi phát hiện khi đang làm (hàng đoạn đầu chuỗi) — chỉ trả Kho, nơi gây lỗi Khách hàng.
+            //   Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00 (B2: chỉ trả Kho).
+            bool taroPhoiLoi = purpose == HandoverPurpose.NgReturn && fromGroupCode == "HTSP" && HandoverLedgerService.IsVao(fromNC);
+            if (taroPhoiLoi)
+            {
+                if (toGroupCode != "KHO") return (false, "Taro trả phôi lỗi (hàng giao theo NC chưa làm xong Taro NC đầu): chỉ trả về Kho.");
+                fromNC = HandoverLedgerService.VaoCode; toNC = null;
+                if (toCell != null && toCell != HandoverCell.Loi) return (false, "Taro trả phôi lỗi về Kho: vào ô Hàng lỗi của Kho.");
+            }
             if (qtyIssued <= 0) return (false, "Số lượng giao phải lớn hơn 0.");
             if (QtyRule.CheckWhole(qtyIssued) is string eWhole) return (false, eWhole);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
             var validGroups = new[] { "KHO", "GC", "HTSP", "KCS", "PKG" };
@@ -645,7 +663,7 @@ namespace MES.Web.Services
                 return (false, $"Ô {HandoverCell.Label(fromCell)} không giao được theo kiểu {HandoverPurpose.Label(purpose)}.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
                 return (false, "Giao theo NC: bắt buộc chọn NC nguồn.");
-            if (purpose == HandoverPurpose.HelpSend && string.IsNullOrWhiteSpace(notes))
+            if (purpose == HandoverPurpose.HelpSend && !khoTaro && string.IsNullOrWhiteSpace(notes))   // [KHO-TARO-THANG] Kho giao thẳng Taro: ghi chú không bắt buộc (NC nhận đã cố định)
                 return (false, "Giao theo NC: bắt buộc ghi chú (N4).");
 
             // [ISO-FIX 2026-10-31] Bỏ IsolationLevel.Serializable, giữ khoá PO (LockPoAsync ngay dưới, trước mọi câu đọc sổ).
@@ -670,6 +688,18 @@ namespace MES.Web.Services
             if (row.ApplyWorkflow && purpose == HandoverPurpose.HelpSend && toGroupCode != "HTSP"
                 && row.LamHoRuns.FirstOrDefault(r => r.HasTaro && string.Equals(r.FromNc, fromNC, StringComparison.OrdinalIgnoreCase)) is { } lhR)
                 return (false, $"Đoạn sau {HandoverLedgerService.NcName(fromNC)} ({string.Join(", ", lhR.Ncs.Select(HandoverLedgerService.NcName))}) có Taro làm hộ: giao theo NC cho HTSP.");
+            // [KHO-TARO-THANG][KTT-PHOILOI] PO phải có đoạn Taro đầu chuỗi (NC đầu Gia công là máy loại trừ có Taro) — mọi Workflow (là kiểu phiếu, không phải trần)
+            if ((khoTaro || taroPhoiLoi) && HandoverLedgerService.KhoTaroRun(row) == null)
+                return (false, (khoTaro ? "Kho giao thẳng Taro" : "Taro trả phôi lỗi về Kho") + ": chỉ dùng khi NC đầu Gia công là máy loại trừ có Taro (Taro làm NC đầu) — PO này không có.");
+            // [KTT-CHI-TARO 2026-11-12] Workflow ON, NC đầu Gia công là Taro (máy loại trừ): Kho chỉ giao thẳng Taro. Nguồn: KHÁCH 12/11 (3.3 b = A); HÙNG 12/11 14:00 —
+            //   chặn Kho lấy ô Hàng mới (phôi) giao Gia công (vào ô Hàng mới / Hàng lỗi đã xử lý) và giao HTSP phiếu Hàng mới (vào việc của HTSP, Taro NC đầu
+            //   không đếm được). Hàng lỗi / hàng sửa / hàng lỗi đã xử lý của Kho (ô khác Hàng mới — có vụ) vẫn giao như cũ (vụ chưa qua NC: như hàng mới).
+            //   OFF: lưu được (form cảnh báo — N7, HÙNG 12/11 14:00 câu B1). Trước: Kho → Gia công vào "Nhận vào" (N3-FIRST), Gia công giao theo NC cho Taro.
+            if (row.ApplyWorkflow && fromGroupCode == "KHO" && !isOut && HandoverLedgerService.KhoTaroRun(row) != null
+                && fromCell == HandoverCell.Moi
+                && ((toGroupCode == "GC" && purpose != HandoverPurpose.HelpReturn && toCell is HandoverCell.Moi or HandoverCell.Xl)
+                    || (toGroupCode == "HTSP" && purpose == HandoverPurpose.New)))
+                return (false, HandoverForm.KhoTaroOnlyMsg(row));
             if (row.ApplyWorkflow && purpose == HandoverPurpose.New && toGroupCode == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(row))
                 return (false, "PO này HTSP chỉ làm Taro làm hộ (giao theo NC), không có công đoạn HTSP của mình — giao Hàng mới cho nhóm sau (KCS / Đóng gói).");
             // K3: hàng làm hộ trả về Gia công phải chọn NC nhận khi PO có snapshot NC
@@ -777,7 +807,7 @@ namespace MES.Web.Services
             if (ngCat != null)
             {
                 var vu = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, ngCat, NgOrigin.TraLoi, fromGroupCode,
-                    fromGroupCode == "GC" ? fromNC : null, toGroupCode, issuedByUserId);
+                    fromGroupCode == "GC" ? fromNC : null, taroPhoiLoi ? "KHACH" : toGroupCode, issuedByUserId);   // [KTT-PHOILOI] phôi lỗi: nơi gây lỗi Khách hàng (khách 12/11 a = A)
                 ngCaseId = vu.NgCaseId;
             }
             var newTx = new HandoverTransaction   // [GN-FORM1] giữ biến để form lấy mã phiếu
@@ -786,7 +816,7 @@ namespace MES.Web.Services
                 FromGroupCode  = fromGroupCode,
                 ToGroupCode    = toGroupCode,
                 QtyIssued      = qtyIssued,
-                FromNC         = purpose == HandoverPurpose.HelpSend || (purpose == HandoverPurpose.NgReturn && fromGroupCode == "GC") ? fromNC : null,   // [GN-NC-PIN] + NC phát hiện lỗi của GC
+                FromNC         = purpose == HandoverPurpose.HelpSend || (purpose == HandoverPurpose.NgReturn && fromGroupCode == "GC") || taroPhoiLoi ? fromNC : null,   // [GN-NC-PIN] + NC phát hiện lỗi của GC · [KTT-PHOILOI] + @VAO (Taro trả phôi lỗi)
                 ToNC           = isOut || toGroupCode == "KHO" || string.IsNullOrEmpty(toNC) ? null : toNC,
                 NgQty          = isNg ? qtyIssued : 0,
                 NgReason       = isNg ? reason?.Trim() : null,
@@ -1724,7 +1754,10 @@ namespace MES.Web.Services
                          && t.SourceReceiveId == null   // [GN-RECV-NG] phiếu trả thành phẩm NG tự lập (Kho → Đóng gói) không phải phôi Kho giao
                          // [D11-KHO-SL 2026-10-28] "SL đã giao" của Kho = chỉ phôi tốt (phiếu Hàng mới). Trước: đếm cả gửi sửa / chuyển hàng lỗi /
                          //   huỷ / trả khách → Kho gửi sửa 10 phôi lỗi hiện "Đã giao 10, Giao một phần" dù chưa giao phôi tốt nào.
-                         && (t.Purpose == HandoverPurpose.New || (t.Purpose == null && !t.IsReturnNg)))
+                         && (t.Purpose == HandoverPurpose.New || (t.Purpose == null && !t.IsReturnNg)
+                             // [KHO-TARO-THANG 2026-11-12] + phiếu Kho giao thẳng Taro (lấy từ ô phôi còn = Giao · Hàng mới của Kho, như sổ) — rà độc lập Gói 18 Trung 1:
+                             //   trước cột "Ngày giao" / "SL đã giao" / ⏳ trang Kho trống trong khi "Còn lại" (đọc sổ) = 0. Nguồn: KHÁCH 12/11 (3.3 b = A).
+                             || (t.Purpose == HandoverPurpose.HelpSend && t.FromCell == HandoverCell.Moi)))
 
                 .Include(t => t.Receives)
 

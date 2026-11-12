@@ -123,6 +123,9 @@ namespace MES.Web.Services
             HandoverPurpose.Scrap        => Loi,
             HandoverPurpose.CustReturn   => Loi,
             HandoverPurpose.HelpReturn   => fromCell == Loi ? Loi : null,   // [TARO-LAMHO-NC] trả lỗi hàng làm hộ (mang vụ) về Gia công ô Hàng lỗi
+            // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro (phiếu giao theo NC do Kho lập) lấy từ ô phôi còn = Giao · Hàng mới của Kho.
+            //   Chỉ phiếu Kho giao thẳng Taro có FromCell MOI (máy chủ tự ghi); Gia công giao theo NC FromCell NULL → null như cũ. Nguồn: KHÁCH 12/11 (3.3 b = A); HÙNG 12/11 14:00.
+            HandoverPurpose.HelpSend     => fromCell == Moi ? Moi : null,
             _ => null
         };
 
@@ -298,8 +301,14 @@ namespace MES.Web.Services
         public decimal      Ret    { get; set; }
         /// <summary>NG trên WTS Taro làm hộ ở các NC của đoạn (chiếc hỏng — đang giữ hoặc đã trả lỗi về Gia công).</summary>
         public decimal      Ng     { get; set; }
-        /// <summary>Hàng làm hộ của đoạn HTSP còn giữ, còn tốt = nhận vào − đã trả về (hàng tốt) − chiếc hỏng (rà độc lập gói 6 mục 1).</summary>
-        public decimal      Held   => In - Ret - Ng;
+        /// <summary>[KHO-TARO-THANG][KTT-PHOILOI 2026-11-12] Taro phát hiện phôi lỗi khi đang làm (hàng đoạn đầu chuỗi, chưa xong bộ Taro) → trả thẳng Kho
+        ///   ô Hàng lỗi (phiếu Hàng lỗi công đoạn trước HTSP → Kho, FromNC @VAO). Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00.</summary>
+        public decimal      TraKho { get; set; }
+        /// <summary>[KTT-PHOILOI] Chưa làm xong bộ Taro của đoạn = nhận vào − trả phôi lỗi Kho − OK bộ − NG (null = đoạn không có mã Taro).</summary>
+        public decimal?     Chua   { get; set; }
+        /// <summary>Hàng làm hộ của đoạn HTSP còn giữ, còn tốt = nhận vào − đã trả về (hàng tốt) − chiếc hỏng (rà độc lập gói 6 mục 1).
+        ///   [KTT-PHOILOI 2026-11-12] − phôi lỗi đã trả thẳng Kho.</summary>
+        public decimal      Held   => In - Ret - Ng - TraKho;
         public List<LedgerDoc> DoneDocs { get; set; } = new();
         public List<LedgerDoc> RetDocs  { get; set; } = new();
     }
@@ -1052,13 +1061,16 @@ namespace MES.Web.Services
 
         static string TxText(InTx t, string purpose)
             => $"Phiếu #{t.Id} · {GroupLabel(t.From)} → {GroupLabel(t.To)} · {PairLabel(t, purpose)}"
-               + (string.IsNullOrEmpty(t.FromNC) ? "" : $" · từ {NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
+               + (string.IsNullOrEmpty(t.FromNC) || IsKhoTaro(t, purpose) ? ""   // [KHO-TARO-THANG] chữ ở PairLabel
+                  : IsTaroPhoiLoi(t, purpose) ? " · " + TaroPhoiLoiFrom   // [KTT-PHOILOI]
+                  : $" · từ {NcText(t.FromNC)}")   // [N3-FIRST] chữ @VAO
                + (string.IsNullOrEmpty(t.ToNC) ? "" : $" · vào NC {t.ToNC}")
                + (t.Status == "COMPLETED" ? "" : $" · {(Received(t) > 0 ? "nhận dở" : "chờ nhận")} (phiếu {t.Issued:0.##})");
 
         /// <summary>[GN-CELL2] Nhãn phiếu theo cặp ô: "Hàng lỗi ☑ → ô Hàng lỗi". Phiếu theo NC / Huỷ / Trả khách: tên loại phiếu.</summary>
         public static string PairLabel(InTx t, string purpose)
         {
+            if (IsKhoTaro(t, purpose)) return KhoTaroLabel;   // [KHO-TARO-THANG]
             if (purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn || HandoverPurpose.IsOut(purpose)) return HandoverPurpose.Label(purpose);
             var from = HandoverCell.IssueCellOf(purpose, t.FromCell);
             return $"{HandoverCell.Label(from)}{(purpose == HandoverPurpose.NgReturn ? " ☑ công đoạn trước" : "")} → ô {HandoverCell.Label(DesigCellOf(t, purpose))}";
@@ -1767,6 +1779,43 @@ namespace MES.Web.Services
                 LedgerCase? csT = carry ? Cs(t.NgCaseId) : null;
                 string txDocName = $"Phiếu #{t.Id}";
 
+                // ── [KHO-TARO-THANG 2026-11-12] KHO GIAO THẲNG TARO (NC đầu Gia công là máy loại trừ có Taro — đoạn làm hộ đầu chuỗi, NC nguồn @VAO) ──
+                //   Nguồn: KHÁCH 10/11 (hỏi lại 3.3 chọn B) + 12/11 file Word (b = A: NC đầu Taro thì Kho chỉ giao Taro); HÙNG 12/11 14:00 OK kế hoạch.
+                //   Phiếu = Giao theo NC do KHO lập (Purpose HELP_SEND, From KHO, FromNC @VAO, FromCell MOI). Cân (L6), mỗi chứng từ cộng trừ = 0:
+                //     lập phiếu      : Kho Giao · Hàng mới + số giao (phôi còn giảm); phần chưa nhận ở Chờ nhận của HTSP (Tồn bên nhận — mục 37)
+                //     mỗi lần nhận   : Gia công Nhận · Hàng mới + số nhận VÀ Giao theo NC từ "Nhận vào (chưa qua NC)" + số nhận (dòng @VAO vào = giao, chờ 0
+                //                      — bảng Giao nhận vẫn tính Gia công đã nhận, khách 12/11 không phản đối); HTSP Nhận theo NC + số nhận; đoạn @VAO vào += phần tốt
+                //     NG lúc nhận    : phôi lỗi — trả THẲNG Kho (phiếu trả tự lập HTSP → Kho, như mọi NG lúc nhận); vụ KHÔNG là vụ làm hộ (Kho sửa / trả khách / huỷ)
+                //   Trước: không có đường này (Kho chỉ giao Gia công "Nhận vào", Gia công giao theo NC cho HTSP — N3-FIRST).
+                if (IsKhoTaro(t, purpose))
+                {
+                    row.TxFromCell[t.Id] = HandoverCell.Moi;   // [GN-NG-TRACE] chỉ ghi lại: Kho lấy từ ô phôi còn
+                    if (t.Status != "COMPLETED")
+                    {
+                        Add(t.To, "cn", "Chờ nhận", Math.Max(0, giao - rec), new LedgerDoc { Kind = "PHIEU", RefId = t.Id, At = t.At, Text = TxText(t, purpose) });
+                        row.G(t.From).PendingToIssue++;
+                        row.G(t.To).PendingToReceive++;
+                    }
+                    Add(t.From, "gm", "Giao Hàng mới", giao, txDoc);
+                    if (rec > 0)
+                    {
+                        var vNote = " · Gia công tính đã nhận vào và giao theo NC ngay (Kho giao thẳng Taro)";
+                        Add("GC", "nm", "Nhận Hàng mới", rec, RecDoc(vNote));
+                        Add("GC", "ghSend", "Giao theo NC (máy loại trừ)", rec, RecDoc(vNote));
+                        Add("GC", "helpOut:" + VaoCode, "Giao theo NC từ " + VaoLabel, rec, RecDoc(vNote));
+                        Add(t.To, "nhSend", "Nhận hàng Gia công giao theo NC", rec, RecDoc(""));
+                        if (LamHoRunFrom(row.LamHoRuns, VaoCode) is { } rk) rk.In += recOk;   // [TARO-LAMHO-NC] vào đoạn = phần tốt lúc nhận
+                    }
+                    foreach (var r in t.Receives.Where(x => x.Ng > 0).OrderBy(x => x.At))
+                    {
+                        var csK = Cs(r.NgCaseId);   // phôi lỗi đếm lúc Taro nhận: vụ mới ở HTSP, trả Kho (không gắn LamHoNhan — không phải chiếc của chuỗi Gia công)
+                        csK.SinhRa += r.Ng; csK.HelpFromNc ??= VaoCode;   // sửa đạt về Gia công: như hàng mới (chưa qua NC nào)
+                        CHop(csK, "PS", t.To, t.From, null, r.Ng, txDocName, t.Id, r.At);
+                        NgBack(t, purpose, r, "glLamHo", false, csK);
+                    }
+                    continue;
+                }
+
                 if (t.Status != "COMPLETED")
                 {
                     // [GN-RECV-NG] Master list mục 37: phần chưa nhận tính vào Tồn BÊN NHẬN (ô Chờ nhận), không còn nằm ngoài ở dòng Đang giao.
@@ -1808,6 +1857,16 @@ namespace MES.Web.Services
                     case HandoverCell.Loi:
                         if (prevNg)
                         {
+                            // [KTT-PHOILOI 2026-11-12] Taro phát hiện phôi lỗi khi đang làm (hàng đoạn đầu chuỗi chưa xong bộ Taro) → trả thẳng Kho ô Hàng lỗi.
+                            //   Lấy từ Tồn hàng giao theo NC (không phải hàng của HTSP — K4): không trừ Chưa làm / NG đầu HTSP; đoạn @VAO TraKho += (chưa làm Taro giảm).
+                            //   Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00 (chỉ trả Kho).
+                            if (IsTaroPhoiLoi(t, purpose))
+                            {
+                                Add(t.From, "glLhKho", "Giao Hàng lỗi (Taro trả phôi lỗi về Kho — hàng giao theo NC)", giao, txDoc);
+                                if (LamHoRunFrom(row.LamHoRuns, VaoCode) is { } rpk) rpk.TraKho += giao;
+                                csT!.HelpFromNc ??= VaoCode;   // sửa đạt về Gia công: như hàng mới (chưa qua NC nào — NC đầu là Taro)
+                            }
+                            else
                             Add(t.From, "glTra", "Giao Hàng lỗi (trả nơi gây lỗi)", giao, txDoc);
                             // [VULOI] Hàng lỗi công đoạn trước: vụ SINH RA cùng phiếu (lấy từ hàng chưa làm), đang chuyển tới nơi gây lỗi
                             csT!.SinhRa += giao; csT.Transit += giao;
@@ -2114,7 +2173,8 @@ namespace MES.Web.Services
                 G.NhanLamHo = V("nhSend") + V("nhRet");
                 G.NhanLamHoVe = V("nhRet"); // [GN-WTS-CAP]
                 G.GiaoMoi   = V("gm");
-                G.GiaoLoi   = V("glTra") + V("glGui") + V("glTu") + V("glChuyen") /* [GN-CELL2] */ + V("glSuaNg") + V("glLamHo") + V("glHuy") + V("glKhach"); // [GN-NG-OUT] + huỷ / trả khách; [GN-CELL] + tự sửa trả, + trả lại hàng nhờ sửa NG
+                G.GiaoLoi   = V("glTra") + V("glGui") + V("glTu") + V("glChuyen") /* [GN-CELL2] */ + V("glSuaNg") + V("glLamHo") + V("glHuy") + V("glKhach")
+                            + V("glLhKho");   // [KTT-PHOILOI] Taro trả phôi lỗi về Kho (từ hàng giao theo NC) // [GN-NG-OUT] + huỷ / trả khách; [GN-CELL] + tự sửa trả, + trả lại hàng nhờ sửa NG
                 G.GiaoSua   = V("gs");
                 G.GiaoLoiXl = V("gx"); // [GN-LEDGER] trước 10/11 luôn 0 · [SUA-XL-GIU] hàng đã sửa giao tiếp từ ô Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện)
                 G.XlGiu     = V("nxGiu") - V("gx");   // [SUA-XL-GIU] Tồn hàng lỗi đã xử lý (hàng đã sửa, giữ vụ)
@@ -2142,7 +2202,8 @@ namespace MES.Web.Services
                 ListExplain("NhanLoiXl", "Nhận · Hàng lỗi đã xử lý", ("nx", "Hàng đã sửa trả về (đã OK, nhập WTS tiếp được)"));
                 ListExplain("NhanLamHo", "Nhận · Giao theo NC",     ("nhSend", "Gia công giao theo NC (máy loại trừ)"), ("nhRet", "Hàng trả về vào NC"));
                 ListExplain("GiaoMoi",   "Giao · Hàng mới",          ("gm", "Phiếu Hàng mới (gồm phiếu chờ nhận)"));
-                ListExplain("GiaoLoi",   "Giao · Hàng lỗi",          ("glTra", "Hàng lỗi công đoạn trước — trả nơi gây lỗi"), ("glGui", "Gửi hàng lỗi đi nhờ sửa"), ("glTu", "Tự sửa xong, trả nơi phát hiện"), ("glChuyen", "Chuyển sang ô Hàng lỗi nhóm khác"), ("glSuaNg", "Trả lại hàng nhờ sửa bị NG lúc nhận"), ("glLamHo", "Trả lỗi từ hàng giao theo NC"), ("glHuy", "Huỷ hàng lỗi"), ("glKhach", "Trả khách hàng lỗi")); // [GN-NG-OUT][GN-CELL]
+                ListExplain("GiaoLoi",   "Giao · Hàng lỗi",          ("glTra", "Hàng lỗi công đoạn trước — trả nơi gây lỗi"), ("glGui", "Gửi hàng lỗi đi nhờ sửa"), ("glTu", "Tự sửa xong, trả nơi phát hiện"), ("glChuyen", "Chuyển sang ô Hàng lỗi nhóm khác"), ("glSuaNg", "Trả lại hàng nhờ sửa bị NG lúc nhận"), ("glLamHo", "Trả lỗi từ hàng giao theo NC"), ("glHuy", "Huỷ hàng lỗi"), ("glKhach", "Trả khách hàng lỗi"),
+                    ("glLhKho", "Taro trả phôi lỗi về Kho (hàng giao theo NC)")); // [GN-NG-OUT][GN-CELL] · [KTT-PHOILOI]
                 ListExplain("GiaoSua",   "Giao · Hàng sửa",          ("gs", "Sửa hộ xong, trả nơi phát hiện"));
                 ListExplain("GiaoLamHo", "Giao · Giao theo NC",     ("ghSend", "Giao theo NC (máy loại trừ)"), ("ghRet", "Trả về Gia công theo NC"));
                 // [SUA-XL-GIU 2026-11-10] trước: cột luôn trống (hàng đã xử lý chỉ NHẬN). Nay = hàng đã sửa giao tiếp về nơi phát hiện (khách 10/11 2.1 A / 2.2 A).
@@ -2193,7 +2254,7 @@ namespace MES.Web.Services
                         Result = G.Ton
                     };
                     e.Terms.Add(new LedgerTerm { Label = "Tổng Nhận", Value = G.NhanTong, Sign = 1, Docs = AllDocs(acc, code, "nm", "nl", "ns", "nx", "nbu", "nhSend", "nhRet") });   // [KHACH-GUI-LAI] + phiếu bù (rà độc lập Gói 14 L2)
-                    e.Terms.Add(new LedgerTerm { Label = "Tổng Giao", Value = G.GiaoTong, Sign = -1, Docs = AllDocs(acc, code, "gm", "glTra", "glGui", "glTu", "glChuyen", "glSuaNg", "glLamHo", "glHuy", "glKhach", "gs", "ghSend", "ghRet") });
+                    e.Terms.Add(new LedgerTerm { Label = "Tổng Giao", Value = G.GiaoTong, Sign = -1, Docs = AllDocs(acc, code, "gm", "glTra", "glGui", "glTu", "glChuyen", "glSuaNg", "glLamHo", "glHuy", "glKhach", "gs", "ghSend", "ghRet", "glLhKho") });   // [KTT-PHOILOI] + trả phôi lỗi Kho
                     if (G.ChoNhan != 0)
                         e.Terms.Add(new LedgerTerm { Label = "Chờ nhận (đã giao tới, chưa bấm Nhận)", Value = G.ChoNhan, Sign = 1, Docs = AllDocs(acc, code, "cn") });
                     if (G.ChoKcs != 0)   // [GC-SUA-TAI-CHO]
@@ -2268,7 +2329,7 @@ namespace MES.Web.Services
                     // [GN-CELL] Tách 2 ô đang giữ theo Excel: Hàng lỗi (của mình: bị trả về + NG làm hỏng) / Hàng sửa (nhóm khác gửi nhờ)
                     G.LoiGiu  = G.NhanLoi + G.NgCuoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
                     G.SuaGiu  = G.NhanSua - G.GiaoSua - V("glSuaNg");
-                    G.LamHoGiu = V("nhSend") - V("ghRet") - V("glLamHo");
+                    G.LamHoGiu = V("nhSend") - V("ghRet") - V("glLamHo") - V("glLhKho");   // [KTT-PHOILOI] − phôi lỗi Taro trả thẳng Kho
 
                     var e = new LedgerExplain
                     {
@@ -2334,9 +2395,10 @@ namespace MES.Web.Services
                     sg.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Nhận Hàng sửa");
                     G.Explains["SuaGiu"] = sg;
 
-                    var lh = new LedgerExplain { Title = $"{G.Label} · Tồn hàng giao theo NC", Formula = "Nhận hàng giao theo NC − Đã trả về Gia công − Lỗi trả lại", Rule = "N3, K4",
+                    var lh = new LedgerExplain { Title = $"{G.Label} · Tồn hàng giao theo NC", Formula = "Nhận hàng giao theo NC − Đã trả về Gia công − Lỗi trả lại − Phôi lỗi trả Kho", Rule = "N3, K4",   // [KTT-PHOILOI]
                         Note = "Hàng của nhóm khác, không tính vào số sản xuất của nhóm này.", Result = G.LamHoGiu };
                     lh.Terms.Add(Tm("nhSend", "Nhận theo NC", 1)); lh.Terms.Add(Tm("ghRet", "Trả về Gia công theo NC", -1)); lh.Terms.Add(Tm("glLamHo", "Lỗi trả lại", -1));
+                    lh.Terms.Add(Tm("glLhKho", "Taro trả phôi lỗi về Kho", -1));   // [KTT-PHOILOI]
                     lh.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Nhận theo NC");
                     G.Explains["LamHoGiu"] = lh;
                     // [TARO-LAMHO-NC] Hàng làm hộ bị lỗi (WTS Taro làm hộ NG, đã có vụ) nằm trong Tồn hàng giao theo NC, chỉ trả Gia công ô Hàng lỗi
@@ -2351,7 +2413,8 @@ namespace MES.Web.Services
                         {
                             var ex = new LedgerExplain { Title = $"HTSP · Taro làm hộ {string.Join(", ", r.Ncs.Select(NcName))} · trả về {NcName(r.NextNc)}", Rule = "N3, K4",
                                 Formula = "OK bộ Taro (nhỏ nhất các mã Taro chính của NC, bộ gộp = OK mã gộp + min mã thành phần) − đã trả về Gia công (hàng tốt)",
-                                Note = $"Hàng Gia công giao theo NC từ {NcName(r.FromNc)} cho HTSP làm Taro; chỉ trả về {NcName(r.NextNc)} số đã xong bộ Taro (Workflow ON). Nhận vào {r.In:0.##}.",
+                                Note = $"Hàng Gia công giao theo NC từ {NcName(r.FromNc)}" + (IsVao(r.FromNc) ? " / Kho giao thẳng Taro" : "") + $" cho HTSP làm Taro; chỉ trả về {NcName(r.NextNc)} số đã xong bộ Taro (Workflow ON). Nhận vào {r.In:0.##}."
+                                     + (r.TraKho != 0 ? $" Phôi lỗi đã trả thẳng Kho {r.TraKho:0.##}." : ""),   // [KHO-TARO-THANG][KTT-PHOILOI] chỉ chữ
                                 Result = r.Done - r.Ret };
                             ex.Terms.Add(new LedgerTerm { Label = "OK bộ Taro làm hộ", Value = r.Done, Sign = 1, Docs = r.DoneDocs });
                             ex.Terms.Add(new LedgerTerm { Label = $"Đã trả về {NcName(r.NextNc)} (hàng tốt)", Value = r.Ret, Sign = -1, Docs = r.RetDocs });
@@ -2603,13 +2666,15 @@ namespace MES.Web.Services
                 {
                     HandoverPurpose.Scrap      => $"{GroupLabel(t.From)} huỷ {t.Issued:0.##} · ô Hàng lỗi",
                     HandoverPurpose.CustReturn => $"{GroupLabel(t.From)} trả khách {t.Issued:0.##} · ô Hàng lỗi",
+                    HandoverPurpose.HelpSend when IsKhoTaro(t, purpose)   // [KHO-TARO-THANG]
+                                               => $"Kho giao thẳng Taro {t.Issued:0.##} → {GroupLabel(t.To)} (Gia công tính nhận vào + giao theo NC cùng số khi Taro nhận)",
                     HandoverPurpose.HelpSend   => $"{GroupLabel(t.From)} giao theo NC {t.Issued:0.##}" + (string.IsNullOrEmpty(t.FromNC) ? "" : $" ({NcText(t.FromNC)})") + $" → {GroupLabel(t.To)}",   // [N3-FIRST] chữ @VAO
                     HandoverPurpose.HelpReturn when HandoverCell.IsLamHoLoi(purpose, t.FromCell)   // [LAMHO-B-CHU 2026-11-07] trả hàng làm hộ bị lỗi (mang vụ) — trước chữ như trả hàng tốt
                                                => $"{GroupLabel(t.From)} trả hàng làm hộ bị lỗi {t.Issued:0.##} → {GroupLabel(t.To)} ô Hàng lỗi (cùng vụ)",
                     HandoverPurpose.HelpReturn => $"{GroupLabel(t.From)} trả về Gia công {t.Issued:0.##} → {GroupLabel(t.To)}" + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})"),
                     _ => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô {HandoverCell.Label(cell)}"
                          + (purpose == HandoverPurpose.NgReturn ? " ☑ lỗi công đoạn trước" : "")
-                         + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? $" (phát hiện ở {NcText(t.FromNC)})" : "")   // [GN-NC-PIN] [N3-FIRST] chữ @VAO
+                         + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? (IsTaroPhoiLoi(t, purpose) ? $" ({TaroPhoiLoiFrom})" : $" (phát hiện ở {NcText(t.FromNC)})") : "")   // [GN-NC-PIN] [N3-FIRST] chữ @VAO · [KTT-PHOILOI]
                          + $" → {GroupLabel(t.To)} ô {HandoverCell.Label(DesigCellOf(t, purpose))}"   // [GN-CELL2] ô bên giao chỉ định
                          + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})")
                 };
@@ -2644,7 +2709,7 @@ namespace MES.Web.Services
                         Text = HandoverCell.IsLamHoLoi(purpose, t.FromCell)
                             ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} hàng làm hộ bị lỗi · ô Hàng lỗi (cùng vụ) · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
                             : purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn
-                            ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} giao theo NC" + (r.Ng > 0 ? (back != null ? $" (NG {r.Ng:0.##} → phiếu trả #{back.Id})" : $" (NG {r.Ng:0.##} trả ngay)") : "") + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"
+                            ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} " + (IsKhoTaro(t, purpose) ? "phôi Kho giao thẳng Taro" : "giao theo NC") + (r.Ng > 0 ? (back != null ? $" (NG {r.Ng:0.##} → phiếu trả #{back.Id})" : $" (NG {r.Ng:0.##} trả ngay)") : "") + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"   // [KHO-TARO-THANG] chữ dòng B nhận phiếu Kho giao thẳng
                             : $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} · ô {HandoverCell.Label(recCell)}"
                               + (recCell is HandoverCell.Xl ? XlRecvNote(inp, t, recCell) : "")   // [XL-CHU-B] hàng đã sửa: giữ / đã làm — không WTS · [SUA-HO-TRA-NGUOC] Gia công: xong NC
                               + CellChangeNote(desigCell, r)   // [GN-CELL2]
@@ -3141,8 +3206,10 @@ namespace MES.Web.Services
                 var lines = G.Steps.Where(s => !s.IsPrep && s.LamHoNc != null && run.Ncs.Contains(s.LamHoNc, StringComparer.OrdinalIgnoreCase)).ToList();
                 if (lines.Count == 0) continue;
                 var okMin = lines.GroupBy(x => x.LamHoNc!, StringComparer.OrdinalIgnoreCase).Min(g => LinesOkMin(g.ToList()));
-                var chua = run.In - okMin - lines.Sum(x => x.Ng);
-                FillWaitLines(G, lines, run.In, 0, chua, $" (Taro làm hộ {string.Join(", ", run.Ncs.Select(NcName))})");
+                // [KTT-PHOILOI 2026-11-12] phôi lỗi Taro trả thẳng Kho = chiếc đã rời chưa làm của đoạn (như trả hàng lỗi ở mã thường — có thể đã làm vài mã)
+                var chua = run.In - run.TraKho - okMin - lines.Sum(x => x.Ng);
+                run.Chua = chua;
+                FillWaitLines(G, lines, run.In, run.TraKho, chua, $" (Taro làm hộ {string.Join(", ", run.Ncs.Select(NcName))})");
             }
         }
 
@@ -3423,7 +3490,9 @@ namespace MES.Web.Services
                 }
                 Put(code, "LOI", "hàng lỗi", G.LoiGiu, "tồn hàng lỗi của nhóm (chờ chuyển / sửa / huỷ / trả khách)");
                 Put(code, "SUA", "hàng nhờ sửa", G.SuaGiu, "nhóm khác gửi nhờ sửa, chưa trả");
-                Put(code, "THEO_NC", "hàng giao theo NC", G.LamHoGiu, "hàng Gia công giao theo NC (máy loại trừ), chưa trả về");
+                Put(code, "THEO_NC", "hàng giao theo NC", G.LamHoGiu, code == "HTSP" && KhoTaroRun(r) != null
+                    ? "hàng Gia công giao theo NC / Kho giao thẳng Taro (NC máy loại trừ), chưa trả về Gia công"   // [KHO-TARO-THANG] chỉ chữ
+                    : "hàng Gia công giao theo NC (máy loại trừ), chưa trả về");
                 Put(code, "XL", "hàng đã sửa chờ trả nơi phát hiện", G.XlGiu, "đã sửa xong, KCS xác nhận đạt — chờ giao về nơi phát hiện lỗi");   // [SUA-XL-GIU]
                 w.Loi += G.LoiGiu + G.SuaGiu;
             }
@@ -3518,6 +3587,20 @@ namespace MES.Web.Services
         //   thiết kế @VAO duyệt 04/11). Mã "@VAO" không bao giờ là NC thật (Part Master không cho ký tự @ đầu mã NC? — không dựa vào đó:
         //   máy chủ chặn WTS / phiếu nhận vào NC "@VAO", chỉ cho làm NC nguồn của Giao theo NC / Trả hàng lỗi / Báo lỗi).
         public const string VaoCode  = "@VAO";
+
+        // [KHO-TARO-THANG 2026-11-12] KHO GIAO THẲNG TARO khi NC đầu Gia công là máy loại trừ có Taro (đoạn làm hộ đầu chuỗi, NC nguồn @VAO).
+        //   Nguồn: KHÁCH 10/11 (hỏi lại 3.3 chọn B) + 12/11 file Word (a = A: Taro phát hiện phôi lỗi khi đang làm trả thẳng Kho, nơi gây lỗi Khách hàng;
+        //   b = A: NC đầu Taro thì Kho chỉ giao Taro); HÙNG 12/11 14:00 OK kế hoạch + 3 câu B. Không SQL: dùng cột sẵn có.
+        //   Phiếu Kho → Taro = HELP_SEND From KHO (FromNC @VAO, FromCell MOI); Taro trả phôi lỗi = NG_RETURN From HTSP → Kho, FromNC @VAO.
+        public const string KhoTaroLabel = "Kho giao thẳng Taro (NC đầu là máy loại trừ)";
+        /// <summary>[KTT-PHOILOI] Chữ nguồn của phiếu Taro trả phôi lỗi về Kho.</summary>
+        public const string TaroPhoiLoiFrom = "Taro phát hiện phôi lỗi khi đang làm (hàng giao theo NC, chưa làm xong Taro NC đầu)";
+        /// <summary>[KHO-TARO-THANG] Phiếu Kho giao thẳng Taro (Giao theo NC do Kho lập).</summary>
+        public static bool IsKhoTaro(InTx t, string purpose) => purpose == HandoverPurpose.HelpSend && t.From == "KHO";
+        /// <summary>[KTT-PHOILOI] Phiếu Taro (HTSP) trả phôi lỗi về Kho từ hàng đoạn đầu chuỗi (Hàng lỗi công đoạn trước, FromNC @VAO).</summary>
+        public static bool IsTaroPhoiLoi(InTx t, string purpose) => purpose == HandoverPurpose.NgReturn && t.From == "HTSP" && IsVao(t.FromNC);
+        /// <summary>[KHO-TARO-THANG] Đoạn làm hộ đầu chuỗi (NC nguồn @VAO) có Taro — PO đi đường Kho giao thẳng Taro. null = không có (đường cũ).</summary>
+        public static LedgerLamHoRun? KhoTaroRun(LedgerRow row) => row.LamHoRuns.FirstOrDefault(r => r.HasTaro && IsVao(r.FromNc));
 
         // ================================================================
         // [SUA-XL-GIU 2026-11-10] HÀNG SỬA ĐẠT KHÔNG QUAY LẠI NC / NHÓM ĐÃ LÀM XONG NHẬN LÀ ĐÃ LÀM
@@ -3659,6 +3742,21 @@ namespace MES.Web.Services
                 case HandoverPurpose.New:
                     return (Math.Max(0, G.ConGiao), Pick("ConGiao"));
                 case HandoverPurpose.NgReturn:
+                    // [KTT-PHOILOI 2026-11-12] Taro phát hiện phôi lỗi khi đang làm (hàng đoạn đầu chuỗi chưa xong bộ Taro) → trả thẳng Kho.
+                    //   Trần = min(chưa làm xong bộ Taro của đoạn, hàng của đoạn còn giữ). Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00.
+                    if (from == "HTSP" && IsVao(fromNC))
+                    {
+                        var kr = KhoTaroRun(row);
+                        if (kr == null)
+                            return (0, new LedgerExplain { Title = "Taro trả phôi lỗi về Kho", Note = "Chỉ khi NC đầu Gia công là máy loại trừ có Taro (Taro làm NC đầu)." });
+                        var ek = new LedgerExplain { Title = $"HTSP · Taro {string.Join(", ", kr.Ncs.Select(NcName))} · chưa làm xong (hàng giao theo NC đầu chuỗi)", Rule = "N3, K4, N16",
+                            Formula = "min(chưa làm xong bộ Taro của đoạn, hàng của đoạn còn giữ)",
+                            Note = "Phôi lỗi Taro phát hiện khi đang làm (chưa xong bộ Taro): trả thẳng Kho ô Hàng lỗi, nơi gây lỗi Khách hàng. Chiếc Taro làm hỏng: ghi NG ở WTS Taro (trả Gia công như cũ)." };
+                        ek.Terms.Add(new LedgerTerm { Label = "Chưa làm xong bộ Taro", Value = kr.Chua ?? 0, Sign = 1 });
+                        ek.Terms.Add(new LedgerTerm { Label = "Hàng của đoạn còn giữ", Value = kr.Held, Sign = 1 });
+                        ek.Result = Math.Min(kr.Chua ?? 0, kr.Held);
+                        return (Math.Max(0, ek.Result), ek);
+                    }
                     if (from == "KHO") return (0, new LedgerExplain { Title = "Kho không có công đoạn trước", Note = "Phôi lỗi tồn ở Kho: giao phân loại Hàng lỗi KHÔNG tích (gửi nhờ sửa), hoặc Huỷ / Trả khách." }); // [GN-PLH] mục 36: trước "giao từ ô"
                     // [GN-NC-PIN] Gia công: trần theo NC phát hiện lỗi = hàng đang chờ ở NC đó (không vượt Chưa làm của nhóm)
                     if (from == "GC" && !string.IsNullOrEmpty(fromNC))
@@ -3728,6 +3826,12 @@ namespace MES.Web.Services
                 }
                 case HandoverPurpose.HelpSend:
                 {
+                    // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro: trần = phôi còn (chỉ khi PO có đoạn Taro đầu chuỗi, NC nguồn @VAO).
+                    //   Nguồn: KHÁCH 12/11 (3.3 b = A); HÙNG 12/11 14:00.
+                    if (from == "KHO")
+                        return KhoTaroRun(row) == null || !IsVao(fromNC)
+                            ? (0, new LedgerExplain { Title = "Kho giao thẳng Taro", Note = "Chỉ khi NC đầu Gia công là máy loại trừ có Taro (Taro làm NC đầu) — PO này không có." })
+                            : (Math.Max(0, G.ConGiao), Pick("ConGiao"));
                     if (from != "GC" || string.IsNullOrEmpty(fromNC))
                         return (0, new LedgerExplain { Title = "Giao theo NC", Note = "Chỉ Gia công giao theo NC, và phải chọn NC nguồn." });
                     var line = G.Steps.FirstOrDefault(s => s.Code == fromNC && !s.IsExcluded);
@@ -3835,6 +3939,7 @@ namespace MES.Web.Services
                 case HandoverPurpose.RepairSend:
                     return null;   // [GN-ROUTE-FREE] trước: chặn gửi sửa cho Kho
                 case HandoverPurpose.HelpSend:
+                    if (from == "KHO") return to == "HTSP" ? null : "Kho giao thẳng Taro: nhóm nhận là HTSP (Taro).";   // [KHO-TARO-THANG 2026-11-12] (khách 12/11 3.3 b = A)
                     if (from != "GC") return "Chỉ Gia công giao theo NC.";   // giữ: "theo NC" là NC của Gia công (FromNC)
                     return null;   // [GN-ROUTE-FREE] trước: chặn giao theo NC cho Kho
                 case HandoverPurpose.HelpReturn:

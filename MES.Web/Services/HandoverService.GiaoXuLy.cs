@@ -147,6 +147,13 @@ namespace MES.Web.Services
                 if (to == null) return (false, "Chọn nhóm nhận.");
                 if (pos.HelpFrom != null)   // (a) Gia công giao theo NC cho nhóm khác làm hộ (N3, N4: ghi chú bắt buộc)
                     return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.HelpSend, pos.HelpFrom, null, notes, null, ftx: ftx);
+                // [KHO-TARO-THANG 2026-11-12] Kho, phôi còn → HTSP khi NC đầu Gia công là Taro (máy loại trừ): phiếu Kho giao thẳng Taro (giao theo NC từ "Nhận vào").
+                //   Nguồn: KHÁCH 12/11 (3.3 b = A — chọn sẵn Taro NC đầu); HÙNG 12/11 14:00.
+                if (g == "KHO" && pos.Id == "PHOI" && to == "HTSP" && HandoverLedgerService.KhoTaroRun(before) != null)
+                {
+                    if (toCellOpt != null) return (false, "Kho giao thẳng Taro: không chọn ô nhận (Taro nhận theo NC).");
+                    return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.HelpSend, HandoverLedgerService.VaoCode, null, notes, null, ftx: ftx);
+                }
                 var tcN = toCellOpt ?? HandoverCell.Moi;
                 var (pN, eN) = HandoverCell.ResolveCells(HandoverCell.Moi, false, tcN);
                 if (pN == null) return (false, eN ?? "Ô nhận không hợp lệ.");
@@ -213,6 +220,20 @@ namespace MES.Web.Services
                     }
                     default: return (false, BadAct);
                 }
+            }
+
+            // ── [KTT-PHOILOI 2026-11-12] Taro phát hiện phôi lỗi khi đang làm hàng đoạn đầu chuỗi (Kho giao thẳng) → 1 phiếu trả thẳng Kho ô Hàng lỗi ──
+            //   Nơi gây lỗi Khách hàng (máy chủ tự ghi). Chỉ việc "Giao" về Kho. Nguồn: KHÁCH 12/11 (3.3 a = A); HÙNG 12/11 14:00 (B2: chỉ trả Kho).
+            if (pos.TaroPhoi)
+            {
+                if (act != HandoverForm.AGiao) return (false, "Phôi lỗi Taro phát hiện khi đang làm: chỉ trả về Kho (bước 3 chọn Giao).");
+                if (!r.Prev) return (false, "Phôi lỗi Taro phát hiện khi đang làm: tích \"Lỗi công đoạn trước\" (phôi lỗi, nơi gây lỗi Khách hàng). Chiếc Taro làm hỏng ghi NG ở WTS Taro.");
+                if (!string.IsNullOrWhiteSpace(r.Cause) && r.Cause.Trim() != "KHACH") return (false, "Phôi lỗi: nơi gây lỗi là Khách hàng.");
+                if (to != null && to != "KHO") return (false, "Taro trả phôi lỗi (hàng giao theo NC chưa làm xong Taro NC đầu): chỉ trả về Kho.");
+                if (toCellOpt != null && toCellOpt != HandoverCell.Loi) return (false, "Taro trả phôi lỗi về Kho: vào ô Hàng lỗi của Kho.");
+                if (r.Qty <= 0) return (false, "Số lượng phải lớn hơn 0.");
+                return await IssueWithPurposeOnceAsync(id, g, "KHO", r.Qty, uid, HandoverPurpose.NgReturn, HandoverLedgerService.VaoCode, null, notes, null,
+                    HandoverCell.Loi, HandoverCell.Loi, r.CatId, null, ftx);
             }
 
             // ── Hàng lỗi mới phát hiện ──────────────────────────────────────

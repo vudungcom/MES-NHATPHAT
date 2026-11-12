@@ -142,6 +142,12 @@
     bool LamHo => IsTot && Pos is { LamHo: true };
     /// <summary>[TARO-LAMHO-NC] Hàng làm hộ bị lỗi (vụ giữ ô LAMHO): chỉ trả Gia công vào ô Hàng lỗi, cùng vụ.</summary>
     bool LamHoLoi => IsHeld && Pos!.HeldCell == HandoverCell.LamHo;
+    // [KHO-TARO-THANG 2026-11-12] NC đầu Gia công là Taro (máy loại trừ): Kho giao phôi thẳng Taro (nhóm nhận HTSP, chọn sẵn — khách 12/11 3.3 b = A).
+    //   Workflow ON: không giao Gia công (máy chủ chặn — KTT-CHI-TARO); OFF: Gia công vẫn chọn được, có cảnh báo (HÙNG 12/11 14:00 câu B1).
+    bool KhoTaroPo => _group == "KHO" && HandoverLedgerService.KhoTaroRun(Row) != null;
+    bool KhoTaro => IsTot && KhoTaroPo && Pos?.Id == "PHOI" && Dest == "HTSP";
+    /// <summary>[KTT-PHOILOI 2026-11-12] HTSP: phôi lỗi Taro phát hiện khi đang làm hàng đoạn đầu chuỗi → chỉ trả Kho ô Hàng lỗi, nơi gây lỗi Khách hàng (khách 12/11 a = A).</summary>
+    bool IsTaroPhoi => !IsTot && Pos is { TaroPhoi: true };
 
     // [TARO-LAMHO-NC] trả hàng làm hộ (hàng tốt): trần theo NC nhận (câu 1 — OK bộ Taro làm hộ của đoạn trước NC đó), cùng hàm máy chủ kiểm
     decimal Have => Pos == null ? 0 : IsHeld ? (Case == null ? 0 : Math.Max(0, Case.HeldAt(_group, Pos.HeldCell!)))
@@ -158,7 +164,7 @@
     bool PrevOn => IsFresh && _prev && (Pos == null || Pos.PrevOk);
     // [CAUSE-BAT-BUOC] (rà độc lập Thấp 2) chưa chọn nơi gây lỗi → chưa xem trước chứng từ / ô nhận (sẽ đổi theo nơi chọn)
     bool CauseMissing => PrevOn && _group != "KHO" && string.IsNullOrEmpty(_cause);
-    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi && !IsXl;   // [TARO-LAMHO-NC] · [SUA-XL-GIU]
+    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi && !IsXl && !IsTaroPhoi;   // [TARO-LAMHO-NC] · [SUA-XL-GIU] · [KTT-PHOILOI]
     string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
 
     string DefaultDest
@@ -166,6 +172,7 @@
         get
         {
             if (LamHo || LamHoLoi) return "GC";   // [TARO-LAMHO-NC]
+            if (IsTaroPhoi) return "KHO";   // [KTT-PHOILOI]
             if (IsXl) return Case == null ? "" : IsTot ? (Case.DetectGroup ?? "") : XlTraLaiDefault(Case);   // mặc định nơi phát hiện [SUA-XL-GIU] · hỏng lại: bộ phận làm lỗi [XL-TRA-NOILOI]   // [SUA-XL-GIU] mặc định nơi phát hiện · [XL-TRA-LAI][XL-TRA-NHOMSUA] nhóm đã sửa (không phải chính mình)
             if (IsTot && HelpFrom) return HandoverForm.NextGroup(_group);   // [GOI8-THAP-E rà độc lập Gói 10 T2] giao theo NC (làm hộ) mặc định HTSP như cũ — không theo "PO không có HTSP / HTSP chỉ làm hộ" (trước: ra KCS, máy chủ chặn). Nguồn: CLAUDE (rà độc lập Gói 10)
             if (IsTot) return HandoverForm.NextGroup(_group, Row);   // [TARO-LAMHO-NC] HTSP chỉ làm hộ: giao thẳng KCS · [GOI8-THAP-E] + PO không có công đoạn HTSP
@@ -174,17 +181,17 @@
             return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group, Row) is var p && p != "" ? p : HandoverForm.NextGroup(_group, Row);   // [LAMHO-L2-KCS] · [GOI8-THAP-E]
         }
     }
-    string Dest => LamHo || LamHoLoi ? "GC" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC]
+    string Dest => LamHo || LamHoLoi ? "GC" : IsTaroPhoi ? "KHO" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC] · [KTT-PHOILOI] chỉ trả Kho
 
     /// <summary>Ô bên nhận theo lựa chọn (có thể đổi ở Tuỳ chọn).</summary>
     string DefaultToCell => IsXl ? (IsTot ? HandoverCell.Xl : HandoverCell.Loi)   // [SUA-XL-GIU][XL-TRA-LAI]
         : IsTot ? HandoverCell.Moi
-        : LamHoLoi ? HandoverCell.Loi   // [TARO-LAMHO-NC]
+        : LamHoLoi || IsTaroPhoi ? HandoverCell.Loi   // [TARO-LAMHO-NC] · [KTT-PHOILOI]
         : Act == HandoverForm.ATraLai ? HandoverCell.Loi
         : Act == HandoverForm.ASuaXong ? HandoverCell.Xl
         : EffPurpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua;
     string ToCellNow => !string.IsNullOrEmpty(_toCell) ? _toCell : DefaultToCell;
-    bool CanPickCell => !IsXl && ((IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao && !LamHoLoi));   // [TARO-LAMHO-NC] · [SUA-XL-GIU] ô cố định
+    bool CanPickCell => !IsXl && !KhoTaro && !IsTaroPhoi && ((IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao && !LamHoLoi));   // [TARO-LAMHO-NC] · [SUA-XL-GIU] ô cố định · [KHO-TARO-THANG][KTT-PHOILOI]
     bool GcHasNc => Row.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
     /// <summary>[K2] Hàng của vụ (đã xử lý) giao vào Gia công ô Hàng lỗi đã xử lý / Hàng mới: NC nhận theo vụ, như sửa tại nhóm (rà độc lập V3).</summary>
     bool CaseToGc => !IsTot && !IsXl && IsGiao && Dest == "GC" && GcHasNc && ToCellNow is HandoverCell.Moi or HandoverCell.Xl;
@@ -214,7 +221,7 @@
     bool NcLater => NcChosen?.Label.StartsWith("Làm tiếp ở") == true;   // [GN-FORM1] rà vòng 4 L-a: chữ ô lý do khi chọn NC sau (hàng cũ chưa mã vụ)
     static string OptKey(HandoverForm.NcOpt? o) => o == null ? "" : o.Default ? "" : o.Code ?? HandoverService.FormNewNc;
 
-    bool NeedCat => IsFresh && !string.IsNullOrEmpty(Act)
+    bool NeedCat => (IsFresh || IsTaroPhoi) && !string.IsNullOrEmpty(Act)   // [KTT-PHOILOI] phôi lỗi: vụ mới, chọn loại lỗi
                     && !(IsSua && _pass + _fail <= 0);
     bool NotesRequired => HelpFrom;
 
@@ -331,6 +338,14 @@
 
     RenderFragment PrevBox() => __builder =>
     {
+        if (IsTaroPhoi)   // [KTT-PHOILOI] phôi lỗi: Lỗi công đoạn trước cố định, nơi gây lỗi Khách hàng
+        {
+            <div class="mt-2 p-2 border rounded border-danger small">
+                <span class="fw-semibold text-danger">Lỗi công đoạn trước (phôi lỗi)</span> — nơi gây lỗi: <strong>Khách hàng</strong>.
+                <div class="text-muted mt-1">Chiếc Taro làm hỏng thì không chọn ở đây: ghi NG ở WTS Taro (trả Gia công như cũ).</div>
+            </div>
+            return;
+        }
         if (!IsFresh) return;
         // [GC-LOI-TRUOC-NCDAU 2026-11-10] Gia công (Workflow ON): hàng đã gia công → lỗi của Gia công, không tích "Lỗi công đoạn trước"
         if (Pos is { PrevOk: false })
@@ -415,7 +430,9 @@
     {
         var list = new List<ActOpt>();
         if (!Ready || IsTot) return list;
-        if (IsFresh)
+        if (IsTaroPhoi)   // [KTT-PHOILOI] chỉ trả Kho (HÙNG 12/11 14:00 câu B2)
+            list.Add(new(HandoverForm.AGiao, "Trả về Kho (ô Hàng lỗi — phôi lỗi)", false));
+        else if (IsFresh)
         {
             list.Add(new(HandoverForm.AGiao, _group == "KHO" ? "Gửi nhóm khác sửa" : "Giao cho nhóm khác", false));
             list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (không giao đi)", false));
@@ -505,6 +522,11 @@
             {
                 <div class="p-2 border rounded bg-light small"><strong>Gia công</strong> <span class="text-muted">— @(LamHoLoi ? "trả hàng làm hộ bị lỗi về Gia công, vào ô Hàng lỗi (cùng vụ)" : "trả hàng làm hộ về Gia công")</span></div>
             }
+            else if (IsTaroPhoi)
+            {
+                @* [KTT-PHOILOI] chỉ trả Kho *@
+                <div class="p-2 border rounded bg-light small"><strong>Kho</strong> <span class="text-muted">— vào ô Hàng lỗi (phôi lỗi, nơi gây lỗi Khách hàng)</span></div>
+            }
             else
             {
                 <select class="form-select form-select-sm" @onchange="OnDestChanged">
@@ -512,7 +534,7 @@
                     @* [GN-NGUOC-CHAN 2026-11-10] Hàng tốt (Workflow ON) không giao ngược về bộ phận trước *@
                     @foreach (var g in DestOptions())
                     {
-                        <option value="@g" selected="@(Dest == g)">@HandoverLedgerService.GroupLabel(g)</option>
+                        <option value="@g" selected="@(Dest == g)">@DestLabel(g)</option>
                     }
                 </select>
             }
@@ -546,7 +568,15 @@
         {
             @NcSelect("Gia công nhận vào NC (theo vụ)")
         }
-        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi && !CauseMissing)   // [CAUSE-BAT-BUOC] (rà Thấp 2)
+        if (KhoTaro)   // [KHO-TARO-THANG]
+        {
+            <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">Kho giao thẳng Taro: HTSP nhận theo NC, làm @(HandoverForm.KhoTaroText(Row).Replace("Taro — làm ", "")) rồi trả về Gia công NC sau. Bảng Giao nhận tính Gia công đã nhận vào và giao theo NC cùng số khi Taro nhận.</div>
+        }
+        else if (IsTot && KhoTaroPo && Pos?.Id == "PHOI" && Dest == "GC")   // [KHO-TARO-THANG] Workflow OFF: vẫn giao Gia công được, cảnh báo (câu B1)
+        {
+            <div class="small p-2 rounded mb-2 text-warning-emphasis" style="background:#fff3cd"><i class="bi bi-exclamation-triangle me-1"></i>@HandoverForm.KhoTaroOffWarn(Row)</div>
+        }
+        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi && !CauseMissing && !KhoTaro)   // [CAUSE-BAT-BUOC] (rà Thấp 2) · [KHO-TARO-THANG] chữ riêng ở trên
         {
             <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow)@TailNote — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
         }
@@ -587,7 +617,12 @@
         => HandoverLedgerService.GroupCodes.Where(x => x != _group
                && !(IsXl && IsTot && Row.ApplyWorkflow && !HandoverForm.XlToOk(_group, x, Case?.DetectGroup, Row))   // [XL-HTSP-LAMHO]
                && !(IsXl && !IsTot && Row.ApplyWorkflow && Case != null && HandoverForm.XlTraLaiGroups(Case, _group) is { Count: > 0 } rg && !rg.Contains(x))   // [XL-TRA-NHOMSUA] trả lại nhóm đã sửa
-               && !(IsTot && !IsXl && !HelpFrom && Row.ApplyWorkflow && HandoverForm.IsBackward(_group, x))).ToList();
+               && !(IsTot && !IsXl && !HelpFrom && Row.ApplyWorkflow && HandoverForm.IsBackward(_group, x))
+               && !(IsTot && KhoTaroPo && Pos?.Id == "PHOI" && Row.ApplyWorkflow && x == "GC")).ToList();   // [KTT-CHI-TARO] Workflow ON: NC đầu là Taro → Kho chỉ giao Taro
+
+    /// <summary>[KHO-TARO-THANG] Chữ nhóm nhận: Kho giao phôi cho HTSP khi NC đầu là Taro = "HTSP — Taro làm NC01 (máy loại trừ H04)".</summary>
+    string DestLabel(string g) => g == "HTSP" && IsTot && KhoTaroPo && Pos?.Id == "PHOI"
+        ? HandoverLedgerService.GroupLabel(g) + " — " + HandoverForm.KhoTaroText(Row) : HandoverLedgerService.GroupLabel(g);
 
     /// <summary>[XL-TRA-LAI] Nhóm đã sửa chiếc của vụ — mặc định khi trả lại hàng đã sửa bị hỏng lại (chung máy chủ: HandoverForm.XlRepairGroup).</summary>
     static string? XlRepairGroup(LedgerCase c) => HandoverForm.XlRepairGroup(c);
@@ -693,6 +728,8 @@
         if (CauseMissing) return "Chọn nơi gây lỗi ở trên trước — chứng từ sẽ ghi tuỳ nơi chọn.";   // [CAUSE-BAT-BUOC] (rà Thấp 2)
         var G = HandoverLedgerService.GroupLabel(_group);
         var D = HandoverLedgerService.GroupLabel(Dest);
+        if (KhoTaro) return "Sẽ ghi: phiếu Kho giao thẳng Taro → HTSP (chờ HTSP nhận; NG lúc nhận tự trả về Kho).";   // [KHO-TARO-THANG]
+        if (IsTaroPhoi) return $"Sẽ ghi: phiếu Hàng lỗi công đoạn trước {G} → Kho, ô Hàng lỗi (phôi lỗi, nơi gây lỗi Khách hàng — 1 chứng từ, sinh vụ mới).";   // [KTT-PHOILOI]
         if (IsTot)
             return LamHo ? $"Sẽ ghi: phiếu trả hàng làm hộ về Gia công (chờ Gia công nhận)."
                  : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D} (chờ {D} nhận)."
@@ -808,11 +845,11 @@
         {
             KhPlanDetailId = detailId, Group = _group, UserId = UserId, Kind = _kind, Pos = _pos,
             CaseId = IsHeld ? _caseId : null,
-            Prev = PrevOn, Cause = PrevOn ? EffCause : null,   // [CAUSE-BAT-BUOC] (rà Thấp 1)
+            Prev = PrevOn || IsTaroPhoi, Cause = IsTaroPhoi ? "KHACH" : PrevOn ? EffCause : null,   // [CAUSE-BAT-BUOC] (rà Thấp 1) · [KTT-PHOILOI] phôi lỗi
             Action = Act,
             ToGroup = IsGiao ? Dest : null,
             Purpose = ShowPurpose ? EffPurpose : (IsGiao && !IsTot && _group == "KHO" ? HandoverForm.PNho : null),
-            ToCell = string.IsNullOrEmpty(_toCell) ? null : _toCell,
+            ToCell = string.IsNullOrEmpty(_toCell) || KhoTaro || IsTaroPhoi ? null : _toCell,   // [KHO-TARO-THANG][KTT-PHOILOI] ô nhận cố định (ô chọn bị ẩn) — không gửi ô chọn từ trước khi đổi nhóm (rà độc lập Gói 18 Thấp 1)
             ToNC = CaseToGc ? (NcOpts.Count == 0 || string.IsNullOrEmpty(_ncNext) ? null : _ncNext)   // [K2] "" = mặc định của vụ (máy chủ tự điền)
                  : NeedToNc && !string.IsNullOrEmpty(_toNc) ? _toNc : null,
             Qty = IsSua ? 0 : _qty, Pass = IsSua ? _pass : 0, Fail = IsSua ? _fail : 0,
