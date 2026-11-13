@@ -3311,10 +3311,22 @@ namespace MES.Web.Services
                 var parts = G.Steps.Where(x => x.Pg == pg && x.GopUnit == line.GopUnit && !x.IsGop && x.LamHoNc == line.LamHoNc).ToList();
                 static string Bare(string k) { var i = k.IndexOf(" (NC ", StringComparison.Ordinal); return i > 0 ? k[..i] : k; }   // cùng NC với mã gộp — bỏ "(NC x)" cho gọn
                 // rà độc lập Gói 19 (Trung 2): "thiếu" = chiếc đã vào bộ (GopDone) − chiếc mã lẻ đó đã ghi (OK + NG); chỉ nêu mã lẻ còn thiếu (> 0)
-                var miss = parts.Select(x => (Code: Bare(x.Code), Thieu: line.GopDone - (x.Ok + x.Ng))).Where(x => x.Thieu > 0).ToList();
+                // [G19-3T-NGKHAC 2026-11-12] (ghi nhớ rà độc lập Gói 19 Thấp 1) chiếc đã NG ở mã lẻ KHÁC trong bộ có thể là phần "thiếu" (hỏng rồi, không cần làm tiếp mã này).
+                //   Không trừ hẳn (không biết chiếc NG đó đã làm mã này chưa — trần sổ cũng không trừ): chỉ nói rõ "trong đó có thể có tới n chiếc đã NG ở 3T1".
+                //   Chỉ đổi chữ, số trần (Waiting) giữ nguyên. Nguồn: CLAUDE rà độc lập Gói 19 12/11; HÙNG 12/11 20:02 (giao vá 3 điểm Thấp Gói 19).
+                var miss = parts.Select(x => (Code: Bare(x.Code), Thieu: line.GopDone - (x.Ok + x.Ng),
+                                              NgKhac: parts.Where(y => !ReferenceEquals(y, x) && y.Ng > 0).Select(y => (Code: Bare(y.Code), y.Ng)).ToList()))
+                                .Where(x => x.Thieu > 0).ToList();
+                static string NgKhacText(decimal thieu, List<(string Code, decimal Ng)> ng)
+                {
+                    var tong = ng.Sum(y => y.Ng);
+                    if (tong <= 0) return "";
+                    return $" — có thể gồm tới {Math.Min(thieu, tong):0.##} chiếc đã NG ở {string.Join(" + ", ng.Select(y => $"{y.Code} (NG {y.Ng:0.##})"))}";   // rà độc lập Gói 20 (vòng 1 Thấp 2, vòng 2 Thấp 2): "(NG k)", nối " + ", vế "chiếc đã NG không cần làm tiếp" nói 1 lần ở cuối
+                }
                 hint = $"Mã {line.Code} làm cả bộ {string.Join(" + ", parts.Select(x => Bare(x.Code)))} một lần — chỉ ghi cho chiếc chưa làm mã lẻ nào trong bộ; "
                      + (miss.Count > 0
-                        ? $"{line.GopDone:0.##} chiếc đã làm mã lẻ thì ghi tiếp mã lẻ còn thiếu ({string.Join(", ", miss.Select(x => $"{x.Code} thiếu {x.Thieu:0.##}"))})."
+                        ? $"{line.GopDone:0.##} chiếc đã làm mã lẻ thì ghi tiếp mã lẻ còn thiếu ({string.Join(miss.Any(x => x.NgKhac.Count > 0) ? "; " : ", ", miss.Select(x => $"{x.Code} thiếu {x.Thieu:0.##}" + NgKhacText(x.Thieu, x.NgKhac)))})."
+                          + (miss.Any(x => x.NgKhac.Count > 0) ? " Chiếc đã NG không cần làm tiếp." : "")
                         : $"{line.GopDone:0.##} chiếc đã làm đủ các mã lẻ trong bộ.");
             }
             return new WtsCapInfo { Max = line.Waiting ?? 0, Locked = (line.In ?? 0) + (gop ? line.GopDone : 0) <= 0, Code = main, Explain = ex, Hint = hint };

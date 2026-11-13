@@ -1160,6 +1160,56 @@ public static class TaroScen
         // tay: 3T chờ = 20 − 0 − max(10, 10, 7) = 10 · thiếu: 3T1 10 − 10 = 0, 3T2 0, 3T3 10 − 7 = 3
         Ok(f1.Ok && f2.Ok && f3.Ok && c3.Max == 10 && !c3.Locked && c3.Hint.Contains("(3T3 thiếu 3)") && !c3.Hint.Contains("3T1 thiếu") && !c3.Hint.Contains("3T2 thiếu"),
            "T28f HTSP nhận 20, bộ đã làm 10 (3T3 = 7): trần 3T 10, câu giải thích chỉ \"3T3 thiếu 3\" (không lấy Chờ 10 / 10 / 13 của mã lẻ)", $"{c3.Max} {c3.Locked} · {c3.Hint}");
+        // T28g [G19-3T-NGKHAC 2026-11-12] (ghi nhớ rà độc lập Gói 19 Thấp 1): chiếc NG ở mã lẻ khác → câu "thiếu" nói rõ có thể gồm chiếc đã NG; số trần giữ.
+        //   PO 25, HTSP nhận 25 · 3T1 OK 20 NG 5 · 3T2 OK 20 (5 chiếc NG ở 3T1 không làm tiếp được — ghi 3T2 tối đa 20 chiếc còn tốt) · 3T3 OK 10 → GopDone = max(25, 20, 10) = 25
+        //   tay: 3T chờ = 25 − 0 − 25 = 0 · thiếu: 3T1 25 − 25 = 0, 3T2 25 − 20 = 5 (đúng 5 chiếc NG ở 3T1), 3T3 25 − 10 = 15; mỗi mã tới min(thiếu, 5) chiếc đã NG ở 3T1
+        var d4 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 25 }, "PO-T28G"))[0];
+        await Feed(db, d4, 25);
+        var g1 = await Taro(db, d4, "3T1", "3", 20, 5); var g2 = await Taro(db, d4, "3T2", "3", 20); var g3b = await Taro(db, d4, "3T3", "3", 10);
+        var row4 = (await led.GetLedgerForDetailAsync(d4))!;
+        var c4 = HandoverLedgerService.WtsCap(row4, "TARO", "3T (NC 3)");
+        var w3 = L(row4, "3T3 (NC 3)")!.Waiting;
+        Ok(g1.Ok && g2.Ok && g3b.Ok && c4.Max == 0 && !c4.Locked && c4.Hint.Contains("3T3 thiếu 15 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)")
+           && c4.Hint.Contains("(3T2 thiếu 5 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5); 3T3 thiếu 15") && c4.Hint.EndsWith(")). Chiếc đã NG không cần làm tiếp.") && !c4.Hint.Contains("3T1 thiếu") && row4.Balanced,
+           "T28g 3T1 OK 20 NG 5, 3T2 20, 3T3 10: trần 3T 0 (giữ), câu \"3T2 thiếu 5 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)\" + 3T3 thiếu 15 (cùng ghi chú), không nêu 3T1",
+           $"{g1.Err} {g2.Err} {g3b.Err} · Max {c4.Max} · 3T3 chờ {w3} · {c4.Hint}");
+        // 3T3 vẫn ghi được 15 (trần sổ không trừ NG mã lẻ khác — số giữ như Gói 19)
+        Ok(w3 == 15, "T28g2 trần 3T3 vẫn 15 (chỉ đổi chữ, không đổi số)", $"{w3}");
+        int n4 = db.WtsProductionLogs.List.Count;
+        var x4 = await Taro(db, d4, "3T", "3", 1);
+        Ok(!x4.Ok && db.WtsProductionLogs.List.Count == n4 && (x4.Err ?? "").Contains("vượt Chưa làm 0") && (x4.Err ?? "").Contains("có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)") && (x4.Err ?? "").Contains("Chiếc đã NG không cần làm tiếp."),
+           "T28g3 lưu WTS 3T NC 3 = 1 → chặn (số giữ), lời báo máy chủ có câu \"có thể gồm tới 5 chiếc đã NG ở 3T1\" + \"Chiếc đã NG không cần làm tiếp.\"", x4.Err);
+        // T28h (rà độc lập Gói 20 Trung 2): NG ở 2 mã lẻ, mã đang thiếu có NG ở chính nó, nhánh min lấy "thiếu" (thiếu < tổng NG mã khác)
+        //   PO 20, HTSP nhận 20 · 3T1 OK 5 NG 5 · 3T2 OK 6 NG 2 · 3T3 OK 9 → GopDone = max(10, 8, 9) = 10 (mỗi lần ghi ≤ Chưa làm nhóm — NG làm giảm Chưa làm)
+        //   tay: 3T1 thiếu 0 (không nêu) · 3T2 thiếu 10 − 8 = 2, NG mã khác = 3T1 5 → "tới min(2, 5) = 2 chiếc đã NG ở 3T1 (NG 5)" (KHÔNG nêu NG của chính 3T2)
+        //        3T3 thiếu 10 − 9 = 1, NG mã khác 3T1 5 + 3T2 2 = 7 → "tới min(1, 7) = 1 chiếc đã NG ở 3T1 (NG 5) + 3T2 (NG 2)"
+        var d5 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 20 }, "PO-T28H"))[0];
+        await Feed(db, d5, 20);
+        var h1 = await Taro(db, d5, "3T1", "3", 5, 5); var h2 = await Taro(db, d5, "3T2", "3", 6, 2); var h3 = await Taro(db, d5, "3T3", "3", 9);
+        var row5 = (await led.GetLedgerForDetailAsync(d5))!;
+        var c5 = HandoverLedgerService.WtsCap(row5, "TARO", "3T (NC 3)");
+        string Part(string hint, string head) => hint.Contains(head) ? hint.Substring(hint.IndexOf(head)).Split(';')[0] : "";
+        var p32 = Part(c5.Hint, "3T2 thiếu"); var p33 = Part(c5.Hint, "3T3 thiếu");
+        Ok(h1.Ok && h2.Ok && h3.Ok && row5.Balanced && !c5.Locked && L(row5, "3T (NC 3)")!.GopDone == 10
+           && p32.StartsWith("3T2 thiếu 2 — có thể gồm tới 2 chiếc đã NG ở 3T1 (NG 5)") && !p32.Contains("3T2 (NG")
+           && p33.StartsWith("3T3 thiếu 1 — có thể gồm tới 1 chiếc đã NG ở 3T1 (NG 5) + 3T2 (NG 2)") && !c5.Hint.Contains("3T1 thiếu"),
+           "T28h NG ở 2 mã lẻ: \"3T2 thiếu 2 — … tới 2 chiếc đã NG ở 3T1 (NG 5)\" (không nêu NG của chính 3T2), \"3T3 thiếu 1 — … tới 1 chiếc (min) đã NG ở 3T1 (NG 5) + 3T2 (NG 2)\", không nêu 3T1",
+           $"{h1.Err} {h2.Err} {h3.Err} · {c5.Hint}");
+        // T28i (ca trộn): chỉ 3T1 có NG và chính 3T1 đang thiếu → 3T1 không có ghi chú, 3T3 có; có ghi chú thì nối "; "
+        //   PO 20 · 3T1 OK 5 NG 5 · 3T2 OK 15 (≤ Chưa làm 15) → GopDone 15 · 3T1 thiếu 5 (NG mã khác 0) · 3T3 thiếu 15, tới min(15, 5) = 5 chiếc đã NG ở 3T1
+        var d6 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 20 }, "PO-T28I"))[0];
+        await Feed(db, d6, 20);
+        var i1 = await Taro(db, d6, "3T1", "3", 5, 5); var i2 = await Taro(db, d6, "3T2", "3", 15);
+        var c6 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d6))!, "TARO", "3T (NC 3)");
+        Ok(i1.Ok && i2.Ok && c6.Hint.Contains("(3T1 thiếu 5; 3T3 thiếu 15 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)). Chiếc đã NG không cần làm tiếp.") && !c6.Hint.Contains("3T2 thiếu"),
+           "T28i ca trộn: 3T1 (mã có NG) thiếu 5 không ghi chú; 3T3 ghi chú NG ở 3T1; nối bằng \"; \"", $"{i1.Err} {i2.Err} · {c6.Hint}");
+        // T28j: 2 mã thiếu, không NG → nối ", " như Gói 19 (không đổi chữ cũ)
+        var d7 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 10 }, "PO-T28J"))[0];
+        await Feed(db, d7, 10);
+        var j1 = await Taro(db, d7, "3T1", "3", 10); var j2 = await Taro(db, d7, "3T2", "3", 7); var j3 = await Taro(db, d7, "3T3", "3", 8);
+        var c7 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d7))!, "TARO", "3T (NC 3)");
+        Ok(j1.Ok && j2.Ok && j3.Ok && c7.Hint.EndsWith("(3T2 thiếu 3, 3T3 thiếu 2).") && !c7.Hint.Contains("có thể gồm") && !c7.Hint.Contains("Chiếc đã NG"),
+           "T28j 2 mã thiếu, không NG: \"(3T2 thiếu 3, 3T3 thiếu 2)\" — nối \", \", không ghi chú NG", c7.Hint);
         // PO mới chưa làm gì: dòng gộp không có câu thêm, phép tính như cũ (Nhận vào, không "Nhận vào bộ")
         var d2 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 5 }, "PO-T28B"))[0];
         await Feed(db, d2, 5);

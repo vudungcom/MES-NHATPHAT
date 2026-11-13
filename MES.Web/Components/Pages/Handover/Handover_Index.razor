@@ -808,6 +808,12 @@ else
                             @if (rcl != null && !HandoverPurpose.IsOut(lp))
                             {
                                 <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
+                                @* [G19-HUYHIEU-NHAN 2026-11-12] (ghi nhớ rà độc lập Gói 19 Thấp 3) bên nhận đổi ô → huy hiệu ghi thêm ô nhận thật (bảng lần nhận bên dưới vẫn như cũ). Nguồn: CLAUDE rà độc lập Gói 19 12/11; HÙNG 12/11 20:02 *@
+                                var realCells = RealRecvCellsText(tx, rcl);
+                                if (realCells != "")
+                                {
+                                    <span class="small text-warning-emphasis" title="Bên nhận đã đổi ô khi nhận — xem cột Vào ô ở bảng lần nhận">(@realCells)</span>
+                                }
                             }
                             @if (string.IsNullOrEmpty(tx.Purpose))
                             {
@@ -2209,6 +2215,18 @@ else
             HandoverPurpose.HelpSend when c == HandoverCell.Moi => HandoverLedgerService.KhoTaroLabel,   // [KHO-TARO-THANG 2026-11-12] chỉ phiếu Kho giao thẳng Taro có ô Hàng mới
             _ => HandoverPurpose.Label(purpose)
         };
+    }
+
+    /// <summary>[G19-HUYHIEU-NHAN 2026-11-12] Ô nhận thật của các lần nhận chưa huỷ khác ô bên giao chỉ định ("" = không lần nhận nào đổi ô).
+    /// Chỉ hiển thị. Nguồn: CLAUDE rà độc lập Gói 19 12/11 (Thấp 3); HÙNG 12/11 20:02.</summary>
+    static string RealRecvCellsText(HandoverLogItem tx, string? shownCell)
+    {
+        var live = tx.Receives.Where(r => !r.IsVoided).Select(r => r.ToCell ?? tx.ToCell ?? shownCell).ToList();   // phiếu cũ không ghi ô: lần nhận không ô = ô đang hiện (rà độc lập Gói 20 vòng 3 Thấp 2)
+        var cells = live.Where(c => !string.IsNullOrEmpty(c) && c != shownCell).Distinct().ToList();
+        if (cells.Count == 0) return "";
+        var list = string.Join(", ", cells.Select(c => "ô " + HandoverCell.Label(c)));
+        // rà độc lập Gói 20 (Thấp 1): còn lần nhận vào đúng ô chỉ định → "có lần nhận vào …" (không đọc như nhận hết vào ô khác)
+        return live.Any(c => c == shownCell) ? "có lần nhận vào " + list : "nhận thật: " + list;
     }
 
     static string PurposeBadge(string p) => p switch

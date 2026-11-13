@@ -34,6 +34,13 @@
             {
                 <span class="badge bg-danger">có ô âm — xem trang Giao nhận</span>
             }
+            @* [G19-VITRI-OFF 2026-11-12] (ghi nhớ rà độc lập Gói 19 Thấp 2) PO tắt Workflow: phần mềm chỉ cảnh báo, không chặn nhập / giao vượt — ô có thể âm (rà độc lập Gói 20 vòng 2: chữ "có thể", không khẳng định nguyên nhân).
+               Nói rõ để người xem (cả khung mở từ trang WTS) không hiểu ô âm là lỗi phần mềm. Chỉ khi có ô âm (rà độc lập Gói 20 Trung 1: "lệch" tổng ≠ phôi vẫn là lỗi
+               phần mềm cần báo — giữ huy hiệu đỏ, không che). Chỉ hiển thị. Nguồn: CLAUDE rà độc lập Gói 19 12/11; HÙNG 12/11 20:02. *@
+            @if (!Row.ApplyWorkflow && w.HasNegative)
+            {
+                <span class="badge bg-warning text-dark" title="PO tắt Workflow: phần mềm chỉ cảnh báo, không chặn nhập vượt — người dùng tự kiểm số">PO tắt Workflow — ô âm có thể do nhập / giao vượt (chỉ cảnh báo, không chặn)</span>
+            }
         </div>
 
         <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:4px">
