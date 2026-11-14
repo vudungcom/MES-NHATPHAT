@@ -8,6 +8,8 @@
 #     L11b lần nhận đổi ô đã huỷ, nhận lại đúng ô → không ghi "nhận thật" · L11c nhận lẫn 2 ô → "(có lần nhận vào ô Hàng lỗi)" · L11d huỷ lần đúng ô, còn lần đổi ô → "nhận thật"
 #     L12 phiếu từ ô Hàng lỗi đã xử lý giao tiếp (Gia công → HTSP nhóm giữa, HTSP → KCS nơi phát hiện): nhãn "Giao · Hàng lỗi đã xử lý (đã sửa đạt)" + "nhận vào ô Hàng lỗi đã xử lý" (ca kiểm mới)
 #     L13 phiếu từ ô Hàng lỗi đã xử lý trả lại ô Hàng lỗi: nhãn "Giao · Hàng lỗi đã xử lý (trả lại — chưa đạt)" + "nhận vào ô Hàng lỗi" (ca kiểm mới)
+#   C [G20-CA-SHOWNCELL 2026-11-14] (PO-G21C, phiếu cũ không ghi ô — ghi thẳng DB): L11e 1 lần không ô + 1 lần ô Hàng lỗi → "(có lần nhận vào ô Hàng lỗi)";
+#     L11f chỉ lần không ô → không chữ. Đột biến bỏ "?? shownCell" phải làm L11e SAI. Nguồn: CLAUDE (sổ G20-GHI-NHO mục 2); HÙNG 14/11 08:28 OK Gói 21.
 #   V (gc01, trang WTS): nút "hàng đang ở đâu"
 #     V1 PO-G20F (Workflow OFF, có ô âm) → khung ghi "PO tắt Workflow — ô âm có thể do nhập / giao vượt (chỉ cảnh báo, không chặn)" (trước: không nói, chỉ "có ô âm")
 #     V3 PO-G20G (Workflow OFF nhưng cân, không ô âm) → không có chữ đó · V5 PO-G20L (OFF, khung lệch, không ô âm — ghi thẳng DB) → đỏ "lệch", không chữ đó · V4 PO-G20H (ô âm từ lúc OFF, nay ON) → "có ô âm", không chữ đó · V2 PO-G20 (Workflow ON) → không có chữ đó
@@ -103,6 +105,21 @@ async def main():
                "L13 HTSP trả lại Gia công từ ô Hàng lỗi đã xử lý: nhãn \"Hàng lỗi đã xử lý (trả lại — chưa đạt)\", nhận vào ô Hàng lỗi", [x for x in items if "trả lại" in x][:3])
         except Exception as e:
             ok(False, "L! pha [L] dừng giữa chừng — lỗi bấm trang", repr(e)[:400])
+
+        # [G20-CA-SHOWNCELL 2026-11-14] phiếu CŨ không ghi ô (PO-G21C, ghi thẳng DB): lần nhận không ô = ô đang hiện (Hàng mới)
+        print("[C] Lịch sử phiếu PO-G21C — phiếu cũ không ghi ô")
+        try:
+            pg = await login(b, "admin", "admin123", "/handover"); await pg.wait_for_timeout(3500)
+            await pg.locator("tr", has_text="PO-G21C").first.locator("button[title='Lịch sử phiếu']").first.click(); await pg.wait_for_timeout(2500)
+            items = await pg.locator(".mes-modal").last.evaluate(LOG_JS) or []
+            ca = [x for x in items if "phieu-cu-lan" in x]
+            cb = [x for x in items if "phieu-cu-khong-o" in x]
+            ok(len(ca) == 1 and "→ nhận vào ô Hàng mới" in ca[0] and "(có lần nhận vào ô Hàng lỗi)" in ca[0] and "nhận thật" not in ca[0],
+               "L11e phiếu cũ không ghi ô: 1 lần nhận không ô + 1 lần ô Hàng lỗi → \"(có lần nhận vào ô Hàng lỗi)\" (lần không ô tính là ô đang hiện, không ghi \"nhận thật\")", ca or items[:4])
+            ok(len(cb) == 1 and "→ nhận vào ô Hàng mới" in cb[0] and "nhận thật" not in cb[0] and "có lần nhận vào" not in cb[0],
+               "L11f phiếu cũ chỉ có lần nhận không ô → huy hiệu không có chữ thêm", cb or items[:4])
+        except Exception as e:
+            ok(False, "C! pha [C] dừng giữa chừng — lỗi bấm trang", repr(e)[:400])
 
         print("[V] trang WTS (gc01): khung Đang ở đâu với PO tắt Workflow")
         try:

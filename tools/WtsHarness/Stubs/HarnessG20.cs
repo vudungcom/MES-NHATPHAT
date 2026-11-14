@@ -159,10 +159,30 @@ public static class HarnessG20
             await Must(svc.IssueSpecialAsync(lid, "GC", "HTSP", 2, admin.UserId, HandoverPurpose.HelpSend, fromNC: "NC01", toNC: "NC02", notes: "giao theo NC"), "L: GC giao HTSP theo NC 2");
             await Must(svc.ReceiveAsync(Last(), 2, 0, null, admin.UserId), "L: HTSP nhận 2");
             db.HandoverTransactions.Add(new HandoverTransaction { KhPlanDetailId = lid, FromGroupCode = "HTSP", ToGroupCode = "KHO", QtyIssued = 2, Purpose = HandoverPurpose.HelpReturn,
-                FromNC = "NC02", Status = "COMPLETED", IssuedBy = admin.UserId, IssuedAt = t0.AddMinutes(80), Notes = "harness: ghi thẳng (máy chủ chặn)" });
+                FromNC = "NC02", Status = "COMPLETED", IssuedBy = admin.UserId, IssuedAt = DateTime.Now.AddSeconds(1), Notes = "harness: ghi thẳng (máy chủ chặn)" });   // [G20-CA-SHOWNCELL 2026-11-14] giờ sau phiếu thật (trước t0+80 phút — sớm hơn phiếu lập bằng hàm thật, ghi nhớ G20-GHI-NHO 4)
             await db.SaveChangesAsync(); db.Fixup();
-            db.HandoverReceives.Add(new HandoverReceive { HandoverTxId = Last(), QtyOk = 2, QtyNg = 0, ReceivedBy = admin.UserId, ReceivedAt = t0.AddMinutes(81), CreatedAt = t0.AddMinutes(81) });
+            db.HandoverReceives.Add(new HandoverReceive { HandoverTxId = Last(), QtyOk = 2, QtyNg = 0, ReceivedBy = admin.UserId, ReceivedAt = DateTime.Now.AddSeconds(2), CreatedAt = DateTime.Now.AddSeconds(2) });
             await db.SaveChangesAsync(); db.Fixup();
+            // PO-G21C — [G20-CA-SHOWNCELL 2026-11-14] phiếu CŨ không ghi ô (trước [GN-CELL] 24/10: FromCell / ToCell null, lần nhận không ô) — ghi thẳng DB như dữ liệu cũ.
+            //   Huy hiệu Lịch sử phiếu (RealRecvCellsText nhánh "?? shownCell"): lần nhận không ô = ô đang hiện (Hàng mới).
+            //   Phiếu A: 1 lần không ô + 1 lần ô Hàng lỗi → "(có lần nhận vào ô Hàng lỗi)"; phiếu B: chỉ lần không ô → không chữ.
+            //   Nguồn: CLAUDE (sổ G20-GHI-NHO mục 2 — nhánh chưa có ca kiểm); HÙNG 14/11 08:28 OK Gói 21.
+            var cc = NewPo("KH-G21C", "PO-G21C", 6, false); await db.SaveChangesAsync(); db.Fixup();
+            int cid = cc.KhPlanDetailId;
+            await Must(svc.IssueByCellAsync(cid, "KHO", "GC", 6, admin.UserId, "MOI", false, "MOI"), "C: Kho giao GC 6");
+            await Must(svc.ReceiveAsync(Last(), 6, 0, null, admin.UserId), "C: GC nhận 6");
+            Wts(cid, "GC", "NC01", null, 90, 6); Wts(cid, "GC", "NC02", null, 100, 6); await db.SaveChangesAsync(); db.Fixup();
+            foreach (var (note, cells) in new[] { ("phieu-cu-lan", new string?[] { null, HandoverCell.Loi }), ("phieu-cu-khong-o", new string?[] { null }) })
+            {
+                db.HandoverTransactions.Add(new HandoverTransaction { KhPlanDetailId = cid, FromGroupCode = "GC", ToGroupCode = "HTSP", QtyIssued = cells.Length, Purpose = HandoverPurpose.New,
+                    Status = "COMPLETED", IssuedBy = admin.UserId, IssuedAt = DateTime.Now, Notes = note });
+                await db.SaveChangesAsync(); db.Fixup();
+                long tc = Last();
+                foreach (var c in cells)
+                    db.HandoverReceives.Add(new HandoverReceive { HandoverTxId = tc, QtyOk = 1, QtyNg = 0, ToCell = c, ToCellReason = c == null ? null : "o loi (du lieu cu)",
+                        ReceivedBy = admin.UserId, ReceivedAt = DateTime.Now, CreatedAt = DateTime.Now });
+                await db.SaveChangesAsync(); db.Fixup();
+            }
         }
         var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-G20");
         int did = det.KhPlanDetailId;

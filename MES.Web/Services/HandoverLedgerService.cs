@@ -3294,6 +3294,26 @@ namespace MES.Web.Services
                     : "Nhận vào mã = hàng nhận vào sản xuất của nhóm − chiếc đã rời nhóm (NG ở mã khác, trả hàng lỗi) mà mã này chưa làm; không vượt Chưa làm của cả nhóm.",
                 Result = line.Waiting ?? 0
             };
+            // [G20-NOTE-BO 2026-11-14] Mã thuộc bộ gộp (vd 3T thay 3T1 + 3T2 + 3T3) — sổ tính theo bộ (FillWaitLines [TARO-3T-GOP]): NG ở mã CÙNG bộ là NG
+            //   của chính bộ, không tính "chiếc đã rời"; mã lẻ trừ thêm chiếc đã ghi mã gộp, mã gộp trừ chiếc đã làm mã lẻ. Câu cũ "trừ chiếc đã rời (NG ở mã khác)"
+            //   nói sai với NG cùng bộ. Chỉ đổi chữ (Note), số trần giữ nguyên. Nguồn: CLAUDE (bàn giao 13/11 ghi nhớ Thấp — Explain.Note mã lẻ Taro bộ gộp); HÙNG 14/11 08:28 OK Gói 21.
+            if (pg != "GC" && line.GopUnit != null)
+            {
+                var unit = G.Steps.Where(x => x.Pg == pg && x.GopUnit == line.GopUnit && x.LamHoNc == line.LamHoNc && !x.IsPrep).ToList();
+                static string Bo(string k) { var i = k.IndexOf(" (NC ", StringComparison.Ordinal); return i > 0 ? k[..i] : k; }   // bỏ "(NC x)" cho gọn (như Bare dưới)
+                var gName = unit.FirstOrDefault(x => x.IsGop)?.Code is string gc ? Bo(gc) : null;
+                var pNames = unit.Where(x => !x.IsGop).Select(x => Bo(x.Code)).ToList();
+                if (gName != null && pNames.Count > 0)
+                    ex.Note = (line.LamHoNc != null ? $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công) — vào = hàng Gia công giao theo NC cho HTSP làm NC này. " : "")
+                            + $"Mã {Bo(line.Code)} thuộc bộ {gName} = {string.Join(" + ", pNames)}: "
+                            + (line.IsGop
+                               ? (line.GopDone > 0   // rà độc lập Gói 21 vòng 1 Thấp 2: theo số hạng "Nhận vào bộ"; vòng 2 Thấp 2: chưa làm mã lẻ nào → phép tính chỉ "Nhận vào"
+                                  ? $"nhận vào bộ = hàng vào sản xuất − chiếc đã rời nhóm (NG ở mã ngoài bộ, trả hàng lỗi) mà bộ chưa làm; mã {gName} trừ thêm chiếc đã làm mã lẻ trong bộ."
+                                  : $"nhận vào {gName} = hàng vào sản xuất − chiếc đã rời nhóm (NG ở mã ngoài bộ, trả hàng lỗi) mà bộ chưa làm (chưa có chiếc nào làm mã lẻ trong bộ).")
+                               : $"nhận vào {Bo(line.Code)} = hàng vào sản xuất − chiếc đã ghi mã {gName} − chiếc đã rời nhóm (NG ở mã ngoài bộ, trả hàng lỗi) mà mã này chưa làm.")
+                            + " NG ở mã cùng bộ là NG của chính bộ (không tính là chiếc đã rời). "
+                            + (line.LamHoNc != null ? "Không tính vào Chưa làm / Đã làm của HTSP." : "Không vượt Chưa làm của cả nhóm.");
+            }
             // [WTS-CAP-TEXT 2026-10-31] chỉ đổi chữ (số giữ nguyên): "OK" / "NG" dễ hiểu nhầm là số đang nhập → "đã ghi WTS OK / NG"
             // [WTS-3T-BAO 2026-11-12] mã gộp (vd 3T thay cả bộ 3T1 + 3T2 + 3T3): chiếc đã làm mã lẻ trong bộ không ghi mã gộp được — trước câu báo
             //   "chưa nhận hàng (Nhận vào 0 …)" dù nhóm đã nhận (khách test 12/11 TH9, PO 0002416654). Chỉ đổi chữ: số trần (Waiting) giữ nguyên.
@@ -3321,9 +3341,11 @@ namespace MES.Web.Services
                 {
                     var tong = ng.Sum(y => y.Ng);
                     if (tong <= 0) return "";
-                    return $" — có thể gồm tới {Math.Min(thieu, tong):0.##} chiếc đã NG ở {string.Join(" + ", ng.Select(y => $"{y.Code} (NG {y.Ng:0.##})"))}";   // rà độc lập Gói 20 (vòng 1 Thấp 2, vòng 2 Thấp 2): "(NG k)", nối " + ", vế "chiếc đã NG không cần làm tiếp" nói 1 lần ở cuối
+                    // [G20-CHU-WTSCAP 2026-11-14] bớt dấu " — " (rà độc lập Gói 20 ghi nhớ Thấp 3): ", trong đó có thể có tới m chiếc đã NG ở …" — chỉ đổi chữ, số giữ nguyên.
+                    //   Nguồn: CLAUDE (sổ G20-GHI-NHO mục 3); HÙNG 14/11 08:28 OK Gói 21.
+                    return $", trong đó có thể có tới {Math.Min(thieu, tong):0.##} chiếc đã NG ở {string.Join(" + ", ng.Select(y => $"{y.Code} (NG {y.Ng:0.##})"))}";   // rà độc lập Gói 20 (vòng 1 Thấp 2, vòng 2 Thấp 2): "(NG k)", nối " + ", vế "chiếc đã NG không cần làm tiếp" nói 1 lần ở cuối
                 }
-                hint = $"Mã {line.Code} làm cả bộ {string.Join(" + ", parts.Select(x => Bare(x.Code)))} một lần — chỉ ghi cho chiếc chưa làm mã lẻ nào trong bộ; "
+                hint = $"Mã {line.Code} làm cả bộ {string.Join(" + ", parts.Select(x => Bare(x.Code)))} một lần: chỉ ghi cho chiếc chưa làm mã lẻ nào trong bộ; "   // [G20-CHU-WTSCAP] "—" → ":"
                      + (miss.Count > 0
                         ? $"{line.GopDone:0.##} chiếc đã làm mã lẻ thì ghi tiếp mã lẻ còn thiếu ({string.Join(miss.Any(x => x.NgKhac.Count > 0) ? "; " : ", ", miss.Select(x => $"{x.Code} thiếu {x.Thieu:0.##}" + NgKhacText(x.Thieu, x.NgKhac)))})."
                           + (miss.Any(x => x.NgKhac.Count > 0) ? " Chiếc đã NG không cần làm tiếp." : "")

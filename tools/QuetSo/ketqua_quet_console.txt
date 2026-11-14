@@ -1,17 +1,20 @@
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 12/11/2026 16:52:31
+QUÉT SỔ (chỉ đọc) · DB MES · 14/11/2026 11:21:34
 PO: 116 · dòng WTS còn hiệu lực: 1242 (dòng cũ chưa có QtyOk: 0)
-PO có vấn đề: 33 · tổng phát hiện: 71
+PO có vấn đề: 33 · tổng phát hiện: 72
   CANH_BAO_SO          8 dòng · 4 PO
   LAMHO_TARO          17 dòng · 16 PO
   MA_TRUNG            22 dòng · 15 PO
   O_AM                15 dòng · 10 PO
+  PHIEU_CHO_O_DAT      1 dòng · 1 PO
   WTS_VUOT_TRAN        9 dòng · 8 PO
   Vụ lỗi cân (VU_LECH): mọi vụ cân, khớp ô sổ + khung lỗi
   Huỷ phần chưa nhận từng lần (CLOSE_LECH): bảng HandoverTxCloses khớp mọi phiếu
   NC Taro khớp nhiều NC Gia công (TARO_NC_LECH, chỉ để biết — sửa Part Master): 0 · 0 PO
   Phiếu Kho giao thẳng Taro / Taro trả phôi lỗi lạ (KHO_TARO_LA): không có
+  Phiếu chờ nhận chỉ định ô đạt từ ô Hàng lỗi / Hàng sửa, PO bật Workflow (PHIEU_CHO_O_DAT, lọc trước khi lên máy khách): 1 phiếu · 1 PO
+  Trả về theo NC tới nhóm khác Gia công (TRA_VE_NHOM_LA, ghi ngoài phần mềm): không có
   Taro làm hộ (LAMHO_TARO, chỉ để biết): 17 đoạn · 16 PO
   Số lẻ (SO_LE, B3): không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)
 
@@ -99,6 +102,7 @@ PO có vấn đề: 33 · tổng phát hiện: 71
    [LAMHO_TARO] Taro làm hộ NC 3 (NC 2 → NC 4): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T (NC 3) OK 0 NG 0 chờ 0, 3T1 (NC 3) OK 0 NG 0 chờ 0, 3T2 (NC 3) OK 0 NG 0 chờ 0, 3T3 (NC 3) OK 0 NG 0 chờ 0, 3T (NC 3) OK 0 NG 0 chờ 0
 ── PO 0003803032 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2039)
    [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
+   [PHIEU_CHO_O_DAT] phiếu #10043 Kho → Gia công lấy từ ô Hàng lỗi chỉ định ô Hàng lỗi đã xử lý, còn chờ nhận 1 (lập 26/10 09:18) — Workflow ON không nhận vào ô đạt: bên nhận nhận ô Hàng lỗi, hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa
 ── PO 0003834055 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2038)
    [LAMHO_TARO] Taro làm hộ NC 4 (NC 3 → NC 5): HTSP nhận theo NC 0 · OK bộ Taro 0 · đã trả về 0 · chiếc làm hộ bị lỗi đang giữ 0 · mã: 2T OK 0 NG 0 chờ 0, 3T1 OK 0 NG 0 chờ 0, 3T2 OK 0 NG 0 chờ 0, 3T3 OK 0 NG 0 chờ 0, 3T OK 0 NG 0 chờ 0
 ── PO 0003880465 · KH KH-20261023-0002 · 4A-PT9820010 · Quang Minh Production Trading Co., Ltd · Workflow ON (KhPlanDetailId 2040)
@@ -122,4 +126,4 @@ PO có vấn đề: 33 · tổng phát hiện: 71
 
 ── Part Master: 0 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1112165231.txt
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1114112134.txt

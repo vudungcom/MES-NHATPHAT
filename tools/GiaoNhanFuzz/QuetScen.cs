@@ -210,6 +210,83 @@ public static class QuetScen
             var sw1 = new StringWriter(); QuetCore.Write(r1, sw1, "GIA");
             Ok(sw1.ToString().Contains("Số lẻ (SO_LE, B3): CÓ"), "File kết quả báo CÓ số lẻ");
         }
+        // [QUET-PHIEU-CHO 2026-11-14] Q6: (a) phiếu chờ nhận chỉ định ô đạt từ ô Hàng lỗi trên PO bật Workflow → PHIEU_CHO_O_DAT (OFF không báo, nhận dở vẫn báo phần còn,
+        //   nhận xong không báo, phiếu Hàng mới thường không báo); (b) "Trả về Gia công theo NC" ghi thẳng tới Kho → TRA_VE_NHOM_LA, tới Gia công không báo.
+        //   Nguồn: CLAUDE (sổ G16-PHIEU-CHO + G20-GHI-NHO 1); HÙNG 14/11 08:28 OK Gói 21.
+        Console.WriteLine("[Q6] [QUET-PHIEU-CHO 14/11] phiếu chờ nhận chỉ định ô đạt từ ô Hàng lỗi (PHIEU_CHO_O_DAT) + trả về theo NC tới nhóm lạ (TRA_VE_NHOM_LA)");
+        {
+            var db = Seed(false); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var kho = new KhoVatLieuService(db, new UserService(null));
+            WtsSvcHelp.Reset();
+            await kho.SaveKhoInputAsync(1, DateTime.Now, 16, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            Ok((await svc.IssueByCellAsync(1, "KHO", "GC", 16, 1, "MOI", false, "MOI", null, "NC1")).Ok, "Kho → GC 16");
+            Ok((await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 16, 0, null, 1)).Ok, "GC nhận 16");
+            Ok((await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC1", null, 12, 4, 1, 1)).Ok, "WTS NC1 OK 12 NG 4 (sinh vụ)");
+            Ok((await WtsSvcHelp.SaveAsync(db, 1, "GC", "NC2", null, 4, 0, 1)).Ok, "WTS NC2 OK 4");
+            var vu = db.NgCases.List.Last().NgCaseId;
+            var a = await svc.IssueByCellAsync(1, "GC", "HTSP", 3, 1, "LOI", false, "XL", ngCaseId: vu);
+            var txA = db.HandoverTransactions.List.Last().HandoverTxId;
+            var cm = await svc.IssueByCellAsync(1, "GC", "HTSP", 1, 1, "LOI", false, "MOI", ngCaseId: vu);
+            var txC = db.HandoverTransactions.List.Last().HandoverTxId;
+            var bm = await svc.IssueByCellAsync(1, "GC", "HTSP", 4, 1, "MOI", false, "MOI");
+            Ok(a.Ok && cm.Ok && bm.Ok, "Workflow OFF: GC → HTSP 3 từ ô Hàng lỗi chỉ định ô Hàng lỗi đã xử lý + 1 từ ô Hàng lỗi chỉ định ô Hàng mới + phiếu Hàng mới 4 (cả 3 chờ nhận)", $"{a.Error} {cm.Error} {bm.Error}");
+            var r0 = await QuetCore.ScanAsync(db, led);
+            Ok(!r0.Findings.Any(f => f.Kind == QuetCore.PhieuChoODat || f.Kind == QuetCore.TraVeLa), "Q6a OFF: không báo PHIEU_CHO_O_DAT (OFF nhận vào ô đạt được)",
+               string.Join(" | ", r0.Findings.Select(f => $"[{f.Kind}] {f.Detail}")));
+            db.KhPlans.List.First().ApplyWorkflow = true; db.Fixup();
+            var r1 = await QuetCore.ScanAsync(db, led);
+            var pc = r1.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat).ToList();
+            Ok(pc.Count == 2 && pc.Any(f => f.Detail.StartsWith($"phiếu #{txA} Gia công → HTSP lấy từ ô Hàng lỗi chỉ định ô Hàng lỗi đã xử lý, còn chờ nhận 3") && f.Po == "PO1")
+               && pc.Any(f => f.Detail.StartsWith($"phiếu #{txC} Gia công → HTSP lấy từ ô Hàng lỗi chỉ định ô Hàng mới, còn chờ nhận 1")),
+               "Q6b bật ON: đúng 2 phiếu (ô chỉ định Hàng lỗi đã xử lý + Hàng mới; phiếu Hàng mới thường không báo), ghi ô lấy / ô chỉ định / còn chờ nhận", string.Join(" | ", pc.Select(f => f.Detail)));
+            var rv = await svc.ReceiveAsync(txA, 0, 1, null, 1, toCell: HandoverCell.Loi, toCellReason: "workflow on");
+            var r2 = await QuetCore.ScanAsync(db, led);
+            var pc2 = r2.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat && f.Detail.StartsWith($"phiếu #{txA} ")).ToList();
+            Ok(rv.Ok && pc2.Count == 1 && pc2[0].Detail.Contains("còn chờ nhận 2"), "Q6c HTSP nhận 1 vào ô Hàng lỗi → còn báo phần chờ 2", $"{rv.Error} · " + string.Join(" | ", pc2.Select(f => f.Detail)));
+            var rv2 = await svc.ReceiveAsync(txA, 0, 2, null, 1, toCell: HandoverCell.Loi, toCellReason: "workflow on");
+            var r3 = await QuetCore.ScanAsync(db, led);
+            Ok(rv2.Ok && r3.Findings.Count(f => f.Kind == QuetCore.PhieuChoODat) == 1 && r3.Findings.Any(f => f.Kind == QuetCore.PhieuChoODat && f.Detail.StartsWith($"phiếu #{txC} ")),
+               "Q6d phiếu #A nhận hết vào ô Hàng lỗi → hết báo, còn phiếu ô Hàng mới", rv2.Error + " · " + string.Join(" | ", r3.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat).Select(f => f.Detail)));
+            // Q6f–Q6h (rà độc lập Gói 21 Trung 1 + Thấp 7): phiếu cũ không ghi ô (ToCell NULL, ô chỉ định suy theo loại phiếu như máy chủ), phiếu lấy từ ô Hàng sửa,
+            //   lần nhận đã huỷ làm số chờ tăng lại — ghi thẳng DB (dữ liệu cũ / hiếm), chỉ để thử bộ quét
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 9701, KhPlanDetailId = 1, FromGroupCode = "GC", ToGroupCode = "HTSP", QtyIssued = 1, Purpose = HandoverPurpose.RepairReturn, Status = "PENDING", IssuedBy = 1, IssuedAt = DateTime.Now });
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 9702, KhPlanDetailId = 1, FromGroupCode = "GC", ToGroupCode = "HTSP", QtyIssued = 1, Purpose = HandoverPurpose.RepairReturn, FromCell = HandoverCell.Sua, ToCell = HandoverCell.Moi, Status = "PENDING", IssuedBy = 1, IssuedAt = DateTime.Now });
+            db.Fixup();
+            var rf = await QuetCore.ScanAsync(db, led);
+            var pf = rf.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat).ToList();
+            Ok(pf.Any(f => f.Detail.StartsWith("phiếu #9701 ") && f.Detail.Contains("chỉ định ô Hàng lỗi đã xử lý (phiếu cũ không ghi ô), còn chờ nhận 1")),
+               "Q6f phiếu \"Trả hàng đã sửa\" cũ không ghi ô (ToCell NULL) → ô chỉ định suy như máy chủ (Hàng lỗi đã xử lý) → báo", string.Join(" | ", pf.Select(f => f.Detail)));
+            Ok(pf.Any(f => f.Detail.StartsWith("phiếu #9702 Gia công → HTSP lấy từ ô Hàng sửa chỉ định ô Hàng mới, còn chờ nhận 1")),
+               "Q6g phiếu lấy từ ô Hàng sửa chỉ định ô Hàng mới → báo", string.Join(" | ", pf.Select(f => f.Detail)));
+            foreach (var id in new long[] { 9701, 9702 }) db.HandoverTransactions.List.First(x => x.HandoverTxId == id).IsVoided = true;
+            var rcC = db.HandoverReceives.List.Where(x => x.HandoverTxId == txC).ToList();
+            if (rcC.Count == 0)
+            {
+                Ok((await svc.ReceiveAsync(txC, 0, 1, null, 1, toCell: HandoverCell.Loi, toCellReason: "workflow on")).Ok, "HTSP nhận hết phiếu ô Hàng mới vào ô Hàng lỗi");
+                rcC = db.HandoverReceives.List.Where(x => x.HandoverTxId == txC).ToList();
+            }
+            var rg = await QuetCore.ScanAsync(db, led);
+            Ok(!rg.Findings.Any(f => f.Kind == QuetCore.PhieuChoODat), "Q6h(1) nhận hết + 2 phiếu ghi thẳng đã huỷ → không báo", string.Join(" | ", rg.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat).Select(f => f.Detail)));
+            foreach (var r in rcC) r.IsVoided = true;
+            db.HandoverTransactions.List.First(x => x.HandoverTxId == txC).Status = "PENDING"; db.Fixup();
+            var rh = await QuetCore.ScanAsync(db, led);
+            var ph = rh.Findings.Where(f => f.Kind == QuetCore.PhieuChoODat).ToList();
+            Ok(ph.Count == 1 && ph[0].Detail.StartsWith($"phiếu #{txC} ") && ph[0].Detail.Contains("còn chờ nhận 1"), "Q6h(2) lần nhận bị huỷ → phiếu chờ lại, số chờ tính lại 1 (không tính lần nhận đã huỷ)",
+               string.Join(" | ", ph.Select(f => f.Detail)));
+            foreach (var r in rcC) r.IsVoided = false;
+            db.HandoverTransactions.List.First(x => x.HandoverTxId == txC).Status = "COMPLETED"; db.Fixup();
+            // (b) ghi thẳng: HTSP → Kho "Trả về Gia công theo NC" (máy chủ chặn) + HTSP → GC (đúng đường) — chỉ dòng tới Kho bị báo
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 9601, KhPlanDetailId = 1, FromGroupCode = "HTSP", ToGroupCode = "KHO", QtyIssued = 1, Purpose = HandoverPurpose.HelpReturn, FromNC = "NC2", Status = "COMPLETED", IssuedBy = 1, IssuedAt = DateTime.Now });
+            db.HandoverTransactions.List.Add(new HandoverTransaction { HandoverTxId = 9602, KhPlanDetailId = 1, FromGroupCode = "HTSP", ToGroupCode = "GC", QtyIssued = 1, Purpose = HandoverPurpose.HelpReturn, FromNC = "NC2", Status = "COMPLETED", IssuedBy = 1, IssuedAt = DateTime.Now });
+            db.Fixup();
+            var r4 = await QuetCore.ScanAsync(db, led);
+            var tv = r4.Findings.Where(f => f.Kind == QuetCore.TraVeLa).ToList();
+            Ok(tv.Count == 1 && tv[0].Detail.StartsWith("phiếu #9601 HTSP → Kho \"Trả về Gia công theo NC\" 1"), "Q6e trả về theo NC tới Kho (ghi thẳng) → TRA_VE_NHOM_LA; tới Gia công không báo",
+               string.Join(" | ", tv.Select(f => f.Detail)));
+            var sw = new StringWriter(); QuetCore.Write(r4, sw, "GIA"); var tx = sw.ToString();
+            Ok(tx.Contains("(PHIEU_CHO_O_DAT, lọc trước khi lên máy khách): 0 phiếu · 0 PO") && tx.Contains("(TRA_VE_NHOM_LA, ghi ngoài phần mềm): CÓ — báo Claude"),
+               "File kết quả in 2 mục mới", string.Join(" / ", tx.Split('\n').Where(l => l.Contains("PHIEU_CHO") || l.Contains("TRA_VE"))));
+        }
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

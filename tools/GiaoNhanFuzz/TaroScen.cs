@@ -466,6 +466,13 @@ public static class TaroScen
         Ok(a1.Ok && a2.Ok && a3.Ok && a4.Ok && a5.Ok && run.Done == 7 && L(row, "3T1")!.Waiting == 1 && L(row, "3T")!.Waiting == 1 && L(row, "2T (NC 3)")!.Waiting == 0,
            "T16b WTS Taro NC 3: 2T 9, 3T OK 4 NG 1, 3T1/3T2/3T3 3 → lưu được; OK bộ = min(9, 4 + 3) = 7; chờ 3T1 = 1, 3T = 1, 2T = 0",
            $"{a1.Err} {a2.Err} {a3.Err} done={run.Done} " + string.Join(" · ", row.G("HTSP").Steps.Where(s => !s.IsPrep).Select(s => $"{s.Code}={s.Waiting}")));
+        {   // T16q [G20-NOTE-BO 2026-11-14] mã Taro làm hộ thuộc bộ gộp: lời giải thích nói làm hộ + theo bộ (không "chiếc đã NG ở mã khác cùng NC")
+            var nk = HandoverLedgerService.WtsCap(row, "TARO", "3T1").Explain.Note;
+            var nk2 = HandoverLedgerService.WtsCap(row, "TARO", "2T (NC 3)").Explain.Note;
+            Ok(nk.StartsWith("Taro làm hộ NC03") && nk.Contains("thuộc bộ 3T = 3T1 + 3T2 + 3T3") && nk.Contains("NG ở mã cùng bộ là NG của chính bộ") && nk.EndsWith("Không tính vào Chưa làm / Đã làm của HTSP.")
+               && nk2.Contains("chiếc đã NG ở mã khác cùng NC mà mã này chưa làm") && !nk2.Contains("thuộc bộ"),
+               "T16q lời giải thích mã làm hộ: 3T1 (bộ 3T) nói làm hộ + theo bộ; 2T giữ câu làm hộ cũ", $"3T1: {nk}\n2T: {nk2}");
+        }
         Ok(row.G("HTSP").ChuaLam == 0 && row.G("HTSP").DaLam == 0 && row.G("HTSP").NgCuoi == 0 && row.G("HTSP").LoiGiu == 0 && row.G("HTSP").LamHoGiu == 9
            && row.LamHoNgHeld("HTSP") == 1 && ngCase != null && row.CaseHeld(ngCase.Value, "HTSP", HandoverCell.LamHo) == 1,
            "T16c 4 số HTSP không đổi (Chưa làm 0, Đã làm 0, NG 0, Tồn hàng lỗi 0); chiếc NG nằm trong Tồn hàng giao theo NC 9, vụ giữ ô làm hộ 1 (câu 2)",
@@ -1169,16 +1176,16 @@ public static class TaroScen
         var row4 = (await led.GetLedgerForDetailAsync(d4))!;
         var c4 = HandoverLedgerService.WtsCap(row4, "TARO", "3T (NC 3)");
         var w3 = L(row4, "3T3 (NC 3)")!.Waiting;
-        Ok(g1.Ok && g2.Ok && g3b.Ok && c4.Max == 0 && !c4.Locked && c4.Hint.Contains("3T3 thiếu 15 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)")
-           && c4.Hint.Contains("(3T2 thiếu 5 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5); 3T3 thiếu 15") && c4.Hint.EndsWith(")). Chiếc đã NG không cần làm tiếp.") && !c4.Hint.Contains("3T1 thiếu") && row4.Balanced,
-           "T28g 3T1 OK 20 NG 5, 3T2 20, 3T3 10: trần 3T 0 (giữ), câu \"3T2 thiếu 5 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)\" + 3T3 thiếu 15 (cùng ghi chú), không nêu 3T1",
+        Ok(g1.Ok && g2.Ok && g3b.Ok && c4.Max == 0 && !c4.Locked && c4.Hint.Contains("3T3 thiếu 15, trong đó có thể có tới 5 chiếc đã NG ở 3T1 (NG 5)")
+           && c4.Hint.Contains("(3T2 thiếu 5, trong đó có thể có tới 5 chiếc đã NG ở 3T1 (NG 5); 3T3 thiếu 15") && c4.Hint.EndsWith(")). Chiếc đã NG không cần làm tiếp.") && !c4.Hint.Contains("3T1 thiếu") && row4.Balanced,
+           "T28g 3T1 OK 20 NG 5, 3T2 20, 3T3 10: trần 3T 0 (giữ), câu \"3T2 thiếu 5, trong đó có thể có tới 5 chiếc đã NG ở 3T1 (NG 5)\" + 3T3 thiếu 15 (cùng ghi chú), không nêu 3T1",
            $"{g1.Err} {g2.Err} {g3b.Err} · Max {c4.Max} · 3T3 chờ {w3} · {c4.Hint}");
         // 3T3 vẫn ghi được 15 (trần sổ không trừ NG mã lẻ khác — số giữ như Gói 19)
         Ok(w3 == 15, "T28g2 trần 3T3 vẫn 15 (chỉ đổi chữ, không đổi số)", $"{w3}");
         int n4 = db.WtsProductionLogs.List.Count;
         var x4 = await Taro(db, d4, "3T", "3", 1);
-        Ok(!x4.Ok && db.WtsProductionLogs.List.Count == n4 && (x4.Err ?? "").Contains("vượt Chưa làm 0") && (x4.Err ?? "").Contains("có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)") && (x4.Err ?? "").Contains("Chiếc đã NG không cần làm tiếp."),
-           "T28g3 lưu WTS 3T NC 3 = 1 → chặn (số giữ), lời báo máy chủ có câu \"có thể gồm tới 5 chiếc đã NG ở 3T1\" + \"Chiếc đã NG không cần làm tiếp.\"", x4.Err);
+        Ok(!x4.Ok && db.WtsProductionLogs.List.Count == n4 && (x4.Err ?? "").Contains("vượt Chưa làm 0") && (x4.Err ?? "").Contains("có thể có tới 5 chiếc đã NG ở 3T1 (NG 5)") && (x4.Err ?? "").Contains("Chiếc đã NG không cần làm tiếp."),
+           "T28g3 lưu WTS 3T NC 3 = 1 → chặn (số giữ), lời báo máy chủ có câu \"có thể có tới 5 chiếc đã NG ở 3T1\" + \"Chiếc đã NG không cần làm tiếp.\"", x4.Err);
         // T28h (rà độc lập Gói 20 Trung 2): NG ở 2 mã lẻ, mã đang thiếu có NG ở chính nó, nhánh min lấy "thiếu" (thiếu < tổng NG mã khác)
         //   PO 20, HTSP nhận 20 · 3T1 OK 5 NG 5 · 3T2 OK 6 NG 2 · 3T3 OK 9 → GopDone = max(10, 8, 9) = 10 (mỗi lần ghi ≤ Chưa làm nhóm — NG làm giảm Chưa làm)
         //   tay: 3T1 thiếu 0 (không nêu) · 3T2 thiếu 10 − 8 = 2, NG mã khác = 3T1 5 → "tới min(2, 5) = 2 chiếc đã NG ở 3T1 (NG 5)" (KHÔNG nêu NG của chính 3T2)
@@ -1191,9 +1198,9 @@ public static class TaroScen
         string Part(string hint, string head) => hint.Contains(head) ? hint.Substring(hint.IndexOf(head)).Split(';')[0] : "";
         var p32 = Part(c5.Hint, "3T2 thiếu"); var p33 = Part(c5.Hint, "3T3 thiếu");
         Ok(h1.Ok && h2.Ok && h3.Ok && row5.Balanced && !c5.Locked && L(row5, "3T (NC 3)")!.GopDone == 10
-           && p32.StartsWith("3T2 thiếu 2 — có thể gồm tới 2 chiếc đã NG ở 3T1 (NG 5)") && !p32.Contains("3T2 (NG")
-           && p33.StartsWith("3T3 thiếu 1 — có thể gồm tới 1 chiếc đã NG ở 3T1 (NG 5) + 3T2 (NG 2)") && !c5.Hint.Contains("3T1 thiếu"),
-           "T28h NG ở 2 mã lẻ: \"3T2 thiếu 2 — … tới 2 chiếc đã NG ở 3T1 (NG 5)\" (không nêu NG của chính 3T2), \"3T3 thiếu 1 — … tới 1 chiếc (min) đã NG ở 3T1 (NG 5) + 3T2 (NG 2)\", không nêu 3T1",
+           && p32.StartsWith("3T2 thiếu 2, trong đó có thể có tới 2 chiếc đã NG ở 3T1 (NG 5)") && !p32.Contains("3T2 (NG")
+           && p33.StartsWith("3T3 thiếu 1, trong đó có thể có tới 1 chiếc đã NG ở 3T1 (NG 5) + 3T2 (NG 2)") && !c5.Hint.Contains("3T1 thiếu"),
+           "T28h NG ở 2 mã lẻ: \"3T2 thiếu 2, trong đó … tới 2 chiếc đã NG ở 3T1 (NG 5)\" (không nêu NG của chính 3T2), \"3T3 thiếu 1, trong đó … tới 1 chiếc (min) đã NG ở 3T1 (NG 5) + 3T2 (NG 2)\", không nêu 3T1",
            $"{h1.Err} {h2.Err} {h3.Err} · {c5.Hint}");
         // T28i (ca trộn): chỉ 3T1 có NG và chính 3T1 đang thiếu → 3T1 không có ghi chú, 3T3 có; có ghi chú thì nối "; "
         //   PO 20 · 3T1 OK 5 NG 5 · 3T2 OK 15 (≤ Chưa làm 15) → GopDone 15 · 3T1 thiếu 5 (NG mã khác 0) · 3T3 thiếu 15, tới min(15, 5) = 5 chiếc đã NG ở 3T1
@@ -1201,21 +1208,40 @@ public static class TaroScen
         await Feed(db, d6, 20);
         var i1 = await Taro(db, d6, "3T1", "3", 5, 5); var i2 = await Taro(db, d6, "3T2", "3", 15);
         var c6 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d6))!, "TARO", "3T (NC 3)");
-        Ok(i1.Ok && i2.Ok && c6.Hint.Contains("(3T1 thiếu 5; 3T3 thiếu 15 — có thể gồm tới 5 chiếc đã NG ở 3T1 (NG 5)). Chiếc đã NG không cần làm tiếp.") && !c6.Hint.Contains("3T2 thiếu"),
+        Ok(i1.Ok && i2.Ok && c6.Hint.Contains("(3T1 thiếu 5; 3T3 thiếu 15, trong đó có thể có tới 5 chiếc đã NG ở 3T1 (NG 5)). Chiếc đã NG không cần làm tiếp.") && !c6.Hint.Contains("3T2 thiếu"),
            "T28i ca trộn: 3T1 (mã có NG) thiếu 5 không ghi chú; 3T3 ghi chú NG ở 3T1; nối bằng \"; \"", $"{i1.Err} {i2.Err} · {c6.Hint}");
         // T28j: 2 mã thiếu, không NG → nối ", " như Gói 19 (không đổi chữ cũ)
         var d7 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 10 }, "PO-T28J"))[0];
         await Feed(db, d7, 10);
         var j1 = await Taro(db, d7, "3T1", "3", 10); var j2 = await Taro(db, d7, "3T2", "3", 7); var j3 = await Taro(db, d7, "3T3", "3", 8);
         var c7 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d7))!, "TARO", "3T (NC 3)");
-        Ok(j1.Ok && j2.Ok && j3.Ok && c7.Hint.EndsWith("(3T2 thiếu 3, 3T3 thiếu 2).") && !c7.Hint.Contains("có thể gồm") && !c7.Hint.Contains("Chiếc đã NG"),
+        Ok(j1.Ok && j2.Ok && j3.Ok && c7.Hint.EndsWith("(3T2 thiếu 3, 3T3 thiếu 2).") && !c7.Hint.Contains("có thể có tới") && !c7.Hint.Contains("Chiếc đã NG"),
            "T28j 2 mã thiếu, không NG: \"(3T2 thiếu 3, 3T3 thiếu 2)\" — nối \", \", không ghi chú NG", c7.Hint);
+        // T28k [G20-NOTE-BO 2026-11-14] lời giải thích trần (Explain.Note) mã thuộc bộ gộp: NG cùng bộ là NG của bộ, không "trừ chiếc đã rời (NG ở mã khác)";
+        //   mã ngoài bộ (2T) giữ câu cũ; "một lần:" thay "một lần —" ([G20-CHU-WTSCAP]). Bản 4f446b8: SAI (câu cũ cho mọi mã). Nguồn: CLAUDE (ghi nhớ bàn giao 13/11); HÙNG 14/11 08:28.
+        {
+            var rk = (await led.GetLedgerForDetailAsync(d))!;
+            var n31 = HandoverLedgerService.WtsCap(rk, "TARO", "3T1 (NC 3)").Explain.Note;
+            var n3 = HandoverLedgerService.WtsCap(rk, "TARO", "3T (NC 3)").Explain.Note;
+            var n2 = HandoverLedgerService.WtsCap(rk, "TARO", "2T (NC 3)").Explain.Note;
+            var hk3 = HandoverLedgerService.WtsCap(rk, "TARO", "3T (NC 3)").Hint;
+            Ok(n31.Contains("Mã 3T1 thuộc bộ 3T = 3T1 + 3T2 + 3T3") && n31.Contains("chiếc đã ghi mã 3T") && n31.Contains("NG ở mã ngoài bộ") && n31.Contains("NG ở mã cùng bộ là NG của chính bộ")
+               && !n31.Contains("(NG ở mã khác, trả hàng lỗi)") && !n31.Contains("(NC 3)")
+               && n3.Contains("nhận vào bộ = hàng vào sản xuất − chiếc đã rời nhóm (NG ở mã ngoài bộ, trả hàng lỗi) mà bộ chưa làm; mã 3T trừ thêm chiếc đã làm mã lẻ trong bộ") && n3.Contains("NG ở mã cùng bộ là NG của chính bộ")
+               && n2.Contains("(NG ở mã khác, trả hàng lỗi) mà mã này chưa làm") && !n2.Contains("thuộc bộ")
+               && hk3.StartsWith("Mã 3T (NC 3) làm cả bộ 3T1 + 3T2 + 3T3 một lần: chỉ ghi") && !hk3.Contains(" — "),
+               "T28k lời giải thích: 3T1 / 3T nói theo bộ (NG cùng bộ không tính đã rời, không \"(NC 3)\"), 2T giữ câu cũ; câu 3T \"một lần: chỉ ghi\", không còn \" — \"",
+               $"3T1: {n31}\n3T: {n3}\n2T: {n2}\nhint: {hk3}");
+        }
         // PO mới chưa làm gì: dòng gộp không có câu thêm, phép tính như cũ (Nhận vào, không "Nhận vào bộ")
         var d2 = (await ChuoiHelp.CreateKhAsync(db, pid, "P-T28", new decimal[] { 5 }, "PO-T28B"))[0];
         await Feed(db, d2, 5);
         var c2 = HandoverLedgerService.WtsCap((await led.GetLedgerForDetailAsync(d2))!, "TARO", "3T (NC 3)");
         Ok(c2.Max == 5 && !c2.Locked && c2.Hint == "" && c2.Explain.Terms[0].Label == "Nhận vào" && !c2.Explain.Terms.Any(t => t.Label.Contains("mã lẻ")),
            "T28e PO chưa làm mã lẻ: 3T trần 5, không câu thêm, phép tính như cũ", $"{c2.Max} {c2.Locked} '{c2.Hint}' {c2.Explain.Terms[0].Label}");
+        // T28m [G20-NOTE-BO] (rà độc lập Gói 21 vòng 2 Thấp 2) chưa làm mã lẻ nào: Note mã gộp nói "nhận vào 3T", không vế "trừ thêm chiếc đã làm mã lẻ"
+        Ok(c2.Explain.Note.Contains("nhận vào 3T = hàng vào sản xuất − chiếc đã rời nhóm") && c2.Explain.Note.Contains("chưa có chiếc nào làm mã lẻ trong bộ") && !c2.Explain.Note.Contains("trừ thêm"),
+           "T28m Note mã gộp khi chưa làm mã lẻ: \"nhận vào 3T\", không \"trừ thêm\" (khớp phép tính chỉ \"Nhận vào\")", c2.Explain.Note);
     }
 
     // [T26] [LAMHO-NCKEY 2026-11-08] NC Taro so với NC Gia công bằng NcKey (bỏ chữ "NC" + số 0 đầu). 2 NC Gia công KHÁC CHỮ cùng khoá ("NC03" máy loại trừ và "3"

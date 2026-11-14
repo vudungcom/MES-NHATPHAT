@@ -1496,6 +1496,7 @@ else
                 var sr = _rows.FirstOrDefault(x => x.KhPlanDetailId == _selectedRow.KhPlanDetailId);
                 if (sr != null) _selectedRow = sr;
             }
+            SyncRecvMustLoiAfterLive();   // [G17-ON-DOI-O] Workflow vừa bật ON lúc đang nhập dở phiếu
             if (pc != null) _pendingCountPerDetail = pc;
             if (pic != null) _pendingIssuedCountPerDetail = pic;
             if (steps != null && _expandedDetailId == expanded) { _steps = steps; _ngTrace = ngTrace; }   // [GN-NG-TRACE] + hàng lỗi
@@ -2174,6 +2175,19 @@ else
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : RecvMustLoi(p) ? HandoverCell.Loi : p.ToCell;   // [G16-NHAN-CHONSAN]
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
     bool RecvSua(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Sua;   // [GN-RECV-SUA] nhận hàng gửi sửa: chỉ 1 ô số lượng
+    /// <summary>[G17-ON-DOI-O 2026-11-14] Workflow vừa bật ON (tự cập nhật) khi đang nhập dở phiếu chỉ định ô đạt lấy từ ô Hàng lỗi / Hàng sửa:
+    ///   ô nhận tự sang Hàng lỗi ([G16-NHAN-CHONSAN]) nhưng trước đây số đã gõ ở ô "Số lượng nhận đạt" (bị khoá) không chuyển → bấm Nhận báo số 0 / thiếu lý do.
+    ///   Nay làm như khi chọn ô Hàng lỗi bằng tay: chọn ô Hàng lỗi, dồn số sang ô Hàng lỗi nhận, điền sẵn lý do (sửa được). Chỉ giao diện — máy chủ không đổi.
+    ///   Ô người dùng tự chọn mà vẫn hợp lệ thì giữ. Nguồn: CLAUDE (rà độc lập Gói 17 Thấp b — sổ G17-GHI-NHO); HÙNG 14/11 08:28 OK Gói 21.</summary>
+    void SyncRecvMustLoiAfterLive()
+    {
+        if (!_showReceiveModal || _expandedTxId == 0) return;
+        var p = _pendingTxs.FirstOrDefault(x => x.HandoverTxId == _expandedTxId);
+        if (p == null || p.ToCell == null || !RecvMustLoi(p)) return;
+        if (!string.IsNullOrEmpty(_receiveCell) && RecvCellOpts(p).Contains(_receiveCell)) return;   // đã chọn ô còn hợp lệ (gồm ô Hàng lỗi) → giữ
+        SelectRecvCell(p, HandoverCell.Loi);   // ô cũ (ô chỉ định / ô đã chọn nay bị ẩn) → Hàng lỗi: dồn số + lý do điền sẵn như chọn tay
+    }
+
     void SelectRecvCell(HandoverTxPending p, string c)
     {
         var _prevCell = RecvCellOf(p);   // [RA-CASCADE 2026-11-01] ô đang chọn trước khi đổi
