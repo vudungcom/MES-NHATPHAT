@@ -1,6 +1,6 @@
 Chuỗi kết nối lấy từ D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\MES.Web\appsettings.json
 Đang quét DB: MES (chỉ đọc)
-QUÉT SỔ (chỉ đọc) · DB MES · 14/11/2026 11:21:34
+QUÉT SỔ (chỉ đọc) · DB MES · 15/11/2026 07:56:32
 PO: 116 · dòng WTS còn hiệu lực: 1242 (dòng cũ chưa có QtyOk: 0)
 PO có vấn đề: 33 · tổng phát hiện: 72
   CANH_BAO_SO          8 dòng · 4 PO
@@ -126,4 +126,4 @@ PO có vấn đề: 33 · tổng phát hiện: 72
 
 ── Part Master: 0 nhóm mã chính trùng (PM_TRUNG, Taro không xét) · 0 dòng mã bắt đầu "@" (PM_MA_A)
 
-Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1114112134.txt
+Đã ghi: D:\Setup\Ngoc\App cua Ngoc\Nhat Phat\Software\mes-prototype\tools\QuetSo\ketqua_quet_MES_1115075632.txt
