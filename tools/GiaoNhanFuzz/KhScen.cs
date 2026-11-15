@@ -100,9 +100,10 @@ public static class KhScen
                && (snap.ChangeLogsJson ?? "").Contains("khách đổi SL") && (snap.ChangeLogsJson ?? "").Contains("\"ChangeId\":7"),
                "[KHE-5] Xoá có lý do: 1 dòng KhPlanDeletedDetails (PO, lý do đã cắt khoảng trắng, người xoá, JSON dòng PO + đầu phiếu KH không kèm navigation, JSON lịch sử sửa có dòng ChangeId 7)",
                r.Error + " · " + snap?.DetailJson + " · " + snap?.ChangeLogsJson);
-            var iDel = EfRaw().FindIndex(x => x.Contains("DELETE FROM KhPlanDetailChangeLogs"));
-            Ok(iDel >= 0 && EfRaw()[iDel].Contains("IF EXISTS (SELECT 1 FROM sys.foreign_keys") && db.Database.Current == null,
-               "[KHE-5] Lịch sử sửa chỉ xoá khi DB còn khoá ngoại vào KhPlanDetails (rà độc lập V1: FK đã drop v0.5.1 → giữ log); giao dịch đã đóng", string.Join(" | ", EfRaw()));
+            // [A1-04 2026-11-15] Gói 22: BỎ hẳn câu "IF EXISTS (FK …) DELETE FROM KhPlanDetailChangeLogs" (FK đã DROP ở DB thật — SQL chỉ đọc 15/11) →
+            //   nay kiểm NGƯỢC: không còn câu DELETE nào đụng KhPlanDetailChangeLogs (append-only), log của PO đã xoá vẫn ở bảng; giao dịch đã đóng.
+            Ok(!EfRaw().Any(x => x.Contains("KhPlanDetailChangeLogs") && x.Contains("DELETE")) && db.KhPlanDetailChangeLogs.List.Any(l => l.KhPlanDetailId == 1) && db.Database.Current == null,
+               "[KHE-5][A1-04] Xoá PO không xoá lịch sử sửa (không câu DELETE KhPlanDetailChangeLogs; log ChangeId 7 vẫn còn, trỏ Id PO đã xoá); giao dịch đã đóng", string.Join(" | ", EfRaw()));
         }
         {
             // [KHE-5] lỗi giữa chừng (sau khi chụp) → quay lại: không còn dòng chụp, PO còn nguyên

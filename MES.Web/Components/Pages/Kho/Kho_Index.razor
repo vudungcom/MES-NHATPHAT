@@ -925,9 +925,12 @@ else
 
     private async Task SaveKhoDataAsync()
     {
+        if (_saving) return;   // [A1-03 2026-11-15] bấm 2 lần trước khi nút kịp khoá → 2 lượt chồng trên 1 DbContext (văng lỗi trang); service đã idempotent. Nguồn: CLAUDE quét Fable 14–15/11 (A1-03 / B1 Trung); Hùng 15/11 15:10 OK Gói 22.
         _errorMessage = null;
         if (_editingRow == null) return;
-
+        _saving = true;   // [A1-03] đặt cờ NGAY sau guard (rà độc lập Gói 22: nhánh sửa `await Db.Users` kiểm PIN chạy trước cờ → bấm đúp 2 truy vấn chồng); hạ ở finally
+        try
+        {
         if (!IsFirstEntry)
         {
             // Lần 2 trở đi: bắt buộc lý do + PIN
@@ -952,9 +955,6 @@ else
             }
         }
 
-        _saving = true;
-        try
-        {
             var reason = IsFirstEntry ? "Nhập lần đầu" : _editReason.Trim();
             var (ok, err) = await KhoSvc.SaveKhoInputAsync(
                 _editingRow.KhPlanDetailId,

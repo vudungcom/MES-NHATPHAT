@@ -170,6 +170,10 @@ public class UserService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
+        // [BM2-04 2026-11-15] Mật khẩu khởi tạo: Trim + tối thiểu 6 ký tự (cùng mức Profile đổi mật khẩu, AuthService:97). Trước: chỉ kiểm rỗng ở trang,
+        //   Admin tạo mật khẩu "1" hay " " vẫn được → tài khoản yếu khi MES mở ra Internet. Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-04 Trung); Hùng 15/11 OK Gói 22.
+        plainPassword = (plainPassword ?? "").Trim();
+        if (plainPassword.Length < 6) return (false, "Mật khẩu khởi tạo tối thiểu 6 ký tự (không tính dấu cách đầu / cuối).");
         if (await db.Users.AnyAsync(x => x.Username == user.Username.Trim()))
             return (false, "Tên đăng nhập đã tồn tại.");
 

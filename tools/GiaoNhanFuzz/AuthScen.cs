@@ -455,6 +455,57 @@ public static class AuthScen
             }
         }
 
+        Console.WriteLine("[U13] C-01 — cách chạy app 5000: tools/chay_app_5000.bat đặt ASPNETCORE_ENVIRONMENT=Production + --no-launch-profile; appsettings.json không còn DetailedErrors");
+        {
+            // [A1-SCEN 2026-11-15] Gói 22 C-01 (Cao): `dotnet run` nạp launchSettings Development → DetailedErrors bật + không UseExceptionHandler → lỗi SQL hiện cho khách.
+            //   Kiểm file cấu hình thật trong repo (chạy từ trong repo, như danhmuc). Không có repo (chạy nơi khác) → bỏ qua, không SAI.
+            var d = new DirectoryInfo(Directory.GetCurrentDirectory()); string? root = null;
+            while (d != null) { if (Directory.Exists(Path.Combine(d.FullName, "MES.Web")) && Directory.Exists(Path.Combine(d.FullName, "tools"))) { root = d.FullName; break; } d = d.Parent; }
+            if (root == null) Console.WriteLine("  (bỏ qua: không tìm thấy gốc repo)");
+            else
+            {
+                var bat = File.ReadAllText(Path.Combine(root, "tools", "chay_app_5000.bat"));
+                var lines = bat.Replace("\r\n", "\n").Split('\n').Select(x => x.Trim()).Where(x => !x.StartsWith("rem", StringComparison.OrdinalIgnoreCase)).ToList();
+                int iEnv = lines.FindIndex(x => x.Equals("set ASPNETCORE_ENVIRONMENT=Production", StringComparison.OrdinalIgnoreCase));
+                int iRun = lines.FindIndex(x => x.StartsWith("dotnet run", StringComparison.OrdinalIgnoreCase));
+                Ok(iEnv >= 0 && iRun > iEnv, "chay_app_5000.bat: `set ASPNETCORE_ENVIRONMENT=Production` đứng TRƯỚC `dotnet run`", $"set ở dòng {iEnv}, run ở dòng {iRun}");
+                Ok(iRun >= 0 && lines[iRun].Contains("--no-launch-profile"), "chay_app_5000.bat: dotnet run --no-launch-profile (launchSettings.json không đè Development)", iRun >= 0 ? lines[iRun] : null);
+                var app = File.ReadAllText(Path.Combine(root, "MES.Web", "appsettings.json"));
+                Ok(!app.Contains("\"DetailedErrors\""), "appsettings.json: không còn \"DetailedErrors\" (Program.cs tự bật theo Development)");
+                var prog = File.ReadAllText(Path.Combine(root, "MES.Web", "Program.cs"));
+                Ok(prog.Contains("options.DetailedErrors = builder.Environment.IsDevelopment()") && prog.Contains("if (!app.Environment.IsDevelopment())") && prog.Contains("UseExceptionHandler(\"/error\""),
+                   "Program.cs: DetailedErrors theo Development + UseExceptionHandler(\"/error\") khi không Development");
+                var ls = File.ReadAllText(Path.Combine(root, "MES.Web", "Properties", "launchSettings.json"));
+                Ok(ls.Contains("\"ASPNETCORE_ENVIRONMENT\": \"Development\""), "launchSettings.json vẫn Development cho Visual Studio / dotnet run tay (chỉ .bat khách chạy Production)");
+            }
+        }
+
+        Console.WriteLine("[U14] BM2-04 — ADMIN tạo tài khoản: mật khẩu khởi tạo Trim + tối thiểu 6 ký tự (UserService.CreateUserAsync)");
+        {
+            // [A1-SCEN 2026-11-15] Gói 22 BM2-04. Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-04 Trung); Hùng 15/11 OK Gói 22.
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = true, Permissions = "[]" };
+            var gA = new UserGroup { GroupId = 2, GroupCode = "GC", GroupName = "Gia công", IsActive = true, Permissions = "[]" };
+            db.UserGroups.List.AddRange(new[] { gAd, gA });
+            db.Users.List.Add(new User { UserId = 1, Username = "admin", FullName = "Admin", IsActive = true, Group = gAd, GroupId = 1 });
+            db.Fixup();
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            var r1 = await us.CreateUserAsync(new User { Username = "cn01", FullName = "Cong nhan 1", GroupId = 2 }, "1", 1);
+            Ok(!r1.Success && (r1.Error ?? "").Contains("tối thiểu 6"), "Mật khẩu \"1\" → từ chối \"tối thiểu 6 ký tự\"", r1.Error);
+            var r2 = await us.CreateUserAsync(new User { Username = "cn01", FullName = "Cong nhan 1", GroupId = 2 }, "   ab1  ", 1);
+            Ok(!r2.Success, "Mật khẩu \"   ab1  \" (3 ký tự sau Trim) → từ chối", r2.Error);
+            var r3 = await us.CreateUserAsync(new User { Username = "cn01", FullName = "Cong nhan 1", GroupId = 2 }, "      ", 1);
+            Ok(!r3.Success, "Mật khẩu toàn dấu cách → từ chối", r3.Error);
+            Ok(!db.Users.List.Any(u => u.Username == "cn01"), "3 lần từ chối: chưa tạo tài khoản cn01");
+            var r4 = await us.CreateUserAsync(new User { Username = "cn01", FullName = "Cong nhan 1", GroupId = 2 }, " abc123 ", 1);
+            var u4 = db.Users.List.FirstOrDefault(u => u.Username == "cn01");
+            Ok(r4.Success && u4 != null && PasswordHasher.Verify("abc123", u4.PasswordHash) && !PasswordHasher.Verify(" abc123 ", u4.PasswordHash),
+               "Mật khẩu \" abc123 \" → tạo được, đăng nhập bằng \"abc123\" (đã Trim)", r4.Error);
+            var r5 = await us.CreateUserAsync(new User { Username = "cn02", FullName = "Cong nhan 2", GroupId = 2 }, "abc123", 5);
+            Ok(!r5.Success, "Người không phải ADMIN (uid 5 không tồn tại) tạo tài khoản → từ chối (giữ USER-PERM-SVC)", r5.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

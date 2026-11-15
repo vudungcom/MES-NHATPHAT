@@ -2556,7 +2556,7 @@ else
 
                                     @onclick="async () => await SaveGroupAsync(grp)"
 
-                                    disabled="@(grp.IsSaving)">
+                                    disabled="@(grp.IsSaving || _anySaving)">
 
                                 @if (grp.IsSaving)
 
@@ -3971,6 +3971,17 @@ else
 
     private List<WtsGroup> _groups = new();
 
+    // [A1-01 2026-11-15] có nhóm nào đang lưu → mọi nút Lưu mờ + SaveGroupAsync bỏ qua (trước: chỉ khoá nút của chính nhóm đó, 2 lần bấm
+    //   trước khi nút kịp khoá → 2 lượt lưu chồng; nhóm không máy KCS / HTSP / Đóng gói ra 2 dòng WTS y nhau; máy chủ nay cũng từ chối [A1-01-ROWSAVED]).
+    //   Nguồn: CLAUDE quét Fable 14/11 (A1-01 Trung, ca a1 A1-2); Hùng 15/11 15:10 OK Gói 22.
+    private bool _anySaving => _groups.Any(g => g.IsSaving);
+    // [BW2-02 2026-11-15] Cổng 1 làn cho các handler có await DB trên cùng AppDbContext scoped (trang + mọi service dùng chung):
+    //   Lưu nhóm · nạp PO khớp (OnSubPoInput → OnSubRowKhChanged, 6–8 truy vấn) · Sửa dòng đã lưu · Xoá dòng. Lượt sau CHỜ lượt trước xong.
+    //   Nguồn: CLAUDE quét Fable 15/11 (B-W2 BW2-02 Trung); Hùng 15/11 15:10 OK Gói 22.
+    //   Tránh "A second operation was started on this context" làm chết mạch Blazor khi gõ PO / bấm Lưu nhóm khác / Sửa dòng lúc lượt nạp
+    //   trước chưa xong (mạng chậm qua tunnel). Không gọi lồng: 4 chỗ dùng cổng đều là điểm vào từ markup.
+    private readonly SemaphoreSlim _dbGate = new(1, 1);
+
     // ── Danh sách nhóm tăng ca (OT) ──
 
     // private List<WtsGroup> _groupsOT = new();        // OT removed 2026-09
@@ -5107,7 +5118,15 @@ else
     // ── Edit / Void saved row (dùng bởi bảng saved rows) ──
 
     // [EDIT-NONGC] async: non-GC cần nạp lại snapshot / Mã CV / nhóm nhỏ khi Sửa dòng
+    // [BW2-02 2026-11-15] vỏ qua cổng _dbGate (thân cũ giữ nguyên ở EditSavedRowCoreAsync)
     private async Task EditSavedRow(WtsRow row)
+    {
+        await _dbGate.WaitAsync();
+        try { await EditSavedRowCoreAsync(row); }
+        finally { _dbGate.Release(); }
+    }
+
+    private async Task EditSavedRowCoreAsync(WtsRow row)
 
     {
         // [ML16-ACT] dòng "Việc không ra sản phẩm" sửa ở form riêng (trước: mở thành nhóm sản xuất → bắt chọn PO, không lưu được)
@@ -5212,11 +5231,12 @@ else
     {
         if (_voidConfirmRow == null || _voidBusy) return;
         _voidBusy = true;
+        await _dbGate.WaitAsync();   // [BW2-02]
         try
         {
             if (await VoidSavedRow(_voidConfirmRow)) { _voidConfirmRow = null; _voidBlockMsg = null; }
         }
-        finally { _voidBusy = false; }
+        finally { _dbGate.Release(); _voidBusy = false; }
     }
 
     private void CloseVoidModal() { _voidConfirmRow = null; _voidBlockMsg = null; }
@@ -6065,7 +6085,14 @@ else
 
         {
 
-            await OnSubRowKhChanged(grp, sub, det.KhPlanDetailId.ToString());
+            await _dbGate.WaitAsync();   // [BW2-02] nạp snapshot + sổ + WTS của PO: 1 lượt một
+            try
+            {
+                // [BW2-02] rà độc lập Gói 22 (Thấp): trong lúc chờ cổng người dùng đã gõ PO khác → bỏ lượt nạp cũ (lượt mới tự nạp)
+                if (!string.Equals(sub.PO, text ?? "", StringComparison.Ordinal)) return;
+                await OnSubRowKhChanged(grp, sub, det.KhPlanDetailId.ToString());
+            }
+            finally { _dbGate.Release(); }
 
         }
 
@@ -6667,6 +6694,9 @@ else
             }
 
         // 2) Với log đã lưu (mọi công nhân, chưa void) — bỏ qua log cũ của dòng đang sửa
+        // [BW2-02] qua cổng _dbGate: 4 chỗ gọi (đổi NC / máy / giờ bắt đầu / giờ kết thúc) đều là handler markup, không nằm trong lượt đang giữ cổng
+        //   (rà độc lập Gói 22: gõ giờ kết thúc rồi bấm Lưu ngay = 2 truy vấn chồng trên 1 DbContext). Nguồn: CLAUDE rà độc lập Gói 22 15/11 (Trung).
+        await _dbGate.WaitAsync();
         try
         {
             var minStart  = subs.Min(s => s.StartTime);
@@ -6705,6 +6735,7 @@ else
         {
             // Lỗi tra cứu lúc nhập không được làm hỏng form — lúc Lưu vẫn kiểm tra lại.
         }
+        finally { _dbGate.Release(); }   // [BW2-02]
     }
 
 
@@ -7145,10 +7176,12 @@ else
     //   Cảnh báo chỉ hiển thị (đọc cache trang) vẫn tính ở đây: ApplyLegacySaveWarnings.
     private async Task SaveGroupAsync(WtsGroup grp)
     {
+        if (grp.IsSaving || _anySaving) return;   // [A1-01 2026-11-15] bấm 2 lần / bấm Lưu nhóm khác khi đang lưu → bỏ (như Handover_Index [D10-DBLCLICK])
         _wtsNotice = null;   // [GOI9-OFF-CANHBAO] rà độc lập Gói 9 (Thấp-2): không giữ lời báo của lần trước
         grp.ErrorMsg = null;
         grp.IsSaving = true;
         StateHasChanged();
+        await _dbGate.WaitAsync();   // [BW2-02] chờ lượt nạp PO / Sửa / Xoá đang chạy xong
         try
         {
             // Gán thuộc tính nhóm xuống từng dòng (như vòng validate cũ) — cần trước khi tra số chuẩn theo NC / máy
@@ -7198,18 +7231,18 @@ else
 
             _groups.Remove(grp);
 
-            // Reload saved rows + thêm nhóm mới trống nếu muốn
-
-            var unsavedGroups = _groups.ToList();
-
+            // [A1-01-NHOM-MA 2026-11-15] GỐC của dòng WTS trùng (Cao, có từ trước). Sửa: bỏ chép / thêm lại nhóm chưa lưu — chúng vẫn nằm trong _groups.
+            //   Nguồn: CLAUDE rà độc lập Gói 22 15/11 (Cao); Hùng 15/11 15:32 "bạn làm đi" (sửa ruột, CLAUDE-RULES mục 0).
+            //   Trước đây `var unsavedGroups = _groups.ToList(); await LoadSavedRowsAsync(); … _groups.AddRange(unsavedGroups);` — LoadSavedRowsAsync
+            //   KHÔNG xoá _groups (chỉ OnWorkDateChanged Clear) → mở ≥ 2 nhóm, lưu nhóm A thì nhóm B bị thêm lần 2 (cùng đối tượng); lưu B xong Remove
+            //   chỉ bỏ 1 bản → còn "nhóm ma" trên form với dòng đã có WtsLogId, bấm Lưu = dòng WTS trùng (nay máy chủ chặn [A1-01-ROWSAVED]).
             await LoadSavedRowsAsync();
             // [GOI9-OFF-CANHBAO 2026-11-08] nhóm đã lưu bị bỏ khỏi form → cảnh báo máy chủ (Workflow OFF, vụ đã đi phiếu) hiện ở khung trên bảng dòng đã lưu
             _wtsNotice = res.Warnings.Count > 0 ? "Đã lưu. " + string.Join("\n", res.Warnings) : null;
-
-            _groups.AddRange(unsavedGroups);
         }
         finally
         {
+            _dbGate.Release();   // [BW2-02]
             grp.IsSaving = false;
             StateHasChanged();
         }

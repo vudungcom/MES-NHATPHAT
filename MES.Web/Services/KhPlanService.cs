@@ -384,6 +384,15 @@ public class KhPlanService
             var srcDocs2 = await PoGuard.CountDocsAsync(_db, sourceDetailId);
             if (srcDocs2.HasAny)
                 throw new InvalidOperationException($"PO {srcPO} vừa có chứng từ số lượng ({srcDocs2.Text()}) — không tách được.");
+            // [A1-02 2026-11-15] Đọc lại SL PO gốc DƯỚI khoá: kiểm "Σ SL mới = SL gốc" ở trên chạy TRƯỚC LockAsync; ai đó SaveEditAsync đổi SL PO
+            //   (giữ cùng khoá MES_PO_) trong lúc Tách chờ khoá → tách xong Σ mới ≠ SL gốc mới, log SplitInto ghi SL cũ. Nay lệch → từ chối, bảo tải lại.
+            //   (PoGuard.LockAsync đã ChangeTracker.Clear nên đọc dưới đây là bản DB mới.) Nguồn: CLAUDE quét Fable 14/11 (A1-02 Trung, ca a1 A1-3); Hùng 15/11 15:10 OK Gói 22.
+            var srcQtyNow = await _db.KhPlanDetails.AsNoTracking().Where(x => x.KhPlanDetailId == sourceDetailId).Select(x => (decimal?)x.Quantity).FirstOrDefaultAsync();
+            if (srcQtyNow == null) throw new InvalidOperationException("Dòng gốc không tồn tại");
+            if (srcQtyNow.Value != totalNewQty)
+                throw new InvalidOperationException(
+                    $"SL PO {srcPO} vừa được người khác đổi ({srcQty.ToString(QtyFormat)} → {srcQtyNow.Value.ToString(QtyFormat)}) — tải lại rồi tách lại cho khớp.");
+            srcQty = srcQtyNow.Value;   // [A1-02] log SplitInto ghi SL thật
             var newDetailIds = new List<int>();
             var newIdList = new List<string>();
 
@@ -667,11 +676,10 @@ public class KhPlanService
             });
             await _db.SaveChangesAsync();
 
-            // Xóa change logs (đã chụp ở trên) — [KHE-5] rà độc lập V1: Architecture-Decisions v0.5.1 ghi FK KhPlanDetailChangeLogs → KhPlanDetails đã DROP
-            //   (Tách PO giữ log của PO đã xoá) → chỉ xoá khi DB còn khoá ngoại đó; không còn thì GIỮ log (chỉ ghi thêm), log trỏ về Id PO đã xoá như Tách PO.
-            await _db.Database.ExecuteSqlRawAsync(
-                @"IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE parent_object_id = OBJECT_ID(N'dbo.KhPlanDetailChangeLogs') AND referenced_object_id = OBJECT_ID(N'dbo.KhPlanDetails'))
-                  DELETE FROM KhPlanDetailChangeLogs WHERE KhPlanDetailId = {0}", khPlanDetailId);
+            // [A1-04 2026-11-15] BỎ câu "IF EXISTS (FK …) DELETE FROM KhPlanDetailChangeLogs" (có từ [KHE-5]): Hùng chạy SQL chỉ đọc 15/11 15:13 —
+            //   17 FK trỏ vào KhPlanDetails, KHÔNG còn FK từ KhPlanDetailChangeLogs (đã DROP, Architecture-Decisions v0.5.1) → câu đó không bao giờ chạy
+            //   = code chết; bỏ để bảng *ChangeLogs không còn đường xoá nào (append-only, log trỏ về Id PO đã xoá như Tách PO; bản JSON vẫn ở KhPlanDeletedDetails).
+            //   Nguồn: CLAUDE quét Fable 14/11 (A1-04 Nghi ngờ → câu hỏi 3); Hùng 15/11 15:32 "bạn làm đi" (gộp Gói 22).
 
             // [KH-GUARD] Dòng Kho (chỉ còn thông tin order / vị trí, chưa có phôi nhận — đã chặn ở trên): tắt IsActive thay vì xoá cứng
             await _db.Database.ExecuteSqlRawAsync(

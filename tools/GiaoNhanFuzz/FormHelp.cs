@@ -431,7 +431,9 @@ public static class FormHelp
         if (r.Action == HandoverForm.AGiao && r.Prev && unworked && g != "KHO" && r.Purpose == HandoverForm.PTra && to == cause && (r.ToCell == null || r.ToCell == HandoverCell.Loi))
         {
             e.Tx = 1; e.Purpose = HandoverPurpose.NgReturn; e.FromCell = HandoverCell.Loi; e.ToCell = HandoverCell.Loi;
-            e.TxFromNc = g == "GC" ? pos[3..] : null;
+            // [QF-KIEM-01 2026-11-15] đáp án sai: pos == "CHUA" (Gia công chỉ có dòng CHUA khi PO toàn máy loại trừ, HandoverForm.cs:193–210 → không có NC)
+            //   bị cắt "CHUA"[3..] = "A" → báo SAI oan (kiem 15/11 08:06 seed 26285 PO16 op59). Chỉ lấy NC khi pos là "NC:…" (như RepNc ở trên); app đúng, không sửa app.
+            e.TxFromNc = g == "GC" && pos.StartsWith("NC:") ? pos[3..] : null;
             ToRecv(HandoverCell.Loi);
             return e;
         }

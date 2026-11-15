@@ -113,7 +113,7 @@ else
                     <button class="btn btn-outline-success shadow-sm"
                             title="Kích hoạt lại Part"
                             @onclick="KhoiPhucPartAsync"
-                            disabled="@_deleteLoading">
+                            disabled="@_pmBusy">
                         @if (_deleteLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                         <i class="bi bi-check-circle"></i> Kích hoạt lại
                     </button>
@@ -1039,7 +1039,7 @@ else
                 <div class="d-flex flex-column align-items-center">
                     <button class="btn @(_hasChanges ? "btn-warning" : "btn-outline-secondary") px-4"
                             @onclick="TrySaveDraftAsync"
-                            disabled="@(_draftSaving || !_hasChanges)">
+                            disabled="@(_pmBusy || !_hasChanges)">
                         <i class="bi bi-floppy me-1"></i>
                         @(_draftSaving ? "Đang lưu..." : "Lưu nháp")
                     </button>
@@ -1049,7 +1049,7 @@ else
                     }
                 </div>
                 <button class="btn @(_savedSuccessfully ? "btn-outline-success" : "btn-primary") px-4 fw-bold" style="height: 38px;"
-                        @onclick="TrySaveAsync" disabled="@(_saving || _savedSuccessfully || !HasUnsavedChanges)">
+                        @onclick="TrySaveAsync" disabled="@(_pmBusy || _savedSuccessfully || !HasUnsavedChanges)">
                     <i class="bi @(_savedSuccessfully ? "bi-check2-all" : "bi-check2-circle") me-1"></i>
                     @(_saving ? "Đang xử lý..." : (_savedSuccessfully ? "Đã lưu & Xác nhận OK ✓" : "Lưu & Xác nhận OK"))
                 </button>
@@ -1459,7 +1459,7 @@ else
             </div>
             <div class="mes-modal-footer">
                 <button class="btn btn-secondary" @onclick="() => _showDeleteConfirm = false">Hủy</button>
-                <button class="btn btn-warning fw-bold" @onclick="XoaPartAsync" disabled="@_deleteLoading">
+                <button class="btn btn-warning fw-bold" @onclick="XoaPartAsync" disabled="@_pmBusy">
                     @if (_deleteLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     <i class="bi bi-slash-circle me-1"></i> Xác nhận Ngưng
                 </button>
@@ -1596,7 +1596,11 @@ else
     private StdUpdateService.RunResult? _stdUpdResult;
     private const int StdUpdMaxRows = 200;
 
-    private bool StdUpdBtnDisabled => HasUnsavedChanges || _stdUpdBusy;
+    private bool StdUpdBtnDisabled => HasUnsavedChanges || _stdUpdBusy || _pmBusy;   // [BP1-18] đang lưu (bước tự cập nhật PO) → không mở Xem trước trên cùng DbContext
+    // [BP1-01 2026-11-15] Cờ bận chung cho 2 nút Lưu + Update TG chuẩn + Ngưng / Kích hoạt: trước mỗi nút chỉ khoá theo cờ riêng (_draftSaving / _saving)
+    //   → bấm "Lưu nháp" rồi "Lưu & Xác nhận OK" khi lượt đầu còn chạy = 2 DoSaveAsync song song trên 1 DbContext ("second operation", Clear giữa lúc
+    //   lượt kia đang ghi → lưu nửa chừng, mọi mục về NG). Nguồn: CLAUDE quét Fable 15/11 (B-P1 BP1-01 Trung, BP1-18); Hùng 15/11 15:10 OK Gói 22.
+    private bool _pmBusy => _saving || _draftSaving || _deleteLoading || _stdUpdBusy;
     private string StdUpdBtnTitle => HasUnsavedChanges
         ? "Đang có thay đổi chưa lưu — bấm Lưu trước khi Update TG chuẩn"
         : "Đẩy TG chuẩn hiện tại sang phiếu KH + WTS lưu từ mốc thời gian chọn";
@@ -3635,6 +3639,7 @@ else
 
     private async Task InitiateSaveAsync(bool isDraft)
     {
+        if (_saving || _draftSaving) return;   // [BP1-01] lượt lưu đang chạy (nút kia) → bỏ
         _saveResult = string.Empty;
         _saveHasError = false;
 
@@ -3751,7 +3756,7 @@ else
 
     private async Task XoaPartAsync()
     {
-        if (_part == null) return;
+        if (_part == null || _pmBusy) return;   // [BP1-01]
         _deleteLoading = true;
         _deleteError = string.Empty;
         var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: true);
@@ -3769,7 +3774,7 @@ else
 
     private async Task KhoiPhucPartAsync()
     {
-        if (_part == null) return;
+        if (_part == null || _pmBusy) return;   // [BP1-01]
         _deleteLoading = true;
         var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: false);
         _deleteLoading = false;

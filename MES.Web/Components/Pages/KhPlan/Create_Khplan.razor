@@ -420,6 +420,7 @@
 
     private async Task DoSaveAsync()
     {
+        if (_saving) return;   // [A1-03 2026-11-15] bấm 2 lần → 2 giao dịch tạo KH chồng trên 1 DbContext (lần 2 bị chặn trùng PO nhưng trang văng lỗi). Nguồn: CLAUDE quét Fable 14–15/11 (A1-03 / B1 Trung); Hùng 15/11 15:10 OK Gói 22.
         _saving = true;
         // [E1-KH-TRX 2026-10-28] Tạo phiếu + chép quy trình (snapshot) trong 1 giao dịch: lỗi giữa chừng thì không còn PO thiếu quy trình
         //   (trước: PO đã lưu mà snapshot thiếu → WTS không có NC để chọn; người dùng tạo lại → PO trùng).

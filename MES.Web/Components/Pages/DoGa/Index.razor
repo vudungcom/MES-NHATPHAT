@@ -579,7 +579,7 @@
                     </table>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-auto" @onclick="() => { DongPopupView(); MoPopupLichSu(itemDangXem); }">
+                    <button type="button" class="btn btn-sm btn-outline-secondary me-auto" @onclick="XemSangLichSuAsync">
                         <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
                     @if (_canEdit)
@@ -876,6 +876,13 @@
         isProcessing = false;
     }
 
+    // [BM1-02 2026-11-15] nút "Lịch sử" trong hộp Xem: trước là lambda khối gọi MoPopupLichSu (async Task) không await → hộp đứng
+    //   "Đang tải lịch sử…" tới khi bấm gì khác. Tách method có await (luật Razor). Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-02 Trung); Hùng 15/11 OK Gói 22.
+    private async Task XemSangLichSuAsync()
+    {
+        var item = itemDangXem; DongPopupView();
+        if (item != null) await MoPopupLichSu(item);
+    }
     private async Task MoPopupLichSu(DoGa item)
     {
         itemDangXem = item;
@@ -917,4 +924,4 @@
             isExporting = false;
         }
     }
-}
+}

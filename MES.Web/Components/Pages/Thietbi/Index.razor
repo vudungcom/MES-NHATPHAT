@@ -241,7 +241,7 @@
                     </table>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => { DongPopupView(); MoPopupLichSu(mayDangXem); }">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="XemSangLichSuAsync">
                         <i class="bi bi-clock-history"></i> Lịch sử
                     </button>
                     @if (_canEdit)
@@ -641,11 +641,20 @@
     }
     private void DongPopupView() { isHienThiPopupView = false; }
 
-    private void ChuyenSangSua(ThietBi may)
+    // [BM1-03 2026-11-15] trước: `_ = MoPopupSua(may)` không await — máy ĐANG DỪNG thì MoPopupSua await DB rồi mới mở form → không render,
+    //   hộp Xem đóng mà hộp Sửa không hiện. Nay await đủ. Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-03 Trung); Hùng 15/11 15:10 OK Gói 22.
+    private async Task ChuyenSangSua(ThietBi may)
     {
         if (!_canEdit) return; // [RS-C1]
         DongPopupView();
-        _ = MoPopupSua(may);
+        await MoPopupSua(may);
+    }
+    // [BM1-02 2026-11-15] nút "Lịch sử" trong hộp Xem: trước là lambda khối gọi MoPopupLichSu (async Task) không await → hộp đứng
+    //   "Đang tải lịch sử…" tới khi bấm gì khác. Tách method có await (luật Razor: không lambda phức tạp). Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-02 Trung).
+    private async Task XemSangLichSuAsync()
+    {
+        var may = mayDangXem; DongPopupView();
+        if (may != null) await MoPopupLichSu(may);
     }
 
     private async Task MoPopupSua(ThietBi may)
@@ -816,4 +825,4 @@
 
         isProcessing = false;
     }
-}
+}

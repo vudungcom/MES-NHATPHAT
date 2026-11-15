@@ -16,6 +16,9 @@ builder.Services.AddRazorComponents()
 builder.Services.AddServerSideBlazor(options =>
 {
     options.DetailedErrors = builder.Environment.IsDevelopment();   // [RS-E11 2026-10-30] chỉ bật khi Development — trước: luôn bật, lỗi hiện chi tiết code cho người dùng
+    // [C-01 2026-11-15] App 5000 nay chạy Production (tools/chay_app_5000.bat: ASPNETCORE_ENVIRONMENT=Production + --no-launch-profile) → dòng trên = false,
+    //   UseExceptionHandler("/error") bên dưới bật; appsettings.json bỏ "DetailedErrors": true. Code không đổi — chỉ ghi để tra tag.
+    //   Nguồn: CLAUDE quét Fable 14/11 (A3C C-01 Cao); Hùng 15/11 15:10 OK câu 5.
     // [BLZ-RECONNECT 2026-11-06] Tab để lâu / mạng chập chờn: máy chủ giữ phiên đã mất kết nối 30 phút (mặc định 3 phút) để trình duyệt
     //   nối lại đúng phiên, không mất ô đang gõ. Máy chủ khởi động lại thì phiên mất hẳn → App.razor tự tải lại trang.
     //   Chỉ cấu hình, không đổi luật. Nguồn: CLAUDE 31/10 (BLZ-RECONNECT, Hùng "để sau"), Hùng 05/11 15:37 cho làm nhóm A.

@@ -232,6 +232,7 @@
 
     private async Task ConfirmSplitAsync()
     {
+        if (_saving) return;   // [BK-08 2026-11-15] Enter 2–3 lần trong ô PIN → tách 2 lần song song (lần 2 "Dòng gốc không tồn tại" chồng lên kết quả). Nguồn: CLAUDE quét Fable 14–15/11 (A1-03 / B1 Trung); Hùng 15/11 15:10 OK Gói 22.
         _error = null;
 
         if (string.IsNullOrWhiteSpace(_pin)) { _error = "Nhập PIN"; return; }

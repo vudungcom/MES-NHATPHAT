@@ -351,6 +351,13 @@ namespace MES.Web.Services
                 sub.MachineUsed = grp.MachineUsed;
                 sub.ProductionMode = grp.ProductionMode;
 
+                // [A1-01-ROWSAVED 2026-11-15] dòng đã có WtsLogId mà không ở chế độ Sửa = dòng vừa lưu xong được gửi lại (bấm Lưu 2 lần
+                //   trước khi nút kịp khoá, hoặc trang khác gọi lặp) → từ chối cả nhóm. Trước: coi là dòng mới → Add thêm 1 dòng y hệt
+                //   (nhóm không máy KCS / HTSP / Đóng gói không có chặn trùng giờ máy → 2 dòng lọt khi trần còn đủ; sổ vẫn cân nên không bắt được).
+                //   Nguồn: CLAUDE quét Fable 14/11 (A1-01 Trung, ca a1 A1-2); Hùng 15/11 15:10 OK Gói 22.
+                if (sub.WtsLogId.HasValue && !sub.IsEditing)
+                { sub.ErrorMsg = "Dòng này đã lưu rồi — tải lại trang để xem."; grp.ErrorMsg = "Nhóm có dòng đã lưu rồi (bấm Lưu 2 lần?) — tải lại trang, không lưu lại."; return Fail(); }
+
                 // [WTS-SUA-NHOM 2026-11-08] sửa dòng đã lưu: nhóm lớn của dòng cũ (đọc DB, không tin trang) phải = nhóm lớn của form
                 if (sub.IsEditing && sub.WtsLogId.HasValue)
                 {

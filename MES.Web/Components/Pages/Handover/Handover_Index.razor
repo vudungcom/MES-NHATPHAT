@@ -1,4 +1,7 @@
 @page "/handover"
+@* [P-08 2026-11-15] 25/26 trang có [Authorize], riêng trang này thiếu — chưa đăng nhập đi qua AuthorizeRouteView như mọi trang (returnUrl);
+   đoạn tự đọc claim → /login bên dưới giữ nguyên. Nguồn: CLAUDE quét Fable 15/11 (A3C P-08 Thấp); Hùng 15/11 OK Gói 22 *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @implements IDisposable
 @using MES.Web.Services
 @using MES.Web.Components.Shared
@@ -1484,7 +1487,7 @@ else
         await InvokeAsync(() =>
         {
             if (_disposed) return;
-            if (fullRows != null) { _rows = fullRows; BuildColFilters(); }
+            if (fullRows != null) { _rows = fullRows; BuildColFilters(keepUser: true); }   // [BH-02] lưới 2 phút / NotifyAll giữ bộ lọc cột người dùng
             else
                 foreach (var (id, r) in fresh)
                 {
@@ -1828,7 +1831,10 @@ else
         try
         {
             (bool ok, string err) = await HandoverSvc.ConfirmRepairAsync(id, _kcsOk, _kcsNg, _kcsNotes, _currentUserId);
-            _saving = false;
+            // [BH-01 2026-11-15] KHÔNG hạ _saving ở đây (trước: `_saving = false;` ngay sau lưu → nút "KCS xác nhận" sáng lại trong lúc
+            //   ReloadRowAsync còn tải sổ 0,5–2 s; bấm lần 2 = thêm 1 lần KCS xác nhận cùng số, máy chủ nhận vì còn ≤ số chờ).
+            //   Giữ _saving tới finally + đóng khối nhập ngay khi lưu xong (như ConfirmReceiveAsync đặt _expandedTxId = 0).
+            //   Nguồn: CLAUDE quét Fable 15/11 (B-H BH-01 Trung); Hùng 15/11 15:10 OK Gói 22.
             if (!ok)
             {   // số chờ có thể vừa đổi (người KCS khác xác nhận) → tải lại danh sách, giữ khối đang mở nếu còn (rà độc lập T3)
                 _modalError = err;
@@ -1837,6 +1843,7 @@ else
                 if (_kcsRepairs.Any(x => x.Id == keep)) _expandedRepairId = keep;
                 return;
             }
+            _expandedRepairId = 0;   // [BH-01]
             await ReloadAfterSaveAsync(async () =>
             {
                 await ReloadRowAsync(detailId);
@@ -2517,15 +2524,27 @@ else
         </span>
     };
 
-    void BuildColFilters()
+    // [BH-02 2026-11-15] keepUser = true (lưới 2 phút / NotifyAll tính lại cả bảng): chỉ cập nhật danh sách giá trị (AllValues),
+    //   GIỮ ExcludedValues + SearchText người dùng đang lọc theo từng cột (trước: tạo bộ lọc mới → mất lọc, menu đang mở mất chữ gõ).
+    //   Đổi khách / tháng / năm (LoadDataAsync) vẫn gọi mặc định = bộ lọc mới (phạm vi dữ liệu đổi).
+    //   Nguồn: CLAUDE quét Fable 15/11 (B-H BH-02 Trung); Hùng 15/11 15:10 OK Gói 22.
+    void BuildColFilters(bool keepUser = false)
     {
         if (!_rows.Any()) return;
+        var old = keepUser ? _colFilters : null;
         _colFilters = new Dictionary<string, HandoverColFilterDef>
         {
             ["PlanNo"]        = HandoverColFilterDef.Build(_rows, r => r.PlanNo),
             ["PurchaseOrder"] = HandoverColFilterDef.Build(_rows, r => r.PurchaseOrder),
             ["PartNo"]        = HandoverColFilterDef.Build(_rows, r => r.PartNo),
         };
+        if (old == null) return;
+        foreach (var (key, def) in _colFilters)
+        {
+            if (!old.TryGetValue(key, out var o)) continue;
+            def.ExcludedValues = o.ExcludedValues;   // [BH-02] cùng HashSet — giá trị không còn trong bảng vẫn giữ (vô hại, chỉ lọc)
+            def.SearchText     = o.SearchText;
+        }
     }
 
     private class HandoverColFilterDef

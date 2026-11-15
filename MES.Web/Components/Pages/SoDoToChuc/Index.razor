@@ -325,7 +325,7 @@
         <button class="context-item" @onclick="() => { DongContextMenu(); MoPopupSua(contextDept); }">
             <i class="bi bi-pencil-square me-2 text-primary"></i> Sửa thông tin / Đổi ảnh & nhân sự
         </button>
-        <button class="context-item" @onclick="() => { DongContextMenu(); MoPopupLichSu(contextDept); }">
+        <button class="context-item" @onclick="MenuSangLichSuAsync">
             <i class="bi bi-clock-history me-2 text-secondary"></i> Xem lịch sử điều động
         </button>
         <button class="context-item text-danger" @onclick="() => { DongContextMenu(); MoPopupXoa(contextDept); }">
@@ -1175,6 +1175,13 @@
     }
 
     // Lịch sử
+    // [BM1-02 2026-11-15] menu chuột phải "Xem lịch sử điều động": trước là lambda khối gọi MoPopupLichSu (async Task) không await → hộp đứng
+    //   "Đang tải lịch sử…". Tách method có await như SuaSangLichSuAsync. Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-02 Trung); Hùng 15/11 OK Gói 22.
+    private async Task MenuSangLichSuAsync()
+    {
+        var d = contextDept; DongContextMenu();
+        if (d != null) await MoPopupLichSu(d);
+    }
     private async Task MoPopupLichSu(Department dept)
     {
         if (!_canView) return;   // [PHAT-HIEN-0311]
