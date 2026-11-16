@@ -18,8 +18,13 @@ public class MachineEfficiencyService
 
     public async Task<MachineEfficiencyResult> GetAsync(
         DateOnly date, TimeOnly fromTime, TimeOnly toTime,
-        CaLamViec? selectedCa = null)
+        CaLamViec? selectedCa = null, int viewerUserId = 0)
     {
+        // [HSM-QUYEN 2026-11-16] Máy chủ kiểm quyền Xem HIEU_SUAT_MAY (ma trận DB, không tin claim) — trước: ai đăng nhập cũng lấy được
+        //   WTS mọi máy. Không quyền → kết quả rỗng (trang đã chặn + ẩn menu; đây là hàng rào thứ hai, như WtsReportService [RPT-4]).
+        //   viewerUserId = 0 chỉ còn ở bộ kiểm cũ → coi như không quyền. Nguồn: CLAUDE quét Fable 15/11 (BM1-09); Hùng 15/11 15:10 OK câu 9.
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay))
+            return EmptyResult(date, fromTime, toTime);
         var dayStart = date.ToDateTime(fromTime);
         // [RPT-3 2026-10-30] Ca vắt đêm (vd 20:00–05:00): giờ kết thúc sang ngày hôm sau — trước: chỉ queryEnd được nới,
         //   dayEnd vẫn cùng ngày → tổng phút âm, mọi đoạn WTS bị cắt hết, hiệu suất 0 %.

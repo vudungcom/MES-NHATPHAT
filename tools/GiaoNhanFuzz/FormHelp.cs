@@ -324,6 +324,9 @@ public static class FormHelp
         /// <summary>[T4] Truy vết: FromNC / ToNC phiếu (ToNcByCase = NC theo vụ, bộ kiểm tự đặt); báo lỗi: NC, nguồn, nơi gây lỗi.</summary>
         public string? TxFromNc, TxToNc, RepNc, RepOrigin, RepCause;
         public bool ToNcByCase;
+        /// <summary>[QF-KIEM-02 2026-11-16] Hàng đã sửa (ô XL) hàng tốt trả về Gia công có NC: máy chủ tự điền NC của chiếc lỗi ([SUA-HO-TRA-NGUOC] Gói 16 —
+        /// chiếc đã xong NC k / NC cuối → không NC). Đáp án: ToNC trống hoặc = NC theo vụ (ExpectNextNc); đáp án cũ đòi trống → SAI giả (kiem trạm 16/11 08:09 seed 15394 PO8; 84d9b9e y hệt).</summary>
+        public bool XlToGc; public long XlCase;
         public void Add(string k, decimal v) { Delta[k] = (Delta.TryGetValue(k, out var x) ? x : 0) + v; }
     }
 
@@ -345,6 +348,7 @@ public static class FormHelp
         {   // [SUA-XL-GIU][XL-TRA-LAI] hàng đã sửa (vụ) → phiếu Trả hàng đã sửa từ ô Hàng lỗi đã xử lý: hàng tốt → ô Hàng lỗi đã xử lý, hàng lỗi → ô Hàng lỗi
             e.Tx = 1; e.Purpose = HandoverPurpose.RepairReturn; e.FromCell = HandoverCell.Xl;
             e.ToCell = r.Kind == HandoverForm.Tot ? HandoverCell.Xl : HandoverCell.Loi;
+            if (r.Kind == HandoverForm.Tot && to == "GC" && r.CaseId is long xc) { e.XlToGc = true; e.XlCase = xc; }   // [QF-KIEM-02]
             e.Add(g + ".Xl", -n); ToRecv(e.ToCell);
             return e;
         }
@@ -525,7 +529,12 @@ public static class FormHelp
             var t = db.HandoverTransactions.List.Last();
             if (e.TxFromNc != null && t.FromNC != e.TxFromNc) bad.Add($"FromNC {t.FromNC} ≠ {e.TxFromNc}");
             var wantTo = e.ToNcByCase ? caseNc : e.TxToNc;
-            if (t.ToNC != wantTo) bad.Add($"ToNC {t.ToNC} ≠ {wantTo}");
+            if (e.XlToGc)
+            {   // [QF-KIEM-02] máy chủ tự điền NC của chiếc lỗi hoặc để trống (đã xong NC) — chấp nhận trống hoặc đúng NC theo vụ, NC khác là sai
+                var nxc = ExpectNextNc(db, t.KhPlanDetailId, e.XlCase, g);
+                if (t.ToNC != null && !string.Equals(t.ToNC, nxc, IC)) bad.Add($"ToNC {t.ToNC} ≠ (trống hoặc {nxc})");
+            }
+            else if (t.ToNC != wantTo) bad.Add($"ToNC {t.ToNC} ≠ {wantTo}");
         }
         if (e.Bl == 1)
         {

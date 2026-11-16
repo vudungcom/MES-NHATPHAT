@@ -27,6 +27,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject AppDbContext Db
+@inject ILogger<Detail_Partmaster> Logger
 @inject IJSRuntime JS
 
 <style>
@@ -117,6 +118,7 @@ else
                         @if (_deleteLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                         <i class="bi bi-check-circle"></i> Kích hoạt lại
                     </button>
+                    @if (_restoreError != null) { <span class="text-danger small ms-2">@_restoreError</span> }   @* [UI-SAFE] (BP1-06) *@
                 }
             }
             @* [STD-UPDATE] Nút "Update TG chuẩn" — quyền PART_STD_UPDATE (ADMIN luôn có). Khóa khi còn thay đổi chưa lưu. *@
@@ -246,7 +248,7 @@ else
                                             @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                             <input class="form-control form-control-sm text-center @(edit.IsBackup ? "fw-bold text-dark" : "fw-bold text-primary")"
                                                    @bind="edit.NC" @bind:after="() => MarkAsModified(edit)"
-                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                                   disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" maxlength="20" />
                                         </div>
                                     </td>
 
@@ -610,7 +612,7 @@ else
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                                 <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
                                                        @bind="edit.NC" @bind:after="() => MarkAsModified(edit)"
-                                                       placeholder="..." disabled="@(!_canEditC || RowLocked(edit))" />
+                                                       placeholder="..." disabled="@(!_canEditC || RowLocked(edit))" maxlength="20" />
                                             </div>
                                         </td>
                                         @* Cột Mã CV — auto fill từ WTS khi chọn, readonly *@
@@ -1018,7 +1020,7 @@ else
                 @(RequiresReason ? "Xác nhận & Lý do thay đổi *" : "Ghi chú / Lý do (Tùy chọn khi nhập lần đầu)")
             </div>
             <div class="card-body bg-light">
-                <textarea class="form-control @(RequiresReason ? "border-danger" : "")" @bind="_reason" rows="2" 
+                <textarea class="form-control @(RequiresReason ? "border-danger" : "")" @bind="_reason" rows="2" maxlength="450" 
                           placeholder="@(RequiresReason ? "Nhập tóm tắt lý do sửa đổi (bắt buộc khi sửa dữ liệu đã có)..." : "Nhập ghi chú nếu có (không bắt buộc đối với lần đầu nhập)...")"></textarea>
                 <small class="text-muted mt-1 d-block">
                     <i class="bi bi-info-circle"></i> 
@@ -1111,6 +1113,10 @@ else
                         Đã chọn: <strong class="text-primary">@(_selectedAltMachines.Count > 0 ? string.Join(", ", _selectedAltMachines) : "Chưa chọn")</strong>
                     </div>
                 </div>
+                @if (_altLenError != null)
+                {
+                    <div class="px-3 pb-2 small text-danger">@_altLenError</div>   @* [LEN-CHECK] (BP1-03) *@
+                }
                 <div class="modal-footer py-2 bg-light">
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAlternativeModal">Hủy</button>
                     <button type="button" class="btn btn-sm btn-primary" @onclick="SaveAlternativeModal">
@@ -1169,6 +1175,10 @@ else
                         </div>
                     }
                 </div>
+                @if (_altLenError != null)
+                {
+                    <div class="px-3 pb-2 small text-danger">@_altLenError</div>   @* [LEN-CHECK] (BP1-02) *@
+                }
                 <div class="modal-footer py-2 bg-light">
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAltDoGaModal">Hủy</button>
                     <button type="button" class="btn btn-sm btn-success" @onclick="SaveAltDoGaModal">
@@ -1229,6 +1239,10 @@ else
                         </div>
                     }
                 </div>
+                @if (_altLenError != null)
+                {
+                    <div class="px-3 pb-2 small text-danger">@_altLenError</div>   @* [LEN-CHECK] (BP1-02) *@
+                }
                 <div class="modal-footer py-2 bg-light">
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseAltDaoModal">Hủy</button>
                     <button type="button" class="btn btn-sm btn-dark" @onclick="SaveAltDaoModal">
@@ -2005,6 +2019,7 @@ else
     private bool _showDeleteConfirm = false;
     private bool _deleteLoading = false;
     private string _deleteError = string.Empty;
+    private string? _altLenError;   // [LEN-CHECK] (BP1-02 / BP1-03) lời báo độ dài ở modal đồ gá / dao / máy đồng dạng
 
     private bool CanViewAnyArea => _canViewA || _canViewB || _canViewC || _canViewD || _canViewE;
     private bool CanEditAnyArea => _canEditA || _canEditB || _canEditC || _canEditD || _canEditE;
@@ -3017,6 +3032,7 @@ else
 
     private void OpenAltDoGaModal(MachiningEdit edit)
     {
+        _altLenError = null;   // [LEN-CHECK]
         _currentEditingAltDoGa = edit;
         _selectedAltDoGas = (edit.FixtureType ?? "")
             .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -3033,6 +3049,7 @@ else
 
     private void CloseAltDoGaModal()
     {
+        _altLenError = null;   // [LEN-CHECK]
         _showAltDoGaModal = false;
         _currentEditingAltDoGa = null;
         _currentTimingRow = null;
@@ -3054,7 +3071,11 @@ else
         }
         else if (_currentEditingAltDoGa != null)
         {
-            _currentEditingAltDoGa.FixtureType = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            // [LEN-CHECK 2026-11-16] (BP1-02) dòng NC chính: cột FixtureType 50 (dòng máy đồng dạng 500) — ghép nhiều tên đồ gá dài quá 50 thì báo ngay ở modal,
+            //   không để tới lúc Lưu nổ SqlException thô. Nới cột = SQL gói sau nếu khách cần (Hùng 16/11 05:15 chọn chặn trước).
+            var _joinFix = string.Join(", ", _selectedAltDoGas.OrderBy(x => x));
+            if (LenCheck.Over(_joinFix, 50, "Tổng tên đồ gá của dòng NC chính (ghép bằng dấu phẩy)") is string _eFix) { _altLenError = _eFix + " Bớt mục hoặc dùng tên ngắn hơn."; return; }
+            _currentEditingAltDoGa.FixtureType = _joinFix;
             MarkAsModified(_currentEditingAltDoGa);
         }
         _showAltDoGaModal = false;
@@ -3063,6 +3084,7 @@ else
 
     private void OpenAltDaoModal(MachiningEdit edit)
     {
+        _altLenError = null;   // [LEN-CHECK]
         _currentEditingAltDao = edit;
         _selectedAltDaos = (edit.ToolType ?? "")
             .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -3079,6 +3101,7 @@ else
 
     private void CloseAltDaoModal()
     {
+        _altLenError = null;   // [LEN-CHECK]
         _showAltDaoModal = false;
         _currentEditingAltDao = null;
         _currentTimingRow = null;
@@ -3100,7 +3123,9 @@ else
         }
         else if (_currentEditingAltDao != null)
         {
-            _currentEditingAltDao.ToolType = string.Join(", ", _selectedAltDaos.OrderBy(x => x));
+            var _joinTool = string.Join(", ", _selectedAltDaos.OrderBy(x => x));   // [LEN-CHECK 2026-11-16] (BP1-02) cột ToolType dòng NC chính 100
+            if (LenCheck.Over(_joinTool, 100, "Tổng tên dao của dòng NC chính (ghép bằng dấu phẩy)") is string _eTool) { _altLenError = _eTool + " Bớt mục hoặc dùng tên ngắn hơn."; return; }
+            _currentEditingAltDao.ToolType = _joinTool;
             MarkAsModified(_currentEditingAltDao);
         }
         _showAltDaoModal = false;
@@ -3109,6 +3134,7 @@ else
 
     private void OpenAlternativeModal(MachiningEdit edit)
     {
+        _altLenError = null;   // [LEN-CHECK]
         // FIX: reset về false trước để Blazor nhận ra thay đổi và re-render modal
         _showAltMachineModal = false;
         _currentTimingRow = null;    // FIX: clear stale timing state từ lần mở trước
@@ -3177,6 +3203,7 @@ else
 
     private void CloseAlternativeModal()
     {
+        _altLenError = null;   // [LEN-CHECK]
         _showAltMachineModal = false;
         _currentEditingAltMachining = null;
         _currentTimingRow = null;
@@ -3188,7 +3215,9 @@ else
         if (_currentTimingRow != null && _currentTimingEdit != null)
         {
             // Lưu tất cả máy được chọn vào SoMay dạng "C04, C06" (1 dòng = 1 nhóm máy cùng thời gian)
-            _currentTimingRow.SoMay = string.Join(", ", _selectedAltMachines.OrderBy(m => m));
+            var _joinMay = string.Join(", ", _selectedAltMachines.OrderBy(m => m));   // [LEN-CHECK 2026-11-16] (BP1-03) cột SoMay 50
+            if (LenCheck.Over(_joinMay, 50, "Danh sách máy đồng dạng của 1 dòng (ghép bằng dấu phẩy)") is string _eMay) { _altLenError = _eMay + " Tách thành 2 dòng máy đồng dạng."; return; }
+            _currentTimingRow.SoMay = _joinMay;
             MarkTimingModified(_currentTimingEdit, _currentTimingRow);
             _currentTimingRow = null;
             _currentTimingEdit = null;
@@ -3756,31 +3785,44 @@ else
 
     private async Task XoaPartAsync()
     {
-        if (_part == null || _pmBusy) return;   // [BP1-01]
+        if (_part == null || _pmBusy || _deleteLoading) return;   // [BP1-01]
         _deleteLoading = true;
         _deleteError = string.Empty;
-        var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: true);
-        _deleteLoading = false;
-        if (res.Success)
+        // [UI-SAFE 2026-11-16] (BP1-06 / G22-GHI-NHO (4)) try/catch/finally: lỗi DB không làm chết mạch, cờ bận hạ ở finally (trước: nút treo spinner tới tải lại)
+        try
         {
-            _showDeleteConfirm = false;
-            _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
+            var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: true);
+            if (res.Success)
+            {
+                _showDeleteConfirm = false;
+                _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
+            }
+            else
+            {
+                _deleteError = res.Error ?? "Lỗi không xác định.";
+            }
         }
-        else
-        {
-            _deleteError = res.Error ?? "Lỗi không xác định.";
-        }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); _deleteError = UiSafe.Text(ex, Logger, "ngưng sử dụng Part"); }
+        finally { _deleteLoading = false; }
     }
 
     private async Task KhoiPhucPartAsync()
     {
-        if (_part == null || _pmBusy) return;   // [BP1-01]
+        if (_part == null || _pmBusy || _deleteLoading) return;   // [BP1-01]
         _deleteLoading = true;
-        var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: false);
-        _deleteLoading = false;
-        if (res.Success)
-            _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
+        _restoreError = null;
+        // [UI-SAFE 2026-11-16] (BP1-06) trước: bỏ qua res.Error (kích hoạt lại thất bại im lặng) + không try/catch
+        try
+        {
+            var res = await PmSvc.SetObsoleteAsync(_part.PartId, _currentUserId, obsolete: false);
+            if (res.Success) _part = await PmSvc.GetByPartNoAsync(_part.PartNo);
+            else _restoreError = res.Error ?? "Không kích hoạt lại được.";
+        }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); _restoreError = UiSafe.Text(ex, Logger, "kích hoạt lại Part"); }
+        finally { _deleteLoading = false; }
     }
+
+    private string? _restoreError;   // [UI-SAFE] (BP1-06)
 
     private async Task SafeSetDefaultAsync(string attrType, string? newValue)
     {

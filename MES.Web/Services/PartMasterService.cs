@@ -220,6 +220,7 @@ public class PartMasterService
             .AsNoTracking()
             .FirstOrDefaultAsync(u => u.UserId == requestedByUserId && u.IsActive);
         if (requester == null) return (false, "Không xác định được người thực hiện.");
+        if (requester.Group == null || !requester.Group.IsActive) return (false, "Nhóm của tài khoản không hoạt động — không có quyền.");   // [PERM-ACTIVE 2026-11-16] (P-07)
 
         bool isAdmin = requester.Group?.GroupCode == "ADMIN" || requester.Username.ToLower() == "admin";
         if (!isAdmin)

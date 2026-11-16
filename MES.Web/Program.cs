@@ -183,7 +183,8 @@ app.MapPost("/login-submit", async (HttpContext ctx, AuthService auth) =>
         new(System.Security.Claims.ClaimTypes.NameIdentifier, user.UserId.ToString()),
         new(System.Security.Claims.ClaimTypes.Name, user.Username),
         new("FullName", user.FullName),
-        new(System.Security.Claims.ClaimTypes.Role, user.Group?.GroupCode ?? "VIEWER")
+        new(System.Security.Claims.ClaimTypes.Role, user.Group?.GroupCode ?? "VIEWER"),
+        new(AuthGuard.PermHashClaim, AuthGuard.PermHash(user.Group?.Permissions))   // [PERM-HASH 2026-11-16] đổi ma trận quyền → phiên cũ hết hiệu lực (AuthGuard.IsStillValidAsync)
     };
     var identity = new System.Security.Claims.ClaimsIdentity(
         claims, CookieAuthenticationDefaults.AuthenticationScheme);

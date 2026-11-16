@@ -27,6 +27,7 @@ if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [G
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
+if (args.Length > 0 && args[0] == "len") { return await LenScen.Run(); }   // [LEN-SCEN 2026-11-16] độ dài chữ theo cột DB ở service (LenCheck) + UiSafe
 if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   // [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16] quyền máy chủ + danh mục + quy trình trống + khoá cấp số KH
 if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }
 if (args.Length > 0 && args[0] == "nghi") { return await NghiScen.Run(); }   // [ML17-XN][CA-NGHI-HIST] làm thông nghỉ + giờ nghỉ chép lúc lưu + ca qua đêm

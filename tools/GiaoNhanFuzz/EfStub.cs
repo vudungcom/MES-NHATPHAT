@@ -80,9 +80,13 @@ namespace Microsoft.EntityFrameworkCore
     public class ChangeTracker
     {
         readonly DbContext _c;
+        public DbContext Ctx => _c;   // [LEN-SCEN 2026-11-16] cho Entries<T>() đọc Pending thật
         public ChangeTracker(DbContext c) { _c = c; }
         public void Clear() { foreach (var s in _c.AllSets()) s.Pending.Clear(); }
     }
+
+    /// <summary>[LEN-SCEN 2026-11-16] Ngoại lệ ghi DB giả — để kịch bản len mô phỏng lỗi SaveChanges ở nhánh Sửa ca (UiSafe.Text phải trả câu Việt chung).</summary>
+    public class DbUpdateException : Exception { public DbUpdateException(string m) : base(m) { } }
 
     public class DbContext
     {
@@ -210,7 +214,8 @@ namespace Microsoft.EntityFrameworkCore
         {
             foreach (var s in _sets.Values)
             {
-                s.Pending.Clear();
+                // [LEN-SCEN 2026-11-16] KHÔNG xoá Pending khi rollback: EF thật giữ nguyên bản Added trong ChangeTracker sau RollbackAsync —
+                //   service phải tự Detached (CaLamViecService, DepartmentService) không thì lần SaveChanges sau ghi lại. Trước stub xoá hộ → phép kiểm detach tự-đúng.
                 if (!snap.TryGetValue(s, out var v)) { s.Items.Clear(); continue; }
                 s.Items.Clear();
                 for (int i = 0; i < v.items.Count; i++)

@@ -46,7 +46,8 @@ async def main():
             await pa.locator("button:has-text('Lưu Ma Trận')").click()
             await pa.wait_for_timeout(1500)
             t = await pa.inner_text("body")
-            ok("Đã lưu ma trận phân quyền thành công" in t, "G4 admin bấm Lưu ma trận phân quyền → báo thành công", [l for l in t.split("\n") if "Lỗi" in l or "ma trận" in l][:4])
+            # [GÓI 23][PERM-HASH] câu báo đổi: "Đã lưu ma trận phân quyền. Nhóm có quyền thay đổi: ... đăng nhập lại"
+            ok("Đã lưu ma trận phân quyền" in t, "G4 admin bấm Lưu ma trận phân quyền → báo thành công", [l for l in t.split("\n") if "Lỗi" in l or "ma trận" in l][:4])
             # [SET-MATRIX-1TX 05/11] (PHAT-HIEN-0311 mục 5) ma trận không còn cột "Cài đặt & Phân quyền" cho nhóm thường; cột khác vẫn có
             heads = await pa.locator("thead th").all_inner_texts()
             ok(not any("Cài đặt & Phân quyền" in h for h in heads) and any("Giao nhận: Gia công" in h for h in heads) and any("Cài đặt ca làm việc" in h for h in heads),

@@ -8,12 +8,38 @@
 @inject HandoverLedgerService LedgerSvc
 @inject KhoVatLieuService KhoSvc
 @inject NavigationManager Nav
+@inject UserService UserSvc
+@inject AuthenticationStateProvider AuthState
+@inject ILogger<View_Khplan> Logger
+@using System.Security.Claims
 
 <PageTitle>Xem phiếu KH - MES</PageTitle>
 
-@if (_plan == null || _detail == null)
+@* [VIEW-PERM 2026-11-16] (BK-01 / BM2-08) Trang xem PO kiểm quyền Xem KE_HOACH theo ma trận như danh sách KH — trước chỉ [Authorize]:
+   tài khoản không có quyền Kế hoạch gõ URL vẫn xem SL, vật liệu, WTS từng công nhân. Nút "Sửa phiếu" chỉ hiện khi có Sửa.
+   Không tìm thấy PO → báo rõ + nút về danh sách (trước: "Đang tải..." mãi). Lỗi đọc DB → câu Việt [UI-SAFE].
+   Nguồn: CLAUDE quét Fable 15/11 (B-K BK-01 Trung, B-M2 BM2-08); Hùng 16/11 05:15 làm theo đề xuất. *@
+@if (_loading)
 {
     <p><em>Đang tải...</em></p>
+}
+else if (!_canView)
+{
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p class="mb-0">Tài khoản của bạn chưa được cấp quyền <b>Xem Kế hoạch</b> trên Ma trận phân quyền — nhờ Admin cấp quyền.</p>
+    </div>
+    <a href="/" class="btn btn-outline-primary"><i class="bi bi-house"></i> Về trang chủ</a>
+}
+else if (_pageError != null)
+{
+    <div class="alert alert-warning shadow-sm my-4">@_pageError</div>
+    <a href="/kh-plan" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Danh sách</a>
+}
+else if (_plan == null || _detail == null)
+{
+    <div class="alert alert-warning shadow-sm my-4"><i class="bi bi-exclamation-triangle"></i> Không tìm thấy PO (phiếu @Id · dòng @DetailId) — có thể đã bị xoá hoặc tách.</div>
+    <a href="/kh-plan" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Danh sách</a>
 }
 else
 {
@@ -44,15 +70,18 @@ else
             <a href="/kh-plan" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i> Danh sách
             </a>
-            <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detail.KhPlanDetailId}/edit")" class="btn btn-primary">
-                <i class="bi bi-pencil-square"></i> Sửa phiếu
-            </a>
+            @if (_canEdit)
+            {
+                <a href="@($"/kh-plan/{_plan.KhPlanId}/detail/{_detail.KhPlanDetailId}/edit")" class="btn btn-primary">
+                    <i class="bi bi-pencil-square"></i> Sửa phiếu
+                </a>
+            }
         </div>
     </div>
 
     <div class="alert alert-secondary py-2 small">
         <i class="bi bi-eye"></i> Chế độ <strong>chỉ xem</strong>.
-        Bấm "Sửa phiếu" để chỉnh sửa (bắt buộc nhập lý do).
+        @if (_canEdit) { <span>Bấm "Sửa phiếu" để chỉnh sửa (bắt buộc nhập lý do).</span> }
         @if (!string.IsNullOrEmpty(_detail.OldPurchaseOrder))
         {
             <span>· Dòng này được <strong>tách từ PO cũ</strong> <code>@_detail.OldPurchaseOrder</code>.</span>
@@ -810,26 +839,40 @@ else
     private List<WtsProductionLog> _wtsLogs = new();
     // [RA-SOCHUNG 2026-10-31] bỏ _wtsQtySummary + GetQtyDone (Σ QtyDone tự cộng, không chỗ nào đọc)
 
+    // [VIEW-PERM] quyền theo ma trận (UserService đọc DB, ADMIN = toàn quyền)
+    private bool _loading = true, _canView, _canEdit;
+    private string? _pageError;
+
     protected override async Task OnInitializedAsync()
     {
-        var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        int.TryParse(auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid);
+        var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+        if (perms.TryGetValue(MES.Web.Constants.SystemPermissions.KeHoach, out var p)) { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }
+        if (!_canView) { _loading = false; return; }
 
-        if (plan != null && detail != null && plan.KhPlanId == Id)
+        _pageError = await UiSafe.RunAsync(async () =>   // [UI-SAFE] (BK-05) lỗi đọc DB không làm chết mạch
         {
-            _plan   = plan;
-            _detail = detail;
+            var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
 
-            _khoItem = await KhoSvc.GetByDetailIdAsync(DetailId);
+            if (plan != null && detail != null && plan.KhPlanId == Id)
+            {
+                _plan   = plan;
+                _detail = detail;
 
-            // Load snapshot quy trình B→E
-            _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
+                _khoItem = await KhoSvc.GetByDetailIdAsync(DetailId);
 
-            // Load WTS production logs
-            _wtsLogs = await KhSvc.GetWtsLogsAsync(DetailId);
-            // [GN-WHERE][V5] Sổ Giao nhận của PO: số từng NC / mã CV + PO đang ở đâu + đường đi
-            _ledgerRow   = await LedgerSvc.GetLedgerForDetailAsync(DetailId);
-            _ledgerSteps = await LedgerSvc.GetStepsForDetailAsync(DetailId);
-        }
+                // Load snapshot quy trình B→E
+                _snapshot = await KhSvc.GetRouteSnapshotAsync(DetailId);
+
+                // Load WTS production logs
+                _wtsLogs = await KhSvc.GetWtsLogsAsync(DetailId);
+                // [GN-WHERE][V5] Sổ Giao nhận của PO: số từng NC / mã CV + PO đang ở đâu + đường đi
+                _ledgerRow   = await LedgerSvc.GetLedgerForDetailAsync(DetailId);
+                _ledgerSteps = await LedgerSvc.GetStepsForDetailAsync(DetailId);
+            }
+        }, Logger, "tải phiếu KH");
+        _loading = false;
     }
 
     // Lấy logs cho 1 NC cụ thể

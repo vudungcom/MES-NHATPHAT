@@ -28,6 +28,10 @@ public class CustomerService
         return await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == id);
     }
 
+    /// <summary>[LEN-CHECK 2026-11-16] Độ dài ô chữ theo cột Customers (Entities/Customer.cs).</summary>
+    public static string? CustomerLenError(Customer m)
+        => LenCheck.FirstOver((m.CustomerCode, 20, "Mã khách hàng"), (m.CustomerName, 200, "Tên khách hàng"), (m.SupplierCode, 20, "Supplier Code"));
+
     public async Task<(bool Success, string? Error, Customer? Data)> CreateAsync(Customer model, int userId)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền: Sửa KHACH_HANG, hoặc Sửa KE_HOACH (trang Tạo Kế hoạch được tạo nhanh khách mới)
@@ -35,6 +39,8 @@ public class CustomerService
             return (false, PermCheck.NoEdit("Khách hàng"), null);
         if (string.IsNullOrWhiteSpace(model.CustomerName))
             return (false, "Tên khách hàng không được để trống.", null);
+        // [LEN-CHECK 2026-11-16] (BM2-01 / BM2-17) Mã KH 20, Tên 200, Supplier Code 20 (cột DB) — trước: SqlException tiếng Anh
+        if (CustomerLenError(model) is string eLen) return (false, eLen, null);
 
         var code = model.CustomerCode?.Trim();
         // [RS-E8 2026-10-29] Mã KH: bắt buộc + không trùng với MỌI khách (kể cả đang Ngừng hoạt động).
@@ -97,6 +103,8 @@ public class CustomerService
             return (false, PermCheck.NoEdit("Khách hàng"));
         if (string.IsNullOrWhiteSpace(updated.CustomerName))
             return (false, "Tên khách hàng không được để trống.");
+        if (CustomerLenError(updated) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BM2-01)
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] CustomerChangeLogs.Reason 500
 
         var existing = await _db.Customers.FirstOrDefaultAsync(c => c.CustomerId == updated.CustomerId);
         if (existing == null) return (false, "Không tìm thấy khách hàng.");

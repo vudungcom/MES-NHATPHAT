@@ -365,7 +365,9 @@ else
         else if (int.TryParse(userIdStr, out var uid))
         {
             var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
-            _canView = perms.Values.Any(p => p.CanView);
+            // [VIEW-PERM 2026-11-16] (BP2-04) Xem danh sách Part Master = Xem 1 trong 5 vùng PART_* (khớp menu NavMenu.CanViewPartMaster) —
+            //   trước: bất kỳ mục nào có Xem (vd chỉ Xem WTS_GC) gõ URL vẫn thấy toàn bộ Part / khách / vật liệu. Nguồn: CLAUDE quét Fable 15/11 (B-P2).
+            _canView = MES.Web.Constants.SystemPermissions.PartMasterViewSections.Any(s => perms.TryGetValue(s, out var pv) && (pv.CanView || pv.CanEdit));
             if (perms.TryGetValue("PART_TAO_MOI", out var p)) _canCreate = p.CanEdit;
         }
 

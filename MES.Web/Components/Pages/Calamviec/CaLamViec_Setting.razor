@@ -9,6 +9,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject UserService UserSvc
 @inject NavigationManager Nav
+@inject ILogger<CaLamViec_Setting> Logger
 
 <PageTitle>Cài đặt ca làm việc - MES</PageTitle>
 
@@ -148,7 +149,7 @@ else
                         <div class="col-7">
                             <label class="form-label fw-semibold">Tên ca <span class="text-danger">*</span></label>
                             <input class="form-control" placeholder="VD: Ca Hành chính, Ca 1..."
-                                   @bind="_editing.TenCa" />
+                                   @bind="_editing.TenCa" maxlength="100" />
                         </div>
                         <div class="col-5">
                             <label class="form-label fw-semibold">Thứ tự hiển thị</label>
@@ -208,7 +209,7 @@ else
                                    @onchange="e => SetNghiKetThuc(idx, e.Value?.ToString())" />
                             <input class="form-control form-control-sm" style="flex:1;"
                                    placeholder="Ghi chú (VD: Nghỉ trưa)"
-                                   @bind="n.GhiChu" />
+                                   @bind="n.GhiChu" maxlength="100" />
                             <button class="btn btn-sm btn-outline-danger px-2"
                                     @onclick="() => RemoveNghi(idx)">
                                 <i class="bi bi-x"></i>
@@ -387,6 +388,7 @@ else
             _editing = null;
             _list = await CaSvc.GetAllAsync();
         }
+        catch (Exception ex) { _error = UiSafe.Text(ex, Logger, "lưu ca làm việc"); }   // [UI-SAFE 2026-11-16] (BM2-05)
         finally { _saving = false; }
     }
 

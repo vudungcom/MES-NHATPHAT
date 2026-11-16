@@ -7,6 +7,7 @@
 @inject MES.Web.Services.DoGaService DoGaSvc
 @inject MES.Web.Services.UserService UserSvc
 @inject NavigationManager Nav
+@inject ILogger<Index> Logger
 @inject IJSRuntime JS
 
 <PageTitle>Quản lý Đồ gá & Phụ kiện - MES</PageTitle>
@@ -250,7 +251,7 @@
                 <div class="modal-body">
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Người mượn (Mã NV & Họ tên) <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="nguoiMuonInput" placeholder="VD: 016 Đỗ Văn Phúc..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="nguoiMuonInput" placeholder="VD: 016 Đỗ Văn Phúc..." maxlength="150" />
                     </div>
                     <div class="row g-2 mb-2">
                         <div class="col-6">
@@ -264,7 +265,7 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Lý do mượn / Gia công Part nào</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoMuonInput" placeholder="VD: Gia công Part 4B-PT1405210 ca ngày..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoMuonInput" placeholder="VD: Gia công Part 4B-PT1405210 ca ngày..." maxlength="500" />
                     </div>
 
                     <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
@@ -304,7 +305,7 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Ghi chú tình trạng khi trả</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="ghiChuTraInput" placeholder="VD: Đồ gá nguyên vẹn, đủ bulong..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="ghiChuTraInput" placeholder="VD: Đồ gá nguyên vẹn, đủ bulong..." maxlength="500" />
                     </div>
 
                     <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
@@ -343,11 +344,11 @@
                     <div class="row g-2 mb-2">
                         <div class="col-8">
                             <label class="form-label small fw-bold mb-1">Tên Đồ Gá (Cột B) <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control form-control-sm fw-bold text-danger" autocomplete="off" @bind="itemDangSua.TenDoGa" placeholder="VD: VJ63, A288, A295+A296..." />
+                            <input type="text" class="form-control form-control-sm fw-bold text-danger" autocomplete="off" @bind="itemDangSua.TenDoGa" placeholder="VD: VJ63, A288, A295+A296..." maxlength="150" />
                         </div>
                         <div class="col-4">
                             <label class="form-label small fw-bold mb-1">Số lượng</label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.SoLuong" placeholder="VD: 1, 2..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.SoLuong" placeholder="VD: 1, 2..." maxlength="50" />
                         </div>
                     </div>
 
@@ -356,29 +357,29 @@
                         <div class="row g-2 mb-2">
                             <div class="col-4">
                                 <label class="form-label small mb-1">Bu lông</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.BuLong" placeholder="VD: M8*30(1)..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.BuLong" placeholder="VD: M8*30(1)..." maxlength="250" />
                             </div>
                             <div class="col-4">
                                 <label class="form-label small mb-1">Bu lông định vị</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.BuLongDinhVi" placeholder="VD: 7..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.BuLongDinhVi" placeholder="VD: 7..." maxlength="250" />
                             </div>
                             <div class="col-4">
                                 <label class="form-label small mb-1">Chốt</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Chot" placeholder="VD: 2 chốt F6..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Chot" placeholder="VD: 2 chốt F6..." maxlength="250" />
                             </div>
                         </div>
                         <div class="row g-2">
                             <div class="col-4">
                                 <label class="form-label small mb-1">Đệm</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Dem" placeholder="VD: 14, 2 đệm..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Dem" placeholder="VD: 14, 2 đệm..." maxlength="250" />
                             </div>
                             <div class="col-4">
                                 <label class="form-label small mb-1">Kẹp</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Kep" placeholder="VD: KTC 25*60(1)..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.Kep" placeholder="VD: KTC 25*60(1)..." maxlength="250" />
                             </div>
                             <div class="col-4">
                                 <label class="form-label small mb-1">Long đen</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.LongDen" placeholder="VD: 4, Long đen F17..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.LongDen" placeholder="VD: 4, Long đen F17..." maxlength="250" />
                             </div>
                         </div>
                     </div>
@@ -386,11 +387,11 @@
                     <div class="row g-2 mb-3">
                         <div class="col-6">
                             <label class="form-label small fw-bold mb-1">Sản phẩm sử dụng (Part No)</label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.SanPhamSuDung" placeholder="VD: 4B-PT1405210..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.SanPhamSuDung" placeholder="VD: 4B-PT1405210..." maxlength="250" />
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold mb-1">Ghi chú</label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.GhiChu" placeholder="VD: Kẹp và đệm đã bắt vào nhau..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="itemDangSua.GhiChu" placeholder="VD: Kẹp và đệm đã bắt vào nhau..." maxlength="500" />
                         </div>
                     </div>
 
@@ -399,7 +400,7 @@
                         {
                             <div class="mb-2">
                                 <label class="form-label small fw-bold mb-1">Lý do thay đổi thông tin</label>
-                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Cập nhật thêm bu lông kẹp..." />
+                                <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Cập nhật thêm bu lông kẹp..." maxlength="500" />
                             </div>
                         }
                         <div>
@@ -721,29 +722,32 @@
 
     private async Task XacNhanMuonAsync()
     {
-        if (itemDangMuonTra == null) return;
+        if (itemDangMuonTra == null || isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         isProcessing = true;
         loiPopup = "";
-
-        var result = await DoGaSvc.MuonDoGaAsync(
-            itemDangMuonTra.DoGaId, 
-            nguoiMuonInput, 
-            ngayMuonInput, 
-            ngayTraDuKienInput, 
-            lyDoMuonInput, 
-            currentUserId, 
-            pinXacNhan);
-
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21) lỗi DB → lời Việt trong popup, cờ hạ ở finally
         {
-            DongPopupMuon();
-            await LoadDataAsync();
+            var result = await DoGaSvc.MuonDoGaAsync(
+                itemDangMuonTra.DoGaId, 
+                nguoiMuonInput, 
+                ngayMuonInput, 
+                ngayTraDuKienInput, 
+                lyDoMuonInput, 
+                currentUserId, 
+                pinXacNhan);
+
+            if (result.Success)
+            {
+                DongPopupMuon();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi ghi nhận mượn đồ gá.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi ghi nhận mượn đồ gá.";
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "ghi nhận mượn đồ gá"); }
+        finally { isProcessing = false; }
     }
 
     private void MoPopupTra(DoGa item)
@@ -758,21 +762,24 @@
 
     private async Task XacNhanTraAsync()
     {
-        if (itemDangMuonTra == null) return;
+        if (itemDangMuonTra == null || isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         isProcessing = true;
         loiPopup = "";
-
-        var result = await DoGaSvc.TraDoGaAsync(itemDangMuonTra.DoGaId, ghiChuTraInput, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21) lỗi DB → lời Việt trong popup, cờ hạ ở finally
         {
-            DongPopupTra();
-            await LoadDataAsync();
+            var result = await DoGaSvc.TraDoGaAsync(itemDangMuonTra.DoGaId, ghiChuTraInput, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupTra();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi xác nhận trả đồ gá.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi xác nhận trả đồ gá.";
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "xác nhận trả đồ gá"); }
+        finally { isProcessing = false; }
     }
 
     private void MoPopupThem()
@@ -814,37 +821,40 @@
 
     private async Task LuuThongTinDoGaAsync()
     {
-        if (itemDangSua == null) return;
+        if (itemDangSua == null || isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         isProcessing = true;
         loiPopup = "";
-
-        if (isThemMoi)
+        try   // [UI-SAFE 2026-11-16] (BM1-21) lỗi DB → lời Việt trong popup, cờ hạ ở finally
         {
-            var result = await DoGaSvc.CreateAsync(itemDangSua, currentUserId, pinXacNhan);
-            if (result.Success)
+            if (isThemMoi)
             {
-                DongPopupSua();
-                await LoadDataAsync();
+                var result = await DoGaSvc.CreateAsync(itemDangSua, currentUserId, pinXacNhan);
+                if (result.Success)
+                {
+                    DongPopupSua();
+                    await LoadDataAsync();
+                }
+                else
+                {
+                    loiPopup = result.Error ?? "Lỗi thêm đồ gá mới.";
+                }
             }
             else
             {
-                loiPopup = result.Error ?? "Lỗi thêm đồ gá mới.";
+                var result = await DoGaSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan);
+                if (result.Success)
+                {
+                    DongPopupSua();
+                    await LoadDataAsync();
+                }
+                else
+                {
+                    loiPopup = result.Error ?? "Lỗi cập nhật đồ gá.";
+                }
             }
         }
-        else
-        {
-            var result = await DoGaSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan);
-            if (result.Success)
-            {
-                DongPopupSua();
-                await LoadDataAsync();
-            }
-            else
-            {
-                loiPopup = result.Error ?? "Lỗi cập nhật đồ gá.";
-            }
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "lưu đồ gá"); }
+        finally { isProcessing = false; }
     }
 
     private void MoPopupXoa(DoGa item)
@@ -859,21 +869,24 @@
 
     private async Task XacNhanXoaAsync()
     {
-        if (itemCanXoa == null) return;
+        if (itemCanXoa == null || isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         isProcessing = true;
         loiPopup = "";
-
-        var result = await DoGaSvc.SoftDeleteAsync(itemCanXoa.DoGaId, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21) lỗi DB → lời Việt trong popup, cờ hạ ở finally
         {
-            DongPopupXoa();
-            await LoadDataAsync();
+            var result = await DoGaSvc.SoftDeleteAsync(itemCanXoa.DoGaId, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupXoa();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi xóa đồ gá.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi xóa đồ gá.";
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "xoá đồ gá"); }
+        finally { isProcessing = false; }
     }
 
     // [BM1-02 2026-11-15] nút "Lịch sử" trong hộp Xem: trước là lambda khối gọi MoPopupLichSu (async Task) không await → hộp đứng

@@ -56,11 +56,15 @@
             </li>
         }
 
-        <li class="nav-item">
-            <NavLink class="nav-link" href="/hieu-suat-may">
-                <i class="bi bi-cpu"></i> Hiệu suất máy
-            </NavLink>
-        </li>
+        @* [HSM-QUYEN 2026-11-16] menu theo ô Xem HIEU_SUAT_MAY (trước: luôn hiện) *@
+        @if (CanView(SystemPermissions.HieuSuatMay))
+        {
+            <li class="nav-item">
+                <NavLink class="nav-link" href="/hieu-suat-may">
+                    <i class="bi bi-cpu"></i> Hiệu suất máy
+                </NavLink>
+            </li>
+        }
         
         <li class="nav-item">
             <NavLink class="nav-link" href="/hieu-suat-cong-nhan">

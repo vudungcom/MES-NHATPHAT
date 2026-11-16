@@ -45,6 +45,7 @@ public class UserService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         if (!await PermCheck.IsAdminAsync(db, actorUserId)) return (false, NotAdminMsg);   // [USER-PERM-SVC]
         group.GroupCode = group.GroupCode.Trim().ToUpper();
+        if (LenCheck.FirstOver((group.GroupCode, 50, "Mã nhóm"), (group.GroupName, 100, "Tên nhóm")) is string eLenG) return (false, eLenG);   // [LEN-CHECK 2026-11-16] (BM2-03)
         if (await db.UserGroups.AnyAsync(x => x.GroupCode == group.GroupCode))
             return (false, "Mã nhóm đã tồn tại.");
 
@@ -63,6 +64,7 @@ public class UserService
         // [USER-PERM-SVC] (rà độc lập T7) tắt nhóm ADMIN = không còn ai quản trị (PermCheck đòi nhóm đang hoạt động) → máy chủ chặn
         if (dbGroup.GroupCode == "ADMIN" && !group.IsActive) return (false, "Không được ngưng nhóm ADMIN (sẽ không còn ai quản trị hệ thống).");
 
+        if (LenCheck.Over(group.GroupName, 100, "Tên nhóm") is string eLenG2) return (false, eLenG2);   // [LEN-CHECK 2026-11-16] (BM2-03)
         dbGroup.GroupName = group.GroupName.Trim();
         dbGroup.IsActive = group.IsActive;
 
@@ -104,11 +106,26 @@ public class UserService
             if (g == null) return (false, $"Không tìm thấy nhóm (GroupId {id}) — có thể vừa bị xoá. Tải lại trang rồi lưu lại; chưa nhóm nào được đổi.");
             if (g.GroupCode == "ADMIN") continue;
             var perms = permsByGroup[id].Where(x => x.SectionCode != SystemPermissions.SettingAdmin).ToList();
+            // [PERM-HASH 2026-11-16] chỉ ghi lại JSON của nhóm có quyền THẬT SỰ đổi (so theo ô Xem / Sửa đang bật, bỏ thứ tự + ô trống):
+            //   AuthGuard so hash JSON → nhóm không đổi không bị đăng xuất; lần lưu đầu sau khi lên bản (tick HIEU_SUAT_MAY cho 1 nhóm)
+            //   không đá cả xưởng. Nguồn: CLAUDE rà độc lập Gói 23 16/11 (T1); Hùng 16/11 05:15 làm theo đề xuất.
+            if (SamePerms(g.Permissions, perms)) continue;
             g.Permissions = JsonSerializer.Serialize(perms);
         }
         await db.SaveChangesAsync();
         await trx.CommitAsync();
         return (true, null);
+    }
+
+    /// <summary>[PERM-HASH] Hai ma trận giống nhau về nghĩa: cùng tập (mục, Xem, Sửa) của các mục có ít nhất 1 ô bật.</summary>
+    internal static bool SamePerms(string? oldJson, List<GroupPermissionSetting> perms)
+    {
+        static HashSet<string> Norm(IEnumerable<GroupPermissionSetting> ps) =>
+            ps.Where(p => p.CanView || p.CanEdit).Select(p => $"{p.SectionCode}|{p.CanView}|{p.CanEdit}").ToHashSet(StringComparer.Ordinal);
+        List<GroupPermissionSetting> old;
+        try { old = string.IsNullOrWhiteSpace(oldJson) ? new() : JsonSerializer.Deserialize<List<GroupPermissionSetting>>(oldJson) ?? new(); }
+        catch { return false; }   // JSON cũ hỏng → ghi lại
+        return Norm(old).SetEquals(Norm(perms));
     }
 
     public List<GroupPermissionSetting> GetGroupPermissions(string? jsonPermissions)
@@ -174,6 +191,8 @@ public class UserService
         //   Admin tạo mật khẩu "1" hay " " vẫn được → tài khoản yếu khi MES mở ra Internet. Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-04 Trung); Hùng 15/11 OK Gói 22.
         plainPassword = (plainPassword ?? "").Trim();
         if (plainPassword.Length < 6) return (false, "Mật khẩu khởi tạo tối thiểu 6 ký tự (không tính dấu cách đầu / cuối).");
+        // [LEN-CHECK 2026-11-16] (BM2-03) Tên đăng nhập 50 / Họ tên 100 (cột Users) — trước: SqlException không bắt → trang Cài đặt chết
+        if (LenCheck.FirstOver((user.Username, 50, "Tên đăng nhập"), (user.FullName, 100, "Họ tên")) is string eLen) return (false, eLen);
         if (await db.Users.AnyAsync(x => x.Username == user.Username.Trim()))
             return (false, "Tên đăng nhập đã tồn tại.");
 
@@ -207,6 +226,7 @@ public class UserService
                 return (false, "Không tự khoá hoặc tự rời nhóm ADMIN của chính mình — nhờ ADMIN khác thực hiện.");
         }
 
+        if (LenCheck.Over(user.FullName, 100, "Họ tên") is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16] (BM2-03)
         dbUser.FullName = user.FullName;
         dbUser.GroupId = user.GroupId;
         // [C6-PIN 2026-10-28] Không ghi đè PIN khi sửa thông tin user (form sửa không có ô PIN → trước: đổi nhóm / họ tên là mất PIN).
@@ -230,6 +250,7 @@ public class UserService
         var user = await db.Users.Include(u => u.Group)
             .FirstOrDefaultAsync(u => u.UserId == userId && u.IsActive);
         if (user == null || user.Group == null) return false;
+        if (!user.Group.IsActive) return false;   // [PERM-ACTIVE 2026-11-16] (P-07) nhóm ngưng = không quyền (cùng luật PermCheck / GetAllUserPermissionsAsync)
 
         // ADMIN luôn có toàn quyền
         if (user.Group.GroupCode == "ADMIN" || user.Username.ToLower() == "admin")

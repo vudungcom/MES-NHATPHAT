@@ -305,7 +305,7 @@ public static class NghiScen
 
         // hiệu suất máy: M1 chạy 11:00–12:40 + 13:00–13:30 = 130; nghỉ 12:40–13:00 = 20; M2 chạy 13:00–14:00 = 60, nghỉ 12:30–13:00
         var eff = new MachineEfficiencyService(db);
-        var me = await eff.GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(7, 0), new TimeOnly(16, 0), ca);
+        var me = await eff.GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(7, 0), new TimeOnly(16, 0), ca, 1);   // [HSM-QUYEN] user 1 ADMIN
         var rM1 = me.Rows.First(x => x.Machine.SoMay == "M1"); var rM2 = me.Rows.First(x => x.Machine.SoMay == "M2");
         Say(Math.Abs(rM1.RunMinutes - 130) < 0.01 && Math.Abs(rM1.BreakMinutes - 20) < 0.01 && Math.Abs(rM2.RunMinutes - 60) < 0.01 && Math.Abs(rM2.BreakMinutes - 60) < 0.01
             && Math.Abs(rM1.TotalMinutes - rM1.RunMinutes - rM1.BreakMinutes - rM1.IdleMinutes - rM1.DownMinutes) < 0.01,
@@ -517,7 +517,7 @@ public static class NghiScen
         db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 902, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC2", MachineUsed = "M2", WorkerId = 3, QtyDone = 2, QtyOk = 2, StartTime = D0.AddHours(28), EndTime = D0.AddHours(30), CreatedAt = D0, CaId = 2 });
         db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 903, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M1", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = D0.AddHours(45), EndTime = D0.AddHours(46), CreatedAt = D0, CaId = 2 });
         db.Fixup();
-        var me = await new MachineEfficiencyService(db).GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(20, 0), new TimeOnly(5, 0), ca);
+        var me = await new MachineEfficiencyService(db).GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(20, 0), new TimeOnly(5, 0), ca, 1);   // [HSM-QUYEN] user 1 ADMIN
         var m1 = me.Rows.First(x => x.Machine.SoMay == "M1"); var m2 = me.Rows.First(x => x.Machine.SoMay == "M2");
         string Inf(dynamic r) => $"tổng {r.TotalMinutes} chạy {r.RunMinutes} nghỉ {r.BreakMinutes} chờ {r.IdleMinutes} dừng {r.DownMinutes}";
         Say(Math.Abs(m1.TotalMinutes - 540) < 0.01 && Math.Abs(m2.TotalMinutes - 540) < 0.01, "Tổng phút ca vắt đêm = 540 (20:00 → 05:00 hôm sau), không âm", Inf(m1));

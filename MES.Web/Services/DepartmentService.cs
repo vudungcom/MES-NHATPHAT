@@ -397,9 +397,16 @@ public class DepartmentService
 
         if (string.IsNullOrWhiteSpace(model.DepartmentName)) return (false, "Tên đơn vị / nhóm không được để trống.");
         if (string.IsNullOrWhiteSpace(model.DepartmentCode)) return (false, "Mã đơn vị không được để trống.");
+        if (DeptLenError(model) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16]
 
         var now = DateTime.Now;
 
+        // [DEPT-PK-LOCK 2026-11-16] (BM1-06) Khoá chính Departments gán tay Max+1 (DatabaseGeneratedOption.None): 2 người cùng Thêm → trùng PK →
+        //   SqlException. Nay: Max+1 + SaveChanges trong 1 giao dịch dưới khoá sp_getapplock MES_DEPT_NEW (LockOwner = Transaction, như PoGuard) —
+        //   người sau chờ, đọc Max sau khi người trước Commit. Không SQL. Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-06 Trung).
+        await using var trx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        if (!await PoGuard.TryLockInTransactionAsync(_db, "MES_DEPT_NEW"))
+            return (false, "Đang có người khác thêm vị trí — chờ vài giây rồi bấm Lưu lại.");
         int nextId = (await _db.Departments.MaxAsync(d => (int?)d.DepartmentId) ?? 0) + 1;
         model.DepartmentId = nextId;
 
@@ -436,9 +443,25 @@ public class DepartmentService
             ChangedBy = currentUserId
         });
 
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+            if (trx != null) await trx.CommitAsync();   // [DEPT-PK-LOCK]
+        }
+        catch (Exception ex)
+        {
+            if (trx != null) { try { await trx.RollbackAsync(); } catch { /* mất kết nối: rollback tự xảy ra ở SQL; vẫn phải tách bản EF bên dưới */ } }   // rà độc lập 16/11 L6
+            // bỏ bản EF vừa thêm (DbContext sống cả phiên trang) — không thì lần lưu sau chèn lại
+            foreach (var en in _db.ChangeTracker.Entries<Department>().Where(x => x.State == EntityState.Added).ToList()) en.State = EntityState.Detached;
+            foreach (var en in _db.ChangeTracker.Entries<DepartmentChangeLog>().Where(x => x.State == EntityState.Added).ToList()) en.State = EntityState.Detached;
+            return (false, UiSafe.Text(ex, null, "thêm vị trí"));   // [UI-SAFE] lỗi hệ thống → câu Việt chung (kịch bản len LN8 bắt được chỗ còn `throw;` — 16/11)
+        }
         return (true, null);
     }
+
+    /// <summary>[LEN-CHECK 2026-11-16] Độ dài ô chữ theo cột Departments (Entities/Department.cs).</summary>
+    public static string? DeptLenError(Department m)
+        => LenCheck.FirstOver((m.DepartmentCode, 50, "Mã đơn vị"), (m.DepartmentName, 150, "Tên đơn vị / nhóm"), (m.RoleTitle, 100, "Chức danh"), (m.ManagerName, 150, "Người phụ trách"));
 
     public async Task<(bool Success, string? Error)> UpdateAsync(
         Department updatedModel, 
@@ -452,6 +475,8 @@ public class DepartmentService
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (DeptLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16]
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] DepartmentChangeLogs.Reason 500
 
         var dept = await _db.Departments.FirstOrDefaultAsync(d => d.DepartmentId == updatedModel.DepartmentId);
         if (dept == null) return (false, "Không tìm thấy bộ phận.");

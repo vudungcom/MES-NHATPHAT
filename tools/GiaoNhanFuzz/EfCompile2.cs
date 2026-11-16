@@ -3,7 +3,9 @@ using System.Linq.Expressions;
 namespace Microsoft.EntityFrameworkCore
 {
     public enum EntityState { Detached, Unchanged, Deleted, Modified, Added }
-    public class EntityEntry<T> where T : class { public T Entity = null!; public EntityState State { get; set; } public dynamic Property(Expression<Func<T, object?>> e) => null!; public dynamic Collection(Expression<Func<T, IEnumerable<object>>> e) => null!; public dynamic Reference(Expression<Func<T, object?>> e) => null!; public Task ReloadAsync() => Task.CompletedTask; public dynamic OriginalValues => null!; public dynamic CurrentValues => null!; }
+    /// <summary>[LEN-SCEN 2026-11-16] State có móc OnState: Entries&lt;T&gt;() trả bản Added thật của DbSet giả; đặt Detached → rút khỏi Pending
+    /// (trước: Entries() luôn rỗng → phép kiểm "tách bản EF sau lỗi" tự-đúng — rà độc lập Gói 23 T6).</summary>
+    public class EntityEntry<T> where T : class { public T Entity = null!; EntityState _state; public Action<EntityState>? OnState; public EntityState State { get => _state; set { _state = value; OnState?.Invoke(value); } } public dynamic Property(Expression<Func<T, object?>> e) => null!; public dynamic Collection(Expression<Func<T, IEnumerable<object>>> e) => null!; public dynamic Reference(Expression<Func<T, object?>> e) => null!; public Task ReloadAsync() => Task.CompletedTask; public dynamic OriginalValues => null!; public dynamic CurrentValues => null!; }
     public static class EF { public static class Functions { public static bool Like(string? a, string b) => true; } public static FuncsStub FunctionsObj => new(); }
     public class FuncsStub { }
     public static class MoreAsyncExt
@@ -45,7 +47,11 @@ namespace Microsoft.EntityFrameworkCore
         public static IQueryable<T> FromSqlRaw<T>(this DbSet<T> q, string s, params object[] a) where T : class => q;
         public static IQueryable<T> FromSqlInterpolated<T>(this DbSet<T> q, FormattableString s) where T : class => q;
         public static EntityEntry<T> Entry<T>(this DbContext c, T e) where T : class => new();
-        public static IEnumerable<EntityEntry<T>> Entries<T>(this ChangeTracker c) where T : class => Array.Empty<EntityEntry<T>>();
+        public static IEnumerable<EntityEntry<T>> Entries<T>(this ChangeTracker c) where T : class
+        {   // [LEN-SCEN 2026-11-16] bản Added đang chờ ghi của DbSet<T> giả (Modified / Deleted: stub không theo dõi → không có)
+            var set = c.Ctx.Set<T>();
+            return set.Added.ToList().Select(e => new EntityEntry<T> { Entity = e, State = EntityState.Added, OnState = s => { if (s == EntityState.Detached) set.Added.Remove(e); } }).ToList();
+        }
         public static void Add<T>(this DbContext c, T e) where T : class { }
         public static void Remove<T>(this DbContext c, T e) where T : class { }
         public static void Update<T>(this DbContext c, T e) where T : class { }

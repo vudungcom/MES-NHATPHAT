@@ -10,6 +10,8 @@
 @inject PartMasterService PmSvc
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject UserService UserSvc
+@inject ILogger<History> Logger
 
 <PageTitle>Lịch sử thay đổi — @_partNo</PageTitle>
 
@@ -48,7 +50,21 @@
 </style>
 
 <div class="container-fluid pt-3 pb-5" style="max-width: 1100px;">
-    @if (_loading)
+    @* [VIEW-PERM 2026-11-16] (BP1-16) Lịch sử Part Master kiểm quyền Xem ≥ 1 vùng PART_* như trang Chi tiết (CanViewAnyArea) — trước chỉ [Authorize]:
+       ai đăng nhập cũng xem được lý do sửa / tên người sửa / số chuẩn cũ-mới của mọi Part bằng URL. Nguồn: CLAUDE quét Fable 15/11 (B-P1 BP1-16). *@
+    @if (!_loading && !_canView)
+    {
+        <div class="alert alert-danger shadow-sm my-4">
+            <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+            <p class="mb-0">Tài khoản của bạn chưa được cấp quyền xem bất kỳ vùng nào của <b>Part Master</b> trên Ma trận phân quyền.</p>
+        </div>
+        <a href="/" class="btn btn-outline-primary"><i class="bi bi-house"></i> Về trang chủ</a>
+    }
+    else if (!_loading && _pageError != null)
+    {
+        <div class="alert alert-warning shadow-sm my-4">@_pageError</div>
+    }
+    else if (_loading)
     {
         <div class="text-center py-5"><span class="spinner-border text-primary"></span></div>
     }
@@ -192,25 +208,37 @@
     private string _partNo = string.Empty;
     private PartMaster? _part;
     private bool _loading = true;
+    private bool _canView;          // [VIEW-PERM]
+    private string? _pageError;     // [UI-SAFE]
     private List<PartProcessStepChangeLog> _logs = new();
     private List<HistoryVersion> _versions = new();
 
     protected override async Task OnInitializedAsync()
     {
         _partNo = Uri.UnescapeDataString(PartNo ?? "");
-        _part = await PmSvc.GetByPartNoAsync(_partNo);
+        // [VIEW-PERM] Xem ≥ 1 vùng Part Master (A–E) theo ma trận (UserService đọc DB; ADMIN toàn quyền)
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        int.TryParse(auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var uid);
+        var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
+        _canView = MES.Web.Constants.SystemPermissions.PartMasterViewSections.Any(s => perms.TryGetValue(s, out var p) && (p.CanView || p.CanEdit));
+        if (!_canView) { _loading = false; return; }
 
-        if (_part != null)
+        _pageError = await UiSafe.RunAsync(async () =>   // [UI-SAFE] lỗi đọc DB không làm chết mạch
         {
-            _logs = await Db.PartProcessStepChangeLogs
-                .Where(l => l.PartId == _part.PartId)
-                .Include(l => l.ChangedByUser)
-                .OrderByDescending(l => l.ChangedAt)
-                .AsNoTracking()
-                .ToListAsync();
+            _part = await PmSvc.GetByPartNoAsync(_partNo);
 
-            _versions = GroupIntoVersions(_logs);
-        }
+            if (_part != null)
+            {
+                _logs = await Db.PartProcessStepChangeLogs
+                    .Where(l => l.PartId == _part.PartId)
+                    .Include(l => l.ChangedByUser)
+                    .OrderByDescending(l => l.ChangedAt)
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                _versions = GroupIntoVersions(_logs);
+            }
+        }, Logger, "tải lịch sử Part Master");
 
         _loading = false;
     }

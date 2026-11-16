@@ -10,6 +10,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.UserService UserSvc
 @inject HandoverLedgerService LedgerSvc
+@inject ILogger<Edit_Khplan> Logger
 
 <PageTitle>Sửa phiếu KH - MES</PageTitle>
 
@@ -58,7 +59,12 @@
     </div>
 }
 
-@if (_plan == null || _detailForm == null)
+@if (_initError != null)
+{
+    <div class="alert alert-warning shadow-sm my-4">@_initError</div>
+    <a href="/kh-plan" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Danh sách</a>
+}
+else if (_plan == null || _detailForm == null)
 {
     <p><em>Đang tải...</em></p>
 }
@@ -124,7 +130,7 @@ else
                 </div>
                 <div class="col-12">
                     <label class="form-label small">Ghi chú chung</label>
-                    <input type="text" class="form-control form-control-sm" @bind="_planNotes" />
+                    <input type="text" class="form-control form-control-sm" @bind="_planNotes" maxlength="500" />
                 </div>
                 @* ── Workflow control ── *@
                 <div class="col-12">
@@ -197,15 +203,15 @@ else
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small">Loại hàng</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.Type" @bind:after="OnAnyFieldChanged" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.Type" @bind:after="OnAnyFieldChanged" maxlength="100" />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Ưu tiên</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.Priority" @bind:after="OnAnyFieldChanged" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.Priority" @bind:after="OnAnyFieldChanged" maxlength="100" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Ghi chú Hàng</label>
-                    <input class="form-control form-control-sm" @bind="_detailForm.PartNotes" @bind:after="OnAnyFieldChanged" />
+                    <input class="form-control form-control-sm" @bind="_detailForm.PartNotes" @bind:after="OnAnyFieldChanged" maxlength="500" />
                 </div>
             </div>
 
@@ -245,19 +251,19 @@ else
                 <div class="col-md-3">
                     <label class="form-label small">Order VL</label>
                     <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25"
-                           @bind="_detailForm.OrderVL" @bind:after="OnAnyFieldChanged" />
+                           @bind="_detailForm.OrderVL" @bind:after="OnAnyFieldChanged" maxlength="50" />
                     @if (KhoDiff(_detailForm.OrderVL, _khoOrderVl)) { <div class="text-muted" style="font-size:0.72rem" title="Danh sách Kế hoạch hiện số của Quản lý Kho">Quản lý Kho ghi: <code>@_khoOrderVl</code></div> }   @* [RS-E5] *@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size:0.75rem;">(tự nhập)</span></label>
                     <input class="form-control form-control-sm font-monospace"
-                           @bind="_detailForm.Location" @bind:after="OnAnyFieldChanged" placeholder="VD B1" />
+                           @bind="_detailForm.Location" @bind:after="OnAnyFieldChanged" placeholder="VD B1" maxlength="50" />
                     @if (KhoDiff(_detailForm.Location, _khoViTri)) { <div class="text-muted" style="font-size:0.72rem" title="Danh sách Kế hoạch hiện số của Quản lý Kho">Quản lý Kho ghi: <code>@_khoViTri</code></div> }   @* [RS-E5] *@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Tình trạng phôi</label>
                     <input class="form-control form-control-sm"
-                           @bind="_detailForm.MaterialCondition" @bind:after="OnAnyFieldChanged" />
+                           @bind="_detailForm.MaterialCondition" @bind:after="OnAnyFieldChanged" maxlength="200" />
                 </div>
             </div>
         </div>
@@ -448,7 +454,7 @@ else
     <div class="card mb-3 border-danger">
         <div class="card-body">
             <h6 class="text-danger mb-2"><i class="bi bi-chat-left-text"></i> Lý do sửa <span class="text-danger">*</span> (BẮT BUỘC)</h6>
-            <textarea class="form-control form-control-sm" rows="2" @bind="_reason"
+            <textarea class="form-control form-control-sm" rows="2" @bind="_reason" maxlength="500"
                       placeholder="VD: Khách yêu cầu tăng SL / Vật tư báo phôi về sớm / Đổi Vị trí kho..."></textarea>
             <div class="form-text small">Lý do này sẽ được ghi vào lịch sử của TẤT CẢ field bị thay đổi trong lần Save này.</div>
         </div>
@@ -520,6 +526,15 @@ else
         // [C1-KH-PERM 2026-10-28] Trang ghi dữ liệu Kế hoạch: bắt buộc quyền Sửa KE_HOACH (trước: chỉ cần đăng nhập — công nhân gõ URL là sửa được)
         if (!await KhEditAllowedAsync(authState.User)) { Nav.NavigateTo("/kh-plan"); return; }
 
+        // [UI-SAFE 2026-11-16] (BK-05) lỗi đọc DB lúc mở trang → lời báo Việt + không tìm thấy PO báo rõ (trước: "Đang tải..." mãi / mạch chết)
+        _initError = await UiSafe.RunAsync(InitLoadAsync, Logger, "tải phiếu KH để sửa");
+        if (_initError == null && _plan == null) _initError = $"Không tìm thấy PO (phiếu {Id} · dòng {DetailId}) — có thể đã bị xoá hoặc tách.";
+    }
+
+    private string? _initError;   // [UI-SAFE] (BK-05)
+
+    private async Task InitLoadAsync()
+    {
         var (plan, detail) = await KhSvc.GetDetailByIdAsync(DetailId);
         if (plan == null || detail == null || plan.KhPlanId != Id) return;
 

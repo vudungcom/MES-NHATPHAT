@@ -367,6 +367,94 @@ public static class QuyenScen
             Ok(!u.Success && t9.DisplayOrder == 7, "Người chỉ có quyền Xem: chặn, thứ tự giữ 7", u.Error);
         }
 
+
+        // ═══ Gói 23 (16/11/2026) — quyền máy chủ P-01/P-02/P-06/P-07 + mã quyền Hiệu suất máy. Nguồn: CLAUDE quét Fable 15/11 (A3C); Hùng 16/11 05:15 làm theo đề xuất ═══
+        Console.WriteLine("[Q9] KH-PERM-SVC — (P-01) KhPlanService.CreateAsync: máy chủ kiểm Sửa KE_HOACH (trước: hàm public không kiểm, chỉ trang kiểm lúc mở)");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            KhPlan P(string po) { var p = new KhPlan { PlanDate = new DateTime(2026, 11, 16), CustomerId = 1 }; p.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = po, Quantity = 5 }); return p; }
+            string? e1 = null; try { await kh.CreateAsync(P("PO-Q9A"), HtspView); } catch (Exception ex) { e1 = ex.Message; }
+            Ok(e1 != null && e1.Contains("không có quyền Sửa mục Kế hoạch"), "u3 chỉ Xem Giao nhận: tạo KH bị từ chối (NoEdit Kế hoạch)", e1);
+            Ok(!db.KhPlanDetails.List.Any(d => d.PurchaseOrder == "PO-Q9A"), "  không ghi dòng PO nào");
+            string? e2 = null; try { await kh.CreateAsync(P("PO-Q9B"), KhEdit); } catch (Exception ex) { e2 = ex.Message; }
+            Ok(e2 == null && db.KhPlanDetails.List.Any(d => d.PurchaseOrder == "PO-Q9B"), "u6 Sửa Kế hoạch: tạo được", e2);
+            string? e3 = null; try { await kh.CreateAsync(P("PO-Q9C"), Admin); } catch (Exception ex) { e3 = ex.Message; }
+            Ok(e3 == null, "Admin: tạo được", e3);
+            string? e4 = null; try { await kh.CreateAsync(P("PO-Q9D"), Locked); } catch (Exception ex) { e4 = ex.Message; }
+            Ok(e4 != null, "u5 Admin nhưng tài khoản khoá: từ chối", e4);
+        }
+
+        Console.WriteLine("[Q10] KH-PERM-SVC — (P-02) RefreshRouteSnapshot / AutoRefreshRoutesForPart / CopyRouteSnapshot: kiểm Sửa KE_HOACH hoặc vùng Part Master B–E");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            db.KhoVatLieus.List.Clear();
+            db.PartMasters.List.Add(new PartMaster { PartId = 60, PartNo = "P", IsActive = true });
+            var pgG = new UserGroup { GroupId = 9, GroupCode = "PMGC", IsActive = true, Permissions = Perm((SystemPermissions.PartGc, true, true)) };
+            db.UserGroups.List.Add(pgG);
+            db.Users.List.Add(new User { UserId = 9, Username = "u9", FullName = "U9", IsActive = true, Group = pgG, GroupId = 9 });
+            db.Fixup();
+            int snap0 = db.KhPlanRouteSnapshotMachining.List.Count;
+            string? e1 = null; try { await kh.RefreshRouteSnapshotAsync(1, 60, CatEdit, "cap nhat"); } catch (Exception ex) { e1 = ex.Message; }
+            Ok(e1 != null && e1.Contains("không có quyền Sửa mục Kế hoạch") && db.KhPlanRouteSnapshotMachining.List.Count == snap0,
+               "u8 Sửa danh mục (không KE_HOACH): \"Cập nhật từ Part Master\" bị từ chối, snapshot giữ", e1);
+            string? e2 = null; try { await kh.CopyRouteSnapshotAsync(1, 60, HtspView); } catch (Exception ex) { e2 = ex.Message; }
+            Ok(e2 != null && e2.Contains("không có quyền Sửa"), "u3 chỉ Xem: CopyRouteSnapshotAsync bị từ chối", e2);
+            string? e3 = null; try { await kh.AutoRefreshRoutesForPartAsync(60, CatEdit, "luu part master"); } catch (Exception ex) { e3 = ex.Message; }
+            Ok(e3 != null && e3.Contains("không có quyền Sửa"), "u8: tự đẩy quy trình sang PO bị từ chối", e3);
+            string? e4 = null; List<KhPlanService.AutoRouteResult>? r4 = null; try { r4 = await kh.AutoRefreshRoutesForPartAsync(60, 9, "luu part master"); } catch (Exception ex) { e4 = ex.Message; }
+            Ok(e4 == null && r4 != null, "u9 chỉ Sửa PART_GC (không KE_HOACH): tự đẩy quy trình ĐƯỢC chạy (đúng ý K6-NOTRUN)", e4 ?? $"{r4!.Count} PO");
+            string? e5 = null; try { await kh.AutoRefreshRoutesForPartAsync(60, KhEdit, "luu part master"); } catch (Exception ex) { e5 = ex.Message; }
+            Ok(e5 == null, "u6 Sửa Kế hoạch: chạy được", e5);
+            string? e6 = null; try { await kh.RefreshRouteSnapshotAsync(1, 60, KhEdit, "cap nhat"); } catch (Exception ex) { e6 = ex.Message; }
+            Ok(e6 == null || e6.Contains("snapshot") || e6.Contains("Part"), "u6 Sửa Kế hoạch: qua cửa quyền (chỉ chấp nhận lỗi nghiệp vụ về snapshot / Part, không nhận ngoại lệ khác — rà độc lập 16/11 L12)", e6);
+        }
+
+        Console.WriteLine("[Q11] PERM-ACTIVE — (P-06 / P-07) nhóm ngưng hoạt động = không quyền ở MỌI bộ kiểm (PartMasterPermissionHelper, GetCanDeleteAsync, SetObsoleteAsync)");
+        {
+            var db = Seed();
+            var deadAdmin = new UserGroup { GroupId = 11, GroupCode = "ADMIN", IsActive = false };
+            var deadKh = new UserGroup { GroupId = 12, GroupCode = "KHX", IsActive = false,
+                Permissions = JsonSerializer.Serialize(new List<GroupPermissionSetting> { new() { SectionCode = SystemPermissions.PartTaoMoi, CanView = true, CanEdit = true, CanDelete = true } }) };
+            db.UserGroups.List.AddRange(new[] { deadAdmin, deadKh });
+            db.Users.List.Add(new User { UserId = 11, Username = "u11", FullName = "U11", IsActive = true, Group = deadAdmin, GroupId = 11 });
+            db.Users.List.Add(new User { UserId = 12, Username = "u12", FullName = "U12", IsActive = true, Group = deadKh, GroupId = 12 });
+            db.PartMasters.List.Add(new PartMaster { PartId = 70, PartNo = "P-OBS", IsActive = true });
+            db.Fixup();
+            Ok(!PartMasterPermissionHelper.CheckPermission(deadAdmin, SystemPermissions.PartGc, true), "PMH: nhóm ADMIN bị ngưng (sửa DB tay) → KHÔNG quyền (trước: ADMIN qua trước khi xét IsActive)");
+            Ok(!await PermCheck.CanEditAsync(db, 11, SystemPermissions.PartGc), "  PermCheck cùng người: không quyền (2 bộ kiểm nay cùng luật)");
+            Ok(PartMasterPermissionHelper.CheckPermission(db.UserGroups.List.First(g => g.GroupId == 1), SystemPermissions.PartGc, true), "  nhóm ADMIN đang hoạt động: vẫn toàn quyền");
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            Ok(!await us.GetCanDeleteAsync(12, SystemPermissions.PartTaoMoi), "GetCanDeleteAsync: nhóm có CanDelete nhưng ngưng → false");
+            var pm = new PartMasterService(db);
+            var r = await pm.SetObsoleteAsync(70, 12, obsolete: true);
+            Ok(!r.Success && !db.PartMasters.List.First(x => x.PartId == 70).IsObsolete, "SetObsoleteAsync: nhóm ngưng → từ chối, Part không bị Ngưng", r.Error);
+            deadKh.IsActive = true; db.Fixup();
+            var r2 = await pm.SetObsoleteAsync(70, 12, obsolete: true);
+            Ok(r2.Success && db.PartMasters.List.First(x => x.PartId == 70).IsObsolete, "  bật lại nhóm: Ngưng Part được (CanDelete)", r2.Error);
+        }
+
+        Console.WriteLine("[Q12] HSM-QUYEN — Hiệu suất máy có mục quyền HIEU_SUAT_MAY: service trả rỗng khi người xem không có ô Xem; ADMIN / có Xem thì có dữ liệu");
+        {
+            var db = Seed();
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", TenMay = "May 1", IsActive = true, TrangThai = "Hoạt động" });
+            var hsmG = new UserGroup { GroupId = 13, GroupCode = "HSM", IsActive = true, Permissions = Perm((SystemPermissions.HieuSuatMay, true, false)) };
+            db.UserGroups.List.Add(hsmG);
+            db.Users.List.Add(new User { UserId = 13, Username = "u13", FullName = "U13", IsActive = true, Group = hsmG, GroupId = 13 });
+            db.Fixup();
+            var eff = new MachineEfficiencyService(db);
+            var d = new DateOnly(2026, 11, 16); var t1 = new TimeOnly(7, 0); var t2 = new TimeOnly(16, 0);
+            var rNo = await eff.GetAsync(d, t1, t2, null, GcOnly);
+            Ok(rNo.Rows.Count == 0, "u2 (không có HIEU_SUAT_MAY): kết quả rỗng (không lộ WTS máy)", $"{rNo.Rows.Count} máy");
+            var r0 = await eff.GetAsync(d, t1, t2, null);
+            Ok(r0.Rows.Count == 0, "không truyền người xem (viewerUserId = 0): rỗng");
+            var rAd = await eff.GetAsync(d, t1, t2, null, Admin);
+            Ok(rAd.Rows.Count == 1, "Admin: thấy 1 máy", $"{rAd.Rows.Count}");
+            var rV = await eff.GetAsync(d, t1, t2, null, 13);
+            Ok(rV.Rows.Count == 1, "u13 nhóm có ô Xem HIEU_SUAT_MAY: thấy 1 máy", $"{rV.Rows.Count}");
+            Ok(SystemPermissions.Sections.Any(s => s.Code == SystemPermissions.HieuSuatMay), "Mục HIEU_SUAT_MAY có trong danh sách ma trận (Cài đặt tự hiện ô)");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

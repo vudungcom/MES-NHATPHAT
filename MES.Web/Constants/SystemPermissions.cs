@@ -31,6 +31,10 @@ public static class SystemPermissions
     public const string WtsKcs     = "WTS_KCS";
     public const string WtsDongGoi = "WTS_DONG_GOI";
     public const string WtsReport  = "WTS_REPORT";
+    // [HSM-QUYEN 2026-11-16] Hiệu suất máy: trước chỉ [Authorize] (ai đăng nhập cũng xem WTS mọi máy — tên công nhân, PO, NC);
+    //   nay có mục quyền riêng (Xem = thấy menu + mở trang + service trả dữ liệu). ADMIN luôn có. Nhóm chưa tick Xem thì Admin tick ở Cài đặt.
+    //   Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-09 / B-M2 BM2-10, nhóm B4); Hùng 15/11 15:10 OK câu 9; 16/11 05:15 "không ảnh hưởng khách thì làm theo ý bạn".
+    public const string HieuSuatMay = "HIEU_SUAT_MAY";
 
     // Giao nhận hàng theo nhóm công đoạn
     public const string HandoverKho  = "HANDOVER_KHO";
@@ -38,6 +42,9 @@ public static class SystemPermissions
     public const string HandoverHtsp = "HANDOVER_HTSP";
     public const string HandoverKcs  = "HANDOVER_KCS";
     public const string HandoverPkg  = "HANDOVER_PKG";
+
+    /// <summary>[VIEW-PERM 2026-11-16] 5 vùng Part Master — "xem được Part Master" = Xem (hoặc Sửa) ≥ 1 vùng (menu, danh sách, lịch sử cùng luật).</summary>
+    public static readonly string[] PartMasterViewSections = { PartTaoMoi, PartGc, PartHtsp, PartKcs, PartDongGoi };
 
     public static readonly List<PermissionSection> Sections = new()
     {
@@ -68,6 +75,7 @@ public static class SystemPermissions
         new PermissionSection(WtsDongGoi, "Nhập WTS: Đóng gói",        "Công nhân đóng gói ghi nhận công việc thực tế"),
 
         new PermissionSection(WtsReport,  "WTS Report",                "Xem báo cáo tổng hợp WTS — tra cứu theo công nhân, ngày, tháng"),
+        new PermissionSection(HieuSuatMay, "Hiệu suất máy",            "Xem Gantt + % chạy từng máy theo ngày / ca (WTS mọi máy) — chỉ dùng ô Xem"),   // [HSM-QUYEN]
 
         // 5 Vùng phân quyền Giao nhận hàng
         new PermissionSection(HandoverKho,  "Giao nhận: Kho",       "Giao/nhận hàng tại Kho — cấp phát phôi cho Gia công"),

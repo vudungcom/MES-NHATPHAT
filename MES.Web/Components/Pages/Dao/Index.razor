@@ -8,6 +8,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject UserService UserSvc
 @inject NavigationManager Nav
+@inject ILogger<Index> Logger
 
 <PageTitle>Quản lý Dao cụ - MES</PageTitle>
 
@@ -165,7 +166,7 @@ else
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label small fw-bold">Phân loại dao <span class="text-danger">*</span></label>
-                            <input class="form-control form-control-sm" list="loai-dao-list" @bind="_editingModel.LoaiDao" placeholder="Chọn hoặc nhập loại dao..." />
+                            <input class="form-control form-control-sm" list="loai-dao-list" @bind="_editingModel.LoaiDao" placeholder="Chọn hoặc nhập loại dao..." maxlength="100" />
                             <datalist id="loai-dao-list">
                                 <option value="Khoan" />
                                 <option value="Center" />
@@ -180,19 +181,19 @@ else
                         </div>
                         <div class="col-md-6">
                             <label class="form-label small fw-bold">Ký hiệu dao (Cột B - Dùng cho Part Master) <span class="text-danger">*</span></label>
-                            <input class="form-control form-control-sm font-monospace fw-bold" @bind="_editingModel.TenDao" placeholder="VD: DRI-CB-D4.2Lc30, END-CB-SU-4F..." />
+                            <input class="form-control form-control-sm font-monospace fw-bold" @bind="_editingModel.TenDao" placeholder="VD: DRI-CB-D4.2Lc30, END-CB-SU-4F..." maxlength="50" />
                         </div>
                         <div class="col-md-12">
                             <label class="form-label small fw-bold">Thông số / Quy cách chi tiết (Cột C)</label>
-                            <input class="form-control form-control-sm" @bind="_editingModel.QuyCach" placeholder="VD: DRILL 4.2 HỢP KIM PAC, DAO PHAY D6*4F*d6*50L..." />
+                            <input class="form-control form-control-sm" @bind="_editingModel.QuyCach" placeholder="VD: DRILL 4.2 HỢP KIM PAC, DAO PHAY D6*4F*d6*50L..." maxlength="100" />
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Hãng sản xuất</label>
-                            <input class="form-control form-control-sm" @bind="_editingModel.HangSX" placeholder="VD: NACHI, OSG, YAMAWA, JAWA..." />
+                            <input class="form-control form-control-sm" @bind="_editingModel.HangSX" placeholder="VD: NACHI, OSG, YAMAWA, JAWA..." maxlength="100" />
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Vị trí tủ dao / Ngăn</label>
-                            <input class="form-control form-control-sm" @bind="_editingModel.ViTriKho" placeholder="VD: Tủ A1-01, Kệ B2..." />
+                            <input class="form-control form-control-sm" @bind="_editingModel.ViTriKho" placeholder="VD: Tủ A1-01, Kệ B2..." maxlength="100" />
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Số lượng tồn kho</label>
@@ -200,14 +201,14 @@ else
                         </div>
                         <div class="col-12">
                             <label class="form-label small fw-bold">Ghi chú</label>
-                            <input class="form-control form-control-sm" @bind="_editingModel.GhiChu" placeholder="Ghi chú điều kiện cắt, vật liệu gia công..." />
+                            <input class="form-control form-control-sm" @bind="_editingModel.GhiChu" placeholder="Ghi chú điều kiện cắt, vật liệu gia công..." maxlength="500" />
                         </div>
 
                         @if (_editingModel.DaoId > 0)
                         {
                             <div class="col-12">
                                 <label class="form-label small fw-bold text-danger">Lý do thay đổi <span class="text-danger">*</span></label>
-                                <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập tóm tắt lý do chỉnh sửa Master Data..." />
+                                <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập tóm tắt lý do chỉnh sửa Master Data..." maxlength="500" />
                             </div>
                         }
                     </div>
@@ -424,18 +425,27 @@ else
             _showEditModal = false;
             await LoadDataAsync();
         }
+        catch (Exception ex) { _errorMessage = UiSafe.Text(ex, Logger, "lưu dao"); }   // [UI-SAFE 2026-11-16] (BM1-05 / BM1-21) trước: Sửa lỗi SQL → trang chết
         finally
         {
             _saving = false;
         }
     }
 
+    private bool _toggleBusy;   // [UI-SAFE] (BM1-21) chặn bấm chồng Ngừng / Khôi phục
     private async Task ToggleDelete(Dao item, bool activate)
     {
-        // [RS-C1 2026-10-29] trước: bỏ qua kết quả → máy chủ từ chối cũng không báo
-        var (okT, errT) = await DaoSvc.ToggleActiveAsync(item.DaoId, activate, activate ? "Khôi phục sử dụng" : "Ngừng sử dụng dao", _currentUserId);
-        _toggleError = okT ? null : errT;
-        await LoadDataAsync();
+        if (_toggleBusy) return;
+        _toggleBusy = true;
+        try
+        {
+            // [RS-C1 2026-10-29] trước: bỏ qua kết quả → máy chủ từ chối cũng không báo
+            var (okT, errT) = await DaoSvc.ToggleActiveAsync(item.DaoId, activate, activate ? "Khôi phục sử dụng" : "Ngừng sử dụng dao", _currentUserId);
+            _toggleError = okT ? null : errT;
+            await LoadDataAsync();
+        }
+        catch (Exception ex) { _toggleError = UiSafe.Text(ex, Logger, "ngừng / khôi phục dao"); }   // [UI-SAFE 2026-11-16] (BM1-21)
+        finally { _toggleBusy = false; }
     }
 
     private async Task OpenHistoryModal(Dao item)
@@ -446,4 +456,4 @@ else
         _historyLogs = await DaoSvc.GetChangeLogsAsync(item.DaoId);
         _historyLoading = false;
     }
-}
+}

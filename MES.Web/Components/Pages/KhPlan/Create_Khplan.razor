@@ -72,7 +72,7 @@
             </div>
             <div class="col-12">
                 <label class="form-label small">Ghi chú chung</label>
-                <input type="text" class="form-control form-control-sm" @bind="_plan.Notes" placeholder="Ghi chú cho toàn phiếu KH" />
+                <input type="text" class="form-control form-control-sm" @bind="_plan.Notes" placeholder="Ghi chú cho toàn phiếu KH" maxlength="500" />
             </div>
             @* ── Workflow control ── *@
             <div class="col-12">
@@ -166,7 +166,8 @@
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small">PO <span class="text-danger">*</span></label>
-                    <input class="form-control form-control-sm font-monospace" @bind="d.PurchaseOrder" />
+                    @* [LEN-CHECK 2026-11-16] (BK-02) maxlength theo cột DB (PO 50, Loại / Ưu tiên 100, Order VL / Vị trí 50, Tình trạng 200, Ghi chú 500); máy chủ KhPlanService kiểm lại *@
+                    <input class="form-control form-control-sm font-monospace" @bind="d.PurchaseOrder" maxlength="50" />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Part No <span class="text-danger">*</span></label>
@@ -195,15 +196,15 @@
             <div class="row g-2 mb-2">
                 <div class="col-md-3">
                     <label class="form-label small">Loại hàng</label>
-                    <input class="form-control form-control-sm" @bind="d.Type" placeholder="Hàng mới / Repeat / Sample..." />
+                    <input class="form-control form-control-sm" @bind="d.Type" placeholder="Hàng mới / Repeat / Sample..." maxlength="100" />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Ưu tiên</label>
-                    <input class="form-control form-control-sm" @bind="d.Priority" placeholder="Bình thường / Gấp / Thấp..." />
+                    <input class="form-control form-control-sm" @bind="d.Priority" placeholder="Bình thường / Gấp / Thấp..." maxlength="100" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Ghi chú Hàng</label>
-                    <input class="form-control form-control-sm" @bind="d.PartNotes" placeholder="Ghi chú đặc biệt cho mã hàng này" />
+                    <input class="form-control form-control-sm" @bind="d.PartNotes" placeholder="Ghi chú đặc biệt cho mã hàng này" maxlength="500" />
                 </div>
             </div>
 
@@ -248,16 +249,16 @@
                 <div class="col-md-3">
                     <label class="form-label small">Order VL</label>
                     <input class="form-control form-control-sm font-monospace bg-warning bg-opacity-25"
-                           @bind="d.OrderVL" placeholder="Chờ Vật tư điền" />
+                           @bind="d.OrderVL" placeholder="Chờ Vật tư điền" maxlength="50" />
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small">Vị trí kho <span class="text-muted" style="font-size: 0.75rem;">(tự nhập, không link Part)</span></label>
                     <input class="form-control form-control-sm font-monospace"
-                           @bind="d.Location" placeholder="VD B1, để trống nếu chưa có" />
+                           @bind="d.Location" placeholder="VD B1, để trống nếu chưa có" maxlength="50" />
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small">Tình trạng phôi</label>
-                    <input class="form-control form-control-sm" @bind="d.MaterialCondition" placeholder="VD: có bvxn, cắt đạt" />
+                    <input class="form-control form-control-sm" @bind="d.MaterialCondition" placeholder="VD: có bvxn, cắt đạt" maxlength="200" />
                 </div>
             </div>
         </div>

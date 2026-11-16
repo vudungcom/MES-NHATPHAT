@@ -20,6 +20,18 @@
        - phiên bị từ chối (máy chủ đã khởi động lại, phiên cũ không còn): tự tải lại trang;
        - hết lượt thử: chờ máy chủ trả lời rồi tự tải lại.
        Không đổi luật / dữ liệu; ô chưa lưu chỉ mất khi phiên đã mất hẳn (như trước). Nguồn: CLAUDE 31/10, Hùng 05/11 15:37 cho làm. *@
+    @* [BLZ-ERROR-UI 2026-11-16] Khung id="blazor-error-ui": Blazor tự hiện khi mạch gặp lỗi không bắt (ngoại lệ thoát handler). Trước KHÔNG có khung này →
+       ở Production trang chỉ đứng im (Development mới có chữ "An unhandled error has occurred" mặc định). Nay: dải báo tiếng Việt + nút Tải lại.
+       Cùng gói với [UI-SAFE] (bọc handler) — đây là lưới cuối cùng. Nguồn: CLAUDE rà độc lập Gói 22 (G22-GHI-NHO (5)); Hùng 16/11 05:15 làm theo đề xuất. *@
+    <div id="blazor-error-ui" class="mes-error-ui">
+        <span>Có lỗi không mong muốn trên trang này — bấm <b>Tải lại</b> để tiếp tục (những gì đã bấm Lưu thành công vẫn còn; ô đang gõ dở có thể mất).</span>
+        <a href="javascript:location.reload()" class="reload btn btn-sm btn-warning ms-2">Tải lại</a>   @* rà độc lập 16/11 L4: href="" + <base href="/"> sẽ về trang chủ — reload() giữ đúng trang đang mở *@
+        <a class="dismiss ms-2" title="Đóng" style="cursor:pointer">🗙</a>
+    </div>
+    <style>
+        .mes-error-ui { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 2001; padding: .6rem 1rem;
+                        background: #f8d7da; color: #58151c; border-top: 1px solid #f1aeb5; font-size: .9rem; text-align: center; }
+    </style>
     <div id="components-reconnect-modal" class="mes-reconnect">
         <span class="mes-reconnect-text mes-rc-show">Mất kết nối máy chủ — đang nối lại…</span>
         <span class="mes-reconnect-text mes-rc-failed">Chưa nối lại được — đang chờ máy chủ, có lại sẽ tự tải trang.</span>

@@ -944,6 +944,7 @@ namespace MES.Web.Services
             }
             // [GN-CELL2] Ô bên nhận: mặc định ô bên giao chỉ định (phiếu cũ: theo loại phiếu); bên nhận đổi được, đổi thì bắt buộc lý do.
             //   Phiếu theo NC / phiếu cũ không rõ loại: không có ô để chọn. Phiếu trả tự lập (NG lúc nhận): luôn ô Hàng lỗi.
+            if (LenCheck.FirstOver((ngReason, 500, "Lý do NG"), (notes, 500, "Ghi chú")) is string lenErr0) return (false, lenErr0);   // [LEN-CHECK 2026-11-16] HandoverReceives.NgReason / Notes cột 500 — trước: SqlException "truncated" (rà độc lập 16/11 T5d)
             var headPurpose = txHead.Purpose ?? (txHead.IsReturnNg ? HandoverPurpose.NgReturn : null);
             string? desigCell = txHead.SourceReceiveId != null ? HandoverCell.Loi
                               : HandoverCell.IsReceiveCell(txHead.ToCell) ? txHead.ToCell
@@ -956,6 +957,7 @@ namespace MES.Web.Services
                     return (false, "Phiếu trả hàng lỗi do phần mềm tự lập: chỉ nhận vào ô Hàng lỗi.");
                 if (HandoverCell.IsLamHoLoi(txHead.Purpose, txHead.FromCell) && toCell != HandoverCell.Loi)   // [TARO-LAMHO-NC]
                     return (false, "Hàng làm hộ bị lỗi trả về: chỉ nhận vào ô Hàng lỗi (cùng vụ).");
+                if (LenCheck.Over(toCellReason, 500, "Lý do đổi phân loại") is string lenErr) return (false, lenErr);   // [LEN-CHECK 2026-11-16] (BH-05) ToCellReason: cột (max), giữ trần 500 như các ô lý do khác — trước: không kiểm
                 if (toCell != desigCell && string.IsNullOrWhiteSpace(toCellReason))
                     return (false, $"Đổi phân loại khác bên giao chỉ định ({HandoverCell.Label(desigCell)} → {HandoverCell.Label(toCell)}): bắt buộc ghi lý do.");
             }

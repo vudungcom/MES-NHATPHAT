@@ -17,6 +17,7 @@
 @inject NgCaseService NgSvc
 @inject UserService UserSvc
 @inject AppDbContext Db
+@inject ILogger<Handover_Index> Logger
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @rendermode InteractiveServer
@@ -520,7 +521,16 @@ else
 
                 @if (!string.IsNullOrEmpty(_receiveToGroup))
                 {
-                    @if (_pendingTxs.Any())
+                    @* [UI-SAFE 2026-11-16] (BH-03) đang tải phiếu chờ → hiện "đang tải" (trước: modal hiện "Không có phiếu" trong lúc truy vấn chưa xong / lỗi bị nuốt) *@
+                    @if (_pendingLoading)
+                    {
+                        <div class="p-3 text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Đang tải phiếu chờ nhận…</div>
+                    }
+                    else if (!string.IsNullOrEmpty(_pendingError))
+                    {
+                        <div class="alert alert-warning py-2 small m-3">@_pendingError</div>
+                    }
+                    else if (_pendingTxs.Any())
                     {
                         <div class="p-2 border-bottom bg-light" style="font-size:11px;color:#666">
                             <i class="bi bi-list-ul me-1"></i>@_pendingTxs.Count phiếu đang chờ — bấm để mở và xác nhận
@@ -604,7 +614,7 @@ else
                                             {
                                                 <div class="mb-2">
                                                     <label class="form-label form-label-sm fw-semibold text-warning-emphasis">Lý do đổi phân loại (@HandoverCell.Label(p.ToCell) → @HandoverCell.Label(RecvCellOf(p))) *</label>
-                                                    <input type="text" class="form-control form-control-sm border-warning" @bind="_receiveCellReason" />
+                                                    <input type="text" class="form-control form-control-sm border-warning" maxlength="500" @bind="_receiveCellReason" />   @* [LEN-CHECK] (BH-05) NgReason cột 500 *@
                                                     @if (p.ToCell == HandoverCell.Sua && RecvCellOf(p) is HandoverCell.Xl or HandoverCell.Moi)
                                                     {
                                                         @* [GC-SUA-TAI-CHO] Hùng chốt Q3 = B 04/11: giữ đường này, chỉ cảnh báo *@
@@ -1512,14 +1522,20 @@ else
 
     async Task LoadDataAsync()
     {
-        _rows = await LedgerSvc.GetLedgerAsync(
-            customerId: _filterCustomerId > 0 ? _filterCustomerId : null,
-            month:      _filterMonth > 0      ? _filterMonth      : null,
-            year:       _filterYear);
-        BuildColFilters();
-        await LoadBadgesAsync();
-        if (_explain != null) RefreshExplain();
-        if (_expandedDetailId != null) await LoadStepsAsync(_expandedDetailId.Value);
+        // [UI-SAFE 2026-11-16] (BH-03) đổi khách / tháng / năm, tải bảng: lỗi SQL (timeout, mất kết nối) → lời báo Việt ở đầu trang,
+        //   không làm chết mạch (trước: ngoại lệ thoát handler → "An unhandled error", phải F5). Nguồn: CLAUDE quét Fable 15/11 (B-H BH-03 Trung).
+        var err = await UiSafe.RunAsync(async () =>
+        {
+            _rows = await LedgerSvc.GetLedgerAsync(
+                customerId: _filterCustomerId > 0 ? _filterCustomerId : null,
+                month:      _filterMonth > 0      ? _filterMonth      : null,
+                year:       _filterYear);
+            BuildColFilters();
+            await LoadBadgesAsync();
+            if (_explain != null) RefreshExplain();
+            if (_expandedDetailId != null) await LoadStepsAsync(_expandedDetailId.Value);
+        }, Logger, "tải bảng Giao nhận");
+        if (err != null) _pageError = err;   // chỉ đọc → không Clear() bản EF (rà độc lập 16/11 T4)
         StateHasChanged();
     }
 
@@ -1563,6 +1579,7 @@ else
             _steps = await LedgerSvc.GetStepsForDetailAsync(detailId);
             _ngTrace = await LedgerSvc.GetNgTraceAsync(detailId);   // [GN-NG-TRACE]
         }
+        catch (Exception ex) { _pageError = UiSafe.Text(ex, Logger, "tải các dòng B của PO"); _pageErrorDetailId = detailId; }   // [UI-SAFE] (BH-03)
         finally { _stepsLoading = false; }
     }
 
@@ -2040,13 +2057,23 @@ else
         if (pendX != null && RecvMustLoi(pendX)) { _receiveCell = HandoverCell.Loi; _receiveCellReason = RecvMustLoiReason; }
     }
 
+    bool _pendingLoading; string _pendingError = "";   // [UI-SAFE] (BH-03) trạng thái tải phiếu chờ (modal Nhận)
     async Task LoadPendingAsync()
     {
         if (_selectedRow == null || string.IsNullOrEmpty(_receiveToGroup)) return;
         _expandedTxId = 0;
         ResetReceiveInputs();
-        _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(_selectedRow.KhPlanDetailId, _receiveToGroup);
-        await LoadKcsRepairsAsync();   // [GC-SUA-TAI-CHO]
+        _pendingLoading = true; _pendingError = "";
+        await InvokeAsync(StateHasChanged);
+        // [UI-SAFE 2026-11-16] (BH-03) OpenReceiveModal gọi fire-and-forget: lỗi truy vấn trước đây bị nuốt im, modal hiện "Không có phiếu giao nào"
+        //   dù thật ra lỗi / đang tải. Nay: cờ đang tải + lời báo Việt trong modal.
+        var err = await UiSafe.RunAsync(async () =>
+        {
+            _pendingTxs = await HandoverSvc.GetPendingForGroupAsync(_selectedRow.KhPlanDetailId, _receiveToGroup);
+            await LoadKcsRepairsAsync();   // [GC-SUA-TAI-CHO]
+        }, Logger, "tải phiếu chờ nhận");
+        if (err != null) { _pendingError = err; _pendingTxs = new(); }
+        _pendingLoading = false;
         await InvokeAsync(StateHasChanged);
     }
 
@@ -2265,10 +2292,15 @@ else
     async Task ShowLogAsync(int khPlanDetailId)
     {
         _logDetailId  = khPlanDetailId;
-        _logItems     = await HandoverSvc.GetLogsAsync(khPlanDetailId);
-        _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
-        _repairLogs   = await HandoverSvc.GetRepairsAsync(khPlanDetailId);     // [GC-SUA-TAI-CHO]
-        _buLogs       = await HandoverSvc.GetReplacementsAsync(khPlanDetailId); // [KHACH-GUI-LAI]
+        // [UI-SAFE 2026-11-16] (BH-03) double-click dòng mở Lịch sử lúc SQL bận → lời báo Việt, không chết mạch
+        var err = await UiSafe.RunAsync(async () =>
+        {
+            _logItems     = await HandoverSvc.GetLogsAsync(khPlanDetailId);
+            _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
+            _repairLogs   = await HandoverSvc.GetRepairsAsync(khPlanDetailId);     // [GC-SUA-TAI-CHO]
+            _buLogs       = await HandoverSvc.GetReplacementsAsync(khPlanDetailId); // [KHACH-GUI-LAI]
+        }, Logger, "tải Lịch sử phiếu");
+        if (err != null) { _pageError = err; _pageErrorDetailId = khPlanDetailId; return; }
         RebuildLogOrder();   // [LS-THOIGIAN]
         _logPartNo    = _rows.FirstOrDefault(r => r.KhPlanDetailId == khPlanDetailId)?.PartNo ?? "";
         _showLogModal = true;

@@ -9,6 +9,7 @@
 @inject MES.Web.Services.DepartmentService DeptSvc
 @inject IWebHostEnvironment Env
 @inject IJSRuntime JS
+@inject ILogger<Index> Logger
 
 <PageTitle>Sơ đồ tổ chức - MES</PageTitle>
 
@@ -358,20 +359,20 @@
                     <div class="row g-2 mb-2">
                         <div class="col-5">
                             <label class="form-label small fw-bold mb-1">Mã vị trí <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control form-control-sm text-uppercase" autocomplete="off" @bind="deptMoi.DepartmentCode" placeholder="VD: NHOM_PHAY_5..." />
+                            <input type="text" class="form-control form-control-sm text-uppercase" autocomplete="off" @bind="deptMoi.DepartmentCode" placeholder="VD: NHOM_PHAY_5..." maxlength="50" />
                         </div>
                         <div class="col-7">
                             <label class="form-label small fw-bold mb-1">Tên vị trí / nhóm <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.DepartmentName" placeholder="VD: NHÓM PHAY 5..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.DepartmentName" placeholder="VD: NHÓM PHAY 5..." maxlength="150" />
                         </div>
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Chức danh</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.RoleTitle" placeholder="VD: Trưởng nhóm, Nhân viên..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.RoleTitle" placeholder="VD: Trưởng nhóm, Nhân viên..." maxlength="100" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Người phụ trách (Mã NV & Họ tên) <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.ManagerName" placeholder="VD: 199 Nguyễn Văn A..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="deptMoi.ManagerName" placeholder="VD: 199 Nguyễn Văn A..." maxlength="150" />
                     </div>
 
                     <div class="mb-3 p-2 bg-light rounded border">
@@ -438,16 +439,16 @@
                     <div class="row g-2 mb-2">
                         <div class="col-5">
                             <label class="form-label small fw-bold mb-1">Mã đơn vị</label>
-                            <input type="text" class="form-control form-control-sm text-uppercase" @bind="deptDangSua.DepartmentCode" />
+                            <input type="text" class="form-control form-control-sm text-uppercase" @bind="deptDangSua.DepartmentCode" maxlength="50" />
                         </div>
                         <div class="col-7">
                             <label class="form-label small fw-bold mb-1">Tên đơn vị / nhóm</label>
-                            <input type="text" class="form-control form-control-sm" @bind="deptDangSua.DepartmentName" />
+                            <input type="text" class="form-control form-control-sm" @bind="deptDangSua.DepartmentName" maxlength="150" />
                         </div>
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">Chức danh</label>
-                        <input type="text" class="form-control form-control-sm" @bind="deptDangSua.RoleTitle" placeholder="VD: Trưởng phòng, Trưởng nhóm..." />
+                        <input type="text" class="form-control form-control-sm" @bind="deptDangSua.RoleTitle" placeholder="VD: Trưởng phòng, Trưởng nhóm..." maxlength="100" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-bold mb-1">
@@ -457,7 +458,7 @@
                                 <span class="badge bg-warning text-dark ms-1">Đã đổi người $\rightarrow$ Bắt buộc tải ảnh mới</span>
                             }
                         </label>
-                        <input type="text" class="form-control form-control-sm" @bind="deptDangSua.ManagerName" placeholder="VD: 016 Đỗ Văn Phúc..." />
+                        <input type="text" class="form-control form-control-sm" @bind="deptDangSua.ManagerName" placeholder="VD: 016 Đỗ Văn Phúc..." maxlength="150" />
                     </div>
 
                     <div class="mb-3 p-2 bg-light rounded border">
@@ -1043,21 +1044,24 @@
             return;
         }
 
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         loiPopup = "";
         isProcessing = true;
-
-        var result = await DeptSvc.CreateAsync(deptMoi, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-06 / BM1-21) lỗi DB (trùng PK, chữ dài) → lời Việt trong popup, cờ hạ ở finally
         {
-            DongPopupThem();
-            await LoadDataAsync();
+            var result = await DeptSvc.CreateAsync(deptMoi, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupThem();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi thêm vị trí mới.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi thêm vị trí mới.";
-        }
-
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "thêm vị trí"); }
+        finally { isProcessing = false; }
     }
 
     // Sửa
@@ -1113,28 +1117,31 @@
             return;
         }
 
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21)
         loiPopup = "";
         isProcessing = true;
-
-        var result = await DeptSvc.UpdateAsync(
-            deptDangSua, 
-            lyDoSua, 
-            currentUserId, 
-            pinXacNhan, 
-            isNewAvatarUploaded, 
-            tenGocLucMoPopup);
-
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21)
         {
-            DongPopupSua();
-            await LoadDataAsync();
-        }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi cập nhật.";
-        }
+            var result = await DeptSvc.UpdateAsync(
+                deptDangSua, 
+                lyDoSua, 
+                currentUserId, 
+                pinXacNhan, 
+                isNewAvatarUploaded, 
+                tenGocLucMoPopup);
 
-        isProcessing = false;
+            if (result.Success)
+            {
+                DongPopupSua();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi cập nhật.";
+            }
+        }
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "lưu vị trí"); }
+        finally { isProcessing = false; }
     }
 
     // Xóa
@@ -1157,21 +1164,24 @@
             return;
         }
 
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21)
         loiPopup = "";
         isProcessing = true;
-
-        var result = await DeptSvc.SoftDeleteAsync(deptCanXoa.DepartmentId, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21)
         {
-            DongPopupXoa();
-            await LoadDataAsync();
+            var result = await DeptSvc.SoftDeleteAsync(deptCanXoa.DepartmentId, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupXoa();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi xóa vị trí.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi xóa vị trí.";
-        }
-
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "xoá vị trí"); }
+        finally { isProcessing = false; }
     }
 
     // Lịch sử

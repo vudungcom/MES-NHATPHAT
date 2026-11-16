@@ -30,6 +30,11 @@ public class KhPlanService
 
     public async Task<int> CreateAsync(KhPlan plan, int userId)
     {
+        // [KH-PERM-SVC 2026-11-16] (P-01) Máy chủ kiểm quyền Sửa KE_HOACH trước khi tạo phiếu — trước: chỉ trang Tạo KH kiểm lúc mở
+        //   (cờ cũ: Admin rút ô Sửa giữa phiên vẫn Lưu được). Cùng luật UpdateFieldAsync / SaveEditAsync [KHE-PERM].
+        //   Nguồn: CLAUDE quét Fable 15/11 (A3C P-01 Trung); Hùng 16/11 05:15 làm theo đề xuất.
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.KeHoach))
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
         // [RS-E16 2026-10-29] Cấp PlanNo (max + 1) và kiểm trùng số PO phải nằm DƯỚI KHOÁ: trước đây đọc ngoài khoá →
         //   2 người tạo KH cùng lúc trong ngày ra cùng PlanNo (unique chặn, 1 người lỗi phải làm lại), 2 người gõ cùng số PO
         //   cùng lúc thì lọt cả 2 ([B5-PODUP]). Khoá sp_getapplock LockOwner = Transaction, nhả khi giao dịch của trang
@@ -59,6 +64,12 @@ public class KhPlanService
         // [B5-PODUP 2026-10-28] Số PO là khoá tra cứu của WTS / Kho / Tách PO → không cho trùng (trong phiếu và với PO đã có).
         //   Trước: tạo được 2 dòng cùng số PO, WTS gõ PO vào dòng tìm thấy đầu → sổ dòng kia thiếu, dòng này dư. (Tách PO đã chặn trùng từ trước.)
         foreach (var d in plan.Details) d.PurchaseOrder = (d.PurchaseOrder ?? "").Trim();
+        // [LEN-CHECK 2026-11-16] (BK-02) chữ dài quá cột (PO 50, Order VL 50, Vị trí 50, Loại / Ưu tiên 100, Tình trạng 200, Ghi chú 500…) → lời Việt
+        //   trước SaveChanges; trước: SqlException "truncated" tiếng Anh, cả phiếu rollback. Nguồn: CLAUDE quét Fable 15/11 (B-K BK-02 Trung).
+        if (LenCheck.Over(plan.Notes, 500, "Ghi chú phiếu") is string eNote) throw new InvalidOperationException(eNote);
+        foreach (var d in plan.Details)
+            if (DetailLenError(d.PurchaseOrder, d.Unit, d.Type, d.Priority, d.Material, d.MaterialConfig, d.OrderVL, d.Location, d.MaterialCondition, d.PartNotes, d.MaterialNotes) is string eLen)
+                throw new InvalidOperationException($"PO {d.PurchaseOrder}: {eLen}");
         var dupIn = plan.Details.GroupBy(d => d.PurchaseOrder, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
         if (dupIn.Any())
             throw new InvalidOperationException($"Số PO bị trùng trong phiếu: {string.Join(", ", dupIn)}");
@@ -328,6 +339,7 @@ public class KhPlanService
 
         // [RS-E16 2026-10-29] Chuẩn hoá số PO trước khi kiểm (trước: kiểm chữ gốc, lưu chữ đã Trim; trùng hoa / thường lọt — SQL coi là 1 số)
         foreach (var r in newRows) r.PurchaseOrder = (r.PurchaseOrder ?? "").Trim();
+        foreach (var r in newRows) LenCheck.Max(r.PurchaseOrder, 50, "Số PO mới");   // [LEN-CHECK 2026-11-16] (BK-02) cột 50
         var duplicates = newRows.GroupBy(r => r.PurchaseOrder, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToList();
         if (duplicates.Any())
             throw new InvalidOperationException($"PO mới bị trùng: {string.Join(", ", duplicates.Select(g => g.Key))}");
@@ -956,9 +968,20 @@ public class KhPlanService
         public string?   PartNotes         { get; set; }
     }
 
+    /// <summary>[LEN-CHECK 2026-11-16] Độ dài các ô chữ của dòng PO theo cột KhPlanDetails (Entities/KhPlan.cs) — dùng chung Tạo / Sửa / Tách.</summary>
+    public static string? DetailLenError(string? po, string? unit, string? type, string? priority, string? material, string? materialConfig,
+                                         string? orderVl, string? location, string? materialCondition, string? partNotes, string? materialNotes)
+        => LenCheck.FirstOver((po, 50, "Số PO"), (unit, 10, "Đơn vị"), (type, 100, "Loại"), (priority, 100, "Ưu tiên"), (material, 100, "Vật liệu"),
+                              (materialConfig, 100, "Cấu hình phôi"), (orderVl, 50, "Order vật liệu"), (location, 50, "Vị trí"),
+                              (materialCondition, 200, "Tình trạng phôi"), (partNotes, 500, "Ghi chú hàng"), (materialNotes, 1000, "Ghi chú vật liệu"));
+
     public async Task<string?> SaveEditAsync(int khPlanId, int khPlanDetailId, KhEditValues orig, KhEditValues now, int changedBy, string reason)
     {
         if (string.IsNullOrWhiteSpace(reason)) return "Bắt buộc nhập lý do sửa";
+        // [LEN-CHECK 2026-11-16] (BK-02) kiểm độ dài TRƯỚC khoá PO + trước PIN đã nhập xong ở trang (lời Việt thay SqlException)
+        if (LenCheck.Over(now.PlanNotes, 500, "Ghi chú phiếu") is string eNote) return eNote;
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eReason) return eReason;   // KhPlanDetailChangeLogs.Reason 500 (rà độc lập 16/11 T5a)
+        if (DetailLenError(null, now.Unit, now.Type, now.Priority, now.Material, now.MaterialConfig, now.OrderVL, now.Location, now.MaterialCondition, now.PartNotes, now.MaterialNotes) is string eLen) return eLen;
         if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))
             return PermCheck.NoEdit("Kế hoạch");
 
@@ -1080,7 +1103,12 @@ public class KhPlanService
     /// Ghi log vào KhPlanDetailChangeLog để truy vết.
     /// </summary>
     public async Task RefreshRouteSnapshotAsync(int khPlanDetailId, int partId, int userId, string reason)
-        => await RefreshRouteCoreAsync(khPlanDetailId, partId, userId, reason, auto: false);
+    {
+        // [KH-PERM-SVC 2026-11-16] (P-02) nút "Cập nhật từ Part Master" ở Sửa phiếu KH: máy chủ kiểm Sửa KE_HOACH (trước: chỉ trang kiểm lúc mở).
+        if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.KeHoach))
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch"));
+        await RefreshRouteCoreAsync(khPlanDetailId, partId, userId, reason, auto: false);
+    }
 
     // =====================================================================
     // [K6-NOTRUN 2026-10-30] Master list mục 13 — "PO chưa chạy" theo khách: chưa có WTS, kể cả GC đã nhận phôi.
@@ -1200,6 +1228,11 @@ public class KhPlanService
     public async Task<List<AutoRouteResult>> AutoRefreshRoutesForPartAsync(int partId, int userId, string reason)
     {
         var res = new List<AutoRouteResult>();
+        // [KH-PERM-SVC 2026-11-16] (P-02) Tự đẩy quy trình sang PO chưa chạy sau khi lưu Part Master: người lưu phải có Sửa ≥ 1 vùng quy trình
+        //   Part Master (B–E) hoặc Sửa KE_HOACH — đúng ý thiết kế K6-NOTRUN (Part Master đổi → PO chưa chạy đổi theo), không cần ô quyền riêng.
+        //   Trước: hàm public không kiểm → phiên cũ bị rút quyền vẫn ghi lại snapshot mọi PO của Part.
+        if (!await PermCheck.CanEditAsync(_db, userId, RouteWriteSections))
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch / quy trình Part Master (B–E)"));
         var part = await _db.PartMasters.AsNoTracking().FirstOrDefaultAsync(p => p.PartId == partId);
         if (part == null || !part.IsActive || part.IsObsolete) return res;
         var dets = await _db.KhPlanDetails.AsNoTracking().Where(d => d.PartNo == part.PartNo)
@@ -1573,8 +1606,19 @@ public class KhPlanService
     /// Gọi SAU KHI KhPlanDetail đã được lưu vào DB (có KhPlanDetailId).
     /// Nếu Part mới (chưa có steps) → không có gì để copy, bỏ qua.
     /// </summary>
+    /// <summary>[KH-PERM-SVC 2026-11-16] Mục quyền được chép / làm mới snapshot quy trình PO: Sửa KE_HOACH hoặc Sửa 1 vùng quy trình Part Master (B–E).</summary>
+    public static readonly string[] RouteWriteSections =
+    {
+        MES.Web.Constants.SystemPermissions.KeHoach, MES.Web.Constants.SystemPermissions.PartGc, MES.Web.Constants.SystemPermissions.PartHtsp,
+        MES.Web.Constants.SystemPermissions.PartKcs, MES.Web.Constants.SystemPermissions.PartDongGoi,
+    };
+
     public async Task CopyRouteSnapshotAsync(int khPlanDetailId, int partId, int snapshotBy)
     {
+        // [KH-PERM-SVC 2026-11-16] (P-02) chép quy trình Part Master vào PO: kiểm Sửa KE_HOACH hoặc vùng Part Master (gọi từ Tạo KH — đã có giao dịch —
+        //   và từ làm mới snapshot; không chỗ nào khác). Người gọi trong cùng giao dịch đã kiểm thì chỉ tốn 1 truy vấn đọc.
+        if (!await PermCheck.CanEditAsync(_db, snapshotBy, RouteWriteSections))
+            throw new InvalidOperationException(PermCheck.NoEdit("Kế hoạch / quy trình Part Master (B–E)"));
         // [PM-SNAP-MID 2026-11-06] (A1) Chờ lượt lưu Part Master đang chạy của Part xong rồi mới chụp (khoá Shared MES_PM_SAVE_<Part> trong giao dịch
         //   đang mở — tạo KH [E1-KH-TRX], "Cập nhật từ Part Master" / tự cập nhật PO chưa chạy [K6-NOTRUN] đều đã có giao dịch). Trước: chụp chen giữa
         //   lượt lưu nhiều giao dịch nhỏ → PO mang quy trình dở. Không có giao dịch ngoài (dựng dữ liệu thử) thì tự mở. Nguồn: CLAUDE (rà độc lập 02/11);
@@ -1900,8 +1944,9 @@ public class KhPlanService
     /// Gọi ngay sau khi snapshot được chép từ Part Master (số và xác nhận cùng thời điểm).
     /// Dòng snapshot không có SourceStepId (snapshot cũ chưa nối) → ghi IsConfirmed = false.
     /// </summary>
-    public async Task WriteSnapshotStdConfirmsAsync(int khPlanDetailId, int partId, string syncSource, long? syncBatchId, int? userId)
+    internal async Task WriteSnapshotStdConfirmsAsync(int khPlanDetailId, int partId, string syncSource, long? syncBatchId, int? userId)
     {
+        // [KH-PERM-SVC 2026-11-16] (P-02) chỉ CopyRouteSnapshotAsync (đã kiểm quyền) gọi → đổi public thành internal, không ai ngoài gọi (grep MES.Web + tools = 0).
         var now = DateTime.Now;
 
         await _db.Database.ExecuteSqlRawAsync(

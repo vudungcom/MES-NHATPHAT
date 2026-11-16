@@ -53,12 +53,19 @@ public class DaoService
         return await _db.Daos.FirstOrDefaultAsync(d => d.DaoId == id);
     }
 
+    /// <summary>[LEN-CHECK 2026-11-16] (BM1-05) Trang gán MaDao = TenDao mà cột MaDao 50, TenDao 255 → Ký hiệu dao ≤ 50 (chặn trước; nới cột = SQL gói sau
+    /// nếu khách cần — Hùng 16/11 05:15). Các ô 100 / 500 theo cột Daos.</summary>
+    public static string? DaoLenError(Dao m)
+        => LenCheck.FirstOver((m.TenDao, 50, "Ký hiệu dao"), (m.MaDao, 50, "Mã dao"), (m.LoaiDao, 100, "Loại dao"), (m.QuyCach, 100, "Quy cách"),
+                              (m.HangSX, 100, "Hãng sản xuất"), (m.VatLieuDao, 100, "Vật liệu dao"), (m.ViTriKho, 100, "Vị trí kho"), (m.GhiChu, 500, "Ghi chú"));
+
     public async Task<(bool Success, string? Error, Dao? Data)> CreateAsync(Dao model, int userId)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa Dao (trước: chỉ cần đăng nhập)
         if (!await PermCheck.CanEditAsync(_db, userId, MES.Web.Constants.SystemPermissions.Dao)) return (false, PermCheck.NoEdit("Dao"), null);
         if (string.IsNullOrWhiteSpace(model.TenDao))
             return (false, "Tên dao không được để trống.", null);
+        if (DaoLenError(model) is string eLen) return (false, eLen, null);   // [LEN-CHECK 2026-11-16] (BM1-05)
         if (model.SoLuongTon < 0) return (false, "SL tồn không được âm.", null);   // [RS-E10 2026-10-31] trước: lưu được số âm
 
         var name = model.TenDao.Trim();
@@ -121,6 +128,8 @@ public class DaoService
         if (updated.SoLuongTon < 0) return (false, "SL tồn không được âm.");   // [RS-E10 2026-10-31] trước: lưu được số âm
         if (string.IsNullOrWhiteSpace(updated.TenDao))
             return (false, "Tên dao không được để trống.");
+        if (DaoLenError(updated) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BM1-05)
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] DaoChangeLogs.Reason 500
 
         var existing = await _db.Daos.FirstOrDefaultAsync(d => d.DaoId == updated.DaoId);
         if (existing == null) return (false, "Không tìm thấy dao trong hệ thống.");

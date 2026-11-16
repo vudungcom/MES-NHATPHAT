@@ -59,8 +59,10 @@ public static class PartMasterPermissionHelper
     /// </summary>
     public static bool CheckPermission(UserGroup? group, string sectionCode, bool requireEdit = false)
     {
-        if (group != null && group.GroupCode == GroupAdmin) return true;
+        // [PERM-ACTIVE 2026-11-16] (P-06) kiểm nhóm đang hoạt động TRƯỚC ADMIN — trước: nhóm ADMIN bị ngưng (chỉ sửa DB tay) vẫn qua ở đây
+        //   trong khi PermCheck cùng người trả "không quyền" → 2 bộ kiểm lệch luật. Nguồn: CLAUDE quét Fable 15/11 (A3C P-06 Thấp).
         if (group == null || !group.IsActive) return false;
+        if (group.GroupCode == GroupAdmin) return true;
 
         if (string.IsNullOrWhiteSpace(group.Permissions)) return false;
         try

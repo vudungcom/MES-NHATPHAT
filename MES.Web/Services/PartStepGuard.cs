@@ -68,6 +68,13 @@ public static class PartStepGuard
     //   Sửa dòng: chỉ kiểm khi mã đổi — dòng cũ đã có "@" (QuetSo PM_MA_A báo) vẫn sửa được ô khác.
     public static bool IsReserved(string? code) => Norm(code).StartsWith("@", StringComparison.Ordinal);
 
+    /// <summary>[LEN-CHECK 2026-11-16] (BP1-03) NC / mã CV ≤ 20 (cột DB), dự phòng "-DP-01" cộng 6 → NC chính ≤ 14 để còn tạo dự phòng
+    /// (chỉ cảnh báo ở trang; máy chủ chặn theo cột). Trước: SqlException "truncated" thô từng dòng.</summary>
+    public static void CheckLen(string label, params (string? Value, int Max, string TenO)[] items)
+    {
+        if (LenCheck.FirstOver(items) is string s) throw new PartStepCodeException($"{label}: {s}");
+    }
+
     public static void CheckReservedCode(string label, params string?[] codes)
     {
         foreach (var c in codes)

@@ -11,6 +11,7 @@
 @inject AppDbContext Db
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject ILogger<Create> Logger
 
 <PageTitle>Tạo Part Master mới - MES</PageTitle>
 
@@ -94,18 +95,18 @@ else
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
                         <input class="form-control form-control-sm" @bind="_material"
-                               placeholder="VD: SS400, MSP-12-A5052-MID..." />
+                               placeholder="VD: SS400, MSP-12-A5052-MID..." maxlength="500" />
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Cấu hình phôi (Material Config)</label>
                         <input class="form-control form-control-sm" @bind="_materialConfig"
-                               placeholder="VD: B12x82x97..." />
+                               placeholder="VD: B12x82x97..." maxlength="500" />
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Ghi chú phôi</label>
-                        <textarea class="form-control form-control-sm" @bind="_materialNote"
+                        <textarea class="form-control form-control-sm" @bind="_materialNote" maxlength="500"
                                   rows="2" placeholder="Ghi chú thêm về phôi (nếu có)..."></textarea>
                     </div>
 
@@ -243,7 +244,10 @@ else
         }
         catch (Exception ex)
         {
-            _errorGeneral = "Lỗi khi tạo: " + ex.Message;
+            // [UI-SAFE 2026-11-16] (BP1-15) DbUpdateException (2 người cùng tạo 1 Part No, chữ dài) → câu Việt thay lỗi EF tiếng Anh
+            _errorGeneral = ex is Microsoft.EntityFrameworkCore.DbUpdateException
+                ? "Không tạo được: Part No vừa được người khác tạo hoặc dữ liệu không hợp lệ với cột DB — tải lại danh sách rồi kiểm tra."
+                : UiSafe.Text(ex, Logger, "tạo Part Master");
         }
         finally
         {

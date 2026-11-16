@@ -379,6 +379,14 @@ namespace MES.Web.Services
                 if (IsPrepNoQty(grp, sub) && (sub.QtyDone != 0 || sub.QtyOk != 0 || sub.QtyNg != 0))
                 { sub.ErrorMsg = "Mã chuẩn bị chỉ tính giờ, không nhập số lượng."; grp.ErrorMsg = "Có hàng mã chuẩn bị mang số lượng — để SL = 0."; return Fail(); }
 
+                // [LEN-CHECK 2026-11-16] (BW1-01 / BW2-03) phát sinh: Mã WTS PS ≤ 50, tên ≤ 250, Nội dung PS ≤ 500 (cột WtsExtraItems) — kiểm TRƯỚC
+                //   vòng ghi; trước: ghi thẳng → SqlException "String or binary data would be truncated" (tiếng Anh, có tên bảng), cả nhóm rollback.
+                foreach (var _ei in sub.ExtraItems.Where(e => e.Minutes > 0))
+                {
+                    var _eLen = LenCheck.FirstOver((_ei.WtsCode, 50, "Mã WTS phát sinh"), (_ei.WtsName, 250, "Tên việc phát sinh"), (_ei.Notes, 500, "Nội dung PS"));
+                    if (_eLen != null) { sub.ErrorMsg = _eLen; grp.ErrorMsg = "Có hàng phát sinh ghi chữ dài quá cột — " + _eLen; return Fail(); }
+                }
+
                 // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
                 var _missSerial = GetMissingSerialTimesMsg(grp, sub);
                 if (_missSerial != null)

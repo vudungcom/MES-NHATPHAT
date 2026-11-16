@@ -60,6 +60,7 @@ public class StandardWtsTaskService
         if (string.IsNullOrWhiteSpace(model.CategoryName)) return (false, "Tên nhóm công đoạn không được để trống.");
         if (string.IsNullOrWhiteSpace(model.TaskCode)) return (false, "Mã công việc không được để trống.");
         if (string.IsNullOrWhiteSpace(model.TaskName)) return (false, "Tên công việc không được để trống.");
+        if (TaskLenError(model) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BP2-01)
 
         model.CategoryCode = model.CategoryCode.Trim().ToUpper();
         model.CategoryName = model.CategoryName.Trim();
@@ -194,6 +195,11 @@ public class StandardWtsTaskService
     }
 
     /// <param name="gopParts">[TARO-3T-GOP] Mã thành phần mà mã này làm thay (null = không đổi khai báo gộp; rỗng = bỏ khai gộp).</param>
+    /// <summary>[LEN-CHECK 2026-11-16] Độ dài ô chữ theo cột StandardWtsTasks (Entities/StandardWtsTask.cs) — trước: SqlException không bắt → trang chết.</summary>
+    public static string? TaskLenError(StandardWtsTask m)
+        => LenCheck.FirstOver((m.CategoryCode, 50, "Mã nhóm công đoạn"), (m.CategoryName, 150, "Tên nhóm công đoạn"), (m.TaskCode, 50, "Mã công việc"),
+                              (m.TaskName, 250, "Tên công việc"), (m.DefaultUnit, 50, "Đơn vị"), (m.GhiChu, 500, "Ghi chú"));
+
     public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin, List<string>? gopParts = null)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
@@ -209,6 +215,8 @@ public class StandardWtsTaskService
         await using var gopTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
         if (!await PoGuard.TryLockInTransactionAsync(_db, GopLock))
             return (false, "Đang có người khác lưu danh mục WTS tiêu chuẩn / khai báo mã gộp — chờ vài giây rồi bấm lưu lại.");
+        if (TaskLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16] (BP2-01)
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] StandardWtsTaskChangeLogs.Reason 500
         var task = await _db.StandardWtsTasks.FirstOrDefaultAsync(x => x.TaskId == updatedModel.TaskId && x.IsActive);
         if (task == null) return (false, "Không tìm thấy công việc.");
 

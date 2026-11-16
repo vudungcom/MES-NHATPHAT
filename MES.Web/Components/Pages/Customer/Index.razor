@@ -8,6 +8,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject UserService UserSvc
 @inject NavigationManager Nav
+@inject ILogger<Index> Logger
 
 <PageTitle>Danh sách Khách hàng - MES</PageTitle>
 
@@ -149,22 +150,22 @@ else
                 <div class="modal-body p-3">
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Mã khách hàng</label>
-                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerCode" placeholder="VD: QM, KOSTAL..." />
+                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerCode" placeholder="VD: QM, KOSTAL..." maxlength="20" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Tên khách hàng <span class="text-danger">*</span></label>
-                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerName" placeholder="VD: Quang Minh Production Trading Co., Ltd" />
+                        <input class="form-control form-control-sm" @bind="_editingModel.CustomerName" placeholder="VD: Quang Minh Production Trading Co., Ltd" maxlength="200" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Supplier Code</label>
-                        <input class="form-control form-control-sm" @bind="_editingModel.SupplierCode" placeholder="Mã nhà cung cấp quy định (nếu có)" />
+                        <input class="form-control form-control-sm" @bind="_editingModel.SupplierCode" placeholder="Mã nhà cung cấp quy định (nếu có)" maxlength="20" />
                     </div>
 
                     @if (_editingModel.CustomerId > 0)
                     {
                         <div class="mb-2">
                             <label class="form-label small fw-bold text-danger">Lý do thay đổi <span class="text-danger">*</span></label>
-                            <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập lý do sửa đổi..." />
+                            <input class="form-control form-control-sm border-danger" @bind="_editReason" placeholder="Nhập lý do sửa đổi..." maxlength="500" />
                         </div>
                     }
 
@@ -359,6 +360,7 @@ else
             _showEditModal = false;
             await LoadDataAsync();
         }
+        catch (Exception ex) { _errorMessage = UiSafe.Text(ex, Logger, "lưu khách hàng"); }   // [UI-SAFE 2026-11-16] (BM2-01) trước chỉ try/finally → mạch chết
         finally
         {
             _saving = false;
@@ -377,6 +379,7 @@ else
             _toggleError = okT ? null : errT;
             await LoadDataAsync();
         }
+        catch (Exception ex) { _toggleError = UiSafe.Text(ex, Logger, "ngừng / khôi phục khách hàng"); }   // [UI-SAFE 2026-11-16] (BM2-02)
         finally { _toggleBusy = false; }
     }
 
@@ -385,7 +388,8 @@ else
         _selectedCustomer = item;
         _showHistoryModal = true;
         _historyLoading = true;
-        _historyLogs = await CustomerSvc.GetChangeLogsAsync(item.CustomerId);
+        var errH = await UiSafe.RunAsync(async () => { _historyLogs = await CustomerSvc.GetChangeLogsAsync(item.CustomerId); }, Logger, "tải lịch sử khách hàng");   // [UI-SAFE]
+        if (errH != null) { _toggleError = errH; _showHistoryModal = false; }
         _historyLoading = false;
     }
 }

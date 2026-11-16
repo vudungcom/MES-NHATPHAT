@@ -1,5 +1,5 @@
 @rendermode InteractiveServer
-
+@* [LEN-CHECK 2026-11-16] (BP2-15) ô gõ tự do có maxlength 500 = cột PartMasterAttribute.Value *@
 <div>
     @if (!string.IsNullOrWhiteSpace(Label))
     {
@@ -22,7 +22,7 @@
                    @onfocus="OpenDropdown"
                    @onclick="OpenDropdown"
                    @onblur="HideDropdown"
-                   placeholder="@Placeholder"
+                   placeholder="@Placeholder" maxlength="500"
                    disabled="@Disabled"
                    readonly="@(!AllowFreeText)" />
             
@@ -68,7 +68,7 @@
         <input class="form-control form-control-sm @InputCssClass"
                value="@_value"
                @oninput="OnInputChanged"
-               placeholder="@Placeholder"
+               placeholder="@Placeholder" maxlength="500"
                disabled="@Disabled"
                readonly="@(!AllowFreeText)" />
     }

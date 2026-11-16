@@ -32,6 +32,11 @@ public class DoGaService
     /// <summary>
     /// Thêm mới đồ gá
     /// </summary>
+    /// <summary>[LEN-CHECK 2026-11-16] Độ dài ô chữ theo cột DoGas (Entities/DoGa.cs) — trước: SqlException không bắt.</summary>
+    public static string? DoGaLenError(DoGa m)
+        => LenCheck.FirstOver((m.TenDoGa, 150, "Tên đồ gá"), (m.SoLuong, 50, "Số lượng"), (m.BuLong, 250, "Bu lông"), (m.BuLongDinhVi, 250, "Bu lông định vị"),
+                              (m.Chot, 250, "Chốt"), (m.Dem, 250, "Đệm"), (m.Kep, 250, "Kẹp"), (m.LongDen, 250, "Long đen"), (m.SanPhamSuDung, 250, "Sản phẩm sử dụng"), (m.GhiChu, 500, "Ghi chú"));
+
     public async Task<(bool Success, string? Error)> CreateAsync(DoGa model, int currentUserId, string pin)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa DoGa (trước: chỉ cần đăng nhập)
@@ -41,6 +46,7 @@ public class DoGaService
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
         if (string.IsNullOrWhiteSpace(model.TenDoGa)) return (false, "Tên đồ gá không được để trống.");
+        if (DoGaLenError(model) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BM1-21 kiểu B3)
 
         var now = DateTime.Now;
         model.TenDoGa = model.TenDoGa.Trim();
@@ -77,6 +83,8 @@ public class DoGaService
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (DoGaLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16]
+        if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] DoGaChangeLogs.Reason 500
 
         var item = await _db.DoGas.FirstOrDefaultAsync(x => x.DoGaId == updatedModel.DoGaId && x.IsActive);
         if (item == null) return (false, "Không tìm thấy đồ gá.");
@@ -155,6 +163,7 @@ public class DoGaService
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
 
         if (string.IsNullOrWhiteSpace(nguoiMuon)) return (false, "Vui lòng nhập tên người mượn.");
+        if (LenCheck.FirstOver((nguoiMuon, 150, "Người mượn"), (lyDo, 500, "Lý do mượn")) is string eLenM) return (false, eLenM);   // [LEN-CHECK 2026-11-16]
 
         // [RS-E10 2026-10-31] Khoá theo đồ gá + đọc lại trạng thái trong giao dịch: đang có người mượn thì không cho mượn chồng
         //   (trước: mượn tiếp được → 2 phiếu "Đang mượn" cùng mở, người mượn đầu biến khỏi bảng; 2 người bấm cùng lúc cũng lọt).
@@ -223,6 +232,7 @@ public class DoGaService
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (LenCheck.Over(ghiChuTra, 500, "Ghi chú trả") is string eLenT) return (false, eLenT);   // [LEN-CHECK 2026-11-16]
 
         // [RS-E10 2026-10-31] Khoá theo đồ gá; đồ gá không có ai mượn thì không "trả" (trước: trả được, ghi lịch sử "Đã trả" rỗng)
         await using var trx = await _db.Database.BeginTransactionAsync();

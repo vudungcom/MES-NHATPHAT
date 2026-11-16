@@ -10,6 +10,7 @@
 @using MES.Web.Constants
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject ILogger<Index_WTS> Logger
 
 <PageTitle>Danh mục Công việc WTS Tiêu Chuẩn - MES</PageTitle>
 
@@ -23,7 +24,7 @@
             </p>
         </div>
         <div class="d-flex gap-2">
-            <button type="button" class="btn btn-outline-success btn-sm" @onclick="XuatExcelAsync" disabled="@isExporting">
+            <button type="button" class="btn btn-outline-success btn-sm" @onclick="XuatExcelAsync" disabled="@(isExporting || !_canViewMaster)" title="@(_canViewMaster ? "" : "Cần quyền Xem Danh mục WTS")">   @* [VIEW-PERM] chỉ Xem Cấu hình nhóm: không xuất danh mục (rà độc lập 16/11 L1) *@
                 @if (isExporting)
                 {
                     <span class="spinner-border spinner-border-sm me-1" role="status"></span>
@@ -46,11 +47,16 @@
 
 @* ── Tab chính: Danh mục | Cấu hình nhóm ── *@
 <ul class="nav nav-tabs mb-0 mt-3">
-    <li class="nav-item">
-        <button class="@_MainTabListCls" @onclick="SetMainTabList">
-            <i class="bi bi-list-check me-1"></i>Danh mục công việc
-        </button>
-    </li>
+    @* [VIEW-PERM 2026-11-16] (BP2-03) chỉ Xem WTS_MAPPING (không Xem WTS_MASTER) → ẩn tab Danh mục, mở thẳng tab Cấu hình nhóm.
+       Nguồn: CLAUDE quét Fable 15/11 (B-P2 BP2-03 Thấp). *@
+    @if (_canViewMaster)
+    {
+        <li class="nav-item">
+            <button class="@_MainTabListCls" @onclick="SetMainTabList">
+                <i class="bi bi-list-check me-1"></i>Danh mục công việc
+            </button>
+        </li>
+    }
     @if (_canViewMapping)
     {
         <li class="nav-item">
@@ -62,7 +68,7 @@
 </ul>
 <div style="border: 1px solid #dee2e6; border-top: none; padding: 1rem; border-radius: 0 0 .375rem .375rem;">
     @* ═══ TAB 1: DANH MỤC CÔNG VIỆC ═══ *@
-    @if (_mainTab == "list")
+    @if (_mainTab == "list" && _canViewMaster)
     {
     <div class="row g-2 mb-3">
         <div class="col-md-5">
@@ -417,12 +423,12 @@
                                 <div class="col-4">
                                     <input type="text" class="form-control form-control-sm font-monospace text-uppercase"
                                            placeholder="Mã nhóm (VD: TARO)"
-                                           @bind="itemDangSua.CategoryCode" />
+                                           @bind="itemDangSua.CategoryCode" maxlength="50" />
                                 </div>
                                 <div class="col-8">
                                     <input type="text" class="form-control form-control-sm"
                                            placeholder="Tên nhóm (VD: Công việc nhóm Taro)"
-                                           @bind="itemDangSua.CategoryName" />
+                                           @bind="itemDangSua.CategoryName" maxlength="150" />
                                 </div>
                             </div>
                             <div class="form-check mt-1">
@@ -441,13 +447,13 @@
                             <label class="form-label fw-semibold">Mã công việc <span class="text-danger">*</span></label>
                             <input type="text" class="form-control form-control-sm font-monospace text-uppercase text-danger fw-bold"
                                    placeholder="VD: 1V"
-                                   @bind="itemDangSua.TaskCode" />
+                                   @bind="itemDangSua.TaskCode" maxlength="50" />
                         </div>
                         <div class="col-9">
                             <label class="form-label fw-semibold">Tên công việc <span class="text-danger">*</span></label>
                             <input type="text" class="form-control form-control-sm"
                                    placeholder="VD: Chuẩn bị"
-                                   @bind="itemDangSua.TaskName" />
+                                   @bind="itemDangSua.TaskName" maxlength="250" />
                         </div>
                     </div>
 
@@ -457,7 +463,7 @@
                             <label class="form-label fw-semibold">Đơn vị tính</label>
                             <input type="text" class="form-control form-control-sm"
                                    placeholder="Chi tiết"
-                                   @bind="itemDangSua.DefaultUnit" />
+                                   @bind="itemDangSua.DefaultUnit" maxlength="50" />
                         </div>
                         <div class="col-4">
                             <label class="form-label fw-semibold">Thứ tự hiển thị</label>
@@ -513,7 +519,7 @@
                     @* ── Ghi chú ── *@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ghi chú</label>
-                        <textarea class="form-control form-control-sm" rows="2"
+                        <textarea class="form-control form-control-sm" rows="2" maxlength="500"
                                   placeholder="Ghi chú thêm (tùy chọn)"
                                   @bind="itemDangSua.GhiChu"></textarea>
                     </div>
@@ -525,7 +531,7 @@
                             <label class="form-label fw-semibold">Lý do thay đổi</label>
                             <input type="text" class="form-control form-control-sm"
                                    placeholder="Mô tả ngắn lý do chỉnh sửa (tùy chọn)"
-                                   @bind="lyDoSua" />
+                                   @bind="lyDoSua" maxlength="500" />
                         </div>
                     }
 
@@ -882,24 +888,27 @@
 
     private async Task XacNhanLuuTongAsync()
     {
-        if (!_localChanges.Any()) return;
+        if (!_localChanges.Any() || isProcessing) return;
         isProcessing = true;
         loiLuuTong = "";
-
-        var changes = _localChanges.Select(kv => (kv.Key, kv.Value)).ToList();
-        var result = await WtsSvc.BulkUpdateProductiveAsync(changes, currentUserId, pinLuuTong);
-
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BP2-01)
         {
-            _localChanges.Clear();
-            DongPopupLuuTong();
-            await LoadDataAsync();
+            var changes = _localChanges.Select(kv => (kv.Key, kv.Value)).ToList();
+            var result = await WtsSvc.BulkUpdateProductiveAsync(changes, currentUserId, pinLuuTong);
+
+            if (result.Success)
+            {
+                _localChanges.Clear();
+                DongPopupLuuTong();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiLuuTong = result.Error ?? "Lỗi lưu phân loại.";
+            }
         }
-        else
-        {
-            loiLuuTong = result.Error ?? "Lỗi lưu phân loại.";
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiLuuTong = UiSafe.Text(ex, Logger, "lưu phân loại Có ích / Vô ích"); }
+        finally { isProcessing = false; }
     }
 
     private List<StandardWtsTask> DanhSachHienThi
@@ -923,6 +932,7 @@
         // [RS-C1 2026-10-29] quyền đọc trước khi nạp: không Xem WTS_MASTER lẫn WTS_MAPPING → về trang chủ
         await LoadMappingPermAsync();
         if (!_canViewMaster && !_canViewMapping) { Nav.NavigateTo("/"); return; }
+        if (!_canViewMaster) { await SetMainTabMapping(); return; }   // [VIEW-PERM] chỉ Xem WTS_MAPPING: không nạp danh mục, mở tab Cấu hình nhóm
         await LoadDataAsync();
     }
 
@@ -1060,37 +1070,41 @@
 
     private async Task LuuThongTinAsync()
     {
-        if (itemDangSua == null) return;
+        if (itemDangSua == null || isProcessing) return;   // [UI-SAFE] (BM1-21 kiểu) chặn bấm chồng
         isProcessing = true;
         loiPopup = "";
-
-        if (isThemMoi)
+        // [UI-SAFE 2026-11-16] (BP2-01) trước: không try/catch → DbUpdateException (chữ dài, DB lỗi) làm trang chết, isProcessing kẹt true
+        try
         {
-            var result = await WtsSvc.CreateAsync(itemDangSua, currentUserId, pinXacNhan);
-            if (result.Success)
+            if (isThemMoi)
             {
-                DongPopupSua();
-                await LoadDataAsync();
+                var result = await WtsSvc.CreateAsync(itemDangSua, currentUserId, pinXacNhan);
+                if (result.Success)
+                {
+                    DongPopupSua();
+                    await LoadDataAsync();
+                }
+                else
+                {
+                    loiPopup = result.Error ?? "Lỗi thêm công việc.";
+                }
             }
             else
             {
-                loiPopup = result.Error ?? "Lỗi thêm công việc.";
+                var result = await WtsSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan, _HienGop ? _gopChon.ToList() : null);   // [TARO-3T-GOP]
+                if (result.Success)
+                {
+                    DongPopupSua();
+                    await LoadDataAsync();
+                }
+                else
+                {
+                    loiPopup = result.Error ?? "Lỗi cập nhật.";
+                }
             }
         }
-        else
-        {
-            var result = await WtsSvc.UpdateAsync(itemDangSua, lyDoSua, currentUserId, pinXacNhan, _HienGop ? _gopChon.ToList() : null);   // [TARO-3T-GOP]
-            if (result.Success)
-            {
-                DongPopupSua();
-                await LoadDataAsync();
-            }
-            else
-            {
-                loiPopup = result.Error ?? "Lỗi cập nhật.";
-            }
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "lưu công việc WTS tiêu chuẩn"); }
+        finally { isProcessing = false; }
     }
 
     private void MoPopupXoa(StandardWtsTask item)
@@ -1110,21 +1124,24 @@
 
     private async Task XacNhanXoaAsync()
     {
-        if (itemCanXoa == null) return;
+        if (itemCanXoa == null || isProcessing) return;
         isProcessing = true;
         loiPopup = "";
-
-        var result = await WtsSvc.SoftDeleteAsync(itemCanXoa.TaskId, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BP2-01)
         {
-            DongPopupXoa();
-            await LoadDataAsync();
+            var result = await WtsSvc.SoftDeleteAsync(itemCanXoa.TaskId, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupXoa();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi xóa công việc.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi xóa công việc.";
-        }
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "xoá công việc WTS tiêu chuẩn"); }
+        finally { isProcessing = false; }
     }
 
     private async Task MoPopupLichSu(StandardWtsTask item)
@@ -1170,7 +1187,7 @@
     private string _MainTabListCls => "nav-link" + (_mainTab == "list"    ? " active fw-bold" : "");
     private string _MainTabMapCls  => "nav-link" + (_mainTab == "mapping" ? " active fw-bold" : "");
 
-    private void SetMainTabList() { _mainTab = "list"; }
+    private void SetMainTabList() { if (_canViewMaster) _mainTab = "list"; }   // [VIEW-PERM]
     private async Task SetMainTabMapping()
     {
         _mainTab = "mapping";
@@ -1266,21 +1283,25 @@
 
     private async Task MXacNhanLuuAsync()
     {
-        if (!_canEditMapping) return; // [RS-C1]
+        if (!_canEditMapping || _mIsProcessing) return; // [RS-C1]
         _mIsProcessing = true;
         _mThongBaoLoi  = "";
-        var selected = _mAllCategories.Where(c => _mLocalSelection.Contains(c.Code)).ToList();
-        var result   = await MappingSvc.SaveGroupMappingAsync(_mActiveTab, selected, currentUserId);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BP2-01)
         {
-            _mThongBaoOk = $"Đã lưu cấu hình cho nhóm {_mActiveTabName} thành công.";
-            await MLoadDataAsync();
+            var selected = _mAllCategories.Where(c => _mLocalSelection.Contains(c.Code)).ToList();
+            var result   = await MappingSvc.SaveGroupMappingAsync(_mActiveTab, selected, currentUserId);
+            if (result.Success)
+            {
+                _mThongBaoOk = $"Đã lưu cấu hình cho nhóm {_mActiveTabName} thành công.";
+                await MLoadDataAsync();
+            }
+            else
+            {
+                _mThongBaoLoi = result.Error ?? "Lỗi lưu cấu hình.";
+            }
         }
-        else
-        {
-            _mThongBaoLoi = result.Error ?? "Lỗi lưu cấu hình.";
-        }
-        _mIsProcessing = false;
+        catch (Exception ex) { _mThongBaoLoi = UiSafe.Text(ex, Logger, "lưu cấu hình nhóm WTS"); }
+        finally { _mIsProcessing = false; }
     }
 
     private List<string> MGetOtherProcessGroups(string categoryCode)

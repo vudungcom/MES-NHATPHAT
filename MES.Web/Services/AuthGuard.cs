@@ -33,7 +33,31 @@ public static class AuthGuard
         if (!string.Equals(name, u.Username, StringComparison.OrdinalIgnoreCase)) return false;
         var role = p.FindFirst(ClaimTypes.Role)?.Value;
         if (role != null && !string.Equals(role, u.Group.GroupCode ?? "VIEWER", StringComparison.Ordinal)) return false;   // đổi nhóm → đăng nhập lại để lấy quyền mới
+        // [PERM-HASH 2026-11-16] Ma trận quyền của nhóm đổi (Admin bỏ / thêm ô Xem / Sửa) → phiên cũ hết hiệu lực, đăng nhập lại mới lấy quyền mới.
+        //   Trước: chỉ kiểm tài khoản / nhóm / tên nhóm → trang đã mở (cờ _canEdit* đọc lúc mở, Detail_Partmaster ghi DB thẳng — P-03) và
+        //   hàm service chưa PermCheck vẫn ghi được tới khi tải lại trang. Nhóm ADMIN luôn toàn quyền → không so (Admin sửa ma trận nhóm mình không bị đá).
+        //   Nguồn: CLAUDE quét Fable 15/11 (A3c P-03 12 chỗ trang ghi DB thẳng; P-04 phiên không hết hạn khi đổi quyền); HÙNG 16/11 05:15 "không ảnh hưởng khách thì làm theo ý bạn" (Gói 23).
+        //   Cookie cũ (trước bản này) không có claim → coi như hết hiệu lực: mọi người đăng nhập lại 1 lần sau khi lên bản.
+        if (!IsAdminGroup(u))
+        {
+            var hash = p.FindFirst(PermHashClaim)?.Value;
+            if (hash == null || !string.Equals(hash, PermHash(u.Group.Permissions), StringComparison.Ordinal)) return false;
+        }
         return true;
+    }
+
+    /// <summary>[PERM-HASH] Tên claim giữ dấu vân ma trận quyền của nhóm lúc đăng nhập.</summary>
+    public const string PermHashClaim = "PermHash";
+
+    /// <summary>[PERM-HASH] Nhóm ADMIN hoặc tên "admin" = toàn quyền (cùng luật PermCheck / UserService) — không cần so ma trận.</summary>
+    public static bool IsAdminGroup(MES.Web.Data.Entities.User u)
+        => u.Group?.GroupCode == "ADMIN" || string.Equals(u.Username, "admin", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[PERM-HASH] SHA-256 (hex) của chuỗi JSON ma trận quyền nhóm; null / rỗng → chuỗi rỗng. Chỉ so bằng nhau, không giải mã.</summary>
+    public static string PermHash(string? permissionsJson)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(permissionsJson ?? ""));
+        return Convert.ToHexString(bytes);
     }
 
     /// <summary>[RS-C4] Chỉ cho chuyển hướng về đường dẫn trong MES (bắt đầu bằng "/", không "//" hay "/\") — chặn chuyển sang trang lạ.</summary>

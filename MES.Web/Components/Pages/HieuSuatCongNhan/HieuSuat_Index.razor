@@ -21,6 +21,7 @@
 @using MES.Web.Constants
 
 @inject AppDbContext Db
+@inject ILogger<HieuSuat_Index> Logger
 @inject PartStepStdTimeConfirmService StdConfirmSvc
 
 @inject KhPlanService KhSvc
@@ -252,7 +253,7 @@ else
 
                     <input type="date" class="form-control form-control-sm" style="width:150px;"
 
-                           @bind="_workDate" @bind:after="OnWorkDateChanged" />
+                           @bind="_workDate" @bind:after="OnWorkDateChanged" disabled="@_anySaving" />
 
                 </div>
 
@@ -2187,7 +2188,7 @@ else
 
                                                placeholder="Mã WTS..."
 
-                                               autocomplete="off"
+                                               autocomplete="off" maxlength="50"
 
                                                @onchange="e => OnSubPsWtsCode(sub, e.Value?.ToString())" />
 
@@ -2235,7 +2236,7 @@ else
 
                                                value="@(sub.ExtraItems.Count > 0 ? sub.ExtraItems[0].Notes : "")"
 
-                                               placeholder="Nội dung PS..."
+                                               placeholder="Nội dung PS..." maxlength="500"
 
                                                @oninput="e => OnSubPsNotes(sub, e)" />
 
@@ -2311,7 +2312,7 @@ else
 
                                                    placeholder="Mã WTS..."
 
-                                                   autocomplete="off"
+                                                   autocomplete="off" maxlength="50"
 
                                                    @onchange="e => OnExtraItemWtsCode(sub, ei, e.Value?.ToString())" />
 
@@ -2359,7 +2360,7 @@ else
 
                                                    value="@ei.Notes"
 
-                                                   placeholder="Nội dung PS..."
+                                                   placeholder="Nội dung PS..." maxlength="500"
 
                                                    @oninput="e => OnExtraItemNotes(ei, e)" />
 
@@ -3935,6 +3936,14 @@ else
 
             }
 
+            else if (!_reportLoading && _reportError != null)
+
+            {
+
+                <div class="alert alert-warning my-3">@_reportError</div>
+
+            }
+
             else if (!_reportLoading)
 
             {
@@ -5022,7 +5031,21 @@ else
 
         // _groupsOT.Clear(); // OT removed 2026-09
 
-        await LoadSavedRowsAsync();
+        // [UI-SAFE 2026-11-16] (BW1-03) đổi ngày lúc SQL bận → lời báo Việt, không chết mạch
+
+        //   Rà độc lập 16/11 T4: đi qua cổng _dbGate (không chen vào lượt Lưu nhóm đang chạy trên cùng DbContext) và KHÔNG Clear()
+
+        //   bản EF khi chỉ đọc lỗi (Clear giữa lúc WtsSaveService đang ghi sẽ tách entity của lượt lưu).
+
+        await _dbGate.WaitAsync();
+
+        string? err;
+
+        try { err = await UiSafe.RunAsync(LoadSavedRowsAsync, Logger, "tải dòng WTS của ngày"); }
+
+        finally { _dbGate.Release(); }
+
+        if (err != null) _wtsNotice = err;
 
         AddGroup();
 
@@ -5123,6 +5146,7 @@ else
     {
         await _dbGate.WaitAsync();
         try { await EditSavedRowCoreAsync(row); }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); _wtsNotice = UiSafe.Text(ex, Logger, "mở sửa dòng WTS"); }   // [UI-SAFE 2026-11-16] (BW2-01) lỗi DB → lời báo Việt
         finally { _dbGate.Release(); }
     }
 
@@ -5236,6 +5260,7 @@ else
         {
             if (await VoidSavedRow(_voidConfirmRow)) { _voidConfirmRow = null; _voidBlockMsg = null; }
         }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); _voidBlockMsg = UiSafe.Text(ex, Logger, "xoá dòng WTS"); }   // [UI-SAFE 2026-11-16] (BW2-01) giữ modal, lời báo Việt
         finally { _dbGate.Release(); _voidBusy = false; }
     }
 
@@ -6092,6 +6117,7 @@ else
                 if (!string.Equals(sub.PO, text ?? "", StringComparison.Ordinal)) return;
                 await OnSubRowKhChanged(grp, sub, det.KhPlanDetailId.ToString());
             }
+            catch (Exception ex) { Db.ChangeTracker.Clear(); sub.ErrorMsg = UiSafe.Text(ex, Logger, "nạp quy trình / sổ của PO"); }   // [UI-SAFE 2026-11-16] (BW1-03) gõ PO lúc SQL bận → lời báo ở dòng
             finally { _dbGate.Release(); }
 
         }
@@ -7239,6 +7265,13 @@ else
             await LoadSavedRowsAsync();
             // [GOI9-OFF-CANHBAO 2026-11-08] nhóm đã lưu bị bỏ khỏi form → cảnh báo máy chủ (Workflow OFF, vụ đã đi phiếu) hiện ở khung trên bảng dòng đã lưu
             _wtsNotice = res.Warnings.Count > 0 ? "Đã lưu. " + string.Join("\n", res.Warnings) : null;
+        }
+        catch (Exception ex)
+        {
+            // [UI-SAFE 2026-11-16] (BW1-03 / BW2-01) trước chỉ try/finally: SQL timeout / mất kết nối giữa lúc Lưu → ngoại lệ thoát handler → mạch chết,
+            //   mất cả nhóm đang gõ. Nay: giữ nguyên form, lời báo Việt ở nhóm (lỗi nghiệp vụ hiện nguyên); giao dịch máy chủ đã rollback.
+            Db.ChangeTracker.Clear();
+            grp.ErrorMsg = UiSafe.Text(ex, Logger, "lưu nhóm WTS");
         }
         finally
         {
@@ -8688,6 +8721,8 @@ else
 
     }
 
+    private string? _reportError;   // [UI-SAFE] (BW2-09)
+
     private async Task LoadReportAsync()
 
     {
@@ -8696,21 +8731,36 @@ else
 
         _reportResult  = null;
 
+        _reportError   = null;
+
         StateHasChanged();
 
-        var from = DateOnly.FromDateTime(_reportDateFrom);
+        try
 
-        var to   = DateOnly.FromDateTime(_reportDateTo);
+        {
 
-        int? wId = _reportWorkerId == 0 ? null : _reportWorkerId;
+            var from = DateOnly.FromDateTime(_reportDateFrom);
 
-        _reportResult = await ReportSvc.GetReportAsync(from, to, wId, _currentUserId)   /* [RPT-4] máy chủ kiểm quyền Xem WTS Report */;
+            var to   = DateOnly.FromDateTime(_reportDateTo);
 
-        // Cập nhật danh sách workers cho khoảng ngày mới
+            // [UI-SAFE 2026-11-16] (BW2-09) chặn Từ > Đến; lỗi DB → lời báo, nút không kẹt (rà độc lập 16/11 T2: KHÔNG thêm trần số ngày — không đổi số nghiệp vụ)
 
-        _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to, _currentUserId)   /* [RPT-4] */;
+            if (to < from) { _reportError = "Ngày \"Từ\" phải trước hoặc bằng ngày \"Đến\"."; return; }
 
-        _reportLoading = false;
+
+            int? wId = _reportWorkerId == 0 ? null : _reportWorkerId;
+
+            _reportResult = await ReportSvc.GetReportAsync(from, to, wId, _currentUserId)   /* [RPT-4] máy chủ kiểm quyền Xem WTS Report */;
+
+            // Cập nhật danh sách workers cho khoảng ngày mới
+
+            _reportWorkers = await ReportSvc.GetWorkersWithLogsAsync(from, to, _currentUserId)   /* [RPT-4] */;
+
+        }
+
+        catch (Exception ex) { _reportError = UiSafe.Text(ex, Logger, "tải báo cáo WTS"); }   // chỉ đọc → không Clear() (T4)
+
+        finally { _reportLoading = false; }
 
     }
 

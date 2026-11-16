@@ -61,11 +61,16 @@ public class ThietBiService
             .FirstOrDefaultAsync();
     }
 
+    /// <summary>[LEN-CHECK 2026-11-16] (BM1-15) Độ dài ô chữ theo cột ThietBis — trước: gõ dài nổ SqlException không bắt.</summary>
+    public static string? ThietBiLenError(ThietBi m)
+        => LenCheck.FirstOver((m.SoMay, 50, "Số máy"), (m.BoPhan, 100, "Bộ phận"), (m.MaMay, 100, "Mã máy"), (m.TenMay, 100, "Tên máy"), (m.LoaiMay, 100, "Loại máy"));
+
     public async Task<(bool Success, string? Error)> CreateAsync(ThietBi thietBi, int currentUserId)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa THIET_BI (trước: chỉ cần đăng nhập)
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.ThietBi)) return (false, PermCheck.NoEdit("Thiết bị"));
         if (string.IsNullOrWhiteSpace(thietBi.SoMay)) return (false, "Số máy không được để trống.");
+        if (ThietBiLenError(thietBi) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BM1-15)
 
         var isDuplicate = await _db.ThietBis.AnyAsync(t => t.SoMay == thietBi.SoMay.Trim() && t.IsActive);
         if (isDuplicate) return (false, $"Số máy '{thietBi.SoMay}' đã tồn tại trong hệ thống.");
@@ -107,6 +112,8 @@ public class ThietBiService
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
         if (!isPinValid) return (false, "Mã PIN không chính xác.");
 
+        if (ThietBiLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16] (BM1-15)
+        if (LenCheck.Over(reason, 500, "Lý do") is string eRs) return (false, eRs);   // [LEN-CHECK] ThietBiChangeLogs.Reason 500
         var existing = await _db.ThietBis.FirstOrDefaultAsync(t => t.ThietBiId == updatedModel.ThietBiId);
         if (existing == null) return (false, "Không tìm thấy thiết bị.");
 

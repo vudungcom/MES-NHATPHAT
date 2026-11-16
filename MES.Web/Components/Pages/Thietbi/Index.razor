@@ -7,6 +7,7 @@
 @inject MES.Web.Services.ThietBiService ThietBiSvc
 @inject MES.Web.Services.UserService UserSvc
 @inject NavigationManager Nav
+@inject ILogger<Index> Logger
 
 <PageTitle>Danh sách thiết bị - MES</PageTitle>
 
@@ -270,23 +271,23 @@
                 <div class="modal-body">
                     <div class="mb-2">
                         <label class="form-label small mb-1">Bộ phận</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.BoPhan" />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.BoPhan" maxlength="100" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small mb-1">Số máy (Mã ID) <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.SoMay" />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.SoMay" maxlength="50" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small mb-1">Tên máy (Thương hiệu)</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.TenMay" />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.TenMay" maxlength="100" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small mb-1">Mã máy (Model)</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.MaMay" />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.MaMay" maxlength="100" />
                     </div>
                     <div class="mb-2">
                         <label class="form-label small mb-1">Loại máy</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.LoaiMay" />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayDangSua.LoaiMay" maxlength="100" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small mb-1 fw-bold">Trạng thái vận hành</label>
@@ -359,7 +360,7 @@
                     <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px;">
                         <div class="mb-2">
                             <label class="form-label small fw-bold mb-1">Lý do thay đổi / Nguyên nhân sự cố</label>
-                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Gãy dao, Cháy motor, Thay linh kiện..." />
+                            <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="lyDoSua" placeholder="VD: Gãy dao, Cháy motor, Thay linh kiện..." maxlength="500" />
                         </div>
                         <div>
                             <label class="form-label text-danger fw-bold small mb-1"><i class="bi bi-shield-lock"></i> Nhập PIN xác nhận *</label>
@@ -485,26 +486,27 @@
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label small">Bộ phận</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.BoPhan" placeholder="VD: GC thô, Taro, Phay CNC..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.BoPhan" placeholder="VD: GC thô, Taro, Phay CNC..." maxlength="100" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small">Số máy (Mã ID quản lý) <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.SoMay" placeholder="VD: C01, H01, P01..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.SoMay" placeholder="VD: C01, H01, P01..." maxlength="50" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small">Tên Máy (Thương hiệu)</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.TenMay" placeholder="VD: AMADA, TAIKAN, OKUMA..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.TenMay" placeholder="VD: AMADA, TAIKAN, OKUMA..." maxlength="100" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small">Mã máy (Model)</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.MaMay" placeholder="VD: T-V856S, SPH-30C..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.MaMay" placeholder="VD: T-V856S, SPH-30C..." maxlength="100" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label small">Loại máy</label>
-                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.LoaiMay" placeholder="VD: Phay CNC, Tiện CNC, Taro điện..." />
+                        <input type="text" class="form-control form-control-sm" autocomplete="off" @bind="mayMoi.LoaiMay" placeholder="VD: Phay CNC, Tiện CNC, Taro điện..." maxlength="100" />
                     </div>
                 </div>
                 <div class="modal-footer">
+                    @if (!string.IsNullOrEmpty(loiPopupThem)) { <span class="text-danger small me-auto">@loiPopupThem</span> }   @* [UI-SAFE] (BM1-15) *@
                     <button type="button" class="btn btn-sm btn-secondary" @onclick="DongPopupThem" disabled="@isProcessing">Hủy</button>
                     <button type="button" class="btn btn-sm btn-primary" @onclick="LuuMayMoiAsync" disabled="@isProcessing">
                         @(isProcessing ? "Đang lưu..." : "Lưu dữ liệu")
@@ -733,21 +735,24 @@
             return;
         }
 
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21) chặn bấm chồng
         loiPopup = "";
         isProcessing = true;
-
-        var result = await ThietBiSvc.UpdateAsync(mayDangSua, lyDoSua, thoiGianBatDau, thoiGianKetThuc, currentUserId, pinXacNhan);
-        if (result.Success)
+        try   // [UI-SAFE 2026-11-16] (BM1-21) lỗi DB → lời Việt trong popup, cờ hạ ở finally (trước: trang chết, nút kẹt)
         {
-            DongPopupSua();
-            await LoadDataAsync();
+            var result = await ThietBiSvc.UpdateAsync(mayDangSua, lyDoSua, thoiGianBatDau, thoiGianKetThuc, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupSua();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi cập nhật thiết bị.";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi cập nhật thiết bị.";
-        }
-
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "lưu thiết bị"); }
+        finally { isProcessing = false; }
     }
 
     private async Task MoPopupLichSu(ThietBi may)
@@ -755,7 +760,8 @@
         mayDangXem = may;
         isHienThiPopupLichSu = true;
         isLoadingLogs = true;
-        danhSachLog = await ThietBiSvc.GetChangeLogsAsync(may.ThietBiId);
+        var errH = await UiSafe.RunAsync(async () => { danhSachLog = await ThietBiSvc.GetChangeLogsAsync(may.ThietBiId); }, Logger, "tải lịch sử thiết bị");   // [UI-SAFE]
+        if (errH != null) { thongBaoLoi = errH; isHienThiPopupLichSu = false; }
         isLoadingLogs = false;
     }
     private void DongPopupLichSu() { isHienThiPopupLichSu = false; }
@@ -765,28 +771,33 @@
         if (!_canEdit) return; // [RS-C1]
         mayMoi = new ThietBi { TrangThai = "Hoạt động" }; 
         thongBaoLoi = string.Empty;
+        loiPopupThem = "";   // [UI-SAFE] (BM1-15)
         isHienThiPopupThem = true; 
     }
     private void DongPopupThem() { isHienThiPopupThem = false; }
 
+    private string loiPopupThem = "";   // [UI-SAFE] (BM1-15) lỗi hiện TRONG popup Thêm, giữ form (trước: đóng popup, mất ô đã gõ)
     private async Task LuuMayMoiAsync()
     {
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21)
         isProcessing = true;
         thongBaoLoi = string.Empty;
-        
-        var result = await ThietBiSvc.CreateAsync(mayMoi, currentUserId);
-        if (result.Success)
+        loiPopupThem = "";
+        try
         {
-            isHienThiPopupThem = false;
-            await LoadDataAsync();
+            var result = await ThietBiSvc.CreateAsync(mayMoi, currentUserId);
+            if (result.Success)
+            {
+                isHienThiPopupThem = false;
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopupThem = result.Error ?? "Lỗi không xác định";   // [BM1-15] giữ popup mở để sửa (vd trùng số máy)
+            }
         }
-        else
-        {
-            thongBaoLoi = result.Error ?? "Lỗi không xác định";
-            isHienThiPopupThem = false;
-        }
-        
-        isProcessing = false;
+        catch (Exception ex) { loiPopupThem = UiSafe.Text(ex, Logger, "thêm thiết bị"); }   // [UI-SAFE 2026-11-16] (BM1-15 / BM1-21)
+        finally { isProcessing = false; }
     }
 
     private void MoPopupXoa(ThietBi may)
@@ -809,20 +820,23 @@
             return;
         }
 
+        if (isProcessing) return;   // [UI-SAFE] (BM1-21)
         loiPopup = "";
         isProcessing = true;
-
-        var result = await ThietBiSvc.SoftDeleteAsync(mayCanXoa!.ThietBiId, currentUserId, pinXacNhan);
-        if (result.Success)
+        try
         {
-            DongPopupXoa();
-            await LoadDataAsync();
+            var result = await ThietBiSvc.SoftDeleteAsync(mayCanXoa!.ThietBiId, currentUserId, pinXacNhan);
+            if (result.Success)
+            {
+                DongPopupXoa();
+                await LoadDataAsync();
+            }
+            else
+            {
+                loiPopup = result.Error ?? "Lỗi hệ thống";
+            }
         }
-        else
-        {
-            loiPopup = result.Error ?? "Lỗi hệ thống";
-        }
-
-        isProcessing = false;
+        catch (Exception ex) { loiPopup = UiSafe.Text(ex, Logger, "xoá thiết bị"); }   // [UI-SAFE 2026-11-16] (BM1-21)
+        finally { isProcessing = false; }
     }
 }

@@ -11,6 +11,9 @@
 @inject MachineEfficiencyService EffSvc
 
 @inject CaLamViecService CaSvc
+@inject UserService UserSvc
+@inject AuthenticationStateProvider AuthState
+@inject ILogger<HieuSuatMay_Index> Logger
 
 <PageTitle>Hiệu suất máy - MES</PageTitle>
 
@@ -125,6 +128,23 @@
 
 </style>
 
+@* [HSM-QUYEN 2026-11-16] Hiệu suất máy có mục quyền riêng HIEU_SUAT_MAY (ô Xem) — trước chỉ [Authorize]: ai đăng nhập cũng xem WTS mọi máy
+   (tên công nhân, PO, NC từng dòng). Không quyền → báo + về trang chủ; menu NavMenu cũng ẩn; service kiểm lại.
+   Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-09, B-M2 BM2-10); Hùng 15/11 15:10 OK câu 9. *@
+@if (_permChecked && !_canView)
+{
+    <div class="alert alert-danger shadow-sm my-4">
+        <h4><i class="bi bi-shield-lock-fill"></i> Truy cập bị từ chối</h4>
+        <p class="mb-0">Tài khoản của bạn chưa được cấp quyền <b>Xem Hiệu suất máy</b> trên Ma trận phân quyền — nhờ Admin cấp quyền.</p>
+    </div>
+    <a href="/" class="btn btn-outline-primary"><i class="bi bi-house"></i> Về trang chủ</a>
+}
+else
+{
+    if (_pageError != null)
+    {
+        <div class="alert alert-warning shadow-sm my-2">@_pageError</div>
+    }
 @* ── Header + Pie tổng ── *@
 
 <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
@@ -545,6 +565,7 @@ else if (!_loading)
     </div>
 
 }
+}
 
 @code {
     // [ML17-XN 2026-11-01] Bảng WTS từng máy: cột Phút = phút LÀM của dòng (giờ nghỉ chép lúc lưu + làm thông nghỉ, WorkMinutes) —
@@ -613,9 +634,29 @@ else if (!_loading)
 
     // ── Init ───────────────────────────────────────────────────────────────
 
+    // [HSM-QUYEN] quyền theo ma trận (UserService đọc DB; ADMIN toàn quyền); [UI-SAFE] lỗi đọc DB → câu Việt, không chết mạch
+
+    private bool _permChecked, _canView;
+
+    private string? _pageError;
+
+    private int _currentUserId;
+
     protected override async Task OnInitializedAsync()
 
     {
+
+        var auth = await AuthState.GetAuthenticationStateAsync();
+
+        int.TryParse(auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out _currentUserId);
+
+        var perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
+
+        _canView = perms.TryGetValue(MES.Web.Constants.SystemPermissions.HieuSuatMay, out var hp) && (hp.CanView || hp.CanEdit);
+
+        _permChecked = true;
+
+        if (!_canView) return;
 
         _caList = await CaSvc.GetActiveAsync();
 
@@ -744,13 +785,15 @@ else if (!_loading)
         {
 
             var selCa = _caList.FirstOrDefault(ca => ca.CaId == _selectedCaId);
-            _result = await EffSvc.GetAsync(_selectedDate, _fromTime, _toTime, selCa);
+            _result = await EffSvc.GetAsync(_selectedDate, _fromTime, _toTime, selCa, _currentUserId);   // [HSM-QUYEN] máy chủ kiểm lại quyền Xem
 
             BuildColDefs();
 
             BuildOverlapWarnings();
+            _pageError = null;
 
         }
+        catch (Exception ex) { _pageError = UiSafe.Text(ex, Logger, "tải hiệu suất máy"); }   // [UI-SAFE]
 
         finally
 

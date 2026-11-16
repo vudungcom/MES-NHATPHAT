@@ -15,11 +15,15 @@ public static class AuthScen
         if (!cond) fails++;
     }
 
-    static ClaimsPrincipal P(string? id, string name, string? role, bool auth = true)
+    // [PERM-HASH 2026-11-16] hash: "auto" = dấu vân ma trận rỗng (nhóm trong các ca này Permissions = null, như lúc đăng nhập thật);
+    //   "none" = cookie cũ không có claim (trước Gói 23); chuỗi khác = dấu vân cho sẵn.
+    static ClaimsPrincipal P(string? id, string name, string? role, bool auth = true, string hash = "auto")
     {
         var c = new List<Claim> { new(ClaimTypes.Name, name) };
         if (id != null) c.Add(new(ClaimTypes.NameIdentifier, id));
         if (role != null) c.Add(new(ClaimTypes.Role, role));
+        if (hash == "auto") c.Add(new(AuthGuard.PermHashClaim, AuthGuard.PermHash(null)));
+        else if (hash != "none") c.Add(new(AuthGuard.PermHashClaim, hash));
         return new ClaimsPrincipal(auth ? new ClaimsIdentity(c, "Cookies") : new ClaimsIdentity(c));
     }
 
@@ -58,6 +62,26 @@ public static class AuthScen
             Ok(!await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "GC")) && !AuthGuard.AccountUsable(u), "Tài khoản bị khoá: hết hiệu lực ngay (và không đăng nhập được)");
             u.IsActive = true; u.GroupId = 2; u.Group = gB;
             Ok(await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "KHO")), "Đăng nhập lại sau khi đổi nhóm: hiệu lực với nhóm mới");
+        }
+
+        Console.WriteLine("[U15] PERM-HASH — đổi ma trận quyền của nhóm → phiên cũ hết hiệu lực (đăng nhập lại mới lấy quyền mới); nhóm ADMIN không so; cookie cũ không có claim → hết hiệu lực");
+        {
+            // [A1-SCEN 2026-11-16] Gói 23 P-01/P-02 đề xuất (3). Nguồn: CLAUDE quét Fable 15/11 (A3C); Hùng 16/11 05:15 làm theo đề xuất.
+            var db = new AppDbContext();
+            var gA = new UserGroup { GroupId = 1, GroupCode = "GC", IsActive = true, Permissions = FuzzPerm.Json("KE_HOACH", "HANDOVER_GC") };
+            var gAd = new UserGroup { GroupId = 2, GroupCode = "ADMIN", IsActive = true, Permissions = null };
+            db.UserGroups.List.AddRange(new[] { gA, gAd });
+            db.Users.List.Add(new User { UserId = 5, Username = "gc01", FullName = "GC", IsActive = true, Group = gA, GroupId = 1 });
+            db.Users.List.Add(new User { UserId = 7, Username = "boss", FullName = "Admin", IsActive = true, Group = gAd, GroupId = 2 });
+            db.Fixup();
+            var h0 = AuthGuard.PermHash(gA.Permissions);
+            Ok(await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "GC", hash: h0)), "Claim đúng dấu vân ma trận hiện tại: còn hiệu lực");
+            Ok(!await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "GC", hash: "none")), "Cookie cũ không có claim (trước Gói 23): hết hiệu lực → đăng nhập lại 1 lần");
+            gA.Permissions = FuzzPerm.Json("HANDOVER_GC");   // Admin bỏ ô Sửa KE_HOACH của nhóm GC
+            Ok(!await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "GC", hash: h0)), "Admin bỏ ô Sửa KE_HOACH của nhóm: phiên cũ hết hiệu lực ngay (hàm service / cờ trang cũ không ghi được nữa)");
+            Ok(await AuthGuard.IsStillValidAsync(db, P("5", "gc01", "GC", hash: AuthGuard.PermHash(gA.Permissions))), "Đăng nhập lại: hiệu lực với ma trận mới");
+            Ok(await AuthGuard.IsStillValidAsync(db, P("7", "boss", "ADMIN", hash: "none")), "Nhóm ADMIN: không so ma trận (cookie không claim vẫn hiệu lực — Admin sửa ma trận không tự đá mình)");
+            Ok(AuthGuard.PermHash(null) == AuthGuard.PermHash("") && AuthGuard.PermHash("[]") != AuthGuard.PermHash(""), "Dấu vân: null = rỗng; chuỗi [] khác rỗng");
         }
 
         Console.WriteLine("[U3] RS-C4 — giới hạn đăng nhập sai: 5 lần / tên + máy → khoá 15 phút; máy khác không bị; đăng nhập đúng xoá đếm; 50 lần / IP khoá IP");

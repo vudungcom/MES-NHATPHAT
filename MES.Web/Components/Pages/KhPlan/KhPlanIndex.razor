@@ -11,6 +11,7 @@
 @inject AppDbContext Db
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
+@inject ILogger<KhPlanIndex> Logger
 
 <PageTitle>Kế Hoạch - MES</PageTitle>
 
@@ -94,6 +95,14 @@ else if (!_canView)
 }
 else
 {
+    @* [UI-SAFE 2026-11-16] (BK-05) lỗi đọc DB ở sự kiện người dùng → lời báo Việt, không chết mạch *@
+    @if (_pageError != null)
+    {
+        <div class="alert alert-warning py-2 small d-flex align-items-start gap-2">
+            <div class="flex-grow-1">@_pageError</div>
+            <button class="btn-close btn-sm" @onclick="() => _pageError = null"></button>
+        </div>
+    }
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             <h1 class="mb-1">Kế Hoạch KH</h1>
@@ -513,9 +522,11 @@ else
             { _canView = p.CanView; _canEdit = p.CanEdit; }
         }
 
-        if (_canView) await Reload();
+        if (_canView) _pageError = await UiSafe.RunAsync(Reload, Logger, "tải danh sách Kế hoạch");   // [UI-SAFE] (BK-05)
         _isLoading = false;
     }
+
+    private string? _pageError;   // [UI-SAFE] (BK-05)
 
     private async Task Reload()
     {
@@ -575,10 +586,15 @@ else
     {
         if (_whereOpen == id) { _whereOpen = null; return; }
         _whereOpen = id;
-        if (!_whereSteps.ContainsKey(id))
-            _whereSteps[id] = await LedgerSvc.GetStepsForDetailAsync(id);   // lazy load + cache
-        if (!_ngTrace.ContainsKey(id))
-            _ngTrace[id] = await LedgerSvc.GetNgTraceAsync(id);   // [GN-NG-TRACE]
+        // [UI-SAFE 2026-11-16] (BK-05) bung "Đang ở đâu" lúc SQL bận → lời báo Việt (trước: mạch chết, mất bộ lọc)
+        var err = await UiSafe.RunAsync(async () =>
+        {
+            if (!_whereSteps.ContainsKey(id))
+                _whereSteps[id] = await LedgerSvc.GetStepsForDetailAsync(id);   // lazy load + cache
+            if (!_ngTrace.ContainsKey(id))
+                _ngTrace[id] = await LedgerSvc.GetNgTraceAsync(id);   // [GN-NG-TRACE]
+        }, Logger, "tải \"PO đang ở đâu\"");
+        if (err != null) { Db.ChangeTracker.Clear(); _pageError = err; _whereOpen = null; }
     }
 
     private void BuildColDefs()
@@ -815,13 +831,15 @@ else
     private async Task OnSplitDoneAsync()
     {
         _showSplitModal = false; _splitSource = null;
-        await Reload();
+        var err = await UiSafe.RunAsync(Reload, Logger, "tải lại danh sách sau khi tách PO");   // [UI-SAFE] (BK-05) — tách đã ghi xong, chỉ phần tải lại lỗi
+        if (err != null) { Db.ChangeTracker.Clear(); _pageError = "Đã tách PO xong. " + err + " Bấm F5 để xem số mới."; }
     }
 
     private async Task OpenHistory(KhPlanDetailRow row)
     {
         _historyRow = row;
-        _history = await KhSvc.GetChangeHistoryAsync(row.KhPlanDetailId);
+        var err = await UiSafe.RunAsync(async () => { _history = await KhSvc.GetChangeHistoryAsync(row.KhPlanDetailId); }, Logger, "tải lịch sử sửa PO");   // [UI-SAFE] (BK-05)
+        if (err != null) { Db.ChangeTracker.Clear(); _pageError = err; _historyRow = null; _history = null; }
     }
 
     private void CloseHistory() { _history = null; _historyRow = null; }

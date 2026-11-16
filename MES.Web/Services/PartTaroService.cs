@@ -46,6 +46,7 @@ public class PartTaroService
     {
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
+        PartStepGuard.CheckLen("Taro", (newStep.NC, 20, "NC"), (newStep.WtsTaskCode, 20, "Mã CV"), (newStep.StepName, 500, "Tên bước"));   // [LEN-CHECK 2026-11-16] (BP1-03)
         PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
         // [TARO-DUPHONG 2026-11-07] Taro không dùng dòng dự phòng (trước: thêm được — dự phòng trỏ cha theo NC, NC nhiều mã → gộp nhầm mã đầu).
         //   Nguồn: HÙNG 07/11 09:11.
@@ -111,6 +112,7 @@ public class PartTaroService
         if (updated.IsBackup && !dbCode.IsBackup)
             throw new PartStepCodeException(PartStepGuard.TaroNoBackupMsg);
         if (updated.IsBackup && dbCode.IsBackup) updated.ParentNC = dbCode.ParentNC;
+        PartStepGuard.CheckLen("Taro", (updated.NC, 20, "NC"), (updated.WtsTaskCode, 20, "Mã CV"), (updated.StepName, 500, "Tên bước"));   // [LEN-CHECK 2026-11-16] (BP1-03)
         if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
         if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
         if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(dbCode.NC, updated.NC)
@@ -217,6 +219,8 @@ public class PartTaroService
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)
             throw new ArgumentException("Lý do phải có ít nhất 3 ký tự", nameof(reason));
+        if (reason.Trim().Length > 450)   // [LEN-CHECK 2026-11-16] (BP1-03) PartProcessStepChangeLogs.Reason 500, service còn nối thêm chữ (" (theo NC chính đổi tên)")
+            throw new ArgumentException($"Lý do dài quá 450 ký tự (đang {reason.Trim().Length}) — rút ngắn rồi lưu lại.", nameof(reason));
     }
 
     private async Task EnsurePermissionAsync(int userId)

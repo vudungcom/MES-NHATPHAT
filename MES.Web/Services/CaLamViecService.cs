@@ -39,6 +39,13 @@ public class CaLamViecService
 
         if (string.IsNullOrWhiteSpace(ca.TenCa))
             return (false, "Tên ca không được để trống.");
+        // [LEN-CHECK 2026-11-16] (BM2-05) Tên ca 100, tên giờ nghỉ 100 (cột DB) — trước: SqlException không bắt ở nhánh Sửa → trang chết
+        if (LenCheck.Over(ca.TenCa, 100, "Tên ca") is string eTen) return (false, eTen);
+        foreach (var n in nghiList)
+            if (LenCheck.Over(n.GhiChu, 100, "Ghi chú giờ nghỉ") is string eNghi) return (false, eNghi);
+        // [CA-0-PHUT 2026-11-16] (BM2-06) ca 0 phút (bắt đầu = kết thúc): IsOvernight = false, tổng phút 0 → WTS chọn ca này tính phút sai. Chặn.
+        //   Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-06); HÙNG 16/11 05:15 "không ảnh hưởng khách thì làm theo ý bạn" (Gói 23).
+        if (ca.GioBatDau == ca.GioKetThuc) return (false, "Giờ bắt đầu và giờ kết thúc ca trùng nhau (ca 0 phút) — sửa lại giờ.");
 
         foreach (var n in nghiList)
         {
@@ -99,11 +106,24 @@ public class CaLamViecService
             foreach (var n in nghiList) { n.CaId = ca.CaId; n.NghiId = 0; _db.CaLamViec_NghiGiaiLaos.Add(n); }
             var after = Snap(cur, nghiList);
             if (after != before) AddLog(ca.CaId, "SUA", before, after, actorUserId);   // [CA-LOG] bấm Lưu mà không đổi gì → không ghi
+            // [UI-SAFE 2026-11-16] (BM2-05) nhánh Sửa trước không try/catch: SaveChanges lỗi (DB tạm, chữ dài) → trx rollback nhưng bản EF còn
+            //   Modified / Deleted / Added trong DbContext dùng chung → lần lưu sau ghi lại lệnh lỗi; ngoại lệ lên trang → trang chết. Nay: bắt + Detach như nhánh Tạo.
+            try
+            {
+                await _db.SaveChangesAsync();
+                await trx.CommitAsync();
+                return (true, "");
+            }
+            catch (Exception ex)
+            {
+                await trx.RollbackAsync();
+                foreach (var en in _db.ChangeTracker.Entries<CaLamViec>().Where(x => x.State != EntityState.Unchanged).ToList()) en.State = EntityState.Detached;
+                foreach (var en in _db.ChangeTracker.Entries<CaLamViec_NghiGiaiLao>().Where(x => x.State != EntityState.Unchanged).ToList()) en.State = EntityState.Detached;
+                foreach (var en in _db.ChangeTracker.Entries<CaLamViecChangeLog>().Where(x => x.State != EntityState.Unchanged).ToList()) en.State = EntityState.Detached;
+                foreach (var n in nghiList) { n.NghiId = 0; n.Ca = null; }
+                return (false, UiSafe.Text(ex, null, "lưu ca"));
+            }
         }
-
-        await _db.SaveChangesAsync();
-        await trx.CommitAsync();
-        return (true, "");
     }
 
     // ================================================================
