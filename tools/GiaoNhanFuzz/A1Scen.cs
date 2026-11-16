@@ -29,8 +29,8 @@ public static class A1Scen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-A1", Customer = cust, CustomerId = 1, ApplyWorkflow = workflow };
         db.KhPlans.List.Add(plan);
-        var d1 = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
-        var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 10, LineNo = 2 };
+        var d1 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
+        var d2 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 10, LineNo = 2 };
         db.KhPlanDetails.List.Add(d1); plan.Details.Add(d1);
         db.KhPlanDetails.List.Add(d2); plan.Details.Add(d2);
         if (phoi)

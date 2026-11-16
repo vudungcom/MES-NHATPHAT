@@ -12,6 +12,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject ILogger<KhPlanIndex> Logger
+@inject AuthService Auth
 
 <PageTitle>Kế Hoạch - MES</PageTitle>
 
@@ -800,11 +801,11 @@ else
         if (!int.TryParse(userIdStr, out var uid))
         { _deleteError = "Không xác định được user."; return; }
 
-        var user = await Db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.UserId == uid);
-        if (user == null || !PasswordHasher.Verify(_deletePin, user.PasswordHash))
+        // [PIN-THROTTLE 2026-11-16] ô này so MẬT KHẨU đăng nhập (chữ "PIN" giữ, chờ KHO-PIN / BK-04); nay qua AuthService để đếm sai 5 lần / 15 phút
+        //   theo người (trước: thử không giới hạn). Nguồn: CLAUDE quét Fable 15/11 (P-05); Hùng 16/11 11:34 OK Gói 24.
+        if (!await Auth.VerifyPasswordForActionAsync(uid, _deletePin))
         {
-            _deleteError = "PIN không đúng. Vui lòng thử lại.";
+            _deleteError = Auth.PinErrorText("PIN không đúng. Vui lòng thử lại.");
             _deletePin = "";
             return;
         }
@@ -820,7 +821,7 @@ else
         }
         catch (Exception ex)
         {
-            _deleteError = "Lỗi: " + ex.Message;
+            _deleteError = UiSafe.Text(ex, Logger, "xoá PO");   // [C-11 2026-11-16]
         }
         finally
         {

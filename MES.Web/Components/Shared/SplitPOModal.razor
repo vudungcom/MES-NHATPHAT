@@ -2,6 +2,7 @@
 @inject KhPlanService KhSvc
 @inject AuthService Auth
 @inject AuthenticationStateProvider AuthState
+@inject ILogger<SplitPOModal> Logger
 
 @if (IsOpen && Source != null)
 {
@@ -246,7 +247,7 @@
             var pinOk = await Auth.VerifyPinAsync(userId, _pin);
             if (!pinOk)
             {
-                _error = "PIN không đúng";
+                _error = Auth.PinErrorText("PIN không đúng");   // [PIN-THROTTLE 2026-11-16]
                 _pin = "";
                 _saving = false;
                 return;
@@ -258,7 +259,7 @@
         }
         catch (Exception ex)
         {
-            _error = "Lỗi: " + ex.Message;
+            _error = UiSafe.Text(ex, Logger, "tách PO");   // [C-11 2026-11-16]
         }
         finally
         {

@@ -28,4 +28,24 @@ public static class QtyRule
     //   Nguồn: rà độc lập toàn hệ thống 07/11 (Thấp) — trước: tạo / sửa KH chỉ kiểm số nguyên, ô SL > 0 chỉ có ở trang (Edit_Khplan).
     public const decimal PoMax = 1_000_000_000m;
     public static string? CheckPoQty(decimal v) => !IsWhole(v) ? Msg : v <= 0 ? "SL PO phải > 0." : v > PoMax ? "SL PO quá lớn (tối đa 1.000.000.000)." : null;
+
+    // [WTS-GIO-AM 2026-11-16] (BW1-02) Giờ thực tế WTS (T.Gá / T.GC / T.Ktra / T.CB / T.Chạy, T.Thực tế/pc) ở máy chủ: không âm, không quá
+    //   cột decimal(10,2) = 99.999.999,99 (trần kỹ thuật của cột, không phải trần nghiệp vụ). Trước: ô bắt buộc chỉ bị bắt "<= 0", ô không bắt buộc
+    //   (T.Chạy khi Chạy thử…) nhận âm ghi vào DB → hiệu suất / tổng giờ chuẩn sai; số quá lớn → SqlException overflow tiếng Anh.
+    //   Nguồn: CLAUDE quét Fable 15/11 (B-W1 BW1-02 Trung); Hùng 16/11 11:34 OK Gói 24.
+    public const decimal TimeMax = 99_999_999.99m;
+    public static string? CheckTimeRange(params (decimal? Value, string TenO)[] items)
+    {
+        foreach (var (v, ten) in items)
+        {
+            if (!v.HasValue) continue;
+            if (v.Value < 0) return $"{ten} không được âm.";
+            if (v.Value > TimeMax) return $"{ten} quá lớn (tối đa 99.999.999,99 phút).";
+        }
+        return null;
+    }
+    /// <summary>[WTS-GIO-AM] Kẹp giá trị ô giờ ở trang về [0, TimeMax] (ô type=number vẫn gõ được "-3" / "1e9").</summary>
+    public static decimal? ClampTime(decimal? v) => v.HasValue ? Math.Min(TimeMax, Math.Max(0m, v.Value)) : null;
+    public static (decimal?, string)[] WtsTimeItems(decimal? setup, decimal? mach, decimal? insp, decimal? prep, decimal? trial, decimal? perPc)
+        => new[] { (setup, "T.Gá"), (mach, "T.GC"), (insp, "T.Ktra"), (prep, "T.CB"), (trial, "T.Chạy"), (perPc, "T.Thực tế/pc") };
 }

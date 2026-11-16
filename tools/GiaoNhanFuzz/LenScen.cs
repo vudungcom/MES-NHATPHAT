@@ -106,7 +106,7 @@ public static class LenScen
         Console.WriteLine("[LN2] KhPlanService — Tạo KH / Sửa PO / Tách PO: PO 50, Order VL 50, Vị trí 50, Loại 100, Tình trạng 200, Ghi chú 500 (cột KhPlanDetails)");
         {
             var db = Seed(); var kh = new KhPlanService(db);
-            KhPlan P(string po, string? loc = null, string? type = null) { var p = new KhPlan { PlanDate = new DateTime(2026, 11, 16), CustomerId = 1 }; p.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = po, Quantity = 5, Location = loc, Type = type }); return p; }
+            KhPlan P(string po, string? loc = null, string? type = null) { var p = new KhPlan { PlanDate = new DateTime(2026, 11, 16), CustomerId = 1 }; p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P", PurchaseOrder = po, Quantity = 5, Location = loc, Type = type }); return p; }
             int n0 = db.KhPlanDetails.List.Count;
             string? e1 = null; try { await kh.CreateAsync(P(S(51, 'A')), 1); } catch (Exception ex) { e1 = ex.Message; }
             Ok(Viet(e1) && e1!.Contains("Số PO dài quá 50"), "Tạo KH: PO 51 ký tự → từ chối lời Việt", e1);
@@ -127,7 +127,7 @@ public static class LenScen
             // Tách PO (PO2 trắng)
             var plan = db.KhPlans.List.First();
             var idMoi = db.KhPlanDetails.List.Max(d => d.KhPlanDetailId) + 1;
-            var d2 = new KhPlanDetail { KhPlanDetailId = idMoi, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 10, LineNo = 2 };
+            var d2 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = idMoi, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 10, LineNo = 2 };
             db.KhPlanDetails.List.Add(d2); plan.Details.Add(d2); db.Fixup();
             string? e5 = null; try { await kh.SplitPOAsync(idMoi, new List<SplitPORow> { new() { PurchaseOrder = S(51, 'C'), Quantity = 4 }, new() { PurchaseOrder = "PO2-B", Quantity = 6 } }, 1, "tach"); } catch (Exception ex) { e5 = ex.Message; }
             Ok(Viet(e5) && e5!.Contains("Số PO mới dài quá 50"), "Tách PO: PO mới 51 ký tự → từ chối", e5);

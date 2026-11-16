@@ -1780,7 +1780,7 @@ else
         catch (Exception ex)
         {
             Db.ChangeTracker.Clear();
-            var msg = "Đã lưu xong. Chỉ phần tải lại số trên màn hình bị lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message)
+            var msg = "Đã lưu xong. Chỉ phần tải lại số trên màn hình bị lỗi máy chủ: " + UiSafe.Text(ex, Logger, "tải lại số")   // [C-11 2026-11-16]
                     + " — bấm F5 để xem số mới (trang cũng tự tính lại sau 2 phút). Không bấm lưu lại (sẽ thành 2 lần).";
             _pageError = msg;
             _pageErrorDetailId = ModalDetailId;   // [PAGE-ERR2-PO]
@@ -1791,7 +1791,7 @@ else
     string ServerErr(Exception ex)
     {
         Db.ChangeTracker.Clear();
-        return "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
+        return "Lỗi máy chủ: " + UiSafe.Text(ex, Logger, "lưu") + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
     }
 
     // ── [GN-NG-AFTER] Huỷ phiếu báo lỗi (Lịch sử). Form báo lỗi cũ gộp vào GiaoXuLyModal [GN-FORM1]. ──

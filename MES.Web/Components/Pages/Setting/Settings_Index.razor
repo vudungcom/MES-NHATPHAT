@@ -115,6 +115,15 @@
                                                     <i class="bi bi-key"></i> Reset PIN
                                                 </button>
                                             }
+                                            @* [ADMIN-RESET-MK 2026-11-16] Admin đặt lại mật khẩu cho người quên (không cho chính mình — dùng Hồ sơ) *@
+                                            @if (u.UserId != _currentAdminUserId)
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger py-0 px-2"
+                                                        title="Đặt lại mật khẩu đăng nhập cho người quên mật khẩu"
+                                                        @onclick="() => MoDatLaiMatKhau(u)">
+                                                    <i class="bi bi-shield-lock"></i> Đặt lại mật khẩu
+                                                </button>
+                                            }
                                         </div>
                                     </td>
                                 </tr>
@@ -343,6 +352,43 @@
     </div>
 }
 
+<!-- [ADMIN-RESET-MK 2026-11-16] Modal đặt lại mật khẩu -->
+@if (_showResetPw && _userResetPw != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" style="max-width: 440px;" @onclick:stopPropagation>
+            <div class="mes-modal-header">
+                <h5 class="mb-0 fw-bold text-danger"><i class="bi bi-shield-lock me-2"></i>Đặt lại mật khẩu</h5>
+                <button type="button" class="btn-close" @onclick="DongDatLaiMatKhau"></button>
+            </div>
+            <div class="mes-modal-body">
+                <p class="mb-1">Đặt mật khẩu đăng nhập mới cho:</p>
+                <p class="fw-bold fs-5 mb-1">@_userResetPw.FullName</p>
+                <p class="text-muted small mb-3">(@_userResetPw.Username — @(_userResetPw.Group?.GroupName ?? "?"))</p>
+                <label class="form-label small fw-bold">Mật khẩu mới (tối thiểu @UserService.PasswordMin ký tự)</label>
+                <input type="password" class="form-control" @bind="_resetPwNew" maxlength="100" placeholder="Mật khẩu mới..." />
+                <label class="form-label small fw-bold mt-2">Gõ lại mật khẩu mới</label>
+                <input type="password" class="form-control" @bind="_resetPwAgain" maxlength="100" placeholder="Gõ lại..." />
+                @if (!string.IsNullOrEmpty(_resetPwError))
+                {
+                    <div class="alert alert-danger py-1 small mt-2 mb-0">@_resetPwError</div>
+                }
+                <div class="alert alert-warning py-2 small mt-2 mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Báo mật khẩu mới cho người dùng; họ nên vào <b>Hồ sơ</b> đổi lại mật khẩu riêng. PIN không đổi.
+                </div>
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-secondary" @onclick="DongDatLaiMatKhau">Hủy</button>
+                <button class="btn btn-danger fw-bold" @onclick="ThucHienDatLaiMatKhauAsync" disabled="@_resetPwLoading">
+                    @if (_resetPwLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    <i class="bi bi-shield-lock me-1"></i> Đặt lại mật khẩu
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 <!-- Modal xác nhận Reset PIN -->
 @if (_showResetPinConfirm && _userResetPin != null)
 {
@@ -399,6 +445,13 @@
     private User userDangSua = new();
     private UserGroup groupMoi = new();
     private string matKhauMoi = "";
+
+    // [ADMIN-RESET-MK 2026-11-16] Đặt lại mật khẩu
+    private bool _showResetPw = false;
+    private bool _resetPwLoading = false;
+    private User? _userResetPw;
+    private string _resetPwNew = "", _resetPwAgain = "";
+    private string? _resetPwError;
 
     // Biến cho Reset PIN
     private bool _showResetPinConfirm = false;
@@ -461,7 +514,7 @@
         }
         catch (Exception ex)
         {
-            thongBaoLoi = "Lỗi khi lưu: " + ex.Message;
+            thongBaoLoi = UiSafe.Text(ex, Logger, "lưu ma trận phân quyền");   // [C-11 2026-11-16]
         }
 
         isProcessing = false;
@@ -503,6 +556,34 @@
     }
 
     // ==== Logic Reset PIN ====
+    // [ADMIN-RESET-MK 2026-11-16]
+    private void MoDatLaiMatKhau(User u)
+    {
+        _userResetPw = u; _resetPwNew = ""; _resetPwAgain = ""; _resetPwError = null;
+        _showResetPw = true; thongBaoLoi = ""; thongBaoThanhCong = "";
+    }
+    private void DongDatLaiMatKhau() { _showResetPw = false; _userResetPw = null; _resetPwNew = ""; _resetPwAgain = ""; }
+    private async Task ThucHienDatLaiMatKhauAsync()
+    {
+        if (_userResetPw == null || _resetPwLoading) return;
+        _resetPwError = null;
+        if ((_resetPwNew ?? "").Trim().Length < UserService.PasswordMin) { _resetPwError = $"Mật khẩu mới tối thiểu {UserService.PasswordMin} ký tự."; return; }
+        if ((_resetPwNew ?? "").Trim() != (_resetPwAgain ?? "").Trim()) { _resetPwError = "Hai lần gõ mật khẩu không khớp."; return; }
+        _resetPwLoading = true;
+        try
+        {
+            var res = await UserSvc.ResetPasswordAsync(_userResetPw.UserId, _resetPwNew, _currentAdminUserId);
+            if (res.Success)
+            {
+                thongBaoThanhCong = $"Đã đặt lại mật khẩu của {_userResetPw.FullName} ({_userResetPw.Username}). Báo mật khẩu mới cho người dùng.";
+                DongDatLaiMatKhau();
+            }
+            else _resetPwError = res.Error ?? "Lỗi khi đặt lại mật khẩu.";
+        }
+        catch (Exception ex) { _resetPwError = UiSafe.Text(ex, Logger, "đặt lại mật khẩu"); }
+        finally { _resetPwLoading = false; }
+    }
+
     private void XacNhanResetPin(User u)
     {
         _userResetPin = u;

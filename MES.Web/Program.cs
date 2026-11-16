@@ -106,6 +106,10 @@ var app = builder.Build();
 
 // [S8D-KHOA 2026-11-07] Khoá lượt lưu Part Master giữ trên kết nối riêng không pool (xem PmSaveLockSql) — trang chết giữa lượt lưu không để khoá treo.
 PartStepGuard.SessionLockOpener = PmSaveLockSql.OpenAsync;
+// [C-11 2026-11-16] service không có ILogger (CustomerService, DaoService, WtsSaveService…) ghi lỗi hệ thống vào logger chung này qua UiSafe.Text
+UiSafe.Fallback = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.UiSafe");
+// [PIN-HASH] log khi chưa nâng được PIN sang hash (cột hẹp) đi vào logger thay Console
+{ var _pinLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.PinHash"); AuthService.PinUpgradeLog = m => _pinLog.LogWarning("{Msg}", m); }
 
 // ==== Auto-create DB + seed (prototype only) ====
 using (var scope = app.Services.CreateScope())
@@ -116,6 +120,14 @@ using (var scope = app.Services.CreateScope())
         db.Database.EnsureCreated();
         SeedData.EnsureSeeded(db);
         Console.WriteLine("[MES] Database ready.");
+        // [PIN-HASH] (P-05) PIN còn chữ rõ → nâng lên hash 1 lần lúc khởi động (cần cột Users.PIN ≥ 95 — tools/sql/16_PIN_HASH.sql;
+        //   cột còn hẹp thì AuthService ghi log 1 dòng, PIN chữ rõ vẫn so được, app vẫn chạy). Lỗi gì cũng không chặn khởi động.
+        try
+        {
+            var nPin = AuthService.UpgradeAllPlainPinsAsync(db).GetAwaiter().GetResult();
+            if (nPin > 0) Console.WriteLine($"[MES] [PIN-HASH] Đã nâng {nPin} PIN chữ rõ sang hash.");
+        }
+        catch (Exception exPin) { Console.WriteLine($"[MES] [PIN-HASH] Bỏ qua nâng PIN: {exPin.GetType().Name}"); }
     }
     catch (Exception ex)
     {
@@ -142,6 +154,19 @@ app.Use(async (ctx, next) =>
         var ext = Path.GetExtension(ctx.Request.Path.Value ?? "").ToLowerInvariant();
         if (ext is not (".jpg" or ".jpeg" or ".png" or ".webp")) { ctx.Response.StatusCode = 404; return; }
         ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    }
+    await next();
+});
+// [UPLOADS-AUTH 2026-11-16] (C-05) Ảnh /uploads (ảnh đại diện Sơ đồ tổ chức) chỉ phát cho người đã đăng nhập — trước: ai có URL cũng tải được
+//   (URL lộ ra ngoài là xem ảnh nhân viên). Chưa đăng nhập → 401. Chỉ xác thực cookie cho đúng đường /uploads (AuthenticateAsync tại chỗ) — không
+//   đưa UseAuthentication lên trước UseStaticFiles để file css / js / lib không phải kiểm cookie (OnValidatePrincipal đọc DB) mỗi lần tải.
+//   Nguồn: CLAUDE quét Fable 15/11 (A3C C-05 Thấp); Hùng 16/11 11:34 OK Gói 24.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/uploads"))
+    {
+        var auth = await ctx.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        if (!auth.Succeeded || auth.Principal?.Identity?.IsAuthenticated != true) { ctx.Response.StatusCode = 401; return; }
     }
     await next();
 });
@@ -194,11 +219,17 @@ app.MapPost("/login-submit", async (HttpContext ctx, AuthService auth) =>
     return Results.Redirect(safeReturn);   // [RS-C4] chỉ đường dẫn nội bộ — trước: returnUrl bất kỳ (chuyển sang trang lạ sau đăng nhập)
 }).DisableAntiforgery();
 
-app.MapGet("/logout", async (HttpContext ctx) =>
+// [LOGOUT-POST 2026-11-16] (P-09 / C-03) Đăng xuất bằng POST + antiforgery (nút Đăng xuất ở MainLayout là form POST) — trước: GET /logout không
+//   kiểm gì → trang lạ nhúng <img src=".../logout"> là đăng xuất người đang nhập WTS (mất ô đang gõ). GET /logout nay chỉ về trang chủ, không đăng xuất.
+//   Nguồn: CLAUDE quét Fable 15/11 (A3C P-09 / C-03 Thấp); Hùng 16/11 11:34 OK Gói 24.
+app.MapPost("/logout", async (HttpContext ctx, Microsoft.AspNetCore.Antiforgery.IAntiforgery af) =>
 {
+    try { await af.ValidateRequestAsync(ctx); }
+    catch (Microsoft.AspNetCore.Antiforgery.AntiforgeryValidationException) { return Results.Redirect("/login"); }   // token lệch (phiên hết 8h / bị đá) → về /login, KHÔNG đăng xuất (rà độc lập 16/11; trước: 400 trống)
     await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/login");
-});
+});   // không có form-binding nên UseAntiforgery không tự kiểm endpoint này → tự gọi ValidateRequestAsync ở trên, sai token trả 400
+app.MapGet("/logout", () => Results.Redirect("/"));   // [LOGOUT-POST] GET không còn đăng xuất
 
 // ==== Download Excel template ====
 app.MapGet("/download/std-update-template.xlsx", () =>

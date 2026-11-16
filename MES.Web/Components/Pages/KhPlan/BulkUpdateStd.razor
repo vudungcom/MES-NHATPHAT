@@ -6,6 +6,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject MES.Web.Services.UserService UserSvc
+@inject ILogger<BulkUpdateStd> Logger
 
 <PageTitle>Sửa STD hàng loạt - MES</PageTitle>
 
@@ -263,7 +264,7 @@ else
         }
         catch (Exception ex)
         {
-            _uploadError = "Lỗi đọc file: " + ex.Message;
+            Logger.LogWarning(ex, "[C-11] Đọc file Excel STD lỗi"); _uploadError = UiSafe.IsBusiness(ex) ? ex.Message : "Không đọc được file — kiểm tra file .xlsx đúng mẫu (tải file mẫu ở trên) và chưa bị hỏng.";   // [C-11 2026-11-16]
         }
         finally
         {
@@ -299,7 +300,7 @@ else
         }
         catch (Exception ex)
         {
-            _confirmError = "Lỗi: " + ex.Message;
+            _confirmError = UiSafe.Text(ex, Logger, "cập nhật STD hàng loạt");   // [C-11 2026-11-16]
         }
         finally
         {

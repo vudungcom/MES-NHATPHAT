@@ -13,6 +13,8 @@ namespace MES.Web.Services;
 //   ex.Message (SqlException lộ tên bảng / cột — C-11). Không đổi luật, không đổi số: chỉ đổi cách báo lỗi.
 //   Nguồn: CLAUDE quét Fable 15/11 (B-H BH-03, B-W1 BW1-03, B-W2 BW2-01, B-K BK-05, B-M2 BM2-01/03/05, B-P1 BP1-06, B-P2 BP2-01,
 //   B-M1 BM1-21 — nhóm B2 Trung); Hùng 16/11 05:15 "không ảnh hưởng khách thì làm theo ý bạn".
+// [C-11 2026-11-16] Gói 24: 35 chỗ trang + 5 chỗ service CŨ còn ghép ex.Message / InnerException.Message vào câu báo → đổi hết sang UiSafe.Text
+//   (grep "ex.Message" trong Components chỉ còn chỗ lọc lỗi nghiệp vụ). Nguồn: CLAUDE quét Fable 15/11 (A3C C-11 Thấp); Hùng 16/11 11:34 OK Gói 24.
 // =====================================================================
 public static class UiSafe
 {
@@ -24,8 +26,12 @@ public static class UiSafe
     }
 
     /// <summary>Câu báo cho người dùng từ 1 ngoại lệ: lỗi nghiệp vụ (chữ Việt do service ném) hiện nguyên; lỗi hệ thống → câu chung + log.</summary>
+    /// <summary>[C-11 2026-11-16] Logger dùng khi chỗ gọi không có ILogger (service tạo bằng new, không qua DI) — Program.cs gán; null thì chỉ bỏ qua log.</summary>
+    public static ILogger? Fallback { get; set; }
+
     public static string Text(Exception ex, ILogger? log = null, string viec = "thực hiện thao tác")
     {
+        log ??= Fallback;   // [C-11]
         if (ex is AggregateException ag && ag.InnerException != null) ex = ag.InnerException;
         if (IsBusiness(ex)) return ex.Message;
         if (HandoverService.IsDeadlock(ex)) return $"Chưa {viec} được — dữ liệu đang có người khác lưu cùng lúc (máy chủ chọn huỷ lượt này). Chưa ghi gì, thử lại sau vài giây.";   // rà độc lập 16/11 L5: không dùng câu "đã tự thử lại 3 lần" của Giao nhận (chỗ này không có vòng thử lại)

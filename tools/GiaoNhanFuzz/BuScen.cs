@@ -28,7 +28,7 @@ public static class BuScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-BU", Customer = cust, CustomerId = 1, ApplyWorkflow = workflow };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 20, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 20, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = 20, NgayNhanPhoi = DateTime.Now.AddDays(-1), SoPO = "PO1", PartNo = "P" });
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });

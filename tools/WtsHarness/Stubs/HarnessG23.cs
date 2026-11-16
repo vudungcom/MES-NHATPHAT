@@ -69,7 +69,7 @@ public static class HarnessG23
         var u = db.Users.List.First(x => x.Username == user);
         var cust = db.Customers.List.First();
         var plan = new KhPlan { PlanDate = DateTime.Today, CustomerId = cust.CustomerId };
-        plan.Details.Add(new KhPlanDetail { PartNo = "P-G23", PurchaseOrder = "PO-G23-" + user, Quantity = 3 });
+        plan.Details.Add(new KhPlanDetail { PartNo = "P-G23", PurchaseOrder = "PO-G23-" + user, Quantity = 3, STD = DateTime.Today });
         try { var id = await kh.CreateAsync(plan, u.UserId); return new { ok = true, id, error = "" }; }
         catch (Exception ex) { return new { ok = false, id = 0, error = ex.Message }; }
     }

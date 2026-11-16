@@ -1,5 +1,5 @@
 # [KIEM-CHUA 03/11/2026] Trang Giao nhận thật (harness EF giả) — lỗi máy chủ khi lưu / khi tải lại sau lưu:
-#   [PAGE-ERR]     lỗi máy chủ lạ lúc Giao / Nhận → báo trong cửa sổ "Lỗi máy chủ: … xem đã lưu chưa", DB không đổi, trang không chết,
+#   [PAGE-ERR]     lỗi máy chủ lạ lúc Giao / Nhận → báo trong cửa sổ "Lỗi máy chủ: … xem đã lưu chưa" (từ Gói 24 [C-11] 16/11: câu Việt chung, không lộ lời SQL), DB không đổi, trang không chết,
 #                  bấm lại lần 2 ghi đúng 1 chứng từ (không ghi kèm dữ liệu dở của lần lỗi)
 #   [PAGE-ERR2]    đã ghi xong, chỉ bước tải lại lỗi → KHÔNG báo "Lỗi máy chủ", báo "Đã lưu xong… Không bấm lưu lại" ở đầu trang
 #                  (và trong cửa sổ Nhận còn mở), DB có đúng 1 chứng từ
@@ -101,7 +101,7 @@ async def run_all():
         await open_issue(pg, "PO-PE1", 5); await confirm_issue(pg)
         st = get("/harness/fail"); mt = await modal_text(pg)
         ok(st["saveThrown"] == 1, "P11 giả lỗi lưu đã chạy đúng 1 lần", st)
-        ok("Lỗi máy chủ: GIA-LOI-SQL-LUU" in mt and "xem đã lưu chưa" in mt, "P12 [PAGE-ERR] cửa sổ Giao còn mở, báo 'Lỗi máy chủ: …' + dặn xem đã lưu chưa", mt[-300:])
+        ok("Lỗi máy chủ:" in mt and "xem đã lưu chưa" in mt and "GIA-LOI-SQL-LUU" not in mt, "P12 [PAGE-ERR][C-11] cửa sổ Giao còn mở, báo 'Lỗi máy chủ: …' (câu Việt chung, KHÔNG lộ lời SQL — Gói 24 C-11) + dặn xem đã lưu chưa", mt[-300:])
         ok(await alive(pg, "issue"), "P13 [PAGE-ERR] trang không chết phiên (cửa sổ Giao còn phản hồi: gõ số vượt trần → viền đỏ)")
         ok(len(txs("PO-PE1")) == 0, "P14 [PAGE-ERR] DB không có phiếu giao nào của PO-PE1 (giao dịch lỗi không ghi)", txs("PO-PE1"))
         await confirm_issue(pg)
@@ -148,7 +148,7 @@ async def run_all():
         await receive_first(pg, 5)
         st = get("/harness/fail"); mt = await modal_text(pg)
         ok(st["saveThrown"] == 2, "P41 giả lỗi lưu lần 2 đã chạy", st)
-        ok("Lỗi máy chủ: GIA-LOI-SQL-LUU" in mt, "P42 [PAGE-ERR] cửa sổ Nhận báo 'Lỗi máy chủ: …'", mt[-300:])
+        ok("Lỗi máy chủ:" in mt and "GIA-LOI-SQL-LUU" not in mt, "P42 [PAGE-ERR][C-11] cửa sổ Nhận báo 'Lỗi máy chủ: …' (không lộ lời SQL)", mt[-300:])
         ok(await top_banner(pg) >= 1, "P42b lần lưu LỖI không xoá lời báo 'Đã lưu xong…' cũ ở đầu trang (chỉ lần lưu được mới bỏ)")
         ok(len(recs("PO-PE1")) == 0, "P43 [PAGE-ERR] Nhận lỗi: PO-PE1 chưa có lần nhận nào", recs("PO-PE1"))
         ok(await alive(pg, "recv"), "P44 [PAGE-ERR] trang không chết phiên sau lỗi Nhận (Thu gọn / mở lại thẻ phiếu được)")

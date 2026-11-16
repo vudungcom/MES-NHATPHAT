@@ -17,6 +17,10 @@ async def storage(pg):
 async def session(pg):
     return await pg.evaluate("() => { const o = {}; for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); o[k] = sessionStorage.getItem(k); } return o; }")
 
+async def logout(pg):
+    # [LOGOUT-POST 16/11/2026] Đăng xuất bằng nút (form POST + antiforgery) — GET /logout không còn đăng xuất
+    await pg.click("form[action='/logout'] button[type=submit]"); await pg.wait_for_load_state("networkidle")
+
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(); ctx = await b.new_context(); pg = await ctx.new_page()
@@ -39,7 +43,7 @@ async def main():
         ok(st.get("mes_saved_username") == "admin" and st.get("mes_remember_me") == "1", "R2 tích Nhớ: lưu tên 'admin' + cờ nhớ", st)
         ok(not leak and "mes_saved_password" not in st, "R2 KHÔNG có giá trị nào chứa mật khẩu trong localStorage / sessionStorage", leak or st)
         # R3 đăng xuất → mở lại: tên điền sẵn, mật khẩu trống
-        await pg.goto(BASE + "/logout"); await pg.wait_for_load_state("networkidle"); await pg.wait_for_timeout(300)
+        await logout(pg); await pg.wait_for_timeout(300)
         if "/login" not in pg.url: await pg.goto(BASE + "/login"); await pg.wait_for_load_state("networkidle")
         u = await pg.input_value("#username"); pw = await pg.input_value("#password")
         ok(u == "admin" and pw == "", "R3 đăng xuất rồi mở lại: tên điền sẵn, mật khẩu trống", f"tên '{u}' mật khẩu '{pw}'")
@@ -48,7 +52,7 @@ async def main():
         await pg.click("button[type=submit]"); await pg.wait_for_load_state("networkidle"); await pg.wait_for_timeout(500)
         st = await storage(pg)
         ok("mes_saved_username" not in st and "mes_remember_me" not in st and "mes_saved_password" not in st, "R4 bỏ tích Nhớ rồi đăng nhập: xoá tên đã nhớ, không còn khoá nào của trang đăng nhập", st)
-        await pg.goto(BASE + "/logout"); await pg.wait_for_load_state("networkidle")
+        await logout(pg)
         if "/login" not in pg.url: await pg.goto(BASE + "/login"); await pg.wait_for_load_state("networkidle")
         u = await pg.input_value("#username")
         ok(u == "", "R4 mở lại trang đăng nhập: ô tên trống", u)

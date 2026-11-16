@@ -47,6 +47,7 @@ public class PartTaroService
         ValidateReason(reason);
         await EnsurePermissionAsync(userId);
         PartStepGuard.CheckLen("Taro", (newStep.NC, 20, "NC"), (newStep.WtsTaskCode, 20, "Mã CV"), (newStep.StepName, 500, "Tên bước"));   // [LEN-CHECK 2026-11-16] (BP1-03)
+        PartStepGuard.CheckStdTimes("Taro", (newStep.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
         // [TARO-DUPHONG 2026-11-07] Taro không dùng dòng dự phòng (trước: thêm được — dự phòng trỏ cha theo NC, NC nhiều mã → gộp nhầm mã đầu).
         //   Nguồn: HÙNG 07/11 09:11.
@@ -113,6 +114,7 @@ public class PartTaroService
             throw new PartStepCodeException(PartStepGuard.TaroNoBackupMsg);
         if (updated.IsBackup && dbCode.IsBackup) updated.ParentNC = dbCode.ParentNC;
         PartStepGuard.CheckLen("Taro", (updated.NC, 20, "NC"), (updated.WtsTaskCode, 20, "Mã CV"), (updated.StepName, 500, "Tên bước"));   // [LEN-CHECK 2026-11-16] (BP1-03)
+        PartStepGuard.CheckStdTimes("Taro", (updated.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
         if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
         if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(dbCode.NC, updated.NC)

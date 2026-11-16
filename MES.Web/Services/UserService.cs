@@ -289,6 +289,27 @@ public class UserService
 
         target.PIN = null;
         await db.SaveChangesAsync();
+        PinThrottle.Success(targetUserId); PinThrottle.Success(-targetUserId);   // [PIN-THROTTLE] Reset PIN = đường mở khoá đếm sai (rà độc lập 16/11)
+        return (true, null);
+    }
+
+    // [ADMIN-RESET-MK 2026-11-16] (BM2-04 / BM2-09) ADMIN đặt lại mật khẩu cho người quên — trước: chỗ ghi PasswordHash duy nhất là Hồ sơ đổi mật khẩu
+    //   (cần mật khẩu cũ) → quên = sửa SQL tay. Luật mật khẩu như tạo mới: Trim + ≥ 6 ký tự. Không tự đặt lại cho chính mình (dùng Hồ sơ).
+    //   Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-04 còn phần nút Admin); Hùng 16/11 11:34 OK Gói 24.
+    public const int PasswordMin = 6;
+    public async Task<(bool Success, string? Error)> ResetPasswordAsync(int targetUserId, string? newPassword, int requestedByUserId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!await PermCheck.IsAdminAsync(db, requestedByUserId)) return (false, "Chỉ ADMIN mới đặt lại được mật khẩu.");
+        if (targetUserId == requestedByUserId) return (false, "Đổi mật khẩu của chính mình ở trang Hồ sơ (cần mật khẩu cũ).");
+        var pw = (newPassword ?? "").Trim();
+        if (pw.Length < PasswordMin) return (false, $"Mật khẩu mới tối thiểu {PasswordMin} ký tự (không tính dấu cách đầu / cuối).");
+        var target = await db.Users.FirstOrDefaultAsync(u => u.UserId == targetUserId);
+        if (target == null) return (false, "Không tìm thấy User.");
+        target.PasswordHash = PasswordHasher.Hash(pw);
+        await db.SaveChangesAsync();
+        PinThrottle.Success(-targetUserId);   // [PIN-THROTTLE] ô "PIN" Xoá PO / Kho so mật khẩu → đặt lại mật khẩu cũng xoá đếm sai của ô đó
         return (true, null);
     }
 }

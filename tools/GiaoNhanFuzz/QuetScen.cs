@@ -30,7 +30,7 @@ public static class QuetScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-QUET", Customer = cust, CustomerId = 1, ApplyWorkflow = workflow };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 16, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 16, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 2, KhPlanDetailId = 1, StepOrder = 2, NC = "NC2", MachineRegistered = "M2" });

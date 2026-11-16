@@ -49,6 +49,7 @@ public class PartInspectionService
         await EnsurePermissionAsync(userId);
 
         PartStepGuard.CheckLen(Label, (newStep.NC, 20, "NC / mã CV"));   // [LEN-CHECK 2026-11-16] (BP1-03)
+        PartStepGuard.CheckStdTimes(Label, (newStep.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         PartStepGuard.CheckReservedCode(Label, newStep.NC);   // [PM-NC-AT 2026-11-05] mã đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
         // [PM-NC-DUP-SVC 2026-11-02] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId>; dòng chính: mã không trống / '-', không trùng dòng chính khác (đọc DB dưới khoá)
         return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
@@ -109,6 +110,7 @@ public class PartInspectionService
         // [PM-NC-DUP-SVC] mã / dự phòng đọc lại từ DB dưới khoá (existing có thể là bản EF trang đang giữ từ lần lưu trước — rà độc lập 02/11 T1)
         var dbNow = await _db.PartInspectionSteps.AsNoTracking().Where(s => s.StepId == stepId).Select(s => new { s.NC, s.IsBackup, s.ParentNC }).FirstAsync();   // [B6-DP-MA] + ParentNC
         PartStepGuard.CheckLen(Label, (updated.NC, 20, "NC / mã CV"));   // [LEN-CHECK 2026-11-16] (BP1-03)
+        PartStepGuard.CheckStdTimes(Label, (updated.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         if (!PartStepGuard.SameCode(dbNow.NC, updated.NC)) PartStepGuard.CheckReservedCode(Label, updated.NC);   // [PM-NC-AT 2026-11-05] chỉ kiểm khi đổi mã
         if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
             PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartInspectionSteps

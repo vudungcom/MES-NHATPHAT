@@ -28,7 +28,7 @@ public static class VuScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-VU", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO-VU", Quantity = 60, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO-VU", Quantity = 60, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = 60, NgayNhanPhoi = DateTime.Now, SoPO = "PO-VU", PartNo = "P" });
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });

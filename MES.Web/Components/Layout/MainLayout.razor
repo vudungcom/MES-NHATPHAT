@@ -16,9 +16,14 @@
                     <a class="btn btn-sm btn-outline-primary me-2" href="/profile">
                         <i class="bi bi-person-gear"></i> Hồ sơ
                     </a>
-                    <a class="btn btn-sm btn-outline-secondary" href="/logout">
-                        <i class="bi bi-box-arrow-right"></i> Đăng xuất
-                    </a>
+                    @* [LOGOUT-POST 2026-11-16] (P-09) Đăng xuất = form POST + token antiforgery (Program.cs MapPost /logout) — trước: link GET,
+                       trang lạ nhúng <img src="/logout"> là đăng xuất chéo. MainLayout vẽ tĩnh (SSR) nên <AntiforgeryToken /> cho token đúng phiên. *@
+                    <form method="post" action="/logout" class="d-inline">
+                        <AntiforgeryToken />
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-box-arrow-right"></i> Đăng xuất
+                        </button>
+                    </form>
                 </Authorized>
             </AuthorizeView>
         </div>

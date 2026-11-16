@@ -393,7 +393,7 @@ public class DepartmentService
         if (!AvatarUrlOk(model.AvatarUrl)) return (false, MsgAvatarType + " Tải lại ảnh bằng nút chọn file.");   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         if (string.IsNullOrWhiteSpace(model.DepartmentName)) return (false, "Tên đơn vị / nhóm không được để trống.");
         if (string.IsNullOrWhiteSpace(model.DepartmentCode)) return (false, "Mã đơn vị không được để trống.");
@@ -474,7 +474,7 @@ public class DepartmentService
         if (!await CanEditAsync(currentUserId)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
         if (DeptLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16]
         if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] DepartmentChangeLogs.Reason 500
 
@@ -569,7 +569,7 @@ public class DepartmentService
         if (!await CanEditAsync(currentUserId)) return (false, PermCheck.NoEdit(TenMuc));   // [PHAT-HIEN-0311]
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         var dept = await _db.Departments.FirstOrDefaultAsync(d => d.DepartmentId == departmentId);
         if (dept == null) return (false, "Không tìm thấy vị trí cần xóa.");

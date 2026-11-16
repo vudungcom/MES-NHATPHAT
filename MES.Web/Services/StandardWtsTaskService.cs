@@ -34,10 +34,13 @@ public class StandardWtsTaskService
         var list = await _db.StandardWtsTasks
             .Where(t => t.IsActive)
             .Select(t => new { t.CategoryCode, t.CategoryName })
-            .Distinct()
-            .ToListAsync();
+            .ToListAsync();   // không Distinct: đếm tần suất THẬT của tên (rà độc lập 16/11 — Distinct làm "tên gặp nhiều nhất" thành tên đầu ABC, lệch GroupNameMismatchAsync)
 
-        return list.Select(x => (x.CategoryCode, x.CategoryName)).ToList();
+        // [WTS-NHOM-TEN 2026-11-16] (BP2-02) 1 mã nhóm = 1 dòng (lấy tên gặp nhiều nhất) — trước: distinct theo cặp (mã, tên) → dữ liệu cũ 1 mã 2 tên ra 2 dòng
+        //   → tab Cấu hình nhóm `@key` trùng → Blazor ném "same key value", tab chết; select nhóm 2 option cùng value. Nguồn: CLAUDE quét Fable 15/11 (B-P2 BP2-02 Trung).
+        return list.GroupBy(x => (x.CategoryCode ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => (g.Key, g.GroupBy(x => (x.CategoryName ?? "").Trim()).OrderByDescending(n => n.Count()).ThenBy(n => n.Key).First().Key))
+            .ToList();
     }
 
     public async Task<List<StandardWtsTask>> GetByCategoryAsync(string categoryCode)
@@ -48,13 +51,27 @@ public class StandardWtsTaskService
             .ToListAsync();
     }
 
+    private static string Cap500(string s) => s.Length <= 500 ? s : s.Substring(0, 500);   // [WTS-NHOM-TEN] cột Reason 500
+
+    /// <summary>[WTS-NHOM-TEN 2026-11-16] Mã nhóm đã có công việc đang dùng mà tên gửi lên khác tên đang có → câu báo; null = khớp / nhóm mới.</summary>
+    private async Task<string?> GroupNameMismatchAsync(string? categoryCode, string? categoryName, long? exceptTaskId = null)
+    {
+        var code = (categoryCode ?? "").Trim().ToUpper(); var name = (categoryName ?? "").Trim();
+        if (code.Length == 0) return null;
+        var names = await _db.StandardWtsTasks.Where(x => x.IsActive && x.CategoryCode == code && (exceptTaskId == null || x.TaskId != exceptTaskId))
+            .Select(x => x.CategoryName).ToListAsync();
+        var cur = names.Select(n => (n ?? "").Trim()).Where(n => n.Length > 0).GroupBy(n => n).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).Select(g => g.Key).FirstOrDefault();
+        if (cur == null || string.Equals(cur, name, StringComparison.Ordinal)) return null;
+        return $"Mã nhóm '{code}' đã có tên '{cur}' — dùng đúng tên đó (bỏ tích \"Tạo nhóm công đoạn mới\" và chọn nhóm). Muốn đổi tên nhóm: Sửa 1 công việc trong nhóm, đổi Tên nhóm → đổi cho cả nhóm.";
+    }
+
     public async Task<(bool Success, string? Error)> CreateAsync(StandardWtsTask model, int currentUserId, string pin)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         if (string.IsNullOrWhiteSpace(model.CategoryCode)) return (false, "Mã nhóm công đoạn không được để trống.");
         if (string.IsNullOrWhiteSpace(model.CategoryName)) return (false, "Tên nhóm công đoạn không được để trống.");
@@ -71,6 +88,8 @@ public class StandardWtsTaskService
 
         bool exists = await _db.StandardWtsTasks.AnyAsync(x => x.TaskCode == model.TaskCode && x.IsActive);
         if (exists) return (false, $"Mã công việc '{model.TaskCode}' đã tồn tại trong danh mục.");
+        // [WTS-NHOM-TEN 2026-11-16] (BP2-02) mã nhóm đã có thì tên nhóm phải đúng tên đang có (tên nhóm lưu theo từng công việc; lệch tên → 2 dòng cùng mã)
+        if (await GroupNameMismatchAsync(model.CategoryCode, model.CategoryName) is string eNhom) return (false, eNhom);
 
         // [RS-E8 2026-10-29] Mã đã xoá (IsActive = 0) mà thêm lại cùng mã → KHÔI PHỤC dòng cũ thay vì thêm dòng mới.
         //   Chỉ mục TaskCode trong DB là unique KHÔNG lọc IsActive → trước đây thêm lại báo lỗi SQL trùng khoá.
@@ -112,6 +131,9 @@ public class StandardWtsTaskService
         model.CreatedBy = currentUserId;
 
         _db.StandardWtsTasks.Add(model);
+        // [WTS-LOG-ID 2026-11-16] lưu trước để có TaskId — trước: log "Tạo mới" ghi TaskId = 0 (mồ côi, lịch sử không có dòng Tạo) — cùng lỗi BM1-04 Đồ gá.
+        //   Nguồn: CLAUDE tự phát hiện khi làm Gói 24 (16/11, lúc sửa WTS-NHOM-TEN); vá theo mục 0 CLAUDE-RULES (vênh truy vết, không đổi số).
+        await _db.SaveChangesAsync();
 
         _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog
         {
@@ -206,7 +228,7 @@ public class StandardWtsTaskService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         // [TARO-3T-GOP 2026-11-06] khoá chung MES_WTS_GOP từ TRƯỚC khi đọc mã / khai báo gộp (rà độc lập 06/11 vòng 1 mục 5 + vòng 2 mục 2):
         //   luật "1 mã thành phần thuộc 1 mã gộp" / "không lồng" / "mã đang khai gộp không đổi mã, đổi nhóm, xoá lặng" đọc rồi ghi —
@@ -244,6 +266,14 @@ public class StandardWtsTaskService
             && (gopParts == null || gopParts.Count > 0)
             && await _db.StandardWtsTaskGops.AnyAsync(g => g.IsActive && (g.GopTaskCode == task.TaskCode || g.PartTaskCode == task.TaskCode)))
             return (false, $"Mã công việc '{task.TaskCode}' đang có khai báo mã gộp — bỏ khai gộp trước rồi mới đổi nhóm.");
+
+        // [WTS-NHOM-TEN 2026-11-16] (BP2-02) chuyển sang mã nhóm KHÁC đang có → tên nhóm phải đúng tên đang có; cùng mã mà đổi tên → đổi tên cho CẢ nhóm (dưới)
+        var catNew = (updatedModel.CategoryCode ?? "").Trim().ToUpper(); var catNameNew = (updatedModel.CategoryName ?? "").Trim();
+        bool sameGroup = string.Equals(catNew, (task.CategoryCode ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+        if (!sameGroup && await GroupNameMismatchAsync(catNew, catNameNew, task.TaskId) is string eNhomU) return (false, eNhomU);
+        List<StandardWtsTask> renameGroup = new();
+        if (sameGroup && !string.Equals(catNameNew, (task.CategoryName ?? "").Trim(), StringComparison.Ordinal))
+            renameGroup = await _db.StandardWtsTasks.Where(x => x.IsActive && x.TaskId != task.TaskId && x.CategoryCode == task.CategoryCode).ToListAsync();
 
         var now = DateTime.Now;
         var logs = new List<StandardWtsTaskChangeLog>();
@@ -302,6 +332,14 @@ public class StandardWtsTaskService
             task.UpdatedAt = now;
             task.UpdatedBy = currentUserId;
 
+            // [WTS-NHOM-TEN] đổi Tên nhóm → mọi công việc cùng mã nhóm nhận tên mới (+ log từng dòng) để 1 mã nhóm chỉ có 1 tên
+            foreach (var o in renameGroup.Where(o => !string.Equals((o.CategoryName ?? "").Trim(), catNameNew, StringComparison.Ordinal)))
+            {
+                logs.Add(new StandardWtsTaskChangeLog { TaskId = o.TaskId, FieldName = "Tên nhóm", OldValue = o.CategoryName?.Trim() ?? "", NewValue = catNameNew,
+                                                        Reason = Cap500((reason ?? "") + $" (đổi tên nhóm {catNew} cho cả nhóm qua mã {task.TaskCode})"), ChangedAt = now, ChangedBy = currentUserId });
+                o.CategoryName = catNameNew; o.UpdatedAt = now; o.UpdatedBy = currentUserId;
+            }
+
             _db.StandardWtsTaskChangeLogs.AddRange(logs);
             await _db.SaveChangesAsync();
         }
@@ -324,7 +362,7 @@ public class StandardWtsTaskService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
         if (!changes.Any()) return (true, null);
 
         var taskIds = changes.Select(c => c.TaskId).ToList();
@@ -375,7 +413,7 @@ public class StandardWtsTaskService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         // [TARO-3T-GOP 2026-11-06] khoá chung MES_WTS_GOP từ TRƯỚC khi đọc mã / khai báo gộp (rà độc lập 06/11 vòng 1 mục 5 + vòng 2 mục 2):
         //   luật "1 mã thành phần thuộc 1 mã gộp" / "không lồng" / "mã đang khai gộp không đổi mã, đổi nhóm, xoá lặng" đọc rồi ghi —

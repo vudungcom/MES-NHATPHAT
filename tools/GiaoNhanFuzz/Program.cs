@@ -184,7 +184,7 @@ for (int po = startPo; po < startPo + poCount; po++)
     var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-TEST", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
     db.KhPlans.List.Add(plan);
     var qty = rnd.Next(8, 40);
-    var det = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO" + po, Quantity = qty };
+    var det = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO" + po, Quantity = qty };
     db.KhPlanDetails.List.Add(det);
     db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = qty, NgayNhanPhoi = DateTime.Now, SoPO = "PO", PartNo = "P" });
     excl = rnd.NextDouble() < exclP;   // (giữ đúng thứ tự rút số ngẫu nhiên như bản cũ)

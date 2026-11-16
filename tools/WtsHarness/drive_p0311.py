@@ -109,8 +109,11 @@ async def main():
                 os.makedirs(os.path.join(hdir, "wwwroot", "uploads", "avatars"), exist_ok=True)
                 open(os.path.join(hdir, "wwwroot", "uploads", "avatars", "cu_doc.html"), "wb").write(b"<script>alert(3)</script>")
             s_png = st(g["avatarUrl"] or "/x.png"); s_html = st("/uploads/avatars/cu_doc.html"); s_js = st("/uploads/avatars/a.js")
-            ok(s_png == (200, "nosniff") and s_html[0] == 404 and s_js[0] == 404 and hdir is not None,
-               "S6 /uploads: ảnh .png → 200 + nosniff; file .html có sẵn trong thư mục / .js → 404", [s_png, s_html, s_js, hdir])
+            # [UPLOADS-AUTH 16/11 Gói 24] chưa đăng nhập → 401 cả ảnh; đã đăng nhập (cookie của trang) → ảnh 200 + nosniff, .html / .js vẫn 404
+            rs_png = await pg.context.request.get(BASE + (g["avatarUrl"] or "/x.png")); rs_html = await pg.context.request.get(BASE + "/uploads/avatars/cu_doc.html")
+            ok(s_png[0] == 401 and s_html[0] in (401, 404) and s_js[0] in (401, 404) and hdir is not None
+               and rs_png.status == 200 and rs_png.headers.get("x-content-type-options") == "nosniff" and rs_html.status == 404,
+               "S6 /uploads: chưa đăng nhập → 401 (Gói 24); đã đăng nhập: ảnh .png → 200 + nosniff; file .html có sẵn trong thư mục / .js → 404", [s_png, s_html, s_js, hdir, rs_png.status, rs_html.status])
 
             # S7 [SODO-NULL] form Sửa → nút Lịch sử mở lịch sử (trước: NullReference, trang chết); khung xem ảnh → Đổi ảnh mở form Sửa
             await go(ps, "/so-do-to-chuc")

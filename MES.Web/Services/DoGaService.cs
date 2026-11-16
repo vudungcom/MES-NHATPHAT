@@ -43,7 +43,7 @@ public class DoGaService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         if (string.IsNullOrWhiteSpace(model.TenDoGa)) return (false, "Tên đồ gá không được để trống.");
         if (DoGaLenError(model) is string eLen) return (false, eLen);   // [LEN-CHECK 2026-11-16] (BM1-21 kiểu B3)
@@ -56,20 +56,38 @@ public class DoGaService
         model.CreatedAt = now;
         model.CreatedBy = currentUserId;
 
-        _db.DoGas.Add(model);
-
-        _db.DoGaChangeLogs.Add(new DoGaChangeLog
+        // [DOGA-LOG-ID 2026-11-16] (BM1-04) Lưu đồ gá TRƯỚC rồi mới ghi log (như ThietBiService) — trước: log ghi cùng lượt với Add nên DoGaId = 0
+        //   (DoGaChangeLog.DoGaId là int thường, không navigation) → dòng log mồ côi, lịch sử đồ gá không bao giờ có dòng "Tạo mới". 1 giao dịch: lỗi log → không còn đồ gá không log.
+        //   Nguồn: CLAUDE quét Fable 15/11 (B-M1 BM1-04 Trung); Hùng 16/11 11:34 OK Gói 24.
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
         {
-            DoGaId = model.DoGaId,
-            FieldName = "Tạo mới đồ gá",
-            OldValue = null,
-            NewValue = model.TenDoGa,
-            Reason = "Khởi tạo dữ liệu đồ gá",
-            ChangedAt = now,
-            ChangedBy = currentUserId
-        });
+            _db.DoGas.Add(model);
+            await _db.SaveChangesAsync();   // có DoGaId
 
-        await _db.SaveChangesAsync();
+            _db.DoGaChangeLogs.Add(new DoGaChangeLog
+            {
+                DoGaId = model.DoGaId,
+                FieldName = "Tạo mới đồ gá",
+                OldValue = null,
+                NewValue = model.TenDoGa,
+                Reason = "Khởi tạo dữ liệu đồ gá",
+                ChangedAt = now,
+                ChangedBy = currentUserId
+            });
+            await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
+        }
+        catch
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            _db.ChangeTracker.Clear(); model.DoGaId = 0;   // rà độc lập 16/11: không để đồ gá (id đã rollback) + log Added kẹt trong DbContext dùng chung → lượt Lưu sau lỗi identity
+            throw;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
         return (true, null);
     }
 
@@ -82,7 +100,7 @@ public class DoGaService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
         if (DoGaLenError(updatedModel) is string eLenU) return (false, eLenU);   // [LEN-CHECK 2026-11-16]
         if (LenCheck.Over(reason, 500, "Lý do sửa") is string eRs) return (false, eRs);   // [LEN-CHECK] DoGaChangeLogs.Reason 500
 
@@ -160,7 +178,7 @@ public class DoGaService
         if (!await PermCheck.CanViewAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoView("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         if (string.IsNullOrWhiteSpace(nguoiMuon)) return (false, "Vui lòng nhập tên người mượn.");
         if (LenCheck.FirstOver((nguoiMuon, 150, "Người mượn"), (lyDo, 500, "Lý do mượn")) is string eLenM) return (false, eLenM);   // [LEN-CHECK 2026-11-16]
@@ -231,7 +249,7 @@ public class DoGaService
         if (!await PermCheck.CanViewAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoView("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
         if (LenCheck.Over(ghiChuTra, 500, "Ghi chú trả") is string eLenT) return (false, eLenT);   // [LEN-CHECK 2026-11-16]
 
         // [RS-E10 2026-10-31] Khoá theo đồ gá; đồ gá không có ai mượn thì không "trả" (trước: trả được, ghi lịch sử "Đã trả" rỗng)
@@ -298,7 +316,7 @@ public class DoGaService
         if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.DoGa)) return (false, PermCheck.NoEdit("Đồ gá"));
         if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
         bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
-        if (!isPinValid) return (false, "Mã PIN xác nhận không chính xác.");
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));   // [PIN-THROTTLE 2026-11-16] lời còn N lần / đang khoá
 
         var item = await _db.DoGas.FirstOrDefaultAsync(x => x.DoGaId == doGaId && x.IsActive);
         if (item == null) return (false, "Không tìm thấy đồ gá.");

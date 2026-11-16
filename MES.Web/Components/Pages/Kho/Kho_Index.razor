@@ -14,6 +14,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
 @inject ILogger<Kho_Index> Logger
+@inject AuthService Auth
 
 <PageTitle>Quản lý Kho Phôi & Vật Tư - MES</PageTitle>
 
@@ -942,6 +943,7 @@ else
         if (_saving) return;   // [A1-03 2026-11-15] bấm 2 lần trước khi nút kịp khoá → 2 lượt chồng trên 1 DbContext (văng lỗi trang); service đã idempotent. Nguồn: CLAUDE quét Fable 14–15/11 (A1-03 / B1 Trung); Hùng 15/11 15:10 OK Gói 22.
         _errorMessage = null;
         if (_editingRow == null) return;
+        if (KhoVatLieuService.KhoNgayNhanError(_editNgayNhan, _editSlNhan) is string eNgay) { _errorMessage = eNgay; return; }   // [KHO-NGAY-NHAN 2026-11-16] (BK-03) báo trước khi hỏi lý do / PIN; máy chủ kiểm lại
         _saving = true;   // [A1-03] đặt cờ NGAY sau guard (rà độc lập Gói 22: nhánh sửa `await Db.Users` kiểm PIN chạy trước cờ → bấm đúp 2 truy vấn chồng); hạ ở finally
         try
         {
@@ -958,12 +960,11 @@ else
                 _errorMessage = "Vui lòng nhập PIN để xác nhận thay đổi.";
                 return;
             }
-            // Verify PIN
-            var user = await Db.Users.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.UserId == _currentUserId);
-            if (user == null || !PasswordHasher.Verify(_editPin.Trim(), user.PasswordHash))
+            // Verify PIN — [PIN-THROTTLE 2026-11-16] ô này so MẬT KHẨU đăng nhập (chữ "PIN" giữ, chờ KHO-PIN); nay qua AuthService để đếm sai
+            //   5 lần / 15 phút theo người (trước: thử không giới hạn). Nguồn: CLAUDE quét Fable 15/11 (P-05); Hùng 16/11 11:34 OK Gói 24.
+            if (!await Auth.VerifyPasswordForActionAsync(_currentUserId, _editPin))
             {
-                _errorMessage = "PIN không đúng. Vui lòng thử lại.";
+                _errorMessage = Auth.PinErrorText("PIN không đúng. Vui lòng thử lại.");
                 _editPin = string.Empty;
                 return;
             }
@@ -986,7 +987,7 @@ else
         catch (Exception ex)
         {
             // [KHO-LEN 2026-10-30] lỗi lưu hiện trong cửa sổ (trước: không bắt → trang sập "An unhandled error", mất phiên)
-            _errorMessage = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message);
+            _errorMessage = UiSafe.Text(ex, Logger, "lưu dữ liệu Kho");   // [C-11 2026-11-16] trước: SqlException thô (tên bảng / cột)
             Db.ChangeTracker.Clear();
         }
         finally { _saving = false; }

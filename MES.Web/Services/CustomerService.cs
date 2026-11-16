@@ -92,7 +92,7 @@ public class CustomerService
         }
         catch (Exception ex)
         {
-            return (false, ex.InnerException?.Message ?? ex.Message, null);
+            return (false, UiSafe.Text(ex, null, "lưu khách hàng"), null);   // [C-11 2026-11-16] (BM2-17) trước: SqlException thô
         }
     }
 

@@ -252,7 +252,7 @@ public static class ChuoiScen
             string? e1 = null; try { await ChuoiHelp.CreateKhAsync(db, pid, "P-006", new decimal[] { 5 }, "PO-6"); } catch (Exception ex) { e1 = ex.Message; }
             Ok(e1 != null && e1.Contains("đã có trong hệ thống") && db.KhPlans.List.Count == plans && db.KhPlanDetails.List.Count == dets && db.KhPlanRouteSnapshotMachining.List.Count == snaps,
                "PO-6 đã có: CreateAsync chặn, không sinh phiếu / dòng / snapshot nào", e1);
-            string? e2 = null; try { var kh = new KhPlanService(db); var p = new KhPlan { CustomerId = 1, PlanDate = DateTime.Today }; p.Details.Add(new KhPlanDetail { PartNo = "P-006", PurchaseOrder = "PO-7", Quantity = 1 }); p.Details.Add(new KhPlanDetail { PartNo = "P-006", PurchaseOrder = "po-7", Quantity = 1 }); await kh.CreateAsync(p, 1); } catch (Exception ex) { e2 = ex.Message; }
+            string? e2 = null; try { var kh = new KhPlanService(db); var p = new KhPlan { CustomerId = 1, PlanDate = DateTime.Today }; p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P-006", PurchaseOrder = "PO-7", Quantity = 1 }); p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P-006", PurchaseOrder = "po-7", Quantity = 1 }); await kh.CreateAsync(p, 1); } catch (Exception ex) { e2 = ex.Message; }
             Ok(e2 != null && e2.Contains("trùng trong phiếu") && db.KhPlans.List.Count == plans, "Cùng phiếu 2 dòng PO-7 / po-7: chặn (không phân biệt hoa thường)", e2);
             // Lỗi giữa chừng: CopyRouteSnapshot với partId không tồn tại → không có bảng nào nhận dòng → vẫn commit được (không ném) → kiểm riêng: ném trong giao dịch thì rollback hết
             var db2 = new AppDbContext(); ChuoiHelp.SeedBase(db2, exclH04: false);
@@ -260,7 +260,7 @@ public static class ChuoiScen
             string? e3 = null;
             try
             {
-                var kh = new KhPlanService(db2); var p = new KhPlan { CustomerId = 1, PlanDate = DateTime.Today }; p.Details.Add(new KhPlanDetail { PartNo = "P-008", PurchaseOrder = "PO-8", Quantity = 3 });
+                var kh = new KhPlanService(db2); var p = new KhPlan { CustomerId = 1, PlanDate = DateTime.Today }; p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P-008", PurchaseOrder = "PO-8", Quantity = 3 });
                 await using var trx = await db2.Database.BeginTransactionAsync();
                 try { await kh.CreateAsync(p, 1); await kh.CopyRouteSnapshotAsync(p.Details[0].KhPlanDetailId, pid2, 1); throw new InvalidOperationException("giả lỗi lúc lưu IsPlanConfirmed"); }
                 catch { await trx.RollbackAsync(); db2.ChangeTracker.Clear(); throw; }
@@ -943,6 +943,51 @@ public static class ChuoiScen
             var rr = ar.FirstOrDefault(a => a.KhPlanDetailId == ids[0]);
             Ok(rr != null && rr.Status == KhPlanService.AutoRouteResult.Kept && (rr.Note ?? "").Contains("NC02 (máy H04)") && ChuoiHelp.SnapPicture(db, ids[0]).Sig == snapB,
                "Part đổi NC02 sang máy loại trừ, chưa khai Taro NC 2: tự cập nhật giữ quy trình cũ, báo NC02", rr?.Status + " " + rr?.Note);
+        }
+
+        // [KH-PART-RONG][KH-PART-CHUA-OK][PM-TG-AM 2026-11-16] Gói 24 câu 11 (Hùng 15/11 15:32 = A) + BP1-04. Bản cdbd991: tạo KH cho Part rỗng được, TG chuẩn âm lưu được → SAI.
+        Console.WriteLine("[C22] KH-PART-RONG — Part chưa có công đoạn nào: tạo KH bị chặn (không ghi gì); KH-PART-CHUA-OK — Part có công đoạn chưa Xác nhận OK: chỉ cảnh báo, vẫn tạo được; PM-TG-AM — TG chuẩn âm / quá cột bị máy chủ chặn");
+        {
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false);
+            var pmSvc = new PartMasterService(db);
+            var pRong = await pmSvc.CreatePartMasterAsync("P-RONG", 1, new Dictionary<string, string>(), 1, "Part rong");
+            var khSvc = new KhPlanService(db);
+            int kh0 = db.KhPlans.List.Count, det0 = db.KhPlanDetails.List.Count;
+            string? err = null;
+            try { await ChuoiHelp.CreateKhAsync(db, pRong.PartId, "P-RONG", new decimal[] { 5 }, "PO-RONG"); } catch (InvalidOperationException ex) { err = ex.Message; }
+            Ok(err != null && err.Contains("chưa có công đoạn nào") && err.Contains("P-RONG") && db.KhPlans.List.Count == kh0 && db.KhPlanDetails.List.Count == det0,
+               "Tạo KH cho Part không có công đoạn (B–E trống): bị chặn, báo tên Part, không ghi phiếu / PO", err + $" | kh {kh0}→{db.KhPlans.List.Count}");
+            Ok(await khSvc.PartRouteEmptyAsync(pRong.PartId) != null && await khSvc.PartUnconfirmedWarningAsync(pRong.PartId) == null,
+               "Part rỗng: PartRouteEmptyAsync báo; cảnh báo chưa OK = null (không có mục nào để xác nhận)");
+            // Part có công đoạn nhưng chưa Xác nhận OK → cảnh báo, vẫn tạo được (như trước)
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-CHUAOK", new ChuoiHelp.Shape { Gc = 1, ExclAt = -1, DongDang = false, DuPhong = false, Taro = 0, Bavia = 1, Rua = 0, Kcs = 0, Pkg = 0, Prep = false, TaroTaskCode = false });
+            var pm = db.PartMasters.List.First(x => x.PartId == pid); pm.IsMachiningConfirmed = false; pm.IsHtspConfirmed = true;
+            var w = await khSvc.PartUnconfirmedWarningAsync(pid);
+            Ok(w != null && w.Contains("B Gia công") && !w.Contains("C HTSP"), "Part chưa Xác nhận OK mục B: câu cảnh báo nêu đúng mục", w);
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-CHUAOK", new decimal[] { 5 }, "PO-CHUAOK");
+            Ok(ids.Count == 1 && db.KhPlanRouteSnapshotMachining.List.Any(x => x.KhPlanDetailId == ids[0]), "Vẫn tạo KH được (chỉ cảnh báo), PO có quy trình nháp", "");
+            pm.IsMachiningConfirmed = true;
+            Ok(await khSvc.PartUnconfirmedWarningAsync(pid) == null, "Xác nhận OK xong: hết cảnh báo");
+            // PM-TG-AM: TG chuẩn âm / quá cột ở 6 service
+            var gc = new PartMachiningService(db);
+            string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
+            int st0 = db.PartMachiningSteps.List.Count;
+            var eAm = E(() => gc.AddAsync(pid, new PartMachiningStep { NC = "NC09", MachineRegistered = "M9", SetupTime = -5, MachiningTime = 1 }, 1, "them nc am"));
+            var eTo = E(() => gc.AddAsync(pid, new PartMachiningStep { NC = "NC09", MachineRegistered = "M9", MachiningTime = 123456789m }, 1, "them nc to"));
+            Ok(eAm != null && eAm.Contains("T.Gá không được âm") && eTo != null && eTo.Contains("T.Gia công quá lớn") && db.PartMachiningSteps.List.Count == st0,
+               "Gia công: T.Gá −5 / T.Gia công 123.456.789 → chặn chữ Việt, không thêm dòng", $"{eAm} | {eTo}");
+            var step = db.PartMachiningSteps.List.First(x => x.PartId == pid && x.IsActive && !x.IsBackup);
+            var eUp = E(() => gc.UpdateAsync(step.StepId, new PartMachiningStep { NC = step.NC, MachineRegistered = step.MachineRegistered, SetupTime = 1, MachiningTime = 2, InspectionTime = -1 }, 1, "sua am"));
+            Ok(eUp != null && eUp.Contains("T.Kiểm tra không được âm") && db.PartMachiningSteps.List.First(x => x.StepId == step.StepId).InspectionTime == 1, "Sửa NC: T.Kiểm tra −1 → chặn, giữ số cũ", eUp);
+            var eB = E(() => new PartBaviaService(db).AddAsync(pid, new PartBaviaStep { NC = "B9", StandardTime = -0.5m }, 1, "bavia am"));
+            var eT = E(() => new PartTaroService(db).AddAsync(pid, new PartTaroStep { NC = "9", WtsTaskCode = "9T", StandardTime = -1 }, 1, "taro am"));
+            var eW = E(() => new PartWashingService(db).AddAsync(pid, new PartWashingStep { NC = "W9", StandardTime = 100000000m }, 1, "rua to"));
+            var eK = E(() => new PartInspectionService(db).AddAsync(pid, new PartInspectionStep { NC = "K9", StandardTime = -2 }, 1, "kcs am"));
+            var eP = E(() => new PartPackagingService(db).AddAsync(pid, new PartPackagingStep { NC = "D9", StandardTime = -3 }, 1, "pkg am"));
+            Ok(new[] { eB, eT, eK, eP }.All(e => e != null && e.Contains("T.Chuẩn không được âm")) && eW != null && eW.Contains("quá lớn"),
+               "Bavia / Taro / KCS / Đóng gói T.Chuẩn âm, Rửa quá lớn → chặn ở 5 service", $"{eB} | {eT} | {eW} | {eK} | {eP}");
+            var okB = E(() => new PartBaviaService(db).AddAsync(pid, new PartBaviaStep { NC = "B8", StandardTime = 0 }, 1, "bavia 0"));
+            Ok(okB == null && db.PartBaviaSteps.List.Any(x => x.PartId == pid && x.NC == "B8"), "T.Chuẩn = 0 / để trống vẫn lưu được (không đổi luật, chỉ chặn âm)", okB);
         }
 
         Console.WriteLine($"\nKẾT QUẢ: {(fails == 0 ? "ĐẠT hết" : fails + " SAI")}");

@@ -75,6 +75,16 @@ public static class PartStepGuard
         if (LenCheck.FirstOver(items) is string s) throw new PartStepCodeException($"{label}: {s}");
     }
 
+    /// <summary>[PM-TG-AM 2026-11-16] (BP1-04) Thời gian chuẩn Part Master (5 ô B, T.Chuẩn C/D/E, dòng máy đồng dạng) ở máy chủ: không âm, không quá
+    /// cột decimal(10,2) (QtyRule.TimeMax). Trước: ô type=number không min, setter chỉ Round, service không kiểm → số âm chép vào snapshot PO →
+    /// WtsProductionLogStds / hiệu suất sai; số quá lớn nổ SqlException overflow. Nguồn: CLAUDE quét Fable 15/11 (B-P1 BP1-04 Trung); Hùng 16/11 11:34 OK Gói 24.</summary>
+    public static void CheckStdTimes(string label, params (decimal? Value, string TenO)[] items)
+    {
+        if (QtyRule.CheckTimeRange(items) is string s) throw new PartStepCodeException($"{label}: {s}");
+    }
+    public static (decimal?, string)[] MachiningTimeItems(decimal? setup, decimal? mach, decimal? insp, decimal? prep, decimal? trial, string suffix = "")
+        => new[] { (setup, "T.Gá" + suffix), (mach, "T.Gia công" + suffix), (insp, "T.Kiểm tra" + suffix), (prep, "T.Chuẩn bị" + suffix), (trial, "T.Chạy thử" + suffix) };
+
     public static void CheckReservedCode(string label, params string?[] codes)
     {
         foreach (var c in codes)

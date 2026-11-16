@@ -21,7 +21,7 @@ public static class KhScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-TEST", Customer = cust, CustomerId = 1, ApplyWorkflow = workflow };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = phoi, NgayNhanPhoi = phoi != null ? DateTime.Now : null, OrderVatLieu = "OVL-1", ViTriDePhoi = "A1", SoPO = "PO1", PartNo = "P" });
         var m1 = new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" };
@@ -194,7 +194,7 @@ public static class KhScen
         static void AddPo2(AppDbContext db)
         {
             var plan = db.KhPlans.List[0];
-            var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
+            var d2 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
             db.KhPlanDetails.List.Insert(0, d2); plan.Details.Add(d2); db.Fixup();   // chèn ĐẦU danh sách → DB trả 2,1: kiểm được khoá có sắp tăng dần
         }
         Console.WriteLine("[A6] KHE-6: bật Workflow kiểm K7 SAU khi khoá mọi PO của phiếu (tăng dần, trong giao dịch)");
@@ -308,7 +308,7 @@ public static class KhScen
             // PO mới chen vào phiếu trong lúc chờ khoá → không lưu
             bool fired = false;
             Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = nm => { if (!fired) { fired = true;
-                var p3 = new KhPlanDetail { KhPlanDetailId = 3, KhPlanId = 1, KhPlan = db.KhPlans.List[0], PartNo = "P", PurchaseOrder = "PO3", Quantity = 5, LineNo = 3 };
+                var p3 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 3, KhPlanId = 1, KhPlan = db.KhPlans.List[0], PartNo = "P", PurchaseOrder = "PO3", Quantity = 5, LineNo = 3 };
                 db.KhPlanDetails.List.Add(p3); db.Fixup(); } };
             var o2 = EV(db, 1); var n2 = EV(db, 1); n2.PlanNotes = "lan 2";
             var e2 = await kh.SaveEditAsync(1, 1, o2, n2, 1, "ghi chu 2");
@@ -568,7 +568,7 @@ public static class KhScen
             string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
             int d0 = Docs();
             var plan = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] };
-            plan.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-LE", PartNo = "P", Quantity = 10.5m });
+            plan.Details.Add(new KhPlanDetail { STD = DateTime.Today, PurchaseOrder = "PO-LE", PartNo = "P", Quantity = 10.5m });
             var eCreate = E(() => kh.CreateAsync(plan, 1));
             var dbS = Seed(phoi: null); var khS = new KhPlanService(dbS);   // tách chỉ được khi PO trắng
             var eSplit = E(() => khS.SplitPOAsync(1, new() { new() { PurchaseOrder = "PO1A", Quantity = 20.5m }, new() { PurchaseOrder = "PO1B", Quantity = 19.5m } }, 1, "tach"));
@@ -622,8 +622,8 @@ public static class KhScen
             var db = Seed(); var kh = new KhPlanService(db);
             string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
             int n0 = db.KhPlanDetails.List.Count;
-            var p0 = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; p0.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-0", PartNo = "P", Quantity = 0 });
-            var pBig = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; pBig.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-BIG", PartNo = "P", Quantity = 5_000_000_000m });
+            var p0 = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; p0.Details.Add(new KhPlanDetail { STD = DateTime.Today, PurchaseOrder = "PO-0", PartNo = "P", Quantity = 0 });
+            var pBig = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; pBig.Details.Add(new KhPlanDetail { STD = DateTime.Today, PurchaseOrder = "PO-BIG", PartNo = "P", Quantity = 5_000_000_000m });
             var e0 = E(() => kh.CreateAsync(p0, 1)); var eBig = E(() => kh.CreateAsync(pBig, 1));
             Ok(e0 != null && e0.Contains("> 0") && eBig != null && eBig.Contains("quá lớn") && db.KhPlanDetails.List.Count == n0, "Tạo PO SL 0 / SL 5 tỷ → chặn, không thêm dòng", $"{e0} | {eBig}");
             var o = EV(db, 1); var n = EV(db, 1); n.Quantity = 0;
@@ -655,6 +655,43 @@ public static class KhScen
             db.PartMachiningSteps.List.First(x => x.StepId == 701).NC = "NC9";
             var b2 = await kh.RouteRefreshBlockAsync(1, 1);
             Ok(b2 != null && b2.Contains("không còn NC đó"), "Đối chứng: Part Master chỉ còn NC9 → chặn", b2);
+        }
+
+        // [KH-NGAY-TRONG 2026-11-16] Gói 24 (BK-06): ô date xoá trống → 01/01/0001 → PlanNo "KH-00010101-0001" / STD rác. Bản cdbd991: tạo được → SAI.
+        Console.WriteLine("[A20] KH-NGAY-TRONG — Ngày lập PO / STD trống (01/01/0001) bị máy chủ chặn khi tạo; sửa STD về trống bị chặn; PO cũ lỡ STD 0001 vẫn sửa ô khác được");
+        {
+            var db = Seed(); var kh = new KhPlanService(db);
+            string? E(Func<Task> a) { try { a().GetAwaiter().GetResult(); return null; } catch (Exception ex) { return ex.Message; } }
+            int n0 = db.KhPlanDetails.List.Count, p0 = db.KhPlans.List.Count;
+            var pNoDate = new KhPlan { CustomerId = 1, Customer = db.Customers.List[0] }; pNoDate.Details.Add(new KhPlanDetail { STD = DateTime.Today, PurchaseOrder = "PO-ND", PartNo = "P", Quantity = 5 });
+            var pNoStd = new KhPlan { PlanDate = DateTime.Today, CustomerId = 1, Customer = db.Customers.List[0] }; pNoStd.Details.Add(new KhPlanDetail { PurchaseOrder = "PO-NS", PartNo = "P", Quantity = 5 });
+            var e1 = E(() => kh.CreateAsync(pNoDate, 1)); var e2 = E(() => kh.CreateAsync(pNoStd, 1));
+            Ok(e1 != null && e1.Contains("Ngày lập PO khách đang trống") && e2 != null && e2.Contains("PO-NS: STD đang trống") && db.KhPlanDetails.List.Count == n0 && db.KhPlans.List.Count == p0 && !db.KhPlans.List.Any(x => x.PlanNo.StartsWith("KH-0001")),
+               "Tạo KH ngày lập trống / STD trống → chặn, không phiếu KH-0001…", $"{e1} | {e2}");
+            Ok(KhPlanService.DateBlankError(new DateTime(1999, 12, 31), "X") != null && KhPlanService.DateBlankError(new DateTime(2000, 1, 1), "X") == null, "DateBlankError: năm < 2000 = trống");
+            var o = EV(db, 1); var n = EV(db, 1); n.STD = default;
+            var eE = await kh.SaveEditAsync(1, 1, o, n, 1, "xoa std");
+            Ok(eE != null && eE.Contains("STD đang trống") && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).STD.Year >= 2000, "Sửa PO: xoá trống STD → chặn, STD cũ giữ", eE);
+            // PO cũ lỡ STD 0001 (dữ liệu trước Gói 24): sửa ô khác vẫn được (không bắt sửa STD cùng lúc — trang Sửa tự bắt chọn STD)
+            db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).STD = default; db.Fixup();
+            var o2 = EV(db, 1); var n2 = EV(db, 1); n2.Location = "KE-9";
+            var eE2 = await kh.SaveEditAsync(1, 1, o2, n2, 1, "doi vi tri");
+            Ok(eE2 == null && db.KhPlanDetails.List.First(x => x.KhPlanDetailId == 1).Location == "KE-9", "PO cũ STD 0001, chỉ sửa Vị trí: lưu được", eE2);
+        }
+
+        // [KHO-NGAY-NHAN 2026-11-16] Gói 24 (BK-03): SL thực nhận > 0 phải có Ngày nhận; ngày tương lai chặn. Bản cdbd991: lưu được → SAI.
+        Console.WriteLine("[A21] KHO-NGAY-NHAN — Kho: SL thực nhận > 0 mà trống Ngày nhận → chặn; Ngày nhận tương lai → chặn; SL 0 không ngày vẫn như cũ");
+        {
+            var db = Seed(); var kho = new KhoVatLieuService(db, new UserService(null));
+            var k0 = db.KhoVatLieus.List.First(k => k.PlanDetailId == 1); var sl0 = k0.SoLuongThucNhan;
+            var r1 = await kho.SaveKhoInputAsync(1, null, 45, "OVL-1", "A1", null, null, null, "quen ngay", 1);
+            Ok(!r1.Success && (r1.Error ?? "").Contains("phải nhập Ngày nhận phôi") && k0.SoLuongThucNhan == sl0, "SL 45 không Ngày nhận: chặn, SL giữ", r1.Error);
+            var r2 = await kho.SaveKhoInputAsync(1, DateTime.Today.AddDays(3), 45, "OVL-1", "A1", null, null, null, "ngay tuong lai", 1);
+            Ok(!r2.Success && (r2.Error ?? "").Contains("ở tương lai") && k0.SoLuongThucNhan == sl0, "Ngày nhận 3 ngày sau: chặn", r2.Error);
+            var r3 = await kho.SaveKhoInputAsync(1, DateTime.Today, 45, "OVL-1", "A1", null, null, null, "hom nay", 1);
+            Ok(r3.Success && k0.SoLuongThucNhan == 45, "Ngày nhận hôm nay + SL 45: lưu", r3.Error);
+            Ok(KhoVatLieuService.KhoNgayNhanError(null, 0) == null && KhoVatLieuService.KhoNgayNhanError(null, null) == null && KhoVatLieuService.KhoNgayNhanError(DateTime.Today.AddDays(-1), 3) == null,
+               "SL 0 / trống không cần ngày; ngày hôm qua hợp lệ");
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");

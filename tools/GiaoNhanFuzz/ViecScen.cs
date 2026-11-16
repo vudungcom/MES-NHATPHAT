@@ -179,7 +179,7 @@ public static class ViecScen
         {
             var db = await SeedAsync(); var s = WtsScen.Svc(db); var kh = new KhPlanService(db);
             var plan = db.KhPlans.List.First(p => p.KhPlanId == 1);
-            var d3 = new KhPlanDetail { KhPlanDetailId = 3, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO3", Quantity = 10, Unit = "EA", LineNo = 2 };
+            var d3 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 3, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO3", Quantity = 10, Unit = "EA", LineNo = 2 };
             db.KhPlanDetails.List.Add(d3); plan.Details.Add(d3); db.Fixup();
             var c0 = await PoGuard.CountDocsAsync(db, 3);
             Ok(!c0.HasAny, "PO3 mới (không phôi / WTS / phiếu / báo lỗi / giờ sửa): PO trắng", c0.Text());

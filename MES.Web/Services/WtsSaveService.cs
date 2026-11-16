@@ -374,6 +374,9 @@ namespace MES.Web.Services
                 { sub.ErrorMsg = eWholeS; grp.ErrorMsg = "Có hàng " + eWholeS; return Fail(); }
                 if (QtyRule.CheckNonNegative(sub.QtyOk, sub.QtyNg) is string eAmS)   // [WTS-AM 2026-11-06] OK / NG không âm (QtyRule)
                 { sub.ErrorMsg = eAmS; grp.ErrorMsg = "Có hàng " + eAmS; return Fail(); }
+                // [WTS-GIO-AM 2026-11-16] (BW1-02) giờ thực tế 5 ô GC + T.Thực tế/pc: không âm, không vượt cột decimal(10,2) — trước: âm lọt vào DB, quá lớn nổ SQL
+                if (QtyRule.CheckTimeRange(QtyRule.WtsTimeItems(sub.SetupTime_Actual, sub.MachiningTime_Actual, sub.InspectionTime_Actual, sub.PreparationTime_Actual, sub.TrialRunTime_Actual, sub.ActualTimePerPc)) is string eGioS)
+                { sub.ErrorMsg = eGioS; grp.ErrorMsg = "Có hàng giờ sai — " + eGioS; return Fail(); }
                 // [WTS-PREP-NG 2026-11-07] mã chuẩn bị (1V/1T/1R/1K/1D/1G) chỉ tính giờ: máy chủ chặn số lượng ≠ 0 (trần + K5 bỏ qua dòng này).
                 // Nguồn: rà độc lập toàn hệ thống 07/11 (Trung) — trước: chỉ trang ẩn ô OK / NG; gửi thẳng "1K" NG 15 → vụ + NG trừ nhóm → ô âm cả khi Workflow ON.
                 if (IsPrepNoQty(grp, sub) && (sub.QtyDone != 0 || sub.QtyOk != 0 || sub.QtyNg != 0))
@@ -930,6 +933,8 @@ namespace MES.Web.Services
             { row.ErrorMsg = eWholeR; return; }
             if (QtyRule.CheckNonNegative(row.QtyOk, row.QtyNg) is string eAmR)   // [WTS-AM 2026-11-06] OK / NG không âm (QtyRule)
             { row.ErrorMsg = eAmR; return; }
+            if (QtyRule.CheckTimeRange(QtyRule.WtsTimeItems(row.SetupTime_Actual, row.MachiningTime_Actual, row.InspectionTime_Actual, row.PreparationTime_Actual, row.TrialRunTime_Actual, row.ActualTimePerPc)) is string eGioR)   // [WTS-GIO-AM 2026-11-16]
+            { row.ErrorMsg = eGioR; return; }
 
             // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế — kiểm tra TRƯỚC khi void bản ghi cũ
             var _missSerialRow = GetMissingSerialTimesMsg(grp, row);
@@ -1134,8 +1139,7 @@ namespace MES.Web.Services
                 }
                 catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10b] deadlock: đi ra SaveGroupAsync để tự lưu lại cả nhóm
                 {
-                    var inner = ex.InnerException?.Message ?? ex.Message;
-                    row.ErrorMsg = "Lỗi khi lưu: " + inner;
+                    row.ErrorMsg = "Lỗi khi lưu: " + UiSafe.Text(ex, null, "lưu WTS");   // [C-11 2026-11-16] trước: SqlException thô (tên bảng) hiện cho công nhân
                     return;
                 }
             }
@@ -1299,7 +1303,7 @@ namespace MES.Web.Services
                 _db.ChangeTracker.Clear();
                 row.HasWarning = true;
                 row.WarningMsg = (row.WarningMsg ?? "") + " Đã lưu WTS nhưng chưa ghi được số chuẩn: "
-                               + (ex.InnerException?.Message ?? ex.Message);
+                               + UiSafe.Text(ex, null, "ghi số chuẩn");   // [C-11 2026-11-16]
             }
         }
 
@@ -1482,7 +1486,7 @@ namespace MES.Web.Services
             catch (Exception ex) when (!HandoverService.IsDeadlock(ex))   // [RS-D10c] deadlock: đi ra SaveActivityAsync để tự lưu lại
             {
                 _db.ChangeTracker.Clear();   // không để dòng lỗi ở lại DbContext dùng chung với trang
-                return Fail("Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message));
+                return Fail("Lỗi khi lưu: " + UiSafe.Text(ex, null, "lưu Việc không ra sản phẩm"));   // [C-11 2026-11-16]
             }
             _db.ChangeTracker.Clear();
             result.Ok = true;

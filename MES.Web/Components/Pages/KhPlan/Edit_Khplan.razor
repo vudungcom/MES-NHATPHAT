@@ -678,7 +678,7 @@ else
         }
         catch (Exception ex)
         {
-            _refreshError = "Lỗi: " + ex.Message;
+            _refreshError = UiSafe.Text(ex, Logger, "cập nhật quy trình từ Part Master");   // [C-11 2026-11-16]
         }
         finally
         {
@@ -700,6 +700,7 @@ else
             _error = "SL phải > 0";
             return;
         }
+        if (KhPlanService.DateBlankError(_detailForm.STD, "STD") is string eStd) { _error = eStd; return; }   // [KH-NGAY-TRONG 2026-11-16] (BK-06) ô date xoá trống → 01/01/0001; máy chủ kiểm lại
 
         // [KH-GUARD 2026-10-27] K7: bật Workflow (OFF → ON) mà PO đang có số âm thì báo ngay, không hỏi PIN
         if (_plan != null && _applyWorkflow && !_plan.ApplyWorkflow)
@@ -771,7 +772,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = "Lỗi khi lưu: " + ex.Message;
+            _error = UiSafe.Text(ex, Logger, "lưu phiếu Kế hoạch");   // [C-11 2026-11-16]
             _savedSuccessfully = false;
             Db.ChangeTracker.Clear();   // [KHE-SAVE] bỏ thay đổi dở (lưu lại không ghi kèm phần cũ)
         }

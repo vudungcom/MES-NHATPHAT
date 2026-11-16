@@ -17,8 +17,9 @@ public class User
     [Required, MaxLength(200)]
     public string PasswordHash { get; set; } = "";
 
-    [MaxLength(20)]
-    public string? PIN { get; set; }  
+    /// <summary>[PIN-HASH] PIN lưu dạng hash PBKDF2 (~95 ký tự, như PasswordHash) — trước: chữ rõ, cột 20. DB có sẵn: chạy tools/sql/16_PIN_HASH.sql (ALTER COLUMN 200).</summary>
+    [MaxLength(200)]
+    public string? PIN { get; set; }
 
     public int? GroupId { get; set; }
     

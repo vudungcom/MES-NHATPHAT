@@ -33,8 +33,8 @@ public static class WtsScen
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-WTS", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
         var plan2 = new KhPlan { KhPlanId = 2, PlanNo = "KH-OFF", Customer = cust, CustomerId = 1, ApplyWorkflow = false };
         db.KhPlans.List.Add(plan); db.KhPlans.List.Add(plan2);
-        var d1 = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = po1, Unit = "EA", LineNo = 1 };
-        var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 2, KhPlan = plan2, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, Unit = "EA", LineNo = 1 };
+        var d1 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = po1, Unit = "EA", LineNo = 1 };
+        var d2 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 2, KhPlanId = 2, KhPlan = plan2, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, Unit = "EA", LineNo = 1 };
         db.KhPlanDetails.List.Add(d1); plan.Details.Add(d1); db.KhPlanDetails.List.Add(d2); plan2.Details.Add(d2);
         int sid = 0, tid = 0;
         foreach (var (id, q) in new[] { (1, po1), (2, 20) })
@@ -1052,6 +1052,29 @@ public static class WtsScen
                    && !db.WtsProductionLogs.List.Single(x => x.WtsLogId == a.WtsLogId).IsVoided,
                    "W22d OFF: nhóm bị chặn (dòng khác vượt PO) → vụ giữ loại lỗi cũ, không cảnh báo, dòng cũ giữ", r.ErrorMsg);
             }
+        }
+
+        // [WTS-GIO-AM 2026-11-16] Gói 24 (BW1-02): giờ thực tế âm / quá cột decimal(10,2) bị máy chủ chặn (cả ô không bắt buộc). Bản cdbd991: T.Chạy −3 lưu được → SAI.
+        Console.WriteLine("[W23] WTS-GIO-AM — giờ thực tế GC (T.Gá / T.GC / T.Ktra / T.CB / T.Chạy) và T.Thực tế/pc: âm → chặn, quá 99.999.999,99 → chặn, 0 / trống ô không bắt buộc vẫn như cũ");
+        {
+            var db = await SeedAsync(); var s = Svc(db); int n0 = WtsCount(db);
+            var g = Gc(mode: "trial"); g.Rows.Add(Row(1, 0, 0, T, T.AddHours(1), mode: "trial", setup: null, mach: null, insp: null, prep: 5, trial: -3));
+            var r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (g.Rows[0].ErrorMsg ?? "").Contains("T.Chạy không được âm") && WtsCount(db) == n0, "Chạy thử T.CB 5, T.Chạy −3 (ô không bắt buộc): chặn, không ghi (trước: ghi −3 vào DB)", g.Rows[0].ErrorMsg);
+            g = Gc(); g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1), setup: 1_000_000_000m));
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (g.Rows[0].ErrorMsg ?? "").Contains("T.Gá quá lớn") && WtsCount(db) == n0, "Hàng loạt T.Gá 1e9: chặn chữ Việt (trước: SqlException overflow tiếng Anh)", g.Rows[0].ErrorMsg);
+            g = Gc(); g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1), insp: -0.5m));
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (g.Rows[0].ErrorMsg ?? "").Contains("T.Ktra không được âm") && (r.ErrorMsg ?? "").Contains("giờ sai"), "T.Ktra −0,5: chặn, lời nhóm nêu giờ sai", r.ErrorMsg);
+            g = NonGc("KCS"); g.Rows.Add(Row(1, 5, 0, T, T.AddHours(1), code: "K1", setup: null, mach: null, insp: null, actualPc: -2));
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && WtsCount(db) == n0, "KCS T.Thực tế/pc −2: chặn (ô bắt buộc > 0 hoặc luật âm)", g.Rows[0].ErrorMsg);
+            g = Gc(mode: "trial"); g.Rows.Add(Row(1, 0, 0, T, T.AddHours(1), mode: "trial", setup: null, mach: null, insp: null, prep: 5, trial: 0));
+            r = await s.SaveGroupAsync(g);
+            Ok(r.Ok && WtsCount(db) == n0 + 1, "Chạy thử T.Chạy = 0: vẫn lưu như cũ (không đổi luật, chỉ chặn âm / quá cột)", r.ErrorMsg);
+            Ok(QtyRule.ClampTime(-3) == 0 && QtyRule.ClampTime(null) == null && QtyRule.ClampTime(1_000_000_000m) == QtyRule.TimeMax && QtyRule.ClampTime(12.5m) == 12.5m,
+               "ClampTime (trang): −3 → 0, 1e9 → trần cột, số thường giữ");
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");

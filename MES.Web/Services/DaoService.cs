@@ -117,7 +117,7 @@ public class DaoService
         }
         catch (Exception ex)
         {
-            return (false, ex.InnerException?.Message ?? ex.Message, null);
+            return (false, UiSafe.Text(ex, null, "lưu dao"), null);   // [C-11 2026-11-16] trước: SqlException thô
         }
     }
 

@@ -53,6 +53,24 @@ public class CaLamViecService
                 return (false, $"Nghỉ giải lao: giờ kết thúc phải sau giờ bắt đầu ({n.NghiBatDau:HH\\:mm}).");
         }
 
+        // [CA-NGHI-NGOAI 2026-11-16] (BM2-06 phần còn) Giờ nghỉ phải nằm trong khung ca (tính cả ca đêm qua 0h: đo theo phút kể từ giờ bắt đầu ca) —
+        //   trước: ca 07:00–17:00 với nghỉ 20:00–21:00 lưu được (không trừ phút, nhưng gây hiểu nhầm / dữ liệu rác). Trùng tên ca đang bật cũng chặn.
+        //   Nguồn: CLAUDE quét Fable 15/11 (B-M2 BM2-06 Trung); Hùng 16/11 11:34 OK Gói 24 (đề xuất B3: chặn).
+        {
+            int Off(TimeOnly t) => (int)(((t - ca.GioBatDau).TotalMinutes % 1440 + 1440) % 1440);
+            int lenCa = Off(ca.GioKetThuc) == 0 ? 1440 : Off(ca.GioKetThuc);
+            foreach (var n in nghiList)
+            {
+                int sB = Off(n.NghiBatDau); int sE = sB + (int)(n.NghiKetThuc - n.NghiBatDau).TotalMinutes;
+                if (sE > lenCa)
+                    return (false, $"Nghỉ giải lao {n.NghiBatDau:HH\\:mm}–{n.NghiKetThuc:HH\\:mm} nằm ngoài khung ca {ca.GioBatDau:HH\\:mm}–{ca.GioKetThuc:HH\\:mm} — sửa giờ nghỉ hoặc giờ ca.");
+            }
+            var ten = ca.TenCa.Trim();
+            var trung = await _db.CaLamViecs.AsNoTracking().Where(c => c.IsActive && c.CaId != ca.CaId).Select(c => c.TenCa).ToListAsync();
+            if (trung.Any(t => string.Equals((t ?? "").Trim(), ten, StringComparison.OrdinalIgnoreCase)))
+                return (false, $"Tên ca \"{ten}\" đã có ca khác đang dùng — đặt tên khác (hoặc Ẩn ca cũ).");
+        }
+
         // [CA-NGHI-OVERLAP 2026-11-01] 2 khoảng nghỉ chồng nhau → trước: trang WTS trừ phần chồng 2 lần (phút làm âm / thiếu).
         //   Nay chặn lưu ca (WorkMinutes.BreakSegments vẫn gộp khoảng chồng của dữ liệu ca cũ cho an toàn).
         var _sorted = nghiList.OrderBy(x => x.NghiBatDau).ToList();
@@ -84,7 +102,7 @@ public class CaLamViecService
                 ca.CaId = 0;
                 ca.NghiGiaiLaos.Clear();   // rà độc lập vòng 2: EF đã tự nối navigation ca ↔ giờ nghỉ — gỡ, không thì bấm Lưu lại chèn giờ nghỉ 2 lần
                 foreach (var n in nghiList) { n.CaId = 0; n.NghiId = 0; n.Ca = null; }
-                return (false, "Không lưu được ca mới: " + ex.Message);
+                return (false, "Không lưu được ca mới: " + UiSafe.Text(ex, null, "lưu ca"));   // [C-11 2026-11-16]
             }
         }
         else

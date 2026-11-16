@@ -530,6 +530,139 @@ public static class AuthScen
             Ok(!r5.Success, "Người không phải ADMIN (uid 5 không tồn tại) tạo tài khoản → từ chối (giữ USER-PERM-SVC)", r5.Error);
         }
 
+        // =============================================================================================================
+        // [PIN-HASH][PIN-THROTTLE 2026-11-16] Gói 24 (P-05 / C-02): PIN lưu hash PBKDF2, PIN chữ rõ cũ vẫn nhận rồi tự nâng; 5 lần sai / 15 phút khoá.
+        //   Nguồn: CLAUDE quét Fable 15/11 (A3C P-05 / C-02 Trung); Hùng 16/11 11:34 OK Gói 24. Bản cdbd991: PIN chữ rõ, không khoá → SAI.
+        // =============================================================================================================
+        Console.WriteLine("[U16] PIN-HASH — PIN chữ rõ cũ vẫn so được rồi tự nâng lên hash; PIN mới ghi hash; PasswordHasher so đúng / sai");
+        {
+            AuthService.PinUpgradeLog = null; PinThrottle.ResetAll();
+            var db = new AppDbContext();
+            var gA = new UserGroup { GroupId = 2, GroupCode = "GC", IsActive = true };
+            db.UserGroups.List.Add(gA);
+            var u = new User { UserId = 5, Username = "gc01", FullName = "Cong nhan", IsActive = true, Group = gA, GroupId = 2, PIN = "1234" };
+            db.Users.List.Add(u);
+            db.Users.List.Add(new User { UserId = 6, Username = "kho01", FullName = "Kho", IsActive = true, Group = gA, GroupId = 2, PIN = null });
+            db.Fixup();
+            var auth = new AuthService(db);
+            Ok(!await auth.VerifyPinAsync(5, "0000") && u.PIN == "1234", "PIN chữ rõ cũ, gõ sai: từ chối, PIN còn chữ rõ (chưa nâng vì chưa chứng minh được)", auth.LastPinError);
+            Ok(await auth.VerifyPinAsync(5, " 1234 ") && AuthService.IsPinHashed(u.PIN) && PasswordHasher.Verify("1234", u.PIN!),
+               "PIN chữ rõ cũ, gõ đúng (có dấu cách thừa): nhận, TỰ NÂNG lên hash PBKDF2 (DB không còn '1234')", u.PIN);
+            Ok(await auth.VerifyPinAsync(5, "1234") && !await auth.VerifyPinAsync(5, "1235"), "Sau khi nâng: PIN đúng vẫn nhận, PIN sai từ chối", auth.LastPinError);
+            Ok(!AuthService.PinMatches(u.PIN, "") && !AuthService.PinMatches(null, "1234") && AuthService.PinMatches("1234", "1234") && AuthService.PinMatches(u.PIN, "1234"),
+               "PinMatches: rỗng / null → false; chữ rõ và hash đều so được");
+            PinThrottle.ResetAll();
+            var s6 = await auth.SetPinAsync(6, null, "2468");
+            var u6 = db.Users.List.Single(x => x.UserId == 6);
+            Ok(s6.Success && AuthService.IsPinHashed(u6.PIN) && await auth.VerifyPinAsync(6, "2468"), "Đặt PIN mới (chưa có PIN): ghi hash, so được", s6.Error + " | " + u6.PIN);
+            var s6b = await auth.SetPinAsync(6, "0000", "1357");
+            Ok(!s6b.Success && s6b.Error == "PIN cũ không đúng" && await auth.VerifyPinAsync(6, "2468"), "Đổi PIN với PIN cũ sai: từ chối, PIN cũ còn", s6b.Error);
+            var s6c = await auth.SetPinAsync(6, "2468", "1357");
+            Ok(s6c.Success && await auth.VerifyPinAsync(6, "1357") && !await auth.VerifyPinAsync(6, "2468"), "Đổi PIN với PIN cũ đúng: PIN mới (hash) có hiệu lực", s6c.Error);
+            Ok(!await auth.HasPinAsync(99) && await auth.HasPinAsync(6), "HasPinAsync như cũ");
+            // nâng hàng loạt lúc khởi động
+            db.Users.List.Add(new User { UserId = 7, Username = "a7", FullName = "A7", IsActive = true, Group = gA, GroupId = 2, PIN = "7777" });
+            db.Users.List.Add(new User { UserId = 8, Username = "a8", FullName = "A8", IsActive = true, Group = gA, GroupId = 2, PIN = "" });
+            db.Fixup();
+            var n = await AuthService.UpgradeAllPlainPinsAsync(db);
+            Ok(n == 1 && AuthService.IsPinHashed(db.Users.List.Single(x => x.UserId == 7).PIN) && db.Users.List.Single(x => x.UserId == 8).PIN == "",
+               "UpgradeAllPlainPinsAsync: chỉ nâng PIN còn chữ rõ (1 người), PIN rỗng / đã hash không đụng", $"n={n}");
+            Ok(await auth.VerifyPinAsync(7, "7777"), "PIN nâng hàng loạt vẫn so đúng");
+            PinThrottle.ResetAll();
+        }
+        Console.WriteLine("[U17] PIN-THROTTLE — 5 lần sai / 15 phút theo userId → khoá 15 phút; gõ đúng xoá đếm; ô \"PIN\" so mật khẩu (Xoá PO / Kho) đếm RIÊNG; Reset PIN xoá đếm");
+        {
+            PinThrottle.ResetAll();
+            var db = new AppDbContext();
+            var gA = new UserGroup { GroupId = 2, GroupCode = "GC", IsActive = true };
+            db.UserGroups.List.Add(gA);
+            db.Users.List.Add(new User { UserId = 5, Username = "gc01", FullName = "A", IsActive = true, Group = gA, GroupId = 2, PIN = PasswordHasher.Hash("1234"), PasswordHash = PasswordHasher.Hash("matkhau1") });
+            db.Users.List.Add(new User { UserId = 6, Username = "gc02", FullName = "B", IsActive = true, Group = gA, GroupId = 2, PIN = PasswordHasher.Hash("1234"), PasswordHash = PasswordHasher.Hash("matkhau2") });
+            db.Fixup();
+            var auth = new AuthService(db);
+            for (int i = 0; i < 4; i++) await auth.VerifyPinAsync(5, "0000");
+            Ok(auth.LastPinError != null && auth.LastPinError.Contains("còn 1 lần"), "Sai 4 lần: còn 1 lần thử (chưa khoá)", auth.LastPinError);
+            Ok(await auth.VerifyPinAsync(5, "1234"), "Lần 5 gõ đúng: nhận (xoá đếm)", auth.LastPinError);
+            for (int i = 0; i < 5; i++) await auth.VerifyPinAsync(5, "0000");
+            Ok(auth.LastPinError != null && auth.LastPinError.Contains("khoá"), "Sai 5 lần liên tiếp: khoá 15 phút", auth.LastPinError);
+            Ok(!await auth.VerifyPinAsync(5, "1234") && (auth.LastPinError ?? "").Contains("đang khoá"), "Đang khoá: PIN ĐÚNG cũng bị từ chối (không dò được)", auth.LastPinError);
+            Ok(await auth.VerifyPinAsync(6, "1234"), "Người khác không bị khoá theo");
+            Ok(PinThrottle.LockedMinutes(5, DateTime.Now.AddMinutes(16)) == null, "Sau 15 phút: hết khoá");
+            PinThrottle.ResetAll();
+            var sp6 = await auth.SetPinAsync(5, "0000", "9999");
+            Ok(!sp6.Success && PinThrottle.Remaining(5, DateTime.Now) == 4, "Đổi PIN gõ PIN cũ sai: cũng đếm (còn 4)", sp6.Error);
+            PinThrottle.ResetAll();
+            // ô "PIN" so mật khẩu đăng nhập (Xoá PO / sửa Kho)
+            Ok(await auth.VerifyPasswordForActionAsync(5, " matkhau1 ") , "VerifyPasswordForActionAsync: mật khẩu đúng (Trim) → nhận", auth.LastPinError);
+            for (int i = 0; i < 5; i++) await auth.VerifyPasswordForActionAsync(5, "sai");
+            Ok(!await auth.VerifyPasswordForActionAsync(5, "matkhau1") && (auth.LastPinError ?? "").Contains("khoá"), "Sai mật khẩu 5 lần ở ô PIN: khoá, đúng cũng từ chối", auth.LastPinError);
+            Ok(await auth.VerifyPinAsync(5, "1234"), "Bộ đếm RIÊNG: khoá ô mật khẩu không khoá PIN thật của người đó (rà độc lập 16/11 — gõ nhầm PIN vào ô Kho / Xoá PO không khoá Thiết bị / Đồ gá)", auth.LastPinError);
+            Ok(!await auth.VerifyPasswordForActionAsync(99, "x") && !await auth.VerifyPasswordForActionAsync(5, ""), "User không có / mật khẩu trống: từ chối");
+            // Reset PIN / Đặt lại mật khẩu = đường mở khoá đếm
+            for (int i = 0; i < 5; i++) await auth.VerifyPinAsync(5, "0000");
+            Ok(!await auth.VerifyPinAsync(5, "1234"), "Khoá PIN lại (5 sai)");
+            PinThrottle.Success(5); PinThrottle.Success(-5);   // như UserService.ResetPinAsync gọi sau khi xoá PIN
+            Ok(PinThrottle.LockedMinutes(5, DateTime.Now) == null && PinThrottle.LockedMinutes(-5, DateTime.Now) == null, "Reset PIN (Admin) xoá cả 2 bộ đếm → hết khoá ngay");
+            PinThrottle.ResetAll();
+        }
+        // [CA-NGHI-NGOAI 2026-11-16] Gói 24 (BM2-06 phần còn): giờ nghỉ ngoài khung ca (tính ca đêm) + trùng tên ca đang bật → chặn. Bản cdbd991: lưu được → SAI.
+        Console.WriteLine("[U19] CA-NGHI-NGOAI — giờ nghỉ nằm ngoài khung ca bị chặn (ca thường + ca đêm qua 0h); trùng tên ca đang bật bị chặn; ca ẩn trùng tên không tính");
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = true, Permissions = "[]" };
+            db.UserGroups.List.Add(gAd);
+            db.Users.List.Add(new User { UserId = 1, Username = "admin", FullName = "Admin", IsActive = true, Group = gAd, GroupId = 1 });
+            db.CaLamViecs.List.Add(new CaLamViec { CaId = 1, TenCa = "Hành chính", GioBatDau = new TimeOnly(7, 30), GioKetThuc = new TimeOnly(17, 0), IsActive = true });
+            db.CaLamViecs.List.Add(new CaLamViec { CaId = 2, TenCa = "Ca cũ", GioBatDau = new TimeOnly(6, 0), GioKetThuc = new TimeOnly(14, 0), IsActive = false });
+            db.Fixup();
+            var cs = new CaLamViecService(db);
+            CaLamViec Ca(string ten, int h1, int m1, int h2, int m2) => new() { TenCa = ten, GioBatDau = new TimeOnly(h1, m1), GioKetThuc = new TimeOnly(h2, m2), IsActive = true };
+            List<CaLamViec_NghiGiaiLao> N(params (int, int, int, int)[] xs) => xs.Select(x => new CaLamViec_NghiGiaiLao { NghiBatDau = new TimeOnly(x.Item1, x.Item2), NghiKetThuc = new TimeOnly(x.Item3, x.Item4) }).ToList();
+            int n0 = db.CaLamViecs.List.Count;
+            var r1 = await cs.SaveAsync(Ca("Ca sáng", 7, 0, 17, 0), N((20, 0, 21, 0)), 1);
+            Ok(!r1.Ok && r1.Error.Contains("nằm ngoài khung ca") && db.CaLamViecs.List.Count == n0, "Ca 07:00–17:00, nghỉ 20:00–21:00: chặn", r1.Error);
+            var r2 = await cs.SaveAsync(Ca("Ca sáng", 7, 0, 17, 0), N((16, 30, 17, 30)), 1);
+            Ok(!r2.Ok && r2.Error.Contains("nằm ngoài khung ca"), "Nghỉ 16:30–17:30 vắt qua giờ kết thúc ca: chặn", r2.Error);
+            var r3 = await cs.SaveAsync(Ca("Ca đêm", 20, 0, 5, 0), N((23, 30, 23, 45), (1, 0, 1, 30)), 1);
+            Ok(r3.Ok, "Ca đêm 20:00–05:00, nghỉ 23:30 và 01:00 (sau 0h): lưu được", r3.Error);
+            var r4 = await cs.SaveAsync(Ca("Ca đêm 2", 20, 0, 5, 0), N((6, 0, 6, 30)), 1);
+            Ok(!r4.Ok && r4.Error.Contains("nằm ngoài khung ca"), "Ca đêm 20:00–05:00, nghỉ 06:00–06:30 (sau giờ kết thúc): chặn", r4.Error);
+            var r5 = await cs.SaveAsync(Ca("hành chính", 8, 0, 16, 0), N(), 1);
+            Ok(!r5.Ok && r5.Error.Contains("Tên ca") && r5.Error.Contains("đã có"), "Tên ca trùng ca đang bật (khác hoa / thường): chặn", r5.Error);
+            var r6 = await cs.SaveAsync(Ca("Ca cũ", 8, 0, 16, 0), N(), 1);
+            Ok(r6.Ok, "Tên trùng ca đã ẨN: cho (ca ẩn không tính)", r6.Error);
+            var ca1 = db.CaLamViecs.List.Single(x => x.CaId == 1);
+            var r7 = await cs.SaveAsync(new CaLamViec { CaId = 1, TenCa = "Hành chính", GioBatDau = new TimeOnly(7, 30), GioKetThuc = new TimeOnly(17, 30), IsActive = true }, N((12, 0, 13, 0)), 1);
+            Ok(r7.Ok && ca1.GioKetThuc == new TimeOnly(17, 30), "Sửa ca 1 giữ tên cũ (không tự trùng chính nó): lưu được", r7.Error);
+        }
+
+        Console.WriteLine("[U18] ADMIN-RESET-MK — ADMIN đặt lại mật khẩu người quên: chỉ ADMIN, không cho chính mình, Trim + ≥ 6, đăng nhập được bằng mật khẩu mới");
+        {
+            var db = new AppDbContext();
+            var gAd = new UserGroup { GroupId = 1, GroupCode = "ADMIN", GroupName = "Admin", IsActive = true, Permissions = "[]" };
+            var gA = new UserGroup { GroupId = 2, GroupCode = "GC", GroupName = "Gia công", IsActive = true, Permissions = "[]" };
+            db.UserGroups.List.AddRange(new[] { gAd, gA });
+            db.Users.List.Add(new User { UserId = 1, Username = "boss", FullName = "Boss", IsActive = true, Group = gAd, GroupId = 1, PasswordHash = PasswordHasher.Hash("bossbos") });
+            db.Users.List.Add(new User { UserId = 5, Username = "gc01", FullName = "A", IsActive = true, Group = gA, GroupId = 2, PasswordHash = PasswordHasher.Hash("cu12345"), PIN = PasswordHasher.Hash("1234") });
+            db.Users.List.Add(new User { UserId = 6, Username = "gc02", FullName = "B", IsActive = true, Group = gA, GroupId = 2, PasswordHash = PasswordHasher.Hash("cu67890") });
+            db.Fixup();
+            var sp = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var us = new UserService(Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(sp));
+            var u5 = db.Users.List.Single(x => x.UserId == 5); var h0 = u5.PasswordHash;
+            var r1 = await us.ResetPasswordAsync(5, "moi123", 6);
+            Ok(!r1.Success && u5.PasswordHash == h0, "Người không phải ADMIN đặt lại cho người khác: chặn", r1.Error);
+            var r2 = await us.ResetPasswordAsync(1, "moi123", 1);
+            Ok(!r2.Success && r2.Error!.Contains("Hồ sơ"), "ADMIN đặt lại cho CHÍNH mình: chặn (dùng Hồ sơ, cần mật khẩu cũ)", r2.Error);
+            var r3 = await us.ResetPasswordAsync(5, " ab1 ", 1);
+            Ok(!r3.Success && r3.Error!.Contains("tối thiểu 6") && u5.PasswordHash == h0, "Mật khẩu mới 3 ký tự sau Trim: chặn", r3.Error);
+            var r4 = await us.ResetPasswordAsync(5, " moi123 ", 1);
+            Ok(r4.Success && PasswordHasher.Verify("moi123", u5.PasswordHash) && !PasswordHasher.Verify("cu12345", u5.PasswordHash) && u5.PIN != null,
+               "ADMIN đặt lại: đăng nhập bằng mật khẩu mới (Trim), mật khẩu cũ hết, PIN không đổi", r4.Error);
+            var r5 = await us.ResetPasswordAsync(99, "moi123", 1);
+            Ok(!r5.Success && r5.Error == "Không tìm thấy User.", "User không tồn tại: báo", r5.Error);
+            Ok(PasswordHasher.Verify("cu67890", db.Users.List.Single(x => x.UserId == 6).PasswordHash), "Người khác không bị đụng");
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
     }

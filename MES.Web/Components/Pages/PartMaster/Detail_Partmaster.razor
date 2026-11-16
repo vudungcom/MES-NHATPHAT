@@ -333,31 +333,31 @@ else
                                     @* Các cột thời gian — icon ✓ per-ô, xanh khi confirmed *@
                                     <td class="@SetupCellCss(edit)">
                                         <div class="d-flex align-items-center gap-1">
-                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.SetupTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (edit.StepId > 0) { <i class="@SetupIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@SetupIconTitle(edit)" @onclick="() => ToggleSetupAsync(edit)"></i> }
                                         </div>
                                     </td>
                                     <td class="@MachiningCellCss(edit)">
                                         <div class="d-flex align-items-center gap-1">
-                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.MachiningTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (edit.StepId > 0) { <i class="@MachiningIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@MachiningIconTitle(edit)" @onclick="() => ToggleMachiningAsync(edit)"></i> }
                                         </div>
                                     </td>
                                     <td class="@InspectionCellCss(edit)">
                                         <div class="d-flex align-items-center gap-1">
-                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.InspectionTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (edit.StepId > 0) { <i class="@InspectionIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@InspectionIconTitle(edit)" @onclick="() => ToggleInspectionAsync(edit)"></i> }
                                         </div>
                                     </td>
                                     <td class="@PreparationCellCss(edit)">
                                         <div class="d-flex align-items-center gap-1">
-                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.PreparationTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (edit.StepId > 0) { <i class="@PreparationIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@PreparationIconTitle(edit)" @onclick="() => TogglePreparationAsync(edit)"></i> }
                                         </div>
                                     </td>
                                     <td class="@TrialRunCellCss(edit)">
                                         <div class="d-flex align-items-center gap-1">
-                                            <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                            <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.TrialRunTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditB || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             @if (edit.StepId > 0) { <i class="@TrialRunIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrialRunIconTitle(edit)" @onclick="() => ToggleTrialRunAsync(edit)"></i> }
                                         </div>
                                     </td>
@@ -462,31 +462,31 @@ else
                                         </td>
                                         <td class="@TrSetupCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="tr.SetupTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrSetupIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrSetupIconTitle(edit, tr)" @onclick="() => TrToggleSetupAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrMachiningCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="tr.MachiningTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrMachiningIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrMachiningIconTitle(edit, tr)" @onclick="() => TrToggleMachiningAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrInspectionCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="tr.InspectionTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrInspectionIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrInspectionIconTitle(edit, tr)" @onclick="() => TrToggleInspectionAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrPreparationCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="tr.PreparationTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrPreparationIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrPreparationIconTitle(edit, tr)" @onclick="() => TrTogglePreparationAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
                                         <td class="@TrTrialRunCellCss(edit, tr)">
                                             <div class="d-flex align-items-center gap-1">
-                                                <input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
+                                                <input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="tr.TrialRunTime" @bind:after="() => MarkTimingFieldEdited(edit, tr)" disabled="@(!CanEditTimingRow(edit, tr))" />
                                                 @if (tr.TimingId > 0 && tr.State != EditState.Deleted) { <i class="@TrTrialRunIconCss(edit, tr) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@TrTrialRunIconTitle(edit, tr)" @onclick="() => TrToggleTrialRunAsync(edit, tr)"></i> }
                                             </div>
                                         </td>
@@ -640,7 +640,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
                                             {
@@ -721,7 +721,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
@@ -806,7 +806,7 @@ else
                                                 <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditC || RowLocked(edit))" />
                                             }
                                         </td>
-                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
+                                        <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditC || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                         
                                         <td class="text-center text-nowrap">
                                             @if (edit.StepId > 0)
@@ -892,7 +892,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit))" />
                                     }
                                 </td>
-                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditD || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
+                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditD || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                 
                                 <td class="text-center text-nowrap">
                                     @if (edit.StepId > 0)
@@ -976,7 +976,7 @@ else
                                         <input class="form-control form-control-sm" value="@edit.StepName" @oninput="e => { edit.StepName = e.Value?.ToString(); MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit))" />
                                     }
                                 </td>
-                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditE || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
+                                <td class="@StdCellCss(edit)"><div class="d-flex align-items-center gap-1"><input type="number" step="0.1" min="0" class="form-control form-control-sm text-end px-1" @bind="edit.StandardTime" @bind:after="() => MarkAsModified(edit)" disabled="@(!_canEditE || RowLocked(edit))" />@if (edit.StepId > 0) { <i class="@StdIconCss(edit) flex-shrink-0" style="cursor:pointer; font-size:0.85rem;" title="@StdIconTitle(edit)" @onclick="() => DoToggleStd(edit)"></i> }</div></td>
                                 
                                 <td class="text-center text-nowrap">
                                     @if (edit.StepId > 0)
@@ -1359,6 +1359,11 @@ else
                                 : "Chưa có")
                         </strong>
                     </div>
+                    @* [EXCL-LOI 2026-11-16] (BP1-05) lỗi lưu hiện ngay trong modal (trước: chỉ Console.Error, modal đứng im, người dùng tưởng đã lưu) *@
+                    @if (!string.IsNullOrEmpty(_excludeError))
+                    {
+                        <div class="alert alert-danger py-2 small mt-2 mb-0">@_excludeError</div>
+                    }
                 </div>
                 <div class="modal-footer py-2 bg-light">
                     <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="CloseExcludeModal" disabled="@_excludeSaving">Hủy</button>
@@ -1853,7 +1858,7 @@ else
         _stdUpdOpenPlan.Clear();
         _stdUpdBusy = true;
         try { _stdUpdPreview = await StdUpdSvc.PreviewAsync(_part.PartId, _stdUpdFrom); await StdUpdSelectAllAfterPreviewAsync(); }
-        catch (Exception ex) { _stdUpdPreview = null; _stdUpdError = ex.InnerException?.Message ?? ex.Message; }
+        catch (Exception ex) { _stdUpdPreview = null; _stdUpdError = UiSafe.Text(ex, Logger, "xem trước Update TG chuẩn"); }   // [C-11 2026-11-16]
         finally { _stdUpdBusy = false; }
     }
 
@@ -1887,7 +1892,7 @@ else
                 StdUpdFingerprintNow());   // [STD-5] Part Master đổi sau lúc Xem trước → máy chủ dừng, bắt Xem trước lại
             _stdUpdPreview = null;
         }
-        catch (Exception ex) { _stdUpdError = "Lỗi khi Update: " + (ex.InnerException?.Message ?? ex.Message); }
+        catch (Exception ex) { _stdUpdError = "Lỗi khi Update: " + UiSafe.Text(ex, Logger, "Update TG chuẩn"); }   // [C-11 2026-11-16]
         finally { _stdUpdBusy = false; }
     }
 
@@ -2233,6 +2238,7 @@ else
     private HashSet<string> _selectedExcludeMachines = new();
     private string _excludeMachineSearch = string.Empty;
     private bool _excludeSaving = false;
+    private string? _excludeError;   // [EXCL-LOI 2026-11-16]
 
     private IEnumerable<DoGa> FilteredAltDoGas
     {
@@ -2885,7 +2891,7 @@ else
             }
             catch (Exception ex)
             {
-                errors.Add($"✗ Xác nhận T.Chuẩn {key.Table} (step {key.StepId}): {ex.Message}");
+                errors.Add($"✗ Xác nhận T.Chuẩn {key.Table} (step {key.StepId}): {UiSafe.Text(ex, Logger, "xác nhận T.Chuẩn")}");   // [C-11 2026-11-16]
             }
         }
     }
@@ -3416,6 +3422,7 @@ else
     private void CloseExcludeModal()
     {
         _showExcludeModal = false;
+        _excludeError = null;   // [EXCL-LOI]
     }
 
     private void ToggleExcludeMachineSelection(string soMay, bool isChecked)
@@ -3426,7 +3433,9 @@ else
 
     private async Task SaveExcludeModalAsync()
     {
+        if (_excludeSaving) return;   // [EXCL-LOI] bấm đúp
         _excludeSaving = true;
+        _excludeError = null;
         try
         {
             var current = await Db.MachineExcludeSettings.ToListAsync();
@@ -3457,7 +3466,12 @@ else
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[MachineExclude] SaveError: {ex.Message}");
+            // [EXCL-LOI 2026-11-16] (BP1-05) trước: chỉ Console.Error, modal không báo + entity Add / Remove lỗi còn kẹt trong DbContext dùng chung
+            //   → lượt Lưu quy trình kế tiếp ghi lại lệnh lỗi tới khi F5. Nay: hiện lỗi (UiSafe — SqlException không lộ tên bảng) + tách bản EF.
+            //   Nguồn: CLAUDE quét Fable 15/11 (B-P1 BP1-05 Trung); Hùng 16/11 11:34 OK Gói 24.
+            Db.ChangeTracker.Clear();
+            _excludeError = "Chưa lưu được danh sách máy loại trừ — " + UiSafe.Text(ex, Logger, "lưu máy loại trừ");
+            try { _excludeSettings = await Db.MachineExcludeSettings.OrderBy(x => x.SoMay).AsNoTracking().ToListAsync(); } catch { /* giữ danh sách cũ */ }
         }
         finally
         {
@@ -3715,6 +3729,9 @@ else
         //   → đi vào snapshot mọi PO mới: mã "-" không bao giờ có WTS → OK HTSP = 0 → PO kẹt; 2 dòng cùng NC → WTS chỉ chọn máy dòng đầu).
         //   Chỉ kiểm dòng mới / đang sửa — dữ liệu cũ không đụng tới thì không chặn oan.
         if (_canEditB) CheckNcList(_machiningEdits, "Gia công", validationErrors);
+        // [PM-TG-AM 2026-11-16] (BP1-04) Thời gian chuẩn âm / quá cột decimal(10,2) → không lưu (B 5 ô + dòng máy đồng dạng ghi thẳng Db, C/D/E T.Chuẩn);
+        //   máy chủ cũng kiểm ở Part*Service (PartStepGuard.CheckStdTimes). Chỉ dòng đang hiện chưa xoá. Nguồn: CLAUDE quét Fable 15/11 (B-P1 BP1-04 Trung).
+        CheckStdTimesPage(validationErrors);
         // [B6-NC-DUP 29/10] Taro: sổ giao nhận / WTS tính theo mã CV (WtsTaskCode, trống thì NC) → kiểm trùng / trống theo đúng mã đó
         // [TARO-NC-MA 2026-11-06] Taro trùng theo CẶP (mã CV, NC): cùng mã CV ở NC khác là hợp lệ (khách chốt B 02/11 09:14 — giữ mã chung nhiều NC,
         //   sổ + form WTS đếm theo cặp); trước: chặn mọi dòng trùng mã CV → khách không khai được Taro 2 lần (NC 3 / NC 5). Máy chủ cũng kiểm cặp.
@@ -3906,7 +3923,7 @@ else
                     }
                     catch (Exception ex)
                     {
-                        errors.Add("✗ Tên chi tiết: " + ex.Message);
+                        errors.Add("✗ Tên chi tiết: " + UiSafe.Text(ex, Logger, "lưu tên chi tiết"));   // [C-11 2026-11-16]
                     }
                 }
 
@@ -3925,7 +3942,7 @@ else
                     }
                     catch (Exception ex)
                     {
-                        errors.Add("✗ Ghi chú mạ: " + ex.Message);
+                        errors.Add("✗ Ghi chú mạ: " + UiSafe.Text(ex, Logger, "lưu ghi chú mạ"));   // [C-11 2026-11-16]
                     }
                 }
 
@@ -3938,19 +3955,19 @@ else
                 if (_setDefaultMaterial)
                 {
                     try { await SafeSetDefaultAsync("Material", _material); log.Add($"✓ Đặt default Material = {_material}"); }
-                    catch (Exception ex) { errors.Add($"✗ Đặt default Material: {ex.Message}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default Material: {UiSafe.Text(ex, Logger, "đặt mặc định Material")}"); }   // [C-11 2026-11-16]
                 }
 
                 if (_setDefaultConfig)
                 {
                     try { await SafeSetDefaultAsync("MaterialConfig", _materialConfig); log.Add($"✓ Đặt default MaterialConfig = {_materialConfig}"); }
-                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialConfig: {ex.Message}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialConfig: {UiSafe.Text(ex, Logger, "đặt mặc định MaterialConfig")}"); }   // [C-11 2026-11-16]
                 }
 
                 if (_setDefaultNote)
                 {
                     try { await SafeSetDefaultAsync("MaterialNote", _materialNote); log.Add($"✓ Đặt default MaterialNote = {_materialNote}"); }
-                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {ex.Message}"); }
+                    catch (Exception ex) { errors.Add($"✗ Đặt default MaterialNote: {UiSafe.Text(ex, Logger, "đặt mặc định MaterialNote")}"); }   // [C-11 2026-11-16]
                 }
 
                 okA = errors.Count == errMark;   // [RS-E2]
@@ -4179,11 +4196,35 @@ else
         }
         catch (Exception ex)
         {
-            errors.Add($"✗ Thêm {type}: {ex.Message}");
+            errors.Add($"✗ Thêm {type}: {UiSafe.Text(ex, Logger, "thêm giá trị thuộc tính")}");   // [C-11 2026-11-16]
         }
     }
 
     /// <summary>[B6-NC-DUP] Dòng mới / đang sửa: NC (mã CV) không trống, không trùng dòng chính khác trong cùng mục.</summary>
+    /// <summary>[PM-TG-AM 2026-11-16] (BP1-04) TG chuẩn đang hiện: không âm, không quá cột (QtyRule.TimeMax) — câu báo ghi NC / mã + ô.</summary>
+    private void CheckStdTimesPage(List<string> errs)
+    {
+        // chỉ dòng mới / đang sửa (như CheckNcList) — dòng cũ có TG lạ không chặn người sửa việc khác (rà độc lập 16/11); máy chủ vẫn kiểm khi dòng đó được ghi
+        static bool Dirty(EditState s) => s == EditState.New || s == EditState.Modified;
+        if (_canEditB)
+            foreach (var e in _machiningEdits.Where(x => Dirty(x.State) || x.TimingRows.Any(t => Dirty(t.State))))
+            {
+                if (Dirty(e.State) && QtyRule.CheckTimeRange(PartStepGuard.MachiningTimeItems(e.SetupTime, e.MachiningTime, e.InspectionTime, e.PreparationTime, e.TrialRunTime)) is string m1)
+                    errs.Add($"NC {e.NC}: {m1}");
+                foreach (var tr in e.TimingRows.Where(t => Dirty(t.State)))
+                    if (QtyRule.CheckTimeRange(PartStepGuard.MachiningTimeItems(tr.SetupTime, tr.MachiningTime, tr.InspectionTime, tr.PreparationTime, tr.TrialRunTime, $" (máy {tr.SoMay})")) is string m2)
+                        errs.Add($"NC {e.NC}: {m2}");
+            }
+        void Chk<T>(List<T> list, string label, bool can) where T : SimpleStepEditBase
+        {
+            if (!can) return;
+            foreach (var e in list.Where(x => Dirty(x.State)))
+                if (QtyRule.CheckTimeRange((e.StandardTime, "T.Chuẩn")) is string m) errs.Add($"{label} {e.NC}: {m}");
+        }
+        Chk(_taroEdits, "Taro", _canEditC); Chk(_baviaEdits, "Bavia", _canEditC); Chk(_washingEdits, "Rửa", _canEditC);
+        Chk(_inspectionEdits, "KCS", _canEditD); Chk(_packagingEdits, "Đóng gói", _canEditE);
+    }
+
     private static void CheckNcList<T>(List<T> list, string label, List<string> errs, Func<T, string?>? codeOf = null, Func<T, string?>? scopeOf = null) where T : StepEditBase
     {
         // codeOf = mã mà sổ giao nhận / WTS dùng để đếm (mặc định NC; Taro: WtsTaskCode, trống thì NC)

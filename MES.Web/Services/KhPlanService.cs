@@ -59,6 +59,10 @@ public class KhPlanService
         }
     }
 
+    /// <summary>[KH-NGAY-TRONG 2026-11-16] (BK-06) Ngày bắt buộc bị xoá trống (01/01/0001) hoặc năm < 2000 → câu báo; null = hợp lệ. Dùng chung trang + máy chủ.</summary>
+    public static string? DateBlankError(DateTime v, string ten)
+        => v.Year < 2000 ? $"{ten} đang trống / không hợp lệ — chọn ngày." : null;
+
     private async Task<int> CreateCoreAsync(KhPlan plan, int userId)
     {
         // [B5-PODUP 2026-10-28] Số PO là khoá tra cứu của WTS / Kho / Tách PO → không cho trùng (trong phiếu và với PO đã có).
@@ -81,6 +85,11 @@ public class KhPlanService
         var leKh = plan.Details.FirstOrDefault(d => QtyRule.CheckPoQty(d.Quantity) != null);   // [KH-SL-MAY-CHU] + > 0, ≤ PoMax
         if (leKh != null)
             throw new InvalidOperationException($"PO {leKh.PurchaseOrder}: {QtyRule.CheckPoQty(leKh.Quantity)}");
+        // [KH-NGAY-TRONG 2026-11-16] (BK-06) ô <input type="date"> xoá trống → DateTime mặc định 01/01/0001 → PlanNo "KH-00010101-0001", STD rác hiện "Quá hạn".
+        //   Máy chủ chặn ngày không hợp lệ (năm < 2000) ở Ngày lập PO + STD từng dòng. Nguồn: CLAUDE quét Fable 15/11 (B-K BK-06 Trung); Hùng 16/11 11:34 OK Gói 24.
+        if (DateBlankError(plan.PlanDate, "Ngày lập PO khách") is string ePd) throw new InvalidOperationException(ePd);
+        foreach (var d in plan.Details)
+            if (DateBlankError(d.STD, "STD") is string eStd) throw new InvalidOperationException($"PO {d.PurchaseOrder}: {eStd}");
         plan.PlanNo = await GenerateNextPlanNoAsync(plan.PlanDate);
         plan.CreatedBy = userId;
         plan.CreatedAt = DateTime.Now;
@@ -721,7 +730,7 @@ public class KhPlanService
         {
             await trx.RollbackAsync();   // [KH-GUARD] lỗi giữa chừng → trả lại như cũ
             _db.ChangeTracker.Clear();
-            return (false, ex.Message);
+            return (false, UiSafe.Text(ex, null, "xoá PO"));   // [C-11 2026-11-16] lỗi nghiệp vụ (PoGuard, PO không trắng…) hiện nguyên; SQL → câu chung
         }
     }
 
@@ -1035,6 +1044,7 @@ public class KhPlanService
             if (nv.Quantity != d.Quantity && QtyRule.CheckPoQty(nv.Quantity) is string ePoE) { await RollbackOwnAsync(ownTx); return ePoE; }   // [B3-SO-NGUYEN 2026-11-06] chỉ số nguyên (SL cũ không đụng) · [KH-SL-MAY-CHU] > 0, ≤ PoMax
             if (Mine("Đơn vị", S(orig.Unit), S(now.Unit), S(d.Unit), x => x))                                         nv.Unit = now.Unit;
             if (Mine("STD", orig.STD.Date, now.STD.Date, d.STD.Date, x => x.ToString("yyyy-MM-dd")))                  nv.STD = now.STD;
+            if (orig.STD.Date != now.STD.Date && DateBlankError(now.STD, "STD") is string eStdE) { await RollbackOwnAsync(ownTx); return eStdE; }   // [KH-NGAY-TRONG 2026-11-16] (BK-06) chỉ khi người dùng đổi STD (PO cũ lỡ 0001 vẫn sửa ô khác được; trang Sửa bắt chọn STD)
             if (Mine("Loại", S(orig.Type), S(now.Type), S(d.Type), x => x))                                           nv.Type = now.Type;
             if (Mine("Ưu tiên", S(orig.Priority), S(now.Priority), S(d.Priority), x => x))                            nv.Priority = now.Priority;
             if (Mine("Vật liệu", S(orig.Material), S(now.Material), S(d.Material), x => x))                           nv.Material = now.Material;
@@ -1629,6 +1639,10 @@ public class KhPlanService
             await PartStepGuard.LockSnapshotReadAsync(_db, partId);
             // [PM-LOAITRU-TARO 2026-11-10] đọc dưới khoá đọc Part: NC máy loại trừ chưa có Taro → không chép (tạo KH báo lỗi + rollback; cập nhật PO giữ quy trình cũ)
             if (await ExclTaroMissingAsync(partId) is string exMiss) throw new InvalidOperationException(exMiss);
+            // [KH-PART-RONG 2026-11-16] (câu 11, Hùng chốt A 15/11 15:32) Part chưa có công đoạn nào (B–E đều trống) → không lập Kế hoạch (PO sẽ không có quy
+            //   trình: WTS không có NC / mã để chọn, sổ không có nơi nhận). Part CHƯA Xác nhận OK vẫn lập được (trang Tạo KH cảnh báo — [KH-PART-CHUA-OK]).
+            //   Nguồn: CLAUDE quét Fable 15/11 (B-K câu hỏi / BP1-02); HÙNG 15/11 15:32 câu 11 = A.
+            if (await PartRouteEmptyAsync(partId) is string eRong) throw new InvalidOperationException(eRong);
             await CopyRouteSnapshotCoreAsync(khPlanDetailId, partId, snapshotBy);
             if (ownTx != null) await ownTx.CommitAsync();
         }
@@ -1641,6 +1655,37 @@ public class KhPlanService
         {
             if (ownTx != null) await ownTx.DisposeAsync();
         }
+    }
+
+    /// <summary>[KH-PART-RONG 2026-11-16] Part không có công đoạn đang dùng ở cả 5 mục B–E → câu báo; null = có ít nhất 1 công đoạn.</summary>
+    public async Task<string?> PartRouteEmptyAsync(int partId)
+    {
+        bool any = await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                || await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                || await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                || await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive);
+        if (any) return null;
+        var no = await _db.PartMasters.AsNoTracking().Where(p => p.PartId == partId).Select(p => p.PartNo).FirstOrDefaultAsync() ?? $"#{partId}";
+        return $"Part {no} chưa có công đoạn nào trong Part Master (mục B–E trống) — không chép được quy trình sang PO (không lập Kế hoạch). Khai quy trình (ít nhất 1 công đoạn) rồi lập lại.";
+    }
+
+    /// <summary>[KH-PART-CHUA-OK 2026-11-16] (câu 11 = A) Part còn mục có công đoạn nhưng chưa Xác nhận OK → câu cảnh báo cho trang Tạo KH (PO sẽ chép quy trình
+    /// NHÁP đang có như trước); null = đã chốt hết. Chỉ cảnh báo, không chặn.
+    /// Nguồn: CLAUDE quét Fable 15/11 (câu hỏi 11); HÙNG 15/11 15:32 câu 11 = A.</summary>
+    public async Task<string?> PartUnconfirmedWarningAsync(int partId)
+    {
+        var part = await _db.PartMasters.AsNoTracking().FirstOrDefaultAsync(p => p.PartId == partId);
+        if (part == null) return null;
+        var ngSec = new List<string>();
+        if (!part.IsMachiningConfirmed && await _db.PartMachiningSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("B Gia công");
+        if (!part.IsHtspConfirmed && (await _db.PartTaroSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartBaviaSteps.AnyAsync(s => s.PartId == partId && s.IsActive)
+                                      || await _db.PartWashingSteps.AnyAsync(s => s.PartId == partId && s.IsActive))) ngSec.Add("C HTSP");
+        if (!part.IsKcsConfirmed && await _db.PartInspectionSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("D KCS");
+        if (!part.IsPkgConfirmed && await _db.PartPackagingSteps.AnyAsync(s => s.PartId == partId && s.IsActive)) ngSec.Add("E Đóng gói");
+        return ngSec.Count == 0 ? null : $"Part {part.PartNo}: mục {string.Join(", ", ngSec)} chưa Xác nhận OK — PO sẽ chép quy trình nháp đang có.";
     }
 
     private async Task CopyRouteSnapshotCoreAsync(int khPlanDetailId, int partId, int snapshotBy)

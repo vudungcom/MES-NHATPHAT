@@ -1,6 +1,7 @@
 @rendermode InteractiveServer
 @inject AuthService Auth
 @inject AuthenticationStateProvider AuthState
+@inject ILogger<PinConfirmModal> Logger
 
 @if (IsOpen)
 {
@@ -130,7 +131,7 @@
             var ok = await Auth.VerifyPinAsync(userId, _pin);
             if (!ok)
             {
-                _error = "PIN không đúng";
+                _error = Auth.PinErrorText("PIN không đúng");   // [PIN-THROTTLE 2026-11-16] còn N lần / đang khoá 15 phút
                 _pin = "";
                 return;
             }
@@ -139,7 +140,7 @@
         }
         catch (Exception ex)
         {
-            _error = "Lỗi: " + ex.Message;
+            _error = UiSafe.Text(ex, Logger, "kiểm PIN");   // [C-11 2026-11-16]
         }
         finally
         {

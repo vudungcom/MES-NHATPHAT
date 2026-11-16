@@ -3,6 +3,7 @@
 @using MES.Web.Components.Shared
 @inject HandoverService HandoverSvc
 @inject MES.Web.Data.AppDbContext Db
+@inject ILogger<GiaoXuLyModal> Logger
 
 @* =====================================================================
    [GN-FORM1 2026-11-05] FORM "GIAO / XỬ LÝ HÀNG" — 1 form 4 bước (thay form Giao cũ + Báo lỗi sau khi nhận + Kết quả sửa + mục Khác)
@@ -836,7 +837,7 @@
             catch (Exception ex)   // [PAGE-ERR]
             {
                 Db.ChangeTracker.Clear();
-                _err = "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
+                _err = "Lỗi máy chủ: " + UiSafe.Text(ex, Logger, "lưu") + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
             }
             finally { _saving = false; }
             return;
@@ -873,7 +874,7 @@
         catch (Exception ex)   // [PAGE-ERR] lỗi máy chủ lạ: bỏ dữ liệu dở khỏi DbContext dùng chung
         {
             Db.ChangeTracker.Clear();
-            _err = "Lỗi máy chủ: " + (ex.InnerException?.Message ?? ex.Message) + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
+            _err = "Lỗi máy chủ: " + UiSafe.Text(ex, Logger, "lưu") + " — đóng cửa sổ, tải lại PO để xem đã lưu chưa rồi thử lại.";
         }
         finally { _saving = false; }
     }

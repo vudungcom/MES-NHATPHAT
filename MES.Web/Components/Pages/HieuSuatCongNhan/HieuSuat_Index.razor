@@ -5517,7 +5517,7 @@ else
             await LoadSavedRowsAsync();
             _act = null;
         }
-        catch (Exception ex) { if (_act != null) _act.Error = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message); }
+        catch (Exception ex) { if (_act != null) _act.Error = UiSafe.Text(ex, Logger, "lưu Việc không ra sản phẩm"); }   // [C-11 2026-11-16] không hiện SqlException thô
         finally { if (_act != null) _act.Busy = false; }
     }
 
@@ -6390,10 +6390,10 @@ else
     // [FIX2] Cập nhật T.Thực tế/pc khi công nhân nhập — trigger lại Dự kiến
     private void OnSubActualTimePerPcInput(WtsGroup grp, WtsRow sub, ChangeEventArgs e)
     {
-        sub.ActualTimePerPc = decimal.TryParse(e.Value?.ToString(),
+        sub.ActualTimePerPc = QtyRule.ClampTime(decimal.TryParse(e.Value?.ToString(),   // [WTS-GIO-AM 2026-11-16] kẹp ≥ 0, ≤ trần cột
             System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var v)
-            ? (decimal?)v : null;
+            ? (decimal?)v : null);
         RecalcGroupTimeline(grp);   // [NONGC-ALLOC-WEIGHT] T.Thực tế đổi → chia lại thời gian
         StateHasChanged();
     }
@@ -6920,6 +6920,7 @@ else
     {
 
         var val = decimal.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? (decimal?)v : null;   // [WTS-SO-CULTURE 2026-11-06]
+        val = QtyRule.ClampTime(val);   // [WTS-GIO-AM 2026-11-16] (BW1-02) "-3" → 0, "1e9" → trần cột; máy chủ kiểm lại (QtyRule.CheckTimeRange)
 
         switch (field)
 
@@ -7886,7 +7887,7 @@ else
 
                 _wtsLogsCache.Remove(kv.Key); _panelLedger.Remove(kv.Key);
 
-                Console.Error.WriteLine($"[WTS-PANEL-QTY] nạp lại bảng quy trình PO {kv.Key} lỗi: {ex.Message}");
+                Logger.LogError(ex, "[WTS-PANEL-QTY] nạp lại bảng quy trình PO {Po} lỗi", kv.Key);   // [C-11 2026-11-16] ghi ILogger thay Console
 
             }
 

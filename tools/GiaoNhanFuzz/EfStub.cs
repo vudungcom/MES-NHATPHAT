@@ -83,6 +83,7 @@ namespace Microsoft.EntityFrameworkCore
         public DbContext Ctx => _c;   // [LEN-SCEN 2026-11-16] cho Entries<T>() đọc Pending thật
         public ChangeTracker(DbContext c) { _c = c; }
         public void Clear() { foreach (var s in _c.AllSets()) s.Pending.Clear(); }
+        public bool HasChanges() => _c.AllSets().Any(s => s.Pending.Count > 0);   // [GÓI 24] AuthService.TryUpgradePinAsync không SaveChanges "ké" khi có thay đổi chờ
     }
 
     /// <summary>[LEN-SCEN 2026-11-16] Ngoại lệ ghi DB giả — để kịch bản len mô phỏng lỗi SaveChanges ở nhánh Sửa ca (UiSafe.Text phải trả câu Việt chung).</summary>

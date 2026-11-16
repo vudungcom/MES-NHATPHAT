@@ -139,6 +139,14 @@ public class KhoVatLieuService
         return await q.AsNoTracking().FirstOrDefaultAsync();
     }
 
+    /// <summary>[KHO-NGAY-NHAN 2026-11-16] (BK-03) null = hợp lệ. Dùng chung trang (báo trước khi lưu) + máy chủ.</summary>
+    public static string? KhoNgayNhanError(DateTime? ngayNhan, int? slNhan)
+    {
+        if ((slNhan ?? 0) > 0 && !ngayNhan.HasValue) return "Đã nhập Số lượng thực nhận thì phải nhập Ngày nhận phôi.";
+        if (ngayNhan.HasValue && ngayNhan.Value.Date > DateTime.Today) return $"Ngày nhận phôi {ngayNhan.Value:dd/MM/yyyy} ở tương lai — nhập ngày đã nhận thật.";
+        return null;
+    }
+
     /// <summary>
     /// Kho cập nhật dữ liệu Cột I -> O (Lưu vào bảng KhoVatLieus & ghi Audit Log vào KhoVatLieuChangeLogs)
     /// </summary>
@@ -165,6 +173,10 @@ public class KhoVatLieuService
         // [E4-KHO-NEG 2026-10-28] Máy chủ chặn số âm (trước chỉ form chặn)
         if (slNhan < 0 || slCap < 0)
             return (false, "Số lượng không được âm.");
+        // [KHO-NGAY-NHAN 2026-11-16] (BK-03) SL thực nhận > 0 thì phải có Ngày nhận, và không ở tương lai. Trước: lưu SL mà bỏ trống ngày → dòng hiện
+        //   "Chưa có phôi" / lọc "Chưa nhận phôi" trong khi sổ đã tính phôi (Giao nhận lập phiếu được) → Kho nhìn bảng tưởng chưa có phôi.
+        //   Nguồn: CLAUDE quét Fable 15/11 (B-K BK-03 Trung); Hùng 16/11 11:34 OK Gói 24.
+        if (KhoNgayNhanError(ngayNhan, slNhan) is string eNgay) return (false, eNgay);
 
         var canEdit = await HasPermissionAsync(userId, SystemPermissions.Kho, requireEdit: true);
         if (!canEdit)

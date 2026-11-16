@@ -934,7 +934,7 @@
         }
         catch (Exception ex)
         {
-            thongBaoLoi = "Lỗi khi xuất file Excel: " + ex.Message;
+            thongBaoLoi = UiSafe.Text(ex, Logger, "xuất file Excel");   // [C-11 2026-11-16]
         }
         finally
         {
@@ -997,7 +997,7 @@
         }
         catch (Exception ex)
         {
-            loiPopup = "Lỗi lưu file ảnh: " + ex.Message;
+            loiPopup = UiSafe.Text(ex, Logger, "lưu file ảnh");   // [C-11 2026-11-16]
         }
     }
 

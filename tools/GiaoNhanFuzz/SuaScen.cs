@@ -28,7 +28,7 @@ public static class SuaScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-SUA", Customer = cust, CustomerId = 1, ApplyWorkflow = workflow };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 20, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 20, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = 20, NgayNhanPhoi = DateTime.Now, SoPO = "PO1", PartNo = "P" });
         db.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });
@@ -686,7 +686,7 @@ public static class SuaScen
         {
             var d = Seed(); WtsSvcHelp.Reset();
             var plan = d.KhPlans.List[0];
-            var d2 = new KhPlanDetail { KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
+            var d2 = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 2, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO2", Quantity = 20, LineNo = 2 };
             d.KhPlanDetails.List.Add(d2); plan.Details.Add(d2);
             d.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 2, PlanDetailId = 2, IsActive = true, SoLuongThucNhan = 20, NgayNhanPhoi = DateTime.Now, SoPO = "PO2", PartNo = "P" });
             d.KhPlanRouteSnapshotMachining.List.Add(new KhPlanRouteSnapshotMachining { SnapshotId = 11, KhPlanDetailId = 2, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" });

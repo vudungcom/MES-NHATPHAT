@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @using MES.Web.Services
 @inject IJSRuntime JS
+@inject ILogger<Index> Logger
 
 <PageTitle>Thông tin bản quyền Máy chủ - MES</PageTitle>
 
@@ -154,7 +155,7 @@
         }
         catch (Exception ex)
         {
-            _message = "Lỗi kết nối: " + ex.Message;
+            Logger.LogWarning(ex, "[C-11] Cập nhật bản quyền online lỗi"); _message = "Lỗi kết nối máy chủ bản quyền — kiểm tra Internet rồi thử lại.";   // [C-11 2026-11-16]
         }
         finally
         {

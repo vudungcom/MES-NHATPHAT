@@ -44,7 +44,7 @@ public static class QuyenScen
         db.Customers.List.Add(cust);
         var plan = new KhPlan { KhPlanId = 1, PlanNo = "KH-TEST", Customer = cust, CustomerId = 1, ApplyWorkflow = true };
         db.KhPlans.List.Add(plan);
-        var d = new KhPlanDetail { KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
+        var d = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 1, KhPlanId = 1, KhPlan = plan, PartNo = "P", PurchaseOrder = "PO1", Quantity = 40, LineNo = 1 };
         db.KhPlanDetails.List.Add(d); plan.Details.Add(d);
         db.KhoVatLieus.List.Add(new KhoVatLieu { KhoVatLieuId = 1, PlanDetailId = 1, IsActive = true, SoLuongThucNhan = 40, NgayNhanPhoi = DateTime.Now, SoPO = "PO1", PartNo = "P" });
         var m1 = new KhPlanRouteSnapshotMachining { SnapshotId = 1, KhPlanDetailId = 1, StepOrder = 1, NC = "NC1", MachineRegistered = "M1" };
@@ -253,7 +253,7 @@ public static class QuyenScen
             var db = Seed(); var kh = new KhPlanService(db);
             var raw = Microsoft.EntityFrameworkCore.DatabaseFacade.RawLog; raw.Clear();
             var p = new KhPlan { PlanDate = new DateTime(2026, 10, 29), CustomerId = 1 };
-            p.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = "PO-NEW", Quantity = 5 });
+            p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P", PurchaseOrder = "PO-NEW", Quantity = 5 });
             int id = 0; string? err = null; try { id = await kh.CreateAsync(p, Admin); } catch (Exception ex) { err = ex.Message; }
             Ok(err == null && p.PlanNo == "KH-20261029-0001", "Tạo KH không có giao dịch ngoài: tự mở giao dịch, PlanNo KH-20261029-0001", err ?? p.PlanNo);
             Ok(raw.Any(s => s.Contains("sp_getapplock") && s.Contains("'Transaction'")), "Có khoá sp_getapplock (LockOwner = Transaction) quanh cấp số + kiểm trùng PO");
@@ -263,19 +263,19 @@ public static class QuyenScen
             await using (var trx = await db.Database.BeginTransactionAsync())
             {
                 var p2 = new KhPlan { PlanDate = new DateTime(2026, 10, 29), CustomerId = 1 };
-                p2.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = "PO-NEW2", Quantity = 5 });
+                p2.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P", PurchaseOrder = "PO-NEW2", Quantity = 5 });
                 err = null; try { await kh.CreateAsync(p2, Admin); } catch (Exception ex) { err = ex.Message; }
                 Ok(err == null && p2.PlanNo == "KH-20261029-0002" && db.Database.Current == trx, "Tạo KH trong giao dịch của trang: dùng giao dịch đó, PlanNo 0002", err ?? p2.PlanNo);
                 await trx.CommitAsync();
             }
             var p3 = new KhPlan { PlanDate = new DateTime(2026, 10, 29), CustomerId = 1 };
-            p3.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = "PO-NEW", Quantity = 5 });
+            p3.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P", PurchaseOrder = "PO-NEW", Quantity = 5 });
             err = null; try { await kh.CreateAsync(p3, Admin); } catch (Exception ex) { err = ex.Message; }
             Ok(err != null && err.Contains("PO-NEW") && db.KhPlans.List.Count == 3, "Số PO đã có: chặn (kiểm dưới khoá), không thêm phiếu", err);
             Ok(db.Database.Current == null, "Bị chặn: giao dịch tự mở đã rollback + đóng");
             // Tách PO: 2 số PO mới chỉ khác hoa / thường hoặc có khoảng trắng → trùng
             var kh2 = new KhPlanService(db);
-            var blank = new KhPlanDetail { KhPlanDetailId = 50, KhPlanId = 1, KhPlan = db.KhPlans.List.First(x => x.KhPlanId == 1), PartNo = "P", PurchaseOrder = "PO-TRANG", Quantity = 40, LineNo = 9 };
+            var blank = new KhPlanDetail { STD = DateTime.Today, KhPlanDetailId = 50, KhPlanId = 1, KhPlan = db.KhPlans.List.First(x => x.KhPlanId == 1), PartNo = "P", PurchaseOrder = "PO-TRANG", Quantity = 40, LineNo = 9 };
             db.KhPlanDetails.List.Add(blank); db.Fixup();
             err = null; try { await kh2.SplitPOAsync(50, new() { new() { PurchaseOrder = "po-7", Quantity = 20 }, new() { PurchaseOrder = " PO-7", Quantity = 20 } }, Admin, "tach"); } catch (Exception ex) { err = ex.Message; }
             Ok(err != null && err.Contains("trùng"), "Tách PO thành 'po-7' và ' PO-7': chặn trùng (trước: lọt cả 2)", err);
@@ -347,6 +347,146 @@ public static class QuyenScen
 
         // [WTS-ORDER-SAVE 2026-11-02] WTS tiêu chuẩn mục 14: chỉ đổi Thứ tự hiển thị phải LƯU + có dòng lịch sử
         //   (trước: không có dòng log nào → bỏ qua cả lượt lưu mà vẫn báo thành công).
+        // [RS-D9-PO-MO 2026-11-16] Gói 24 câu 10 (Hùng 15/11 15:10 OK): máy còn trong snapshot / WTS của PO CHƯA Đủ thành phẩm → không xoá; PO Đủ → xoá được.
+        //   Đi đủ chuỗi bằng hàm thật (Kho → GC → KCS → PKG → Kho thành phẩm) để PO ra "DU". Bản cdbd991: xoá được khi Part đã ngưng → SAI.
+        Console.WriteLine("[Q13] RS-D9-PO-MO — xoá máy đang trong quy trình / WTS của PO chưa Đủ thành phẩm: chặn (gợi ý Tạm dừng); PO Đủ rồi: xoá được");
+        {
+            PinThrottle.ResetAll();
+            var db = new AppDbContext(); ChuoiHelp.SeedBase(db, exclH04: false);
+            var pid = await ChuoiHelp.BuildPartAsync(db, "P-Q13", new ChuoiHelp.Shape { Gc = 1, ExclAt = -1, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 1, Prep = false, TaroTaskCode = false });
+            var ids = await ChuoiHelp.CreateKhAsync(db, pid, "P-Q13", new decimal[] { 10 }, "PO-Q13");
+            int det = ids[0];
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", TenMay = "May 1", IsActive = true, TrangThai = "Hoạt động" });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M9", TenMay = "May 9", IsActive = true, TrangThai = "Hoạt động" });
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 3, SoMay = "M8", TenMay = "May 8", IsActive = true, TrangThai = "Hoạt động" });
+            db.Users.List.Single(u => u.UserId == 1).PIN = "1111";
+            db.Fixup();
+            var auth = new AuthService(db); var tb = new ThietBiService(db, auth);
+            Ok(db.KhPlanRouteSnapshotMachining.List.Any(x => x.KhPlanDetailId == det && x.MachineRegistered == "M1"), "Dựng: PO-Q13 (10 chiếc) snapshot NC01 máy M1");
+            // Part đang dùng M1 → chặn như cũ (RS-D9); ngưng Part để kiểm riêng luật PO mở
+            var r0 = await tb.SoftDeleteAsync(1, 1, "1111");
+            Ok(!r0.Success && r0.Error!.Contains("Part Master P-Q13"), "Part P-Q13 đang dùng M1: chặn như cũ (RS-D9)", r0.Error);
+            db.PartMasters.List.Single(x => x.PartId == pid).IsObsolete = true;
+            var r1 = await tb.SoftDeleteAsync(1, 1, "1111");
+            Ok(!r1.Success && r1.Error!.Contains("PO chưa xong") && r1.Error.Contains("PO-Q13") && r1.Error.Contains("Tạm dừng") && db.ThietBis.List[0].IsActive,
+               "Part đã ngưng nhưng PO-Q13 chưa có phôi (chưa xong) còn trỏ M1 trong snapshot: KHÔNG xoá, nêu PO + gợi ý Tạm dừng", r1.Error);
+            // máy chỉ có trong WTS của PO mở (không có trong snapshot)
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 901, KhPlanDetailId = det, ProcessGroup = "GC", NC = "NC01", MachineUsed = "M9", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = DateTime.Now, EndTime = DateTime.Now, CreatedAt = DateTime.Now });
+            db.Fixup();
+            var r2 = await tb.SoftDeleteAsync(2, 1, "1111");
+            Ok(!r2.Success && r2.Error!.Contains("PO-Q13") && db.ThietBis.List[1].IsActive, "M9 chỉ có ở dòng WTS của PO-Q13 (chưa xong): KHÔNG xoá", r2.Error);
+            db.WtsProductionLogs.List.Single(w => w.WtsLogId == 901).IsVoided = true; db.Fixup();
+            var r2b = await tb.SoftDeleteAsync(2, 1, "1111");
+            Ok(r2b.Success, "Dòng WTS M9 đã huỷ: xoá M9 được", r2b.Error);
+            var r3 = await tb.SoftDeleteAsync(3, 1, "1111");
+            Ok(r3.Success, "M8 không ở PO nào: xoá được như cũ", r3.Error);
+            // đi hết chuỗi cho PO Đủ thành phẩm
+            var kho = new KhoVatLieuService(db, new UserService(null)); var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var k = await kho.SaveKhoInputAsync(det, DateTime.Now, 10, "OVL", "A1", null, null, null, "nhan phoi", 1);
+            var i1 = await svc.IssueByCellAsync(det, "KHO", "GC", 10, 2, "MOI", false, "MOI", null, "NC01");
+            var rc1 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 2);
+            var (ncs, codeOf) = ChuoiHelp.CodesFromSnapshot(db, det);
+            await VuHelp.Wts(db, "GC", "NC01", null, 10, 0, 2, 1);
+            var i2 = await svc.IssueByCellAsync(det, "GC", "KCS", 10, 2, "MOI", false, "MOI");
+            var rc2 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 3);
+            await VuHelp.Wts(db, "KCS", null, codeOf["KCS"].codes[0], 10, 0, 3, 1);
+            var i3 = await svc.IssueByCellAsync(det, "KCS", "PKG", 10, 3, "MOI", false, "MOI");
+            var rc3 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 4);
+            await VuHelp.Wts(db, "PKG", null, codeOf["PKG"].codes[0], 10, 0, 4, 1);
+            var i4 = await svc.IssueByCellAsync(det, "PKG", "KHO", 10, 4, "MOI", false, "MOI");
+            var rc4 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 10, 0, null, 5);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            var st = HandoverLedgerService.WhereIs(row).Status;
+            Ok(k.Success && i1.Ok && rc1.Ok && i2.Ok && rc2.Ok && i3.Ok && rc3.Ok && i4.Ok && rc4.Ok && st == "DU",
+               "Đi hết chuỗi: PO-Q13 Đủ thành phẩm (sổ Status = DU)", $"{k.Error}|{i1.Error}|{rc1.Error}|{i2.Error}|{rc2.Error}|{i3.Error}|{rc3.Error}|{i4.Error}|{rc4.Error}|st={st}");
+            var r4 = await tb.SoftDeleteAsync(1, 1, "1111");
+            Ok(r4.Success && !db.ThietBis.List[0].IsActive, "PO đã Đủ thành phẩm + Part đã ngưng: xoá M1 được", r4.Error);
+            PinThrottle.ResetAll();
+        }
+
+        // [BM1-01 2026-11-16] Gói 24: sổ sự cố máy — đang dừng mà lưu lại không mở dòng sự cố thứ 2; về Hoạt động chốt MỌI dòng mở. Bản cdbd991: dòng mở trùng, dòng cũ mở mãi → SAI.
+        Console.WriteLine("[Q14] BM1-01 — Thiết bị: đang dừng mà sửa tên / lý do không mở dòng sự cố mới; đổi loại dừng → chốt dòng cũ, mở dòng loại mới; về Hoạt động chốt mọi dòng mở (cả dữ liệu cũ)");
+        {
+            PinThrottle.ResetAll();
+            var db = Seed(); var auth = new AuthService(db); var tb = new ThietBiService(db, auth);
+            db.ThietBis.List.Add(new ThietBi { ThietBiId = 21, SoMay = "C01", TenMay = "May C01", BoPhan = "GC", TrangThai = "Hoạt động", IsActive = true });
+            db.Fixup();
+            var t0 = DateTime.Now.AddHours(-3);
+            ThietBi M(string tt, string ten = "May C01") => new() { ThietBiId = 21, SoMay = "C01", TenMay = ten, BoPhan = "GC", TrangThai = tt };
+            List<ThietBiChangeLog> Open() => db.ThietBiChangeLogs.List.Where(l => l.ThietBiId == 21 && l.ThoiGianBatDau != null && l.ThoiGianKetThuc == null).ToList();
+            var r1 = await tb.UpdateAsync(M("Báo hỏng"), "gay dao", t0, null, CatEdit, "1111");
+            Ok(r1.Success && Open().Count == 1 && Open()[0].NewValue == "Báo hỏng" && Open()[0].ThoiGianBatDau == t0, "Hoạt động → Báo hỏng (giờ t0): 1 dòng sự cố mở", r1.Error + $" open={Open().Count}");
+            var tDoi = DateTime.Now;
+            var r2 = await tb.UpdateAsync(M("Bảo trì"), "chuyen bao tri", null, null, CatEdit, "1111");
+            var hong = db.ThietBiChangeLogs.List.Single(l => l.ThietBiId == 21 && l.NewValue == "Báo hỏng" && l.ThoiGianBatDau == t0);
+            Ok(r2.Success && Open().Count == 1 && Open()[0].NewValue == "Bảo trì" && Open()[0].OldValue == "Báo hỏng" && Open()[0].ThoiGianBatDau >= tDoi.AddSeconds(-2) && Open()[0].Reason == "chuyen bao tri",
+               "Báo hỏng → Bảo trì: vẫn chỉ 1 dòng mở = dòng 'Trạng thái' Bảo trì mở từ lúc đổi (trước: 2 dòng mở)", r2.Error + $" open={Open().Count}");
+            Ok(hong.ThoiGianKetThuc != null && hong.ThoiGianKetThuc >= tDoi.AddSeconds(-2) && hong.NewValue == "Báo hỏng" && hong.SoPhutDung >= 170,
+               "Dòng Báo hỏng cũ được CHỐT lúc đổi loại, giữ nguyên loại 'Báo hỏng' + phút dừng (rà độc lập 16/11: không ghi đè loại hồi tố → Hiệu suất máy ngày cũ không đổi)", $"ket={hong.ThoiGianKetThuc} phut={hong.SoPhutDung}");
+            var r3 = await tb.UpdateAsync(M("Bảo trì", ten: "May C01 moi"), "doi ten", null, null, CatEdit, "1111");
+            Ok(r3.Success && Open().Count == 1 && db.ThietBis.List.Single(x => x.ThietBiId == 21).TenMay == "May C01 moi", "Đang Bảo trì, chỉ đổi tên: lưu, vẫn 1 dòng mở (trước: thêm 'Nhật ký dừng máy' mở)", r3.Error + $" open={Open().Count}");
+            var r3b = await tb.UpdateAsync(M("Bảo trì", ten: "May C01 moi"), "khong doi gi", null, null, CatEdit, "1111");
+            Ok(r3b.Success && Open().Count == 1, "Đang Bảo trì, không đổi gì (chỉ nhập PIN): vẫn 1 dòng mở", r3b.Error + $" open={Open().Count}");
+            // dữ liệu cũ: thêm 1 dòng mở nữa (như bản trước để lại) → về Hoạt động phải chốt cả 2
+            db.ThietBiChangeLogs.List.Add(new ThietBiChangeLog { ChangeId = 9001, ThietBiId = 21, FieldName = "Nhật ký dừng máy", OldValue = "Báo hỏng", NewValue = "Báo hỏng", Reason = "cu", ThoiGianBatDau = t0.AddMinutes(10), ChangedAt = t0.AddMinutes(10), ChangedBy = CatEdit });
+            db.Fixup();
+            Ok(Open().Count == 2, "Dựng dữ liệu cũ: 2 dòng mở");
+            var tEnd = DateTime.Now;   // dòng Bảo trì mở từ lúc đổi loại (vừa rồi) → giờ xong phải ≥ lúc đó
+            var r4 = await tb.UpdateAsync(M("Hoạt động", ten: "May C01 moi"), "xong", null, tEnd, CatEdit, "1111");
+            var closed = db.ThietBiChangeLogs.List.Where(l => l.ThietBiId == 21 && l.ThoiGianBatDau != null && l.ThoiGianKetThuc != null).ToList();
+            Ok(r4.Success && Open().Count == 0 && closed.Count(l => l.ThoiGianKetThuc == tEnd) >= 2 && closed.All(l => l.SoPhutDung >= 0),
+               "Về Hoạt động: chốt MỌI dòng mở (2 dòng) lúc tEnd, số phút ≥ 0 (trước: chỉ dòng mới nhất, dòng cũ mở mãi)", r4.Error + $" open={Open().Count} closed={closed.Count}");
+            Ok(db.ThietBis.List.Single(x => x.ThietBiId == 21).TrangThai == "Hoạt động", "Máy về Hoạt động");
+            PinThrottle.ResetAll();
+        }
+        // [DOGA-LOG-ID][WTS-LOG-ID 2026-11-16] Gói 24 (BM1-04): log "Tạo mới" phải mang Id thật (trước: Id 0, mồ côi). Bản cdbd991: DoGaId = 0 → SAI.
+        Console.WriteLine("[Q15] DOGA-LOG-ID / WTS-LOG-ID — log 'Tạo mới' đồ gá / công việc WTS mang đúng Id (trước 0, lịch sử không có dòng Tạo)");
+        {
+            PinThrottle.ResetAll();
+            var db = Seed(); var auth = new AuthService(db); var dg = new DoGaService(db, auth);
+            var c = await dg.CreateAsync(new DoGa { TenDoGa = "VJ-LOG" }, CatEdit, "1111"); db.Fixup();
+            var g = db.DoGas.List.FirstOrDefault(x => x.TenDoGa == "VJ-LOG");
+            var lg = db.DoGaChangeLogs.List.FirstOrDefault(l => l.FieldName == "Tạo mới đồ gá" && l.NewValue == "VJ-LOG");
+            Ok(c.Success && g != null && g.DoGaId > 0 && lg != null && lg.DoGaId == g.DoGaId, "Đồ gá: log Tạo mới DoGaId = Id đồ gá (≠ 0)", $"{c.Error} id={g?.DoGaId} log={lg?.DoGaId}");
+            Ok(!db.DoGaChangeLogs.List.Any(l => l.DoGaId == 0), "Không còn dòng log DoGaId = 0");
+            var wts = new StandardWtsTaskService(db, auth);
+            var cw = await wts.CreateAsync(new StandardWtsTask { TaskCode = "9L", TaskName = "Log 9", CategoryCode = "KCS", CategoryName = "KCS", DefaultUnit = "Chi tiết", IsProductiveTask = true }, Admin, "1111"); db.Fixup();
+            var t9 = db.StandardWtsTasks.List.FirstOrDefault(x => x.TaskCode == "9L");
+            var lw = db.StandardWtsTaskChangeLogs.List.FirstOrDefault(l => l.FieldName == "Tạo mới công việc" && (l.NewValue ?? "").Contains("[9L]"));
+            Ok(cw.Success && t9 != null && lw != null && lw.TaskId == t9.TaskId && t9.TaskId > 0, "WTS tiêu chuẩn: log Tạo mới TaskId = Id công việc (≠ 0)", $"{cw.Error} id={t9?.TaskId} log={lw?.TaskId}");
+            PinThrottle.ResetAll();
+        }
+        // [WTS-NHOM-TEN 2026-11-16] Gói 24 (BP2-02): 1 mã nhóm = 1 tên. Bản cdbd991: tạo CV cùng mã nhóm tên khác → 2 dòng nhóm → SAI.
+        Console.WriteLine("[Q16] WTS-NHOM-TEN — thêm công việc với mã nhóm đã có mà tên khác: chặn; sửa Tên nhóm → đổi cho cả nhóm (+ log); danh sách nhóm 1 mã 1 dòng");
+        {
+            PinThrottle.ResetAll();
+            var db = Seed(); var auth = new AuthService(db); var wts = new StandardWtsTaskService(db, auth);
+            StandardWtsTask M(string code, string cat, string catName) => new() { TaskCode = code, TaskName = "CV " + code, CategoryCode = cat, CategoryName = catName, DefaultUnit = "Chi tiết", IsProductiveTask = true };
+            var c1 = await wts.CreateAsync(M("T1", "TARO", "Taro"), Admin, "1111");
+            var c2 = await wts.CreateAsync(M("T2", "TARO", "Taro 2"), Admin, "1111");
+            Ok(c1.Success && !c2.Success && (c2.Error ?? "").Contains("đã có tên 'Taro'") && !db.StandardWtsTasks.List.Any(x => x.TaskCode == "T2"),
+               "Thêm T2 mã nhóm TARO tên 'Taro 2' (khác tên đang có 'Taro'): chặn, nêu tên đang có", c2.Error);
+            var c3 = await wts.CreateAsync(M("T2", "TARO", " Taro "), Admin, "1111");
+            Ok(c3.Success, "Thêm T2 với đúng tên 'Taro' (có dấu cách): được", c3.Error);
+            var cats = await wts.GetDistinctCategoriesAsync();
+            Ok(cats.Count(c => c.Code == "TARO") == 1, "Danh sách nhóm: TARO 1 dòng", string.Join(" | ", cats.Select(c => c.Code + "=" + c.Name)));
+            // đổi tên nhóm qua 1 công việc → cả nhóm đổi
+            var t1 = db.StandardWtsTasks.List.Single(x => x.TaskCode == "T1"); var t2 = db.StandardWtsTasks.List.Single(x => x.TaskCode == "T2");
+            var u = await wts.UpdateAsync(new StandardWtsTask { TaskId = t1.TaskId, TaskCode = "T1", TaskName = "CV T1", CategoryCode = "TARO", CategoryName = "Ta rô", DefaultUnit = "Chi tiết", IsProductiveTask = true }, "doi ten nhom", CatEdit, "1111");
+            Ok(u.Success && t1.CategoryName == "Ta rô" && t2.CategoryName == "Ta rô", "Sửa T1 đổi Tên nhóm 'Taro' → 'Ta rô': T2 cùng nhóm đổi theo", u.Error + $" t2={t2.CategoryName}");
+            Ok(db.StandardWtsTaskChangeLogs.List.Any(l => l.TaskId == t2.TaskId && l.FieldName == "Tên nhóm" && l.NewValue == "Ta rô" && (l.Reason ?? "").Contains("cả nhóm")),
+               "T2 có dòng lịch sử 'Tên nhóm' do đổi cho cả nhóm");
+            // dữ liệu cũ lệch tên: distinct vẫn 1 dòng
+            db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 777, TaskCode = "T7", TaskName = "cu", CategoryCode = "TARO", CategoryName = "Taro cu", IsActive = true }); db.Fixup();
+            cats = await wts.GetDistinctCategoriesAsync();
+            Ok(cats.Count(c => c.Code == "TARO") == 1 && cats.Single(c => c.Code == "TARO").Name == "Ta rô", "Dữ liệu cũ 1 mã 2 tên: danh sách nhóm vẫn 1 dòng, lấy tên nhiều nhất", string.Join(" | ", cats.Select(c => c.Code + "=" + c.Name)));
+            // chuyển T2 sang nhóm KCS (đã có tên 'KCS' ở Q8 seed? không — nhóm mới) tên bất kỳ: được
+            var u2 = await wts.UpdateAsync(new StandardWtsTask { TaskId = t2.TaskId, TaskCode = "T2", TaskName = "CV T2", CategoryCode = "BAVIA", CategoryName = "Bavia", DefaultUnit = "Chi tiết", IsProductiveTask = true }, "doi nhom", CatEdit, "1111");
+            var u3 = await wts.UpdateAsync(new StandardWtsTask { TaskId = t2.TaskId, TaskCode = "T2", TaskName = "CV T2", CategoryCode = "TARO", CategoryName = "Taro X", DefaultUnit = "Chi tiết", IsProductiveTask = true }, "ve taro", CatEdit, "1111");
+            Ok(u2.Success && t2.CategoryCode == "BAVIA" && !u3.Success && (u3.Error ?? "").Contains("đã có tên"), "Chuyển sang nhóm mới BAVIA: được; chuyển về TARO với tên khác tên đang có: chặn", u2.Error + " | " + u3.Error);
+            PinThrottle.ResetAll();
+        }
+
         Console.WriteLine("[Q8] WTS-ORDER-SAVE — WTS tiêu chuẩn: chỉ đổi Thứ tự hiển thị → lưu + lịch sử");
         {
             var db = Seed(); var auth = new AuthService(db); var wts = new StandardWtsTaskService(db, auth);
@@ -372,7 +512,7 @@ public static class QuyenScen
         Console.WriteLine("[Q9] KH-PERM-SVC — (P-01) KhPlanService.CreateAsync: máy chủ kiểm Sửa KE_HOACH (trước: hàm public không kiểm, chỉ trang kiểm lúc mở)");
         {
             var db = Seed(); var kh = new KhPlanService(db);
-            KhPlan P(string po) { var p = new KhPlan { PlanDate = new DateTime(2026, 11, 16), CustomerId = 1 }; p.Details.Add(new KhPlanDetail { PartNo = "P", PurchaseOrder = po, Quantity = 5 }); return p; }
+            KhPlan P(string po) { var p = new KhPlan { PlanDate = new DateTime(2026, 11, 16), CustomerId = 1 }; p.Details.Add(new KhPlanDetail { STD = DateTime.Today, PartNo = "P", PurchaseOrder = po, Quantity = 5 }); return p; }
             string? e1 = null; try { await kh.CreateAsync(P("PO-Q9A"), HtspView); } catch (Exception ex) { e1 = ex.Message; }
             Ok(e1 != null && e1.Contains("không có quyền Sửa mục Kế hoạch"), "u3 chỉ Xem Giao nhận: tạo KH bị từ chối (NoEdit Kế hoạch)", e1);
             Ok(!db.KhPlanDetails.List.Any(d => d.PurchaseOrder == "PO-Q9A"), "  không ghi dòng PO nào");

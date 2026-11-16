@@ -12,6 +12,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider AuthState
 @inject UserService UserSvc
+@inject ILogger<Create_Khplan> Logger
 
 <PageTitle>Tạo phiếu KH mới - MES</PageTitle>
 
@@ -26,9 +27,9 @@
         <a href="/kh-plan" class="btn btn-outline-secondary">
             <i class="bi bi-x"></i> Hủy
         </a>
-        <button class="btn btn-primary" @onclick="AttemptSaveAsync" disabled="@_saving">
+        <button class="btn @(_warnAck ? "btn-warning" : "btn-primary")" @onclick="AttemptSaveAsync" disabled="@_saving">
             <i class="bi bi-check-lg"></i>
-            @(_saving ? "Đang lưu..." : "Xác nhận Kế hoạch")
+            @(_saving ? "Đang lưu..." : (_warnAck ? "Vẫn lập Kế hoạch" : "Xác nhận Kế hoạch"))
         </button>
     </div>
 </div>
@@ -36,6 +37,15 @@
 @if (!string.IsNullOrEmpty(_error))
 {
     <div class="alert alert-danger py-2">@_error</div>
+}
+@* [KH-PART-CHUA-OK] (câu 11 = A) Part chưa Xác nhận OK → cảnh báo, bấm "Vẫn lập Kế hoạch" lần nữa mới lưu (PO chép quy trình nháp như trước) *@
+@if (_warnAck && _partWarnings.Count > 0)
+{
+    <div class="alert alert-warning py-2">
+        <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill me-1"></i>Part Master chưa Xác nhận OK:</div>
+        @foreach (var w in _partWarnings) { <div class="small">• @w</div> }
+        <div class="small mt-1">Kiểm lại quy trình ở Part Master trước, hoặc bấm <b>Vẫn lập Kế hoạch</b> để lập với quy trình đang có.</div>
+    </div>
 }
 
 <div class="card mb-3">
@@ -285,6 +295,8 @@
 
     private bool _saving;
     private string? _error;
+    private bool _warnAck;                           // [KH-PART-CHUA-OK] đã hiện cảnh báo, lần bấm sau mới lưu
+    private List<string> _partWarnings = new();      // [KH-PART-CHUA-OK]
     private string _currentUserName = "";
     private int _currentUserId;
 
@@ -337,6 +349,7 @@
 
     private async Task OnPartNoChangedAsync(int idx)
     {
+        _warnAck = false;   // [KH-PART-CHUA-OK] đổi Part → cảnh báo cũ hết hiệu lực, kiểm lại khi bấm Lưu
         var d = _details[idx];
         if (string.IsNullOrEmpty(d.PartNo)) return;
         if (!_partLookup.TryGetValue(d.PartNo, out var pm)) return;
@@ -414,6 +427,24 @@
             if (!_partLookup.ContainsKey(d.PartNo)) { _error = $"Part No '{d.PartNo}' không tồn tại trong Part Master. Vui lòng tạo Part trước."; return; }
             if (string.IsNullOrWhiteSpace(d.PurchaseOrder)) { _error = "Nhập PO cho mọi dòng"; return; }
             if (d.Quantity <= 0) { _error = "SL phải > 0"; return; }
+            if (KhPlanService.DateBlankError(d.STD, $"STD của PO {d.PurchaseOrder}") is string eStd) { _error = eStd; return; }   // [KH-NGAY-TRONG 2026-11-16] (BK-06)
+        }
+        if (KhPlanService.DateBlankError(_plan.PlanDate, "Ngày lập PO khách") is string ePd) { _error = ePd; return; }   // [KH-NGAY-TRONG 2026-11-16] (BK-06) ô date xoá trống → 01/01/0001 → PlanNo rác
+
+        // [KH-PART-CHUA-OK] (câu 11 = A — Hùng 15/11 15:32) Part chưa Xác nhận OK: cảnh báo 1 lần, bấm lại mới lập (Part không có công đoạn: máy chủ CHẶN [KH-PART-RONG])
+        if (!_warnAck)
+        {
+            if (_saving) return;   // rà độc lập 16/11: bấm đúp lúc đang hỏi cảnh báo → 2 truy vấn chồng trên DbContext dùng chung (A1-03)
+            _saving = true;
+            try
+            {
+                _partWarnings = new List<string>();
+                foreach (var pid in _details.Where(x => _partLookup.ContainsKey(x.PartNo)).Select(x => _partLookup[x.PartNo].PartId).Distinct())
+                    if (await KhSvc.PartUnconfirmedWarningAsync(pid) is string w) _partWarnings.Add(w);
+            }
+            catch (Exception ex) { _error = UiSafe.Text(ex, Logger, "kiểm Part Master trước khi lập Kế hoạch"); return; }
+            finally { _saving = false; }
+            if (_partWarnings.Count > 0) { _warnAck = true; return; }
         }
 
         await DoSaveAsync();
@@ -499,7 +530,7 @@
             Db.ChangeTracker.Clear();
             _plan.KhPlanId = 0;           // lưu lại lần sau tạo mới từ đầu
             _plan.Details = new List<KhPlanDetail>();
-            _error = "Lỗi khi lưu: " + (ex.InnerException?.Message ?? ex.Message);
+            _error = UiSafe.Text(ex, Logger, "lưu Kế hoạch");   // [C-11 2026-11-16] trước: SqlException thô
         }
         finally
         {
