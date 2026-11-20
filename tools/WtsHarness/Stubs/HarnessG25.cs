@@ -56,4 +56,59 @@ public static class HarnessG25
             wts = rows.Select(w => new { id = w.WtsLogId, w.WorkerId, start = w.StartTime.ToString("yyyy-MM-dd HH:mm"), w.NC, w.MachineUsed, w.QtyOk, w.QtyNg, w.IsVoided, w.VoidReason, w.VoidedBy }).ToList(),
         };
     }
+    // [GÓI 25b 20/11/2026] dữ liệu cho drive_g25b.py ([WTS-SUA-NHANH] Sửa nhanh dòng nhóm khác + R-10 ca dòng gốc).
+    //   POST /harness/g25b-seed → KH-G25B / PO-G25B (Workflow OFF), ca "Ca G25B" 07:00–16:00 nghỉ trưa 12:00–13:00, dòng WTS KCS K1 của kcs01
+    //   HÔM QUA 11:30–13:30 OK 5 (ca G25B, làm thông nghỉ 20 phút) ghi thẳng DB. GET /harness/g25b → { k1, kcs01, admin, caB, wts[], brk[] }.
+    //   Bản cũ (a57f112): bấm Sửa dòng KCS ở form Gia công của admin → báo "Dòng này của nhóm KCS…" (không modal) → SAI là đúng.
+    public static async Task<object> Seed25bAsync(AppDbContext db)
+    {
+        if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-G25B"))
+        {
+            var admin = db.Users.List.First(u => u.Username == "admin");
+            var kcs = db.Users.List.First(u => u.Username == "kcs01");
+            var cust = db.Customers.List.First();
+            var t0 = DateTime.Now.AddDays(-2);
+            var plan = new KhPlan { PlanNo = "KH-G25B", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = false, CreatedBy = admin.UserId, CreatedAt = t0 };
+            db.KhPlans.Add(plan); await db.SaveChangesAsync();
+            var d = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-G25B", PurchaseOrder = "PO-G25B", Quantity = 20, Unit = "EA", STD = t0.AddDays(10), CreatedAt = t0 };
+            db.KhPlanDetails.Add(d); await db.SaveChangesAsync();
+            db.KhPlanRouteSnapshotMachining.Add(new KhPlanRouteSnapshotMachining { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "NC01", MachineRegistered = "M1", SetupTime = 5, MachiningTime = 2, InspectionTime = 1 });
+            db.KhPlanRouteSnapshotInspection.Add(new KhPlanRouteSnapshotInspection { KhPlanDetailId = d.KhPlanDetailId, StepOrder = 1, NC = "K1", StandardTime = 1.5m });
+            var ca = new CaLamViec { TenCa = "Ca G25B", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0), IsActive = true, SortOrder = 8 };
+            db.CaLamViecs.Add(ca); await db.SaveChangesAsync();
+            var ng = new CaLamViec_NghiGiaiLao { CaId = ca.CaId, NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0), GhiChu = "Trưa" };
+            db.CaLamViec_NghiGiaiLaos.Add(ng); await db.SaveChangesAsync(); db.Fixup();
+            var y = DateTime.Today.AddDays(-1);
+            var w = new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "KCS", WtsCode = "K1", WorkerId = kcs.UserId, QtyDone = 5, QtyOk = 5, QtyNg = 0,
+                StartTime = y.AddHours(11.5), EndTime = y.AddHours(13.5), ActualTimePerPc = 2, CaId = ca.CaId, CreatedAt = y.AddHours(14) };
+            db.WtsProductionLogs.Add(w); await db.SaveChangesAsync(); db.Fixup();
+            db.WtsBreakWorkLogs.Add(new WtsBreakWorkLog { WtsLogId = w.WtsLogId, CaId = ca.CaId, NghiId = ng.NghiId, BreakName = "Trưa", BreakStart = y.AddHours(12), BreakEnd = y.AddHours(13), OverlapMin = 60, WorkedMin = 20, CreatedAt = y });
+            await db.SaveChangesAsync(); db.Fixup();
+            // R25b-01: dòng GC của gc01 hôm qua 11:00–14:00 ca G25B (form thường của admin = Gia công, cùng nhóm → mở form, không modal)
+            var gc = db.Users.List.First(u => u.Username == "gc01");
+            var wg = new WtsProductionLog { KhPlanDetailId = d.KhPlanDetailId, ProcessGroup = "GC", NC = "NC01", MachineUsed = "M1", WorkerId = gc.UserId, QtyDone = 3, QtyOk = 3, QtyNg = 0,
+                StartTime = y.AddHours(11), EndTime = y.AddHours(14), SetupTime_Actual = 5, MachiningTime_Actual = 2, InspectionTime_Actual = 1, ProductionMode = "serial", CaId = ca.CaId, CreatedAt = y.AddHours(14) };
+            db.WtsProductionLogs.Add(wg); await db.SaveChangesAsync(); db.Fixup();
+            db.WtsBreakWorkLogs.Add(new WtsBreakWorkLog { WtsLogId = wg.WtsLogId, CaId = ca.CaId, NghiId = ng.NghiId, BreakName = "Trưa", BreakStart = y.AddHours(12), BreakEnd = y.AddHours(13), OverlapMin = 60, WorkedMin = 0, CreatedAt = y });
+            await db.SaveChangesAsync(); db.Fixup();
+        }
+        return State25b(db);
+    }
+
+    public static object State25b(AppDbContext db)
+    {
+        var d = db.KhPlanDetails.List.FirstOrDefault(x => x.PurchaseOrder == "PO-G25B");
+        var kcs = db.Users.List.First(u => u.Username == "kcs01"); var admin = db.Users.List.First(u => u.Username == "admin");
+        var rows = d == null ? new List<WtsProductionLog>() : db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == d.KhPlanDetailId).OrderBy(w => w.WtsLogId).ToList();
+        var ids = rows.Select(r => r.WtsLogId).ToList();
+        return new
+        {
+            ok = d != null, gc01 = db.Users.List.First(u => u.Username == "gc01").UserId, kcs01 = kcs.UserId, admin = admin.UserId, det = d?.KhPlanDetailId,
+            caB = db.CaLamViecs.List.FirstOrDefault(c => c.TenCa == "Ca G25B")?.CaId,
+            k1 = rows.FirstOrDefault(w => w.ProcessGroup == "KCS")?.WtsLogId,
+            g1 = rows.FirstOrDefault(w => w.ProcessGroup == "GC")?.WtsLogId,
+            wts = rows.Select(w => new { id = w.WtsLogId, w.WorkerId, w.ProcessGroup, w.WtsCode, start = w.StartTime.ToString("yyyy-MM-dd HH:mm"), end = w.EndTime.ToString("yyyy-MM-dd HH:mm"), w.QtyOk, w.QtyNg, w.CaId, w.ActualTimePerPc, w.IsVoided, w.VoidReason, w.VoidedBy }).ToList(),
+            brk = db.WtsBreakWorkLogs.List.Where(b => b.WtsLogId != null && ids.Contains(b.WtsLogId.Value)).Select(b => new { b.WtsLogId, b.CaId, b.OverlapMin, b.WorkedMin }).ToList(),
+        };
+    }
 }

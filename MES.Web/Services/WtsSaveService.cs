@@ -344,6 +344,156 @@ namespace MES.Web.Services
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════════════════════════════════
+        // [WTS-SUA-NHANH 2026-11-20] Gói 25b — "Sửa nhanh" 1 dòng WTS đã lưu của nhóm KHÁC form người sửa (G25-GHI-NHO R-01).
+        //   Nguồn: CLAUDE rà độc lập Gói 25 20/11 (R-01: Admin form Gia công sửa dòng HTSP / KCS / Đóng gói người khác bị [WTS-SUA-NHOM] chặn,
+        //   chỉ xoá được — nhập lại ngày cũ thì bị chặn); HÙNG 20/11 18:12 chốt phương án modal "Sửa nhanh" theo dòng + 18:32 OK ô sửa:
+        //   giờ bắt đầu / kết thúc (giữ ngày), OK, NG, loại lỗi, T.Thực tế (HTSP / KCS / Đóng gói) hoặc 5 ô giờ (Gia công), ghi chú.
+        //   KHÔNG đổi: PO, mã CV / NC, nhóm nhỏ, NC Taro, máy, chế độ — muốn đổi thì Xoá rồi nhập lại.
+        //   Máy chủ tự dựng nhóm lưu từ DÒNG CŨ trong DB (không tin trang): nhóm lớn / nhỏ, PO, mã, NC Taro, máy, chế độ, vụ lỗi, phát sinh,
+        //   nguồn số chuẩn (WtsProductionLogStds), ca + khoảng nghỉ dòng gốc (R-10) → đi ĐÚNG đường SaveGroupAsync → SaveGroupOnceAsync
+        //   (khoá người / máy / PO, trần + K5 cả lưới thời gian, giữ người làm + ngày, VoidReason "Sửa lại (quyền cao hơn): …"). Không có đường ghi số thứ hai.
+        //   Chỉ Admin / Sửa WTS_MASTER (đọc ma trận DB); lý do 3–150 ký tự bắt buộc.
+        public sealed class WtsQuickEdit
+        {
+            public long     WtsLogId     { get; set; }
+            public int      UserId       { get; set; }
+            public DateTime StartTime    { get; set; }
+            public DateTime EndTime      { get; set; }
+            public decimal  QtyOk        { get; set; }
+            public decimal  QtyNg        { get; set; }
+            public int?     NgCategoryId { get; set; }
+            /// <summary>HTSP / KCS / Đóng gói: T.Thực tế/pc.</summary>
+            public decimal? ActualTimePerPc        { get; set; }
+            /// <summary>Gia công: 5 ô giờ thực tế.</summary>
+            public decimal? SetupTime_Actual       { get; set; }
+            public decimal? MachiningTime_Actual   { get; set; }
+            public decimal? InspectionTime_Actual  { get; set; }
+            public decimal? PreparationTime_Actual { get; set; }
+            public decimal? TrialRunTime_Actual    { get; set; }
+            public string?  Notes        { get; set; }
+            public string?  Reason       { get; set; }
+        }
+        public const string QuickNoPermMsg = "Sửa nhanh chỉ dành cho Admin hoặc người có quyền Sửa WTS tiêu chuẩn.";
+        public const int NotesMax = 500;   // cột WtsProductionLogs.Notes
+
+        public async Task<WtsSaveResult> EditRowCuAsync(WtsQuickEdit q)
+        {
+            WtsSaveResult Fail(string msg) => new() { Ok = false, ErrorMsg = msg };
+            if (!await CanCuAsync(_db, q.UserId)) return Fail(QuickNoPermMsg);
+            if (CuReasonError(q.Reason) is string _rs) return Fail(_rs);
+            if (LenCheck.FirstOver((q.Notes, NotesMax, "Ghi chú")) is string _ln) return Fail(_ln);
+            var old = await _db.WtsProductionLogs.AsNoTracking().FirstOrDefaultAsync(l => l.WtsLogId == q.WtsLogId);
+            if (old == null || old.IsVoided) return Fail("Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang.");
+            var pg = (old.ProcessGroup ?? "").Trim().ToUpperInvariant();
+            // rà độc lập Gói 25b R25b-06 / R25b-07: nhóm lạ / dòng cũ thiếu NC-máy (GC) hoặc mã CV → không dựng được nhóm lưu đúng, báo rõ thay vì lời khó hiểu
+            if (pg is not ("GC" or "TARO" or "BAVIA" or "WASHING" or "KCS" or "PKG"))
+                return Fail($"Dòng WTS này không rõ nhóm (\"{old.ProcessGroup}\") — không sửa nhanh được, chỉ Xoá.");
+            if (pg == "GC" ? string.IsNullOrWhiteSpace(old.NC) || string.IsNullOrWhiteSpace(old.MachineUsed) : string.IsNullOrWhiteSpace(old.WtsCode))
+                return Fail("Dòng WTS cũ thiếu " + (pg == "GC" ? "NC / máy" : "mã CV") + " — không sửa nhanh được: Xoá dòng rồi nhờ người làm nhập lại.");
+            bool isGc = pg == "GC", isHtsp = pg is "TARO" or "BAVIA" or "WASHING";
+            string sub = pg switch { "TARO" => "Taro", "BAVIA" => "Bavia", "WASHING" => "Rua", _ => "" };
+            string mode = isGc ? (old.ProductionMode ?? ((old.PreparationTime_Actual.HasValue || old.TrialRunTime_Actual.HasValue) ? "trial" : "serial")) : "serial";
+            var po = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == old.KhPlanDetailId).Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
+            var grp = new WtsSaveGroup
+            {
+                IsGc = isGc, IsHtsp = isHtsp, HandoverGroupCode = isGc ? "GC" : isHtsp ? "HTSP" : pg == "KCS" ? "KCS" : "PKG",
+                NC = isGc ? old.NC : null, MachineUsed = isGc ? old.MachineUsed : null, ProductionMode = mode, HtspSubGroup = sub,
+                UserId = q.UserId, CaId = old.CaId, WorkDate = old.StartTime.Date, EditReason = q.Reason,
+            };
+            var row = new WtsSaveRow
+            {
+                WtsLogId = old.WtsLogId, IsEditing = true, KhPlanDetailId = old.KhPlanDetailId, PO = po,
+                StartTime = q.StartTime, EndTime = q.EndTime,
+                WtsCode = isGc ? null : old.WtsCode, StepNC = old.StepNC, HtspSubGroup = isHtsp ? sub : null,
+                QtyOk = q.QtyOk, QtyNg = q.QtyNg, QtyDone = q.QtyOk + q.QtyNg,
+                NgCategoryId = q.QtyNg > 0 ? q.NgCategoryId : null, NgCaseId = old.NgCaseId,
+                Notes = string.IsNullOrWhiteSpace(q.Notes) ? null : q.Notes.Trim(), IsOvertime = old.IsOvertime, ProductionMode = mode,
+                SetupTime_Actual       = isGc ? q.SetupTime_Actual       : null,
+                MachiningTime_Actual   = isGc ? q.MachiningTime_Actual   : null,
+                InspectionTime_Actual  = isGc ? q.InspectionTime_Actual  : null,
+                PreparationTime_Actual = isGc ? q.PreparationTime_Actual : null,
+                TrialRunTime_Actual    = isGc ? q.TrialRunTime_Actual    : null,
+                ActualTimePerPc        = isGc ? null : q.ActualTimePerPc,
+            };
+            // phát sinh của dòng gốc giữ nguyên (không sửa ở Sửa nhanh)
+            row.ExtraItems = (await _db.WtsExtraItems.AsNoTracking().Where(x => x.WtsLogId == old.WtsLogId).OrderBy(x => x.Id).ToListAsync())
+                .Select(x => new WtsSaveExtra { WtsCode = x.WtsCode, WtsName = x.WtsName, Minutes = x.Minutes, Notes = x.Notes }).ToList();
+            // nguồn số chuẩn = dòng snapshot dòng gốc đã lấy (RefreshStdFromSnapshotAsync đọc lại số + kiểm đúng NC / máy)
+            var stds = await _db.WtsProductionLogStds.AsNoTracking().Where(x => x.WtsLogId == old.WtsLogId).ToListAsync();
+            var src0 = stds.FirstOrDefault(x => !string.IsNullOrEmpty(x.SnapshotTable) && x.SnapshotRowId.HasValue);
+            //   dòng gốc không ghi nguồn (dữ liệu cũ / trang không tra được) → tra lại snapshot PO như trang (GetStdTiming / GetStdSourceForSubRow)
+            var src = src0 != null ? (src0.SnapshotTable!, src0.SnapshotRowId!.Value) : await GuessStdSrcAsync(old.KhPlanDetailId, pg, old.WtsCode, old.NC, old.MachineUsed);
+            if (isGc) row.GcStd = src == null ? null : new WtsSaveStd { SrcTable = src.Value.Table, SrcRowId = src.Value.RowId };
+            else
+            {
+                row.StdSrcTable = src?.Table; row.StdSrcRowId = src?.RowId;
+                row.StdTimePerPc = stds.FirstOrDefault(x => x.FieldName == StdTrack.Field.Standard)?.StdValue;   // RefreshStdFromSnapshotAsync đọc lại số mới nhất
+            }
+            // ca + khoảng nghỉ dòng gốc (dòng cu: SaveGroupOnceAsync tính lại y hệt; dòng của chính mình hôm nay: dùng bộ này)
+            var ca = await CuCaAsync(old.CaId);
+            grp.CaId = ca?.CaId;
+            row.Breaks = await CuBreaksAsync(ca, old.WtsLogId, WorkMinutes.RoundToMinute(q.StartTime), WorkMinutes.RoundToMinute(q.EndTime), null);
+            grp.Rows.Add(row);
+            var res = await SaveGroupAsync(grp);
+            if (!res.Ok && string.IsNullOrEmpty(res.ErrorMsg)) res.ErrorMsg = grp.ErrorMsg ?? row.ErrorMsg;
+            return res;
+        }
+
+        /// <summary>[WTS-SUA-NHANH] Tra dòng snapshot lấy số chuẩn khi dòng gốc không ghi nguồn — cùng cách trang: GC theo NC + máy (máy đăng ký /
+        ///   máy đồng dạng / NC không đăng ký máy); non-GC theo mã CV (khớp mã có số chuẩn trước, rồi NC). RefreshStdFromSnapshotAsync kiểm lại.</summary>
+        private async Task<(string Table, long RowId)?> GuessStdSrcAsync(int dId, string pg, string? code, string? nc, string? machine)
+        {
+            static bool Eq(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+            if (pg == "GC")
+            {
+                var ms = await _db.KhPlanRouteSnapshotMachining.AsNoTracking().Where(x => x.KhPlanDetailId == dId).ToListAsync();
+                var main = ms.Where(x => Eq(x.NC, nc)).OrderBy(x => x.IsBackup).ThenBy(x => x.StepOrder).ToList();
+                var reg = main.FirstOrDefault(x => Eq(x.MachineRegistered, machine));
+                if (reg != null) return (StdTrack.Table.Machining, reg.SnapshotId);
+                var ids = main.Select(x => x.SnapshotId).ToList();
+                var tms = await _db.KhPlanRouteSnapshotMachiningTimings.AsNoTracking().Where(x => x.KhPlanDetailId == dId && ids.Contains(x.MachiningSnapshotId)).ToListAsync();
+                var tm = tms.FirstOrDefault(t => (t.SoMay ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(m => Eq(m, machine)));
+                if (tm != null) return (StdTrack.Table.MachiningTiming, tm.TimingSnapshotId);
+                var noReg = main.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.MachineRegistered));
+                return noReg == null ? null : (StdTrack.Table.Machining, noReg.SnapshotId);
+            }
+            (string Table, long RowId)? Pick<T>(List<T> list, string table, Func<T, string?> key, Func<T, string?> ncKey, Func<T, decimal?> val, Func<T, long> id)
+            {
+                var byCode = list.Where(x => Eq(key(x), code)).ToList();
+                var hit = byCode.FirstOrDefault(x => val(x).HasValue) ?? byCode.FirstOrDefault() ?? list.FirstOrDefault(x => Eq(ncKey(x), code));
+                return hit == null ? null : (table, id(hit));
+            }
+            return pg switch
+            {
+                "TARO"    => Pick((await _db.KhPlanRouteSnapshotTaro.AsNoTracking().Where(x => x.KhPlanDetailId == dId && !x.IsBackup).OrderBy(x => x.StepOrder).ToListAsync()), StdTrack.Table.Taro, x => string.IsNullOrWhiteSpace(x.WtsTaskCode) ? x.NC : x.WtsTaskCode, x => x.NC, x => x.StandardTime, x => x.SnapshotId),
+                "BAVIA"   => Pick((await _db.KhPlanRouteSnapshotBavia.AsNoTracking().Where(x => x.KhPlanDetailId == dId && !x.IsBackup).OrderBy(x => x.StepOrder).ToListAsync()), StdTrack.Table.Bavia, x => x.NC, x => x.NC, x => x.StandardTime, x => x.SnapshotId),
+                "WASHING" => Pick((await _db.KhPlanRouteSnapshotWashing.AsNoTracking().Where(x => x.KhPlanDetailId == dId && !x.IsBackup).OrderBy(x => x.StepOrder).ToListAsync()), StdTrack.Table.Washing, x => x.NC, x => x.NC, x => x.StandardTime, x => x.SnapshotId),
+                "KCS"     => Pick((await _db.KhPlanRouteSnapshotInspection.AsNoTracking().Where(x => x.KhPlanDetailId == dId && !x.IsBackup).OrderBy(x => x.StepOrder).ToListAsync()), StdTrack.Table.Inspection, x => x.NC, x => x.NC, x => x.StandardTime, x => x.SnapshotId),
+                _         => Pick((await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(x => x.KhPlanDetailId == dId && !x.IsBackup).OrderBy(x => x.StepOrder).ToListAsync()), StdTrack.Table.Packaging, x => x.NC, x => x.NC, x => x.StandardTime, x => x.SnapshotId),
+            };
+        }
+
+        /// <summary>[WTS-SUA-NHANH] Ca (kèm giờ nghỉ) của dòng gốc; null = dòng không ca / ca không còn.</summary>
+        private async Task<CaLamViec?> CuCaAsync(int? caId)
+            => caId == null ? null : await _db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == caId.Value);
+
+        /// <summary>[WTS-SUA-NHANH] R-10: khoảng nghỉ dòng sửa chạm theo CA DÒNG GỐC; phút làm thông = trang gửi (đúng khoảng) → đã lưu dòng gốc → 0.
+        ///   Phút đã lưu bị kẹp vào phần chồng mới; phút trang gửi để nguyên (WorkMinutes.Verify báo nếu sai).</summary>
+        private async Task<List<WorkMinutes.SentBreak>> CuBreaksAsync(CaLamViec? ca, long oldId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
+        {
+            var calc = WorkMinutes.Touching(ca, s, e);
+            if (calc.Count == 0) return new();
+            var oldB = await _db.WtsBreakWorkLogs.AsNoTracking().Where(x => x.WtsLogId == oldId).ToListAsync();
+            return calc.Select(c =>
+            {
+                var fromPage = sent?.FirstOrDefault(x => x.BreakStart == c.BreakStart && x.BreakEnd == c.BreakEnd);
+                var fromOld  = oldB.FirstOrDefault(x => x.BreakStart == c.BreakStart && x.BreakEnd == c.BreakEnd);
+                int w = fromPage != null ? fromPage.WorkedMin : Math.Clamp(fromOld?.WorkedMin ?? 0, 0, c.OverlapMin);
+                return new WorkMinutes.SentBreak { BreakStart = c.BreakStart, BreakEnd = c.BreakEnd, WorkedMin = w };
+            }).ToList();
+        }
+
         private async Task<WtsSaveResult> SaveGroupOnceAsync(WtsSaveGroup grp)   // [RS-D10b] thân cũ của SaveGroupAsync, không đổi
         {
             grp.ErrorMsg = null;
@@ -383,11 +533,16 @@ namespace MES.Web.Services
             //   không có quyền → báo đúng nghĩa (trước: câu UPDATE lọc WorkerId + hôm nay trả 0 dòng → báo "đã bị sửa / xoá ở nơi khác (tab khác)" sai nghĩa — A2-11).
             //   Dòng cũ không còn / đã huỷ: để nguyên đường cũ (UPDATE 0 dòng → báo tải lại, rollback cả nhóm — ca W6).
             bool? _canCu = null; int _cuRows = 0;
+            var _cuCa = new List<int?>();   // [WTS-SUA-NHANH 2026-11-20] ca của từng dòng sửa đi đường quyền cao hơn (R-10)
             foreach (var s1 in grp.Rows.Where(s => s.IsEditing && s.WtsLogId.HasValue))
             {
                 s1.Cu = false; s1.OldWorkerId = null; s1.OldStart = null;
                 var _old = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == s1.WtsLogId!.Value)
-                    .Select(l => new { l.WorkerId, l.StartTime, l.IsVoided, l.ProcessGroup }).FirstOrDefaultAsync();
+                    .Select(l => new { l.WorkerId, l.StartTime, l.IsVoided, l.ProcessGroup, l.CaId }).FirstOrDefaultAsync();   // [WTS-SUA-NHANH 2026-11-20] + CaId (R-10)
+                // rà độc lập Gói 25b R25b-05: sửa dòng NGÀY CŨ mà dòng đã bị tab khác sửa / xoá → trước rơi xuống lời "Chỉ được nhập WTS cho ngày hôm nay" (sai nghĩa).
+                //   Chỉ áp ngày cũ — hôm nay giữ đường cũ (UPDATE 0 dòng → báo tải lại, ca W6).
+                if ((_old == null || _old.IsVoided) && grp.WorkDate.Date != DateTime.Today)
+                { s1.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; grp.ErrorMsg = s1.ErrorMsg; return Fail(); }
                 if (_old == null || _old.IsVoided) continue;
                 // [WTS-SUA-NHOM 2026-11-08] sửa dòng đã lưu: nhóm lớn của dòng cũ (đọc DB, không tin trang) phải = nhóm lớn của form — kiểm TRƯỚC quyền cao hơn
                 //   (lời "xoá dòng rồi nhập lại ở nhóm đúng" có đường gỡ; dời từ vòng kiểm dòng lên đây để đọc dòng cũ 1 lần — [L7-WTS-CU])
@@ -406,6 +561,7 @@ namespace MES.Web.Services
                     grp.ErrorMsg = s1.ErrorMsg; return Fail();
                 }
                 s1.Cu = true; _cuRows++;
+                _cuCa.Add(_old.CaId);   // [WTS-SUA-NHANH] R-10: ca của dòng gốc
             }
             // [L7-WTS-CU] nhóm có dòng sửa đi đường quyền cao hơn thì CHỈ gồm dòng đó (không trộn dòng mới / dòng thường — dòng mới sẽ ghi người sửa, rà độc lập R-02)
             bool _allCu = _cuRows > 0 && _cuRows == grp.Rows.Count;
@@ -414,6 +570,19 @@ namespace MES.Web.Services
             // nhóm CHỈ gồm dòng sửa đi đường quyền cao hơn → không cần quyền nhập WTS của nhóm dòng (B1); còn lại kiểm như cũ
             if (!_wgPerm.Value.IsAdmin && !_wgPerm.Value.Groups.Contains(_permKey) && !_allCu)
             { grp.ErrorMsg = WtsNoPermMsg(_permKey); return Fail(); }
+            // [WTS-SUA-NHANH 2026-11-20] R-10 (rà độc lập Gói 25): dòng sửa đi đường quyền cao hơn GIỮ CA của dòng gốc — trước: lấy ca người sửa đang chọn
+            //   (Admin ca HC sửa dòng ca 2 → phút làm / giờ nghỉ tính theo ca HC). Nay máy chủ ép grp.CaId = ca dòng gốc; khoảng nghỉ tính lại theo ca đó
+            //   (giờ nghỉ hiện tại của ca), phút làm thông: lấy phút trang gửi nếu đúng khoảng nghỉ đó, không thì phút đã lưu của dòng gốc, không có = 0.
+            //   Nhóm có 2 dòng cu khác ca → chặn (sửa từng dòng). Nguồn: HÙNG 20/11 18:12 chốt "giữ ca + giờ nghỉ dòng gốc — đóng R-10".
+            if (_allCu)
+            {
+                if (_cuCa.Distinct().Count() > 1)
+                { grp.ErrorMsg = "Các dòng đang sửa thuộc ca khác nhau — sửa từng dòng một."; return Fail(); }
+                var _caKeep = await CuCaAsync(_cuCa[0]);
+                grp.CaId = _caKeep?.CaId;
+                foreach (var s2 in grp.Rows)
+                    s2.Breaks = await CuBreaksAsync(_caKeep, s2.WtsLogId!.Value, WorkMinutes.RoundToMinute(s2.StartTime), WorkMinutes.RoundToMinute(s2.EndTime), s2.Breaks);
+            }
 
             // Validate từng sub-row
             foreach (var sub in grp.Rows)

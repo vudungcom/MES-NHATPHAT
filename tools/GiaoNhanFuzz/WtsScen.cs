@@ -1181,6 +1181,159 @@ public static class WtsScen
             Ok(!v.Ok && v.ErrorMsg == "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang." && w900.VoidedBy == 1 && w900.VoidReason == "Xóa dòng (quyền cao hơn): nhập nhầm NC", "W24i xoá lại dòng đã huỷ: báo tải lại, không ghi đè người / lý do huỷ trước", v.ErrorMsg);
         }
 
+
+        // [WTS-SUA-NHANH 2026-11-20] Gói 25b — Sửa nhanh dòng WTS nhóm khác form (G25-GHI-NHO R-01) + R-10 giữ ca dòng gốc.
+        //   Nguồn: HÙNG 20/11 18:12 + 18:32 (ô sửa: giờ giữ ngày / OK / NG / loại lỗi / T.Thực tế hoặc 5 giờ GC / ghi chú). Bản a57f112 (Gói 25): chưa có EditRowCuAsync
+        //   → không biên dịch; phần R-10 (W25h) bản cũ ghi CaId ca người sửa → SAI.
+        Console.WriteLine("[W25] WTS-SUA-NHANH — Admin / Sửa WTS_MASTER sửa nhanh dòng nhóm khác (HTSP / KCS / Đóng gói / GC) theo dòng cũ; giữ ca + khoảng nghỉ dòng gốc (R-10)");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var gM = new UserGroup { GroupId = 92, GroupCode = "WTSMASTER", GroupName = "Quản WTS (thử)", IsActive = true, Permissions = FuzzPerm.Json(SystemPermissions.WtsMaster) };
+            db.UserGroups.List.Add(gM); db.Users.List.Add(new User { UserId = 11, Username = "u11", FullName = "U11", IsActive = true, Group = gM, GroupId = 92 });
+            // ca 2: 07:00–16:00, nghỉ trưa 12:00–13:00
+            var ca2 = new CaLamViec { CaId = 2, TenCa = "C2", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0), IsActive = true };
+            var ng2 = new CaLamViec_NghiGiaiLao { NghiId = 21, CaId = 2, NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0), GhiChu = "Trưa" };
+            ca2.NghiGiaiLaos.Add(ng2); db.CaLamViecs.List.Add(ca2); db.CaLamViec_NghiGiaiLaos.List.Add(ng2);
+            db.Fixup();
+            var Y = DateTime.Today.AddDays(-1);
+            // (a) u3 lưu KCS K1 PO2 OK 5 hôm nay (có 1 phát sinh)
+            var gk = NonGc("KCS"); var rk = Row(2, 5, 0, T.AddHours(1), T.AddHours(2), code: "K1", setup: null, mach: null, insp: null, actualPc: 1.2m, cat: null);
+            rk.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS1", WtsName = "Lau bàn", Minutes = 5, Notes = "x" });
+            gk.Rows.Add(rk); var r = await s.SaveGroupAsync(gk); Ok(r.Ok, "u3 lưu KCS K1 PO2 OK 5", r.ErrorMsg);
+            long kId = rk.WtsLogId!.Value;
+            // form thường của Admin (Gia công) vẫn bị [WTS-SUA-NHOM] chặn như cũ
+            var gx = Gc(nc: "NC1", machine: "M1"); gx.UserId = 1; gx.EditReason = "thử form GC"; var ex = Row(2, 4, 0, T.AddHours(1), T.AddHours(2)); ex.IsEditing = true; ex.WtsLogId = kId; gx.Rows.Add(ex);
+            r = await s.SaveGroupAsync(gx);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Dòng này của nhóm KCS"), "W25a form Gia công của Admin sửa dòng KCS: vẫn chặn [WTS-SUA-NHOM] (đường cũ không đổi)", r.ErrorMsg);
+            WtsSaveService.WtsQuickEdit Q(long id, int user, DateTime st, DateTime en, decimal ok, decimal ng = 0, int? cat = null, decimal? act = 1.2m, string? why = "tổ trưởng báo đếm sai")
+                => new() { WtsLogId = id, UserId = user, StartTime = st, EndTime = en, QtyOk = ok, QtyNg = ng, NgCategoryId = cat, ActualTimePerPc = act, Reason = why };
+            // (b) không quyền / không lý do / ghi chú dài
+            r = await s.EditRowCuAsync(Q(kId, 3, T.AddHours(1), T.AddHours(2), 4));
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.QuickNoPermMsg, "W25b u3 (không quyền cao hơn) sửa nhanh: chặn", r.ErrorMsg);
+            r = await s.EditRowCuAsync(Q(kId, 1, T.AddHours(1), T.AddHours(2), 4, why: "ab"));
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuReasonMsg, "W25b Admin sửa nhanh lý do 2 ký tự: chặn", r.ErrorMsg);
+            var qn = Q(kId, 1, T.AddHours(1), T.AddHours(2), 4); qn.Notes = new string('n', 501);
+            r = await s.EditRowCuAsync(qn);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("Ghi chú") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == kId).IsVoided, "W25b ghi chú 501 ký tự: chặn trước khi ghi", r.ErrorMsg);
+            // (c) Admin sửa nhanh dòng KCS của u3: OK 4, giờ 09:10–10:00 → dòng mới giữ u3, KCS, K1, phát sinh, số chuẩn; dòng cũ huỷ "Sửa lại (quyền cao hơn)"
+            int n0 = WtsCount(db, false);
+            r = await s.EditRowCuAsync(Q(kId, 1, T.AddHours(1).AddMinutes(10), T.AddHours(2), 4)); db.Fixup();
+            var oldK = db.WtsProductionLogs.List.First(x => x.WtsLogId == kId);
+            var newK = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.KhPlanDetailId == 2 && x.ProcessGroup == "KCS").OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+            var exK = newK == null ? new List<WtsExtraItemLog>() : db.WtsExtraItems.List.Where(x => x.WtsLogId == newK.WtsLogId).ToList();
+            var stK = newK == null ? null : db.WtsProductionLogStds.List.FirstOrDefault(x => x.WtsLogId == newK.WtsLogId);
+            Ok(r.Ok && newK != null && newK.WorkerId == 3 && newK.WtsCode == "K1" && newK.QtyOk == 4 && newK.StartTime == T.AddHours(1).AddMinutes(10) && newK.ActualTimePerPc == 1.2m
+               && oldK.IsVoided && oldK.VoidedBy == 1 && oldK.VoidReason == "Sửa lại (quyền cao hơn): tổ trưởng báo đếm sai" && WtsCount(db, false) == n0 + 1
+               && exK.Count == 1 && exK[0].WtsCode == "PS1" && exK[0].Minutes == 5 && stK != null && stK.StdValue == 1 && stK.SnapshotTable == StdTrack.Table.Inspection,
+               "W25c Admin sửa nhanh KCS của u3: dòng mới giữ người làm / nhóm / mã / phát sinh / số chuẩn; dòng cũ huỷ ghi lý do + người sửa", r.ErrorMsg + $" | new {newK?.WorkerId} {newK?.WtsCode} ok {newK?.QtyOk} ex {exK.Count} std {stK?.StdValue}");
+            var led2 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(2);
+            Ok(led2 != null && led2.Balanced, "W25c sổ PO2 cân sau sửa nhanh");
+            // (d) Taro: u3 lưu HTSP Taro T1 PO2 OK 3 → u11 (chỉ Sửa WTS_MASTER) sửa nhanh OK 2 → dòng mới TARO, nhóm nhỏ Taro, người làm u3 (B1)
+            var gt = NonGc("HTSP", "Taro"); var rt = Row(2, 3, 0, T.AddHours(2), T.AddHours(3), code: "T1", setup: null, mach: null, insp: null, actualPc: 1.5m); gt.Rows.Add(rt);
+            r = await s.SaveGroupAsync(gt); Ok(r.Ok, "u3 lưu Taro T1 PO2 OK 3", r.ErrorMsg);
+            r = await s.EditRowCuAsync(Q(rt.WtsLogId!.Value, 11, T.AddHours(2), T.AddHours(3), 2, act: 1.6m)); db.Fixup();
+            var newT = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.ProcessGroup == "TARO").OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+            Ok(r.Ok && newT != null && newT.WorkerId == 3 && newT.HtspSubGroup == "Taro" && newT.WtsCode == "T1" && newT.QtyOk == 2 && newT.ActualTimePerPc == 1.6m
+               && db.WtsProductionLogs.List.First(x => x.WtsLogId == rt.WtsLogId).VoidedBy == 11, "W25d u11 (chỉ Sửa WTS_MASTER) sửa nhanh Taro của u3: TARO / Taro / T1 giữ, OK 2", r.ErrorMsg);
+            // (e) NG: thêm NG 1 không loại lỗi → chặn; có loại lỗi → vụ mới nơi gây lỗi KCS
+            r = await s.EditRowCuAsync(Q(newK!.WtsLogId, 1, newK.StartTime, newK.EndTime, 3, ng: 1));
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("loại lỗi") && !newK.IsVoided, "W25e sửa nhanh NG 1 không chọn loại lỗi: chặn", r.ErrorMsg);
+            r = await s.EditRowCuAsync(Q(newK.WtsLogId, 1, newK.StartTime, newK.EndTime, 3, ng: 1, cat: 1)); db.Fixup();
+            var newK2 = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.ProcessGroup == "KCS").OrderByDescending(x => x.WtsLogId).First();
+            var vK = newK2.NgCaseId == null ? null : db.NgCases.List.FirstOrDefault(c => c.NgCaseId == newK2.NgCaseId);
+            Ok(r.Ok && newK2.QtyNg == 1 && newK2.QtyOk == 3 && vK != null && vK.KhPlanDetailId == 2, "W25e có loại lỗi: lưu, tạo vụ lỗi của PO2", r.ErrorMsg);
+            // (f) dòng đã huỷ → báo tải lại; dòng ngày cũ: giữ ngày, đổi sang hôm nay → chặn
+            r = await s.EditRowCuAsync(Q(kId, 1, T.AddHours(1), T.AddHours(2), 4));
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("tải lại trang"), "W25f sửa nhanh dòng đã huỷ: báo tải lại", r.ErrorMsg);
+            // dòng Đóng gói ngày cũ của u3, ca 2, chạm nghỉ trưa 11:30–13:30 có làm thông 20 phút
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 960, KhPlanDetailId = 2, ProcessGroup = "PKG", WtsCode = "P1", WorkerId = 3, QtyDone = 2, QtyOk = 2, StartTime = Y.AddHours(11.5), EndTime = Y.AddHours(13.5), CreatedAt = Y.AddHours(14), CaId = 2, ActualTimePerPc = 1 });
+            db.WtsBreakWorkLogs.List.Add(new WtsBreakWorkLog { Id = 9601, WtsLogId = 960, CaId = 2, NghiId = 21, BreakName = "Trưa", BreakStart = Y.AddHours(12), BreakEnd = Y.AddHours(13), OverlapMin = 60, WorkedMin = 20, CreatedAt = Y });
+            db.Fixup();
+            r = await s.EditRowCuAsync(Q(960, 1, T.AddHours(3.5), T.AddHours(4), 2, act: 1));
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Sửa WTS ngày cũ / của người khác: giữ nguyên ngày của dòng") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 960).IsVoided, "W25f dời dòng ngày cũ sang hôm nay: chặn, không huỷ", r.ErrorMsg);
+            // (g) R-10: sửa nhanh dòng ngày cũ ca 2 → giữ CaId 2 + làm thông 20 phút; giờ mới 11:00–13:00 chồng nghỉ 60
+            r = await s.EditRowCuAsync(Q(960, 1, Y.AddHours(11), Y.AddHours(13), 1, act: 1)); db.Fixup();
+            var n960 = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.ProcessGroup == "PKG").OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+            var b960 = n960 == null ? new List<WtsBreakWorkLog>() : db.WtsBreakWorkLogs.List.Where(x => x.WtsLogId == n960.WtsLogId).ToList();
+            Ok(r.Ok && n960 != null && n960.CaId == 2 && n960.StartTime == Y.AddHours(11) && n960.WorkerId == 3 && b960.Count == 1 && b960[0].WorkedMin == 20 && b960[0].OverlapMin == 60,
+               "W25g sửa nhanh dòng ngày cũ: giữ ca 2 + khoảng nghỉ trưa, làm thông 20 phút giữ như dòng gốc (R-10)", r.ErrorMsg + $" | ca {n960?.CaId} brk {b960.Count} worked {b960.FirstOrDefault()?.WorkedMin}");
+            // (h) R-10 qua FORM THƯỜNG: Admin (ca đang chọn = 1, không nghỉ) sửa dòng GC ngày cũ ca 2 của u2 → máy chủ ép ca 2 + khoảng nghỉ trưa
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 970, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M7", WorkerId = 2, QtyDone = 2, QtyOk = 2, StartTime = Y.AddHours(11), EndTime = Y.AddHours(14), CreatedAt = Y.AddHours(14), CaId = 2, ProductionMode = "serial" });
+            db.WtsBreakWorkLogs.List.Add(new WtsBreakWorkLog { Id = 9701, WtsLogId = 970, CaId = 2, NghiId = 21, BreakName = "Trưa", BreakStart = Y.AddHours(12), BreakEnd = Y.AddHours(13), OverlapMin = 60, WorkedMin = 0, CreatedAt = Y });
+            db.Fixup();
+            var gh = Gc(nc: "NC1", machine: "M7"); gh.UserId = 1; gh.WorkDate = Y.Date; gh.CaId = 1; gh.EditReason = "sửa giờ hôm qua";
+            var eh = Row(2, 2, 0, Y.AddHours(11), Y.AddHours(14).AddMinutes(30)); eh.IsEditing = true; eh.WtsLogId = 970; gh.Rows.Add(eh);
+            r = await s.SaveGroupAsync(gh); db.Fixup();
+            var n970 = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.MachineUsed == "M7").OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+            var b970 = n970 == null ? new List<WtsBreakWorkLog>() : db.WtsBreakWorkLogs.List.Where(x => x.WtsLogId == n970.WtsLogId).ToList();
+            Ok(r.Ok && n970 != null && n970.WtsLogId != 970 && n970.CaId == 2 && b970.Count == 1 && b970[0].BreakStart == Y.AddHours(12),
+               "W25h form thường sửa dòng ngày cũ ca 2 (Admin đang chọn ca 1): dòng mới CaId 2 + khoảng nghỉ trưa (R-10 — bản cũ ghi ca 1, không nghỉ)", r.ErrorMsg + $" | ca {n970?.CaId} brk {b970.Count}");
+            // (i) GC sửa nhanh: K5 vẫn chặn — PO1 u2 NC1 OK 10, NC2 OK 10 → Admin sửa nhanh NC1 OK 5
+            var g1 = Gc(nc: "NC1", machine: "M1"); var a1 = Row(1, 10, 0, T.AddHours(5), T.AddHours(6)); g1.Rows.Add(a1); r = await s.SaveGroupAsync(g1); Ok(r.Ok, "u2 NC1 OK 10 PO1", r.ErrorMsg);
+            var g2 = Gc(nc: "NC2", machine: "M2"); var a2 = Row(1, 10, 0, T.AddHours(6), T.AddHours(7)); g2.Rows.Add(a2); r = await s.SaveGroupAsync(g2); Ok(r.Ok, "u2 NC2 OK 10 PO1", r.ErrorMsg);
+            var qg = new WtsSaveService.WtsQuickEdit { WtsLogId = a1.WtsLogId!.Value, UserId = 11, StartTime = T.AddHours(5), EndTime = T.AddHours(6), QtyOk = 5, SetupTime_Actual = 5, MachiningTime_Actual = 2, InspectionTime_Actual = 1, Reason = "đếm nhầm" };
+            r = await s.EditRowCuAsync(qg);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("NC2") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == a1.WtsLogId).IsVoided, "W25i u11 sửa nhanh NC1 OK 10 → 5 khi NC2 đã dùng: K5 chặn, dòng còn", r.ErrorMsg);
+            qg.QtyOk = 10; qg.MachiningTime_Actual = 3; r = await s.EditRowCuAsync(qg); db.Fixup();
+            var n1 = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.KhPlanDetailId == 1 && x.NC == "NC1").OrderByDescending(x => x.WtsLogId).First();
+            Ok(r.Ok && n1.WtsLogId != a1.WtsLogId && n1.WorkerId == 2 && n1.MachineUsed == "M1" && n1.MachiningTime_Actual == 3 && n1.ProductionMode == "serial", "W25i sửa nhanh GC giữ NC / máy / chế độ, đổi giờ GC", r.ErrorMsg);
+            var led1 = await new HandoverLedgerService(db).GetLedgerForDetailAsync(1);
+            Ok(led1 != null && led1.Balanced, "W25i sổ PO1 cân");
+            // ── rà độc lập Gói 25b (R25b-T1): ca bổ sung ──
+            // (j) form thường: trang gửi ĐÚNG khoảng nghỉ ca gốc (ca 2 12:00–13:00) với làm thông 30 → máy chủ lấy phút trang gửi (ưu tiên hơn phút đã lưu)
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999800, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M8", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(11), EndTime = Y.AddHours(14), CreatedAt = Y.AddHours(14), CaId = 2, ProductionMode = "serial" });
+            db.Fixup();
+            var gj = Gc(nc: "NC1", machine: "M8"); gj.UserId = 1; gj.WorkDate = Y.Date; gj.CaId = 2; gj.EditReason = "làm thông trưa";
+            var ej = Row(2, 1, 0, Y.AddHours(11), Y.AddHours(14)); ej.IsEditing = true; ej.WtsLogId = 999800;
+            ej.Breaks.Add(new WorkMinutes.SentBreak { BreakStart = Y.AddHours(12), BreakEnd = Y.AddHours(13), WorkedMin = 30 }); gj.Rows.Add(ej);
+            r = await s.SaveGroupAsync(gj); db.Fixup();
+            var bj = db.WtsBreakWorkLogs.List.Where(x => x.WtsLogId == ej.WtsLogId).ToList();
+            Ok(r.Ok && bj.Count == 1 && bj[0].WorkedMin == 30, "W25j form thường gửi đúng khoảng nghỉ ca gốc làm thông 30 → máy chủ giữ 30 (phút trang gửi ưu tiên)", r.ErrorMsg + $" | brk {bj.Count} {bj.FirstOrDefault()?.WorkedMin}");
+            // (k) dòng cũ KHÔNG ca → sửa nhanh: dòng mới không ca, không khoảng nghỉ
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999810, KhPlanDetailId = 2, ProcessGroup = "KCS", WtsCode = "K1", WorkerId = 3, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(11), EndTime = Y.AddHours(14), CreatedAt = Y.AddHours(14), CaId = null, ActualTimePerPc = 1 });
+            db.Fixup();
+            r = await s.EditRowCuAsync(Q(999810, 1, Y.AddHours(11), Y.AddHours(13), 1, act: 1)); db.Fixup();
+            var nk = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.ProcessGroup == "KCS" && x.StartTime == Y.AddHours(11)).OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+            Ok(r.Ok && nk != null && nk.WtsLogId != 999810 && nk.CaId == null && !db.WtsBreakWorkLogs.List.Any(x => x.WtsLogId == nk.WtsLogId), "W25k dòng cũ không ca: sửa nhanh giữ không ca, không khoảng nghỉ", r.ErrorMsg);
+            // (l) nhóm 2 dòng cu khác ca → chặn
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999820, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M9", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(8), EndTime = Y.AddHours(9), CreatedAt = Y.AddHours(9), CaId = 1, ProductionMode = "serial" });
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999830, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M9", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(9), EndTime = Y.AddHours(10), CreatedAt = Y.AddHours(10), CaId = 2, ProductionMode = "serial" });
+            db.Fixup();
+            var gl = Gc(nc: "NC1", machine: "M9"); gl.UserId = 1; gl.WorkDate = Y.Date; gl.EditReason = "2 dòng khác ca";
+            var el1 = Row(2, 1, 0, Y.AddHours(8), Y.AddHours(9)); el1.IsEditing = true; el1.WtsLogId = 999820; gl.Rows.Add(el1);
+            var el2 = Row(2, 1, 0, Y.AddHours(9), Y.AddHours(10)); el2.IsEditing = true; el2.WtsLogId = 999830; gl.Rows.Add(el2);
+            r = await s.SaveGroupAsync(gl);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Các dòng đang sửa thuộc ca khác nhau") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 999820).IsVoided, "W25l nhóm 2 dòng cu khác ca: chặn, không huỷ", r.ErrorMsg);
+            // (m) GC Chạy thử: sửa nhanh giữ chế độ trial, thiếu T.CB → chặn; có T.CB → lưu
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999840, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M10", WorkerId = 2, QtyDone = 0, QtyOk = 0, StartTime = Y.AddHours(15), EndTime = Y.AddHours(16), CreatedAt = Y.AddHours(16), CaId = 1, ProductionMode = "trial", PreparationTime_Actual = 10 });
+            db.Fixup();
+            var qm = new WtsSaveService.WtsQuickEdit { WtsLogId = 999840, UserId = 1, StartTime = Y.AddHours(15), EndTime = Y.AddHours(16).AddMinutes(10), QtyOk = 0, Reason = "chạy thử lâu hơn" };
+            r = await s.EditRowCuAsync(qm);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("T.CB"), "W25m sửa nhanh GC Chạy thử thiếu T.CB: chặn (giữ chế độ trial)", r.ErrorMsg);
+            qm.PreparationTime_Actual = 12; r = await s.EditRowCuAsync(qm); db.Fixup();
+            var nm = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.MachineUsed == "M10").OrderByDescending(x => x.WtsLogId).First();
+            Ok(r.Ok && nm.WtsLogId != 999840 && nm.ProductionMode == "trial" && nm.PreparationTime_Actual == 12, "W25m có T.CB: lưu, chế độ trial", r.ErrorMsg);
+            // (n) dòng KCS của CHÍNH Admin hôm nay (không cu): sửa nhanh đi đường thường, VoidReason "Sửa lại"
+            var gn = NonGc("KCS"); gn.UserId = 1; var rn = Row(2, 2, 0, T.AddHours(8), T.AddHours(9), code: "K1", setup: null, mach: null, insp: null, actualPc: 1); gn.Rows.Add(rn);
+            r = await s.SaveGroupAsync(gn); Ok(r.Ok, "u1 (Admin) lưu KCS K1 PO2 hôm nay", r.ErrorMsg);
+            r = await s.EditRowCuAsync(Q(rn.WtsLogId!.Value, 1, T.AddHours(8), T.AddHours(9), 1, act: 1)); db.Fixup();
+            var on = db.WtsProductionLogs.List.First(x => x.WtsLogId == rn.WtsLogId);
+            Ok(r.Ok && on.IsVoided && on.VoidReason == "Sửa lại", "W25n sửa nhanh dòng của chính mình hôm nay: đường thường, VoidReason 'Sửa lại'", r.ErrorMsg + " | " + on.VoidReason);
+            // (o) form thường sửa dòng NGÀY CŨ đã bị huỷ ở tab khác → lời đúng nghĩa (R25b-05)
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999870, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M11", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(2), EndTime = Y.AddHours(3), CreatedAt = Y.AddHours(3), CaId = 1, ProductionMode = "serial", IsVoided = true, VoidReason = "Xóa dòng (quyền cao hơn): tab khác", VoidedBy = 1, VoidedAt = Y.AddHours(4) });
+            db.Fixup();   // rà độc lập 25b V2-T1: dòng ngày cũ ĐÃ HUỶ tự dựng (không dựa dòng của ca khác)
+            var go = Gc(nc: "NC1", machine: "M11"); go.UserId = 1; go.WorkDate = Y.Date; go.EditReason = "tab cũ"; var eo = Row(2, 1, 0, Y.AddHours(2), Y.AddHours(3)); eo.IsEditing = true; eo.WtsLogId = 999870; go.Rows.Add(eo);
+            r = await s.SaveGroupAsync(go);
+            Ok(!r.Ok && r.ErrorMsg == "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang.", "W25o sửa dòng ngày cũ đã bị huỷ: báo 'đã bị sửa / xoá ở nơi khác' (trước: 'Chỉ được nhập WTS cho ngày hôm nay')", r.ErrorMsg);
+            // (p) dòng cũ thiếu mã CV / nhóm lạ → báo rõ
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999850, KhPlanDetailId = 2, ProcessGroup = "KCS", WtsCode = null, WorkerId = 3, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(16), EndTime = Y.AddHours(17), CreatedAt = Y.AddHours(17) });
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999860, KhPlanDetailId = 2, ProcessGroup = "XYZ", WtsCode = "K1", WorkerId = 3, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(17), EndTime = Y.AddHours(18), CreatedAt = Y.AddHours(18) });
+            db.Fixup();
+            r = await s.EditRowCuAsync(Q(999850, 1, Y.AddHours(16), Y.AddHours(17), 1));
+            var r2 = await s.EditRowCuAsync(Q(999860, 1, Y.AddHours(17), Y.AddHours(18), 1));
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("thiếu mã CV") && !r2.Ok && (r2.ErrorMsg ?? "").Contains("không rõ nhóm"), "W25p dòng cũ thiếu mã CV / nhóm lạ: báo rõ, không ghi", r.ErrorMsg + " | " + r2.ErrorMsg);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

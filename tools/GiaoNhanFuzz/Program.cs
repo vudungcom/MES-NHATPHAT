@@ -849,11 +849,36 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {   // [WTS-SVC] sửa dòng bằng hàm thật: huỷ dòng cũ (Sửa lại) + ghi dòng mới giữ vụ, cùng giao dịch
                         var catE = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? rnd.Next(1, 6);
                         var oldId = w.WtsLogId;
-                        var se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId, stepNc: w.StepNC);
-                        if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5] PO{po} op{op} {desc} → {se.Err}"); continue; }
+                        // [WTS-SUA-NHANH 2026-11-20] Gói 25b: QUICK (mặc định 0.3) phần lần sửa đi đường "Sửa nhanh" của Admin (EditRowCuAsync — máy chủ dựng nhóm từ dòng cũ).
+                        //   Rút số bằng Random RIÊNG (seed + PO + op) → dãy thao tác các seed cũ không đổi. Cùng mọi đáp án dưới (số, vụ, chuỗi sửa sổ);
+                        //   thêm: dòng mới giữ người làm / nhóm / mã / NC Taro, dòng cũ VoidedBy = Admin. QUICK=0 tắt.
+                        double qp = double.TryParse(Environment.GetEnvironmentVariable("QUICK"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var qv) ? qv : 0.3;
+                        bool quick = new Random(seed0 * 7919 + po * 131 + op).NextDouble() < qp;
+                        (bool Ok, string? Err, long? LogId) se;
+                        if (quick)
+                        {
+                            long maxId = db.WtsProductionLogs.List.Max(x => x.WtsLogId);
+                            var qr = await new WtsSaveService(db, new HandoverLedgerService(db)).EditRowCuAsync(new WtsSaveService.WtsQuickEdit
+                            {
+                                WtsLogId = oldId, UserId = 1, StartTime = w.StartTime, EndTime = w.EndTime, QtyOk = tot - ng2, QtyNg = ng2, NgCategoryId = catE,
+                                ActualTimePerPc = w.ActualTimePerPc ?? 1, SetupTime_Actual = w.SetupTime_Actual ?? 1, MachiningTime_Actual = w.MachiningTime_Actual ?? 1,
+                                InspectionTime_Actual = w.InspectionTime_Actual ?? 1, PreparationTime_Actual = w.PreparationTime_Actual, TrialRunTime_Actual = w.TrialRunTime_Actual,
+                                Reason = "fuzz sửa nhanh",
+                            });
+                            db.Fixup();
+                            var nq = db.WtsProductionLogs.List.Where(x => x.WtsLogId > maxId && !x.IsVoided).OrderByDescending(x => x.WtsLogId).FirstOrDefault();
+                            se = (qr.Ok, qr.ErrorMsg, nq?.WtsLogId);
+                            if (qr.Ok && nq == null) { fails.Add($"[Sửa nhanh báo xong mà không có dòng mới] PO{po} op{op} {desc}"); continue; }
+                            if (qr.Ok && (nq!.WorkerId != w.WorkerId || nq.ProcessGroup != w.ProcessGroup || nq.NC != w.NC || nq.WtsCode != w.WtsCode || nq.StepNC != w.StepNC || nq.HtspSubGroup != w.HtspSubGroup || nq.CaId != w.CaId))
+                                fails.Add($"[Sửa nhanh đổi người / nhóm / mã / ca] PO{po} op{op} {desc} → {nq.WorkerId} {nq.ProcessGroup} {nq.NC} {nq.WtsCode} {nq.StepNC} ca {nq.CaId}");
+                            if (qr.Ok) Inc("wtsedit.quick");
+                        }
+                        else se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId, stepNc: w.StepNC);
+                        if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5{(quick ? " — sửa nhanh" : "")}] PO{po} op{op} {desc} → {se.Err}"); continue; }
                         var wOld = db.WtsProductionLogs.List.First(x => x.WtsLogId == oldId);
                         var wNew = db.WtsProductionLogs.List.First(x => x.WtsLogId == se.LogId);
-                        if (!wOld.IsVoided || wOld.VoidReason != "Sửa lại") fails.Add($"[WtsSaveService sửa không huỷ dòng cũ] PO{po} op{op} {desc}");
+                        bool cuQ = quick && WtsSaveService.IsCu(1, w.WorkerId, w.StartTime);
+                        if (!wOld.IsVoided || wOld.VoidReason != (cuQ ? "Sửa lại (quyền cao hơn): fuzz sửa nhanh" : "Sửa lại") || (quick && wOld.VoidedBy != 1)) fails.Add($"[WtsSaveService sửa không huỷ dòng cũ / sai lý do] PO{po} op{op} {desc} → '{wOld.VoidReason}' by {wOld.VoidedBy}");
                         if (wNew.QtyOk != tot - ng2 || wNew.QtyNg != ng2) fails.Add($"[WtsSaveService sửa ghi sai số] PO{po} op{op} {desc}");
                         if (ng2 > 0 && keep != null && wNew.NgCaseId != keep) fails.Add($"[WtsSaveService sửa không giữ vụ] PO{po} op{op} {desc} → {wNew.NgCaseId}");
                         if (ng2 > 0 && keep == null && wNew.NgCaseId == null) fails.Add($"[WtsSaveService sửa thêm NG không tạo vụ] PO{po} op{op} {desc}");

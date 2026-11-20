@@ -89,6 +89,68 @@
     </div>
 }
 
+@* [WTS-SUA-NHANH 2026-11-20] Gói 25b — "Sửa nhanh" 1 dòng WTS nhóm khác form người sửa (Admin / Sửa WTS tiêu chuẩn). Máy chủ WtsSaveService.EditRowCuAsync
+   dựng nhóm lưu từ dòng cũ (PO / mã / nhóm nhỏ / NC Taro / máy / ca giữ nguyên) và đi đường lưu thường (khoá PO + K5). Nguồn: HÙNG 20/11 18:12 + 18:32. *@
+@if (_quick != null)
+{
+    var qf = _quick;
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="max-width:520px;">
+            <div class="mes-modal-header">
+                <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>Sửa nhanh WTS — @qf.GroupLabel</h5>
+                <button class="btn-close" @onclick="CloseQuickEdit" disabled="@qf.Busy"></button>
+            </div>
+            <div class="mes-modal-body">
+                <table class="table table-sm table-bordered small mb-2">
+                    <tr><th class="text-muted" style="width:110px">Người làm</th><td>@qf.WorkerName</td></tr>
+                    <tr><th class="text-muted">Ngày</th><td>@qf.Row.StartTime.ToString("dd/MM/yyyy") <small class="text-muted">(giữ nguyên ngày)</small></td></tr>
+                    <tr><th class="text-muted">PO</th><td>@(qf.Row.PO ?? "—")</td></tr>
+                    <tr><th class="text-muted">@(qf.IsGc ? "NC / Máy" : "Mã CV")</th><td>@qf.CodeText</td></tr>
+                </table>
+                <div class="small text-muted mb-2">Không đổi được PO, mã CV / NC, nhóm nhỏ, máy — muốn đổi thì Xoá dòng rồi nhờ người làm nhập lại.</div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small mb-0">Bắt đầu</label>
+                        <input type="time" class="form-control form-control-sm" @bind="qf.Start" />
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small mb-0">Kết thúc</label>
+                        <input type="time" class="form-control form-control-sm" @bind="qf.End" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small mb-0">OK</label>
+                        <input type="number" min="0" step="1" class="form-control form-control-sm" @bind="qf.Ok" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small mb-0">NG</label>
+                        <input type="number" min="0" step="1" class="form-control form-control-sm" @bind="qf.Ng" />
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small mb-0">Loại lỗi</label>
+                        <NgCategoryPicker Categories="_ngCats" @bind-Value="qf.Cat" Disabled="@(qf.Ng <= 0)" Required="@(qf.Ng > 0)" Style="font-size:12px" Placeholder="Loại lỗi…" />
+                    </div>
+                </div>
+                @QuickTimeInputs(qf)
+                <div class="mb-2">
+                    <label class="form-label small mb-0">Ghi chú</label>
+                    <input class="form-control form-control-sm" maxlength="500" @bind="qf.Notes" />
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold mb-0">Lý do sửa <span class="text-danger">*</span> <small class="text-muted">(≥ 3 ký tự)</small></label>
+                    <input class="form-control form-control-sm" maxlength="150" @bind="qf.Reason" placeholder="Vd: tổ trưởng báo đếm sai, đã xác nhận với công nhân" />
+                </div>
+                <div class="alert alert-warning py-2 small mb-0" style="@QuickErrStyle">@qf.Error</div>
+            </div>
+            <div class="mes-modal-footer d-flex gap-2 justify-content-end">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseQuickEdit" disabled="@qf.Busy">Hủy</button>
+                <button class="btn btn-sm btn-primary" @onclick="SaveQuickEditAsync" disabled="@qf.Busy">
+                    <i class="bi bi-check2 me-1"></i>@(qf.Busy ? "Đang xử lý..." : "Lưu sửa")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @* ── Modal confirm xóa WTS ── *@
 
 @if (_voidConfirmRow != null)
@@ -829,7 +891,7 @@ else
 
                                         <button class="btn btn-sm btn-outline-warning py-0 px-1"
 
-                                                @onclick="() => EditSavedRow(row)"
+                                                @onclick="() => OnEditSavedClick(row)"
 
                                                 title="Sửa lại">
 
@@ -1010,6 +1072,8 @@ else
                             <div class="ms-2" style="min-width:260px">
                                 <div style="font-size:10px;color:#b02a37;margin-bottom:2px">Lý do sửa <b>*</b> (WTS ngày cũ / của người khác)</div>
                                 <input class="form-control form-control-sm" maxlength="150" @bind="grp.EditReason" placeholder="≥ 3 ký tự" />
+                                @* [WTS-SUA-NHANH 2026-11-20] R-10: nhóm giữ ca dòng gốc *@
+                                <div style="font-size:10px" class="text-muted">Giữ ca của dòng: @(grp.CaKeep?.TenCa ?? "không ca")</div>
                             </div>
                         }
 
@@ -5268,6 +5332,12 @@ else
 
         row.IsEditing = true;
         grp.CuRow = IsCuRow(row);   // [L7-WTS-CU] dòng ngày cũ / của người khác → nhóm hiện ô Lý do (máy chủ bắt ≥ 3 ký tự)
+        if (grp.CuRow)   // [WTS-SUA-NHANH 2026-11-20] R-10 (R25b-01): giữ ca dòng gốc cho mọi phép tính nghỉ của nhóm (cả ca đã ẩn)
+        {
+            grp.CaFixed = true;
+            grp.CaKeep = row.CaId == null ? null
+                : _caList.FirstOrDefault(c => c.CaId == row.CaId) ?? await Db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == row.CaId);
+        }
 
         grp.SubRows.Add(row);
 
@@ -5347,6 +5417,140 @@ else
     }
 
     private void CloseVoidModal() { _voidConfirmRow = null; _voidBlockMsg = null; }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // [WTS-SUA-NHANH 2026-11-20] Gói 25b — "Sửa nhanh" dòng WTS của nhóm KHÁC form người sửa (G25-GHI-NHO R-01).
+    //   Trước: Admin (form Gia công) bấm Sửa dòng HTSP / KCS / Đóng gói của người khác → [WTS-SUA-NHOM] báo "xoá rồi nhập lại ở nhóm đúng",
+    //   mà nhập lại ngày cũ thì bị chặn → chỉ xoá được. Nay: Admin / Sửa WTS tiêu chuẩn mở modal theo DÒNG (không theo form nhóm), sửa giờ (giữ ngày),
+    //   OK / NG / loại lỗi / T.Thực tế hoặc 5 ô giờ GC / ghi chú + lý do; máy chủ (EditRowCuAsync) tự dựng nhóm lưu từ dòng cũ, kiểm quyền + lý do + K5.
+    //   Dòng cùng nhóm form vẫn mở form nhóm như cũ. Nguồn: HÙNG 20/11 18:12 (chốt modal) + 18:32 (OK ô sửa).
+    // ════════════════════════════════════════════════════════════════════════════
+    private sealed class QuickForm
+    {
+        public WtsRow   Row        { get; set; } = null!;
+        public bool     IsGc       { get; set; }
+        public string   Mode       { get; set; } = "serial";
+        public string   GroupLabel { get; set; } = "";
+        public string   CodeText   { get; set; } = "";
+        public string   WorkerName { get; set; } = "";
+        public TimeOnly? Start     { get; set; }
+        public TimeOnly? End       { get; set; }
+        public decimal  Ok         { get; set; }
+        public decimal  Ng         { get; set; }
+        public int?     Cat        { get; set; }
+        public decimal? Act        { get; set; }
+        public decimal? Setup      { get; set; }
+        public decimal? Mach       { get; set; }
+        public decimal? Insp       { get; set; }
+        public decimal? Prep       { get; set; }
+        public decimal? Trial      { get; set; }
+        public string?  Notes      { get; set; }
+        public string?  Reason     { get; set; }
+        public string?  Error      { get; set; }
+        public bool     Busy       { get; set; }
+    }
+    private QuickForm? _quick;
+    private string QuickErrStyle => _quick?.Error != null ? "display:block;white-space:pre-line" : "display:none";
+    /// <summary>Dòng đã lưu thuộc nhóm lớn khác form người đang xem → Sửa đi modal Sửa nhanh (chỉ người có quyền cao hơn).</summary>
+    private bool UseQuickEdit(WtsRow r) => _canCu && r.WtsLogId.HasValue && !r.ActivityLogId.HasValue
+        && WtsSaveService.OtherGroupEditMsg(r.SavedPg, WtsSaveService.FormGroupKey(IsGcGroup, IsHtspGroup, HandoverGroupCode)) != null;
+    private async Task OnEditSavedClick(WtsRow row)
+    {
+        if (UseQuickEdit(row)) { await OpenQuickEditAsync(row); return; }
+        await EditSavedRow(row);
+    }
+    private static string PgLabel(string? pg) => (pg ?? "").Trim().ToUpperInvariant() switch
+    {
+        "GC" => "Gia công", "TARO" => "HTSP (Taro)", "BAVIA" => "HTSP (Bavia)", "WASHING" => "HTSP (Rửa)", "KCS" => "KCS", _ => "Đóng gói"
+    };
+    private async Task OpenQuickEditAsync(WtsRow row)
+    {
+        _wtsNotice = null;
+        int? cat = null;
+        await _dbGate.WaitAsync();
+        try
+        {
+            if (row.NgCaseId.HasValue)
+                cat = await Db.NgCases.AsNoTracking().Where(x => x.NgCaseId == row.NgCaseId.Value).Select(x => (int?)x.NgCategoryId).FirstOrDefaultAsync();
+        }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); _wtsNotice = UiSafe.Text(ex, Logger, "mở sửa nhanh WTS"); return; }
+        finally { _dbGate.Release(); }
+        bool gc = string.Equals((row.SavedPg ?? "").Trim(), "GC", StringComparison.OrdinalIgnoreCase);
+        _quick = new QuickForm
+        {
+            Row = row, IsGc = gc, Mode = row.ProductionMode ?? "serial", GroupLabel = PgLabel(row.SavedPg),
+            CodeText = gc ? $"{row.NC ?? "—"} / {row.MachineUsed ?? "—"}" : (row.NC ?? "—") + (string.IsNullOrWhiteSpace(row.StepNC) ? "" : $" (NC {row.StepNC})"),
+            WorkerName = ViewingOther ? _viewUserName : "(chính mình)",
+            Start = TimeOnly.FromDateTime(row.StartTime), End = TimeOnly.FromDateTime(row.EndTime),
+            Ok = row.QtyOk, Ng = row.QtyNg, Cat = cat, Act = row.ActualTimePerPc,
+            Setup = row.SetupTime_Actual, Mach = row.MachiningTime_Actual, Insp = row.InspectionTime_Actual, Prep = row.PreparationTime_Actual, Trial = row.TrialRunTime_Actual,
+            Notes = row.Notes,
+        };
+    }
+    private void CloseQuickEdit() { if (_quick?.Busy == true) return; _quick = null; }   // R25b-04: không đóng khi đang lưu
+    // (luật Razor: không @if chứa <div> lồng trong thẻ → chọn khối bằng C#)
+    private RenderFragment QuickTimeInputs(QuickForm qf) => !qf.IsGc ? QuickActInput(qf) : qf.Mode == "trial" ? QuickTrialInputs(qf) : QuickSerialInputs(qf);
+    private RenderFragment QuickActInput(QuickForm qf) => __builder =>
+    {
+        <div class="row g-2 mb-2">
+            <div class="col-6">
+                <label class="form-label small mb-0">T.Thực tế (phút/sp)</label>
+                <input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Act" />
+            </div>
+        </div>
+    };
+    private RenderFragment QuickTrialInputs(QuickForm qf) => __builder =>
+    {
+        <div class="row g-2 mb-2">
+            <div class="col-6"><label class="form-label small mb-0">T.CB</label><input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Prep" /></div>
+            <div class="col-6"><label class="form-label small mb-0">T.Chạy</label><input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Trial" /></div>
+        </div>
+    };
+    private RenderFragment QuickSerialInputs(QuickForm qf) => __builder =>
+    {
+        <div class="row g-2 mb-2">
+            <div class="col-4"><label class="form-label small mb-0">T.Gá</label><input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Setup" /></div>
+            <div class="col-4"><label class="form-label small mb-0">T.GC</label><input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Mach" /></div>
+            <div class="col-4"><label class="form-label small mb-0">T.Ktra</label><input type="number" min="0" step="0.01" class="form-control form-control-sm" @bind="qf.Insp" /></div>
+        </div>
+    };
+    /// <summary>Giờ ô nhập + ngày của dòng gốc (dòng qua đêm: giờ kết thúc ≤ giờ bắt đầu → ngày hôm sau).</summary>
+    private static bool QuickTimes(QuickForm qf, out DateTime s, out DateTime e)
+    {
+        s = e = default;
+        if (qf.Start is not TimeOnly ts || qf.End is not TimeOnly te) return false;
+        var d = qf.Row.StartTime.Date;
+        s = d.Add(ts.ToTimeSpan());
+        e = d.Add(te.ToTimeSpan());
+        if (e <= s && qf.Row.EndTime.Date > qf.Row.StartTime.Date) e = e.AddDays(1);
+        return true;
+    }
+    private async Task SaveQuickEditAsync()
+    {
+        var qf = _quick;
+        if (qf == null || qf.Busy) return;
+        qf.Error = null;
+        if (!QuickTimes(qf, out var s, out var e)) { qf.Error = "Giờ bắt đầu / kết thúc chưa đúng (HH:mm)."; return; }
+        qf.Busy = true;
+        await _dbGate.WaitAsync();
+        try
+        {
+            var res = await WtsSaveSvc.EditRowCuAsync(new WtsSaveService.WtsQuickEdit
+            {
+                WtsLogId = qf.Row.WtsLogId!.Value, UserId = _currentUserId, StartTime = s, EndTime = e,
+                QtyOk = qf.Ok, QtyNg = qf.Ng, NgCategoryId = qf.Ng > 0 ? qf.Cat : null,
+                ActualTimePerPc = qf.Act, SetupTime_Actual = qf.Setup, MachiningTime_Actual = qf.Mach, InspectionTime_Actual = qf.Insp,
+                PreparationTime_Actual = qf.Prep, TrialRunTime_Actual = qf.Trial, Notes = qf.Notes, Reason = qf.Reason,
+            });
+            if (!res.Ok) { qf.Error = res.ErrorMsg; return; }
+            _quick = null;
+            await LoadSavedRowsAsync();
+            _wtsNotice = "Đã sửa dòng WTS." + (res.Warnings.Count > 0 ? " " + string.Join("\n", res.Warnings) : "");
+            if (qf.Row.KhPlanDetailId.HasValue) { await ReloadFlowAsync(qf.Row.KhPlanDetailId.Value); await ReloadPanelAsync(new[] { qf.Row.KhPlanDetailId.Value }); }
+        }
+        catch (Exception ex) { Db.ChangeTracker.Clear(); qf.Error = UiSafe.Text(ex, Logger, "sửa nhanh WTS"); }
+        finally { _dbGate.Release(); qf.Busy = false; }
+    }
 
     // [GN-WTS-CAP] Trả true = đã xoá; false = bị chặn (lời báo ở _voidBlockMsg).
     // [WTS-SVC 2026-10-29] Phần khoá PO + kiểm K5 + 2 câu UPDATE huỷ dòng + [GN-WHY] dời NGUYÊN VĂN sang
@@ -6505,8 +6709,10 @@ else
     private List<LineBreak> GroupTouching(WtsGroup grp)
     {
         var sp = GroupSpan(grp);
-        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(SelectedCa, sp.Value.S, sp.Value.E);
+        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(CaOf(grp), sp.Value.S, sp.Value.E);   // [WTS-SUA-NHANH] R-10: ca của nhóm
     }
+    /// <summary>[WTS-SUA-NHANH 2026-11-20] Ca dùng tính nghỉ cho nhóm: nhóm sửa quyền cao hơn giữ ca dòng gốc (CaFixed), còn lại ca đang chọn.</summary>
+    private CaLamViec? CaOf(WtsGroup? g) => g != null && g.CaFixed ? g.CaKeep : SelectedCa;
 
     // Đồng bộ ô phút làm thông với khoảng nghỉ đang chạm: ô chưa sửa tay = đủ phần chồng; ô đã sửa tay giữ số, kẹp trong [0, chồng].
     //   (rà độc lập 01/11) Khoảng nghỉ MỚI chạm sau khi đã tích (đổi giờ / đổi ca / giờ kết thúc tự tính kéo dài) = 0 phút (nghỉ thật),
@@ -6538,7 +6744,7 @@ else
         var sp = grp != null ? GroupSpan(grp) : null;
         var anchor = sp?.S ?? from;
         var lo = from < anchor ? from : anchor;
-        var segs = WorkMinutes.BreakSegments(SelectedCa, lo, lo.AddDays(2));
+        var segs = WorkMinutes.BreakSegments(CaOf(grp), lo, lo.AddDays(2));   // [WTS-SUA-NHANH] R-10
         return WorkMinutes.EffectiveBreaks(segs, anchor, grp != null && grp.ThongNghi ? grp.NghiWorked : null);
     }
 
@@ -6554,8 +6760,8 @@ else
         if (e0 <= s0) return new List<LineBreak>();
         var sp = GroupSpan(grp);
         var anchor = sp?.S ?? s0;
-        var segs = WorkMinutes.BreakSegments(SelectedCa, s0 < anchor ? s0 : anchor, e0);
-        return WorkMinutes.SplitForLine(segs, anchor, grp.ThongNghi ? grp.NghiWorked : null, s0, e0, SelectedCa?.CaId);
+        var segs = WorkMinutes.BreakSegments(CaOf(grp), s0 < anchor ? s0 : anchor, e0);   // [WTS-SUA-NHANH] R-10
+        return WorkMinutes.SplitForLine(segs, anchor, grp.ThongNghi ? grp.NghiWorked : null, s0, e0, CaOf(grp)?.CaId);
     }
 
     // Giờ kết thúc sau khi làm đủ prodMin phút từ start, nhảy qua khoảng nghỉ hiệu lực của nhóm chứa dòng (nếu có)
@@ -7060,19 +7266,20 @@ else
 
         sub.ErrorMsg = null;
 
-        if (SelectedCa == null) return; // OT removed 2026-09 — chỉ skip khi chưa chọn ca
+        var caW = CaOf(grp);   // [WTS-SUA-NHANH 2026-11-20] rà độc lập 25b V2-01: nhóm sửa quyền cao hơn cảnh báo theo ca dòng gốc
+        if (caW == null) return; // OT removed 2026-09 — chỉ skip khi chưa chọn ca
 
-        var caStart = _workDate.Date.Add(SelectedCa.GioBatDau.ToTimeSpan());
+        var caStart = (grp.CaFixed ? (sub.StartTime != default ? sub.StartTime.Date : _workDate.Date) : _workDate.Date).Add(caW.GioBatDau.ToTimeSpan());
 
-        var caEnd   = _workDate.Date.Add(SelectedCa.GioKetThuc.ToTimeSpan());
+        var caEnd   = (grp.CaFixed ? (sub.StartTime != default ? sub.StartTime.Date : _workDate.Date) : _workDate.Date).Add(caW.GioKetThuc.ToTimeSpan());
 
-        if (SelectedCa.IsOvernight) caEnd = caEnd.AddDays(1);
+        if (caW.IsOvernight) caEnd = caEnd.AddDays(1);
 
         if (sub.StartTime != default && (sub.StartTime < caStart || sub.StartTime > caEnd))
 
         {
 
-            sub.ErrorMsg = $"⚠ T.Bắt đầu ngoài ca {SelectedCa.TenCa} ({SelectedCa.GioBatDau:HH:mm}–{SelectedCa.GioKetThuc:HH:mm})";
+            sub.ErrorMsg = $"⚠ T.Bắt đầu ngoài ca {caW.TenCa} ({caW.GioBatDau:HH:mm}–{caW.GioKetThuc:HH:mm})";
 
             return;
 
@@ -7082,7 +7289,7 @@ else
 
         {
 
-            sub.ErrorMsg = $"⚠ T.Kết thúc ({sub.EndTime:HH:mm}) vượt ca {SelectedCa.TenCa} (hết lúc {SelectedCa.GioKetThuc:HH:mm}).";
+            sub.ErrorMsg = $"⚠ T.Kết thúc ({sub.EndTime:HH:mm}) vượt ca {caW.TenCa} (hết lúc {caW.GioKetThuc:HH:mm}).";
 
         }
 
@@ -7375,7 +7582,7 @@ else
         {
             IsGc = IsGcGroup, IsHtsp = IsHtspGroup, HandoverGroupCode = HandoverGroupCode,
             NC = grp.NC, MachineUsed = grp.MachineUsed, ProductionMode = grp.ProductionMode, HtspSubGroup = grp.HtspSubGroup,
-            UserId = _currentUserId, CaId = _selectedCaId, WorkDate = _workDate,
+            UserId = _currentUserId, CaId = grp.CaFixed ? grp.CaKeep?.CaId : _selectedCaId, WorkDate = _workDate,   // [WTS-SUA-NHANH] R-10
             EditReason = grp.EditReason,   // [L7-WTS-CU] lý do sửa dòng ngày cũ / của người khác
         };
         foreach (var sub in grp.SubRows)
@@ -8502,6 +8709,10 @@ else
         /// <summary>[L7-WTS-CU 2026-11-19] nhóm mở từ dòng ngày cũ / của người khác (Admin / Sửa WTS tiêu chuẩn) → cần lý do.</summary>
         public bool CuRow { get; set; }
         public string? EditReason { get; set; }
+        /// <summary>[WTS-SUA-NHANH 2026-11-20] R-10 (rà độc lập Gói 25b R25b-01): nhóm sửa dòng ngày cũ / của người khác GIỮ CA của dòng gốc —
+        ///   khoảng nghỉ / làm thông / hàng Tổng / giờ kết thúc tự tính / bộ nghỉ gửi máy chủ tính theo ca này (máy chủ cũng ép ca dòng gốc). CaFixed + CaKeep null = dòng không ca.</summary>
+        public bool CaFixed { get; set; }
+        public CaLamViec? CaKeep { get; set; }
 
         // Tăng ca — không validate khung giờ ca, ghi IsOvertime=true vào DB
 
