@@ -852,7 +852,7 @@ namespace MES.Web.Services
                 .AsNoTracking().ToListAsync();
             // [WTS-SUA-GIO-GOC 2026-11-05] dòng WTS đã huỷ vì "Sửa lại" → dòng mới thay nó giữ giờ máy chủ lưu GỐC (xem EditOrigins)
             var wtsEdited = await _db.WtsProductionLogs
-                .Where(w => ids.Contains(w.KhPlanDetailId) && w.IsVoided && w.VoidReason == WtsEditVoidReason && w.VoidedAt != null)
+                .Where(w => ids.Contains(w.KhPlanDetailId) && w.IsVoided && w.VoidReason != null && w.VoidReason.StartsWith(WtsEditVoidReason) && w.VoidedAt != null)   // [L7-WTS-CU 2026-11-19] + "Sửa lại (quyền cao hơn): <lý do>" (Admin / Sửa WTS_MASTER sửa dòng ngày cũ / người khác) vẫn ghép giờ gốc
                 .Select(w => new { w.WtsLogId, w.KhPlanDetailId, w.WorkerId, w.ProcessGroup, w.NC, w.WtsCode, w.StepNC, w.CreatedAt, w.VoidedAt,
                                    w.QtyDone, w.QtyOk, w.QtyNg })   // [WTS-SUA-PHAN] + số của dòng cũ · [TARO-NC-MA] + NC Taro
                 .AsNoTracking().ToListAsync();

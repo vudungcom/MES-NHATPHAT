@@ -672,7 +672,8 @@ namespace MES.Web.Services
         /// <summary>[H10-WHY-NGAYCU 2026-11-08] Dòng WTS bắt đầu trước hôm nay — máy chủ chỉ cho người nhập sửa / xoá dòng BẮT ĐẦU hôm nay
         ///   (WtsSaveService: StartTime &gt;= hôm nay). Trước xét theo At = giờ KẾT THÚC → ca qua đêm (bắt đầu hôm qua, kết thúc hôm nay) không báo mà trang không cho sửa.</summary>
         static bool OldDay(InWts w) => (w.Start ?? w.At).Date < DateTime.Today;
-        const string OldDayNote = " (dòng ngày trước hôm nay: trang WTS chỉ sửa dòng hôm nay — cần quyền cao hơn)";
+        // [L7-WTS-CU 2026-11-19] quyền cao hơn nay có thật (Gói 25): Admin / Sửa WTS tiêu chuẩn mở trang WTS, chọn ngày + người → Sửa / Xoá kèm lý do
+        const string OldDayNote = " (dòng ngày trước hôm nay: người nhập chỉ sửa dòng hôm nay — nhờ Admin / người có quyền Sửa WTS tiêu chuẩn vào trang WTS chọn ngày + người, Sửa / Xoá kèm lý do)";
         /// <summary>[H10-KET-WHY-3] Bước "sửa dòng WTS về số trước lần sửa cuối" (chữ như StepWts + lời khuyên riêng có số đích + giờ lần sửa).</summary>
         static WhyStep StepWtsRevert(InWts w)
         {

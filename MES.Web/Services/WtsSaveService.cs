@@ -1,3 +1,4 @@
+using MES.Web.Constants;   // [L7-WTS-CU 2026-11-19] SystemPermissions.WtsMaster
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -83,6 +84,12 @@ namespace MES.Web.Services
             public decimal? ActualTimePerPc        { get; set; }
             public string   ProductionMode         { get; set; } = "serial";
             public bool     IsEditing              { get; set; }
+            /// <summary>[L7-WTS-CU 2026-11-19] Dòng đang sửa: người làm + giờ bắt đầu của dòng CŨ đọc từ DB (service tự gán ở bước kiểm nhóm; trang không gửi).
+            ///   Dòng mới giữ WorkerId = OldWorkerId (sửa dòng người khác không đổi người làm → hiệu suất không nhảy sang người sửa).</summary>
+            public int?     OldWorkerId            { get; set; }
+            public DateTime? OldStart              { get; set; }
+            /// <summary>[L7-WTS-CU] Dòng sửa đi đường "quyền cao hơn" (ngày cũ / của người khác, đã kiểm quyền + lý do) — service tự gán.</summary>
+            public bool     Cu                     { get; set; }
             // [ML17-XN 2026-11-01] Khoảng nghỉ ca dòng này chạm (trang tính bằng WorkMinutes, gửi ĐỦ cả khoảng không làm thông = 0 phút).
             //   Máy chủ tự tính lại từ ca + giờ dòng (WorkMinutes.Verify) — khác tập → chặn "giờ nghỉ ca vừa đổi"; ghi vào WtsBreakWorkLogs.
             public List<WorkMinutes.SentBreak> Breaks { get; set; } = new();
@@ -118,6 +125,8 @@ namespace MES.Web.Services
             public int?    CaId              { get; set; }
             public DateTime WorkDate         { get; set; }
             public List<WtsSaveRow> Rows     { get; set; } = new();
+            /// <summary>[L7-WTS-CU 2026-11-19] Lý do khi sửa dòng WTS ngày cũ / của người khác (Admin / Sửa WTS_MASTER) — bắt buộc ≥ 3 ký tự; ghi vào VoidReason dòng cũ.</summary>
+            public string? EditReason        { get; set; }
             /// <summary>Kết quả: lời báo của nhóm (null = lưu xong).</summary>
             public string? ErrorMsg          { get; set; }
         }
@@ -139,7 +148,37 @@ namespace MES.Web.Services
             public long? ActivityLogId  { get; set; }
             public int?  KhPlanDetailId { get; set; }
             public int   UserId         { get; set; }
+            /// <summary>[L7-WTS-CU 2026-11-19] Lý do khi xoá dòng ngày cũ / của người khác (Admin / Sửa WTS_MASTER) — bắt buộc ≥ 3 ký tự.</summary>
+            public string? Reason       { get; set; }
         }
+
+        // ── [L7-WTS-CU 2026-11-19] "Quyền cao hơn" sửa / xoá WTS ngày cũ hoặc của người khác ─────────────────────
+        //   Nguồn: CLAUDE quét Fable 15/11 (A2-01 Trung: lời báo "cần quyền cao hơn" nhưng quyền chưa tồn tại → chuỗi gỡ K5 đi qua dòng WTS hôm qua
+        //   kẹt trên giao diện, chỉ SQL gỡ được); HÙNG 15/11 15:32 CHỐT A: Admin / người có Sửa WTS_MASTER được sửa-xoá WTS ngày cũ / của người khác,
+        //   bắt lý do ≥ 3 ký tự, vẫn K5 (cả lưới thời gian) + khoá PO như nay. Luật L7 (WTS) ghi ở Sổ luật tab chính (Gói 25).
+        //   Không đổi luật xưởng: người không có quyền cao hơn vẫn bị chặn y chữ cũ; nhập dòng MỚI cho ngày cũ vẫn chặn (chốt chỉ nói sửa-xoá).
+        //   Sửa dòng người khác: dòng mới GIỮ WorkerId người làm gốc + GIỮ NGÀY của dòng (chỉ đổi giờ / số / NC / máy / loại lỗi), khoá WTS_WORKER_
+        //   + kiểm trùng giờ theo người gốc; VoidReason dòng cũ = "Sửa lại (quyền cao hơn): <lý do>" (sổ EditOrigins vẫn ghép theo tiền tố "Sửa lại").
+        //   Người có quyền cao hơn đi đường này KHÔNG cần thêm quyền nhập WTS của nhóm dòng (Sửa WTS tiêu chuẩn = quản WTS cả xưởng — Claude tự chốt B1).
+        public const int CuReasonMin = 3, CuReasonMax = 150;   // VoidReason cột 200: tiền tố ≤ 30 + lý do ≤ 150
+        public const string CuNoPermEditOther = "Dòng WTS này của người khác — chỉ Admin hoặc người có quyền Sửa WTS tiêu chuẩn mới sửa được (kèm lý do).";
+        public const string CuNoPermEditOld   = "Dòng WTS này của ngày cũ — chỉ Admin hoặc người có quyền Sửa WTS tiêu chuẩn mới sửa được (kèm lý do).";
+        public const string CuReasonMsg       = "Sửa / xoá WTS ngày cũ hoặc của người khác: nhập lý do (≥ 3 ký tự).";
+        /// <summary>Dòng là "ngày cũ hoặc của người khác" so với người thao tác.</summary>
+        public static bool IsCu(int actorId, int ownerId, DateTime start)
+            => ownerId != actorId || start < DateTime.Today || start >= DateTime.Today.AddDays(1);
+        /// <summary>Người thao tác có "quyền cao hơn": Admin (nhóm ADMIN / tên admin) hoặc Sửa WTS_MASTER — đọc ma trận DB (PermCheck).</summary>
+        public static Task<bool> CanCuAsync(AppDbContext db, int userId) => PermCheck.CanEditAsync(db, userId, SystemPermissions.WtsMaster);
+        /// <summary>Lời báo khi lý do thiếu / quá dài; null = hợp lệ.</summary>
+        public static string? CuReasonError(string? reason)
+        {
+            var r = (reason ?? "").Trim();
+            if (r.Length < CuReasonMin) return CuReasonMsg;
+            if (r.Length > CuReasonMax) return $"Lý do dài quá {CuReasonMax} ký tự.";
+            return null;
+        }
+        /// <summary>VoidReason ghi vào dòng cũ: "Sửa lại (quyền cao hơn): …" / "Xóa dòng (quyền cao hơn): …".</summary>
+        public static string CuVoidReason(string act, string? reason) => $"{act} (quyền cao hơn): {(reason ?? "").Trim()}";
 
         // ── Helper thuần (chép từ trang, cùng quy tắc) ────────────────────────
 
@@ -319,7 +358,7 @@ namespace MES.Web.Services
             static string? Tn(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
             static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
             grp.NC = Blank(grp.NC);
-            foreach (var s0 in grp.Rows) { s0.NC = Blank(s0.NC); s0.WtsCode = Blank(s0.WtsCode); s0.StepNC = Tn(s0.StepNC); }
+            foreach (var s0 in grp.Rows) { s0.NC = Blank(s0.NC); s0.WtsCode = Blank(s0.WtsCode); s0.StepNC = Tn(s0.StepNC); s0.Cu = false; }   // [L7-WTS-CU] cờ đường quyền cao hơn tính lại mỗi lần lưu
 
             // Validate nhóm
             if (grp.IsGc && string.IsNullOrEmpty(grp.NC))
@@ -338,7 +377,42 @@ namespace MES.Web.Services
             var _wgPerm = await PermCheck.WtsProcessGroupsAsync(_db, grp.UserId);
             if (_wgPerm == null) { grp.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return Fail(); }
             var _permKey = WtsPermKey(grp);
-            if (!_wgPerm.Value.IsAdmin && !_wgPerm.Value.Groups.Contains(_permKey))
+
+            // [L7-WTS-CU 2026-11-19] Dòng đang sửa: đọc người làm + giờ của dòng CŨ từ DB TRƯỚC mọi bước (trang không gửi, không tin trang).
+            //   Dòng ngày cũ / của người khác → chỉ Admin / Sửa WTS_MASTER (đọc ma trận DB) + lý do ≥ 3 ký tự + giữ nguyên ngày của dòng;
+            //   không có quyền → báo đúng nghĩa (trước: câu UPDATE lọc WorkerId + hôm nay trả 0 dòng → báo "đã bị sửa / xoá ở nơi khác (tab khác)" sai nghĩa — A2-11).
+            //   Dòng cũ không còn / đã huỷ: để nguyên đường cũ (UPDATE 0 dòng → báo tải lại, rollback cả nhóm — ca W6).
+            bool? _canCu = null; int _cuRows = 0;
+            foreach (var s1 in grp.Rows.Where(s => s.IsEditing && s.WtsLogId.HasValue))
+            {
+                s1.Cu = false; s1.OldWorkerId = null; s1.OldStart = null;
+                var _old = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == s1.WtsLogId!.Value)
+                    .Select(l => new { l.WorkerId, l.StartTime, l.IsVoided, l.ProcessGroup }).FirstOrDefaultAsync();
+                if (_old == null || _old.IsVoided) continue;
+                // [WTS-SUA-NHOM 2026-11-08] sửa dòng đã lưu: nhóm lớn của dòng cũ (đọc DB, không tin trang) phải = nhóm lớn của form — kiểm TRƯỚC quyền cao hơn
+                //   (lời "xoá dòng rồi nhập lại ở nhóm đúng" có đường gỡ; dời từ vòng kiểm dòng lên đây để đọc dòng cũ 1 lần — [L7-WTS-CU])
+                if (OtherGroupEditMsg(_old.ProcessGroup, _permKey) is string _grpMsg)
+                { s1.ErrorMsg = _grpMsg; grp.ErrorMsg = _grpMsg; return Fail(); }
+                s1.OldWorkerId = _old.WorkerId; s1.OldStart = _old.StartTime;
+                if (!IsCu(grp.UserId, _old.WorkerId, _old.StartTime)) continue;
+                _canCu ??= await CanCuAsync(_db, grp.UserId);
+                if (_canCu != true)
+                { s1.ErrorMsg = _old.WorkerId != grp.UserId ? CuNoPermEditOther : CuNoPermEditOld; grp.ErrorMsg = s1.ErrorMsg; return Fail(); }
+                if (CuReasonError(grp.EditReason) is string _rsErr)
+                { s1.ErrorMsg = _rsErr; grp.ErrorMsg = _rsErr; return Fail(); }
+                if (WorkMinutes.RoundToMinute(s1.StartTime).Date != _old.StartTime.Date)   // so sau khi làm tròn phút như lúc ghi (R-05)
+                {
+                    s1.ErrorMsg = $"Sửa WTS ngày cũ / của người khác: giữ nguyên ngày của dòng ({_old.StartTime:dd/MM/yyyy}) — chỉ sửa giờ, số lượng, NC / máy, loại lỗi.";
+                    grp.ErrorMsg = s1.ErrorMsg; return Fail();
+                }
+                s1.Cu = true; _cuRows++;
+            }
+            // [L7-WTS-CU] nhóm có dòng sửa đi đường quyền cao hơn thì CHỈ gồm dòng đó (không trộn dòng mới / dòng thường — dòng mới sẽ ghi người sửa, rà độc lập R-02)
+            bool _allCu = _cuRows > 0 && _cuRows == grp.Rows.Count;
+            if (_cuRows > 0 && !_allCu)
+            { grp.ErrorMsg = "Nhóm sửa WTS ngày cũ / của người khác chỉ gồm dòng đang sửa — bỏ dòng thêm mới rồi Lưu lại."; return Fail(); }
+            // nhóm CHỈ gồm dòng sửa đi đường quyền cao hơn → không cần quyền nhập WTS của nhóm dòng (B1); còn lại kiểm như cũ
+            if (!_wgPerm.Value.IsAdmin && !_wgPerm.Value.Groups.Contains(_permKey) && !_allCu)
             { grp.ErrorMsg = WtsNoPermMsg(_permKey); return Fail(); }
 
             // Validate từng sub-row
@@ -358,13 +432,7 @@ namespace MES.Web.Services
                 if (sub.WtsLogId.HasValue && !sub.IsEditing)
                 { sub.ErrorMsg = "Dòng này đã lưu rồi — tải lại trang để xem."; grp.ErrorMsg = "Nhóm có dòng đã lưu rồi (bấm Lưu 2 lần?) — tải lại trang, không lưu lại."; return Fail(); }
 
-                // [WTS-SUA-NHOM 2026-11-08] sửa dòng đã lưu: nhóm lớn của dòng cũ (đọc DB, không tin trang) phải = nhóm lớn của form
-                if (sub.IsEditing && sub.WtsLogId.HasValue)
-                {
-                    var _oldPg = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == sub.WtsLogId.Value).Select(l => l.ProcessGroup).FirstOrDefaultAsync();
-                    if (OtherGroupEditMsg(_oldPg, _permKey) is string _grpMsg)
-                    { sub.ErrorMsg = _grpMsg; grp.ErrorMsg = _grpMsg; return Fail(); }
-                }
+                // [WTS-SUA-NHOM 2026-11-08] nhóm lớn dòng cũ = nhóm form: đã kiểm ở bước đọc dòng cũ phía trên ([L7-WTS-CU] gộp 1 lần đọc)
 
                 if (!sub.KhPlanDetailId.HasValue)
                 { sub.ErrorMsg = "Chưa chọn số kế hoạch."; grp.ErrorMsg = "Có hàng chưa chọn KH."; return Fail(); }
@@ -455,9 +523,11 @@ namespace MES.Web.Services
                 //   đã lưu của CHÍNH người này (trước: chỉ chiều ngược lại chặn → báo cáo coi phút chồng là có ích, giấu giờ vô ích).
                 //   Khoá WTS_WORKER_<người> ĐẦU TIÊN — thứ tự khoá toàn hệ thống: WTS_WORKER_ → WTS_MACHINE_ → MES_PO_ (tăng dần) → MES_KH_NUMBERS,
                 //   giống SaveActivityAsync (chỉ giữ khoá người) → 2 đường không chờ vòng nhau. WTS chồng WTS (GC đứng nhiều máy) giữ như cũ.
-                if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + grp.UserId, deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
+                // [L7-WTS-CU 2026-11-19] sửa dòng người khác: khoá thêm WTS_WORKER_<người làm gốc> (tăng dần theo id — người đó chỉ khoá 1 khoá của mình nên không vòng)
+                foreach (var _wk in grp.Rows.Where(r => r.Cu && r.OldWorkerId != null).Select(r => r.OldWorkerId!.Value).Append(grp.UserId).Distinct().OrderBy(x => x))
+                if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + _wk, deadlockThrows: true))   // [RS-D10c] −3 → SaveGroupAsync tự lưu lại
                 {
-                    grp.ErrorMsg = "Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây.";
+                    grp.ErrorMsg = _wk == grp.UserId ? "Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây." : "Người làm dòng này đang lưu WTS — bấm Lưu lại sau vài giây.";
                     return Fail();
                 }
                 var _actOverlapMsg = await CheckActivityOverlapAsync(grp);
@@ -563,8 +633,9 @@ namespace MES.Web.Services
             foreach (var row in grp.Rows)
             {
                 var s0 = row.StartTime; var e0 = row.EndTime; var skip = row.IsEditing ? row.ActivityLogId : null;   // chỉ dòng việc mà SaveRowAsync sẽ huỷ (IsEditing) mới được bỏ qua
+                var _wkr = row.Cu && row.OldWorkerId != null ? row.OldWorkerId.Value : grp.UserId;   // [L7-WTS-CU] sửa dòng người khác: so với việc của NGƯỜI LÀM gốc
                 var hit = await _db.WorkerActivityLogs.AsNoTracking()
-                    .Where(a => a.WorkerId == grp.UserId && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0
+                    .Where(a => a.WorkerId == _wkr && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0
                              && (skip == null || a.ActivityLogId != skip.Value))
                     .OrderBy(a => a.StartTime)
                     .Select(a => new { a.StartTime, a.EndTime, a.WtsCode })
@@ -917,7 +988,8 @@ namespace MES.Web.Services
         private async Task SaveRowAsync(WtsSaveGroup grp, WtsSaveRow row, List<int> notify, List<(WtsSaveRow Row, string Msg)> warns)   // [GOI9-OFF-CANHBAO] + warns
         {
             row.ErrorMsg = null;
-            if (grp.WorkDate.Date != DateTime.Today)
+            // [L7-WTS-CU 2026-11-19] dòng SỬA đi đường quyền cao hơn (đã kiểm ở SaveGroupOnceAsync: quyền + lý do + giữ ngày) được lưu cho ngày cũ; dòng mới vẫn chặn
+            if (grp.WorkDate.Date != DateTime.Today && !row.Cu)
             { row.ErrorMsg = "Chỉ được nhập WTS cho ngày hôm nay. Ngày cũ cần quyền cao hơn."; return; }
 
             // Validate chung
@@ -954,9 +1026,15 @@ namespace MES.Web.Services
                     // [WTS-VOID-PO 2026-11-01] chỉ huỷ dòng của CHÍNH người nhập, bắt đầu trong ngày hôm nay (như trang: chỉ hiện dòng của mình,
                     //   chỉ sửa ngày hôm nay) — trước: id trang gửi là huỷ, kể cả dòng người khác / ngày cũ.
                     _editAt = DateTime.Now;   // [WTS-SUA-GIO-GOC]
-                    var _nVoid = await _db.Database.ExecuteSqlRawAsync(
-                        "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0} AND StartTime>={3} AND StartTime<{4}",
-                        grp.UserId, _editAt.Value, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
+                    // [L7-WTS-CU 2026-11-19] đường quyền cao hơn (ngày cũ / người khác, đã kiểm quyền + lý do): huỷ theo đúng WtsLogId còn hiệu lực,
+                    //   VoidedBy = người sửa, VoidReason "Sửa lại (quyền cao hơn): <lý do>" (sổ ghép dòng sửa theo tiền tố "Sửa lại"). Đường thường giữ y cũ.
+                    var _nVoid = row.Cu
+                        ? await _db.Database.ExecuteSqlRawAsync(
+                            "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason={3}, VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",
+                            grp.UserId, _editAt.Value, row.WtsLogId.Value, CuVoidReason(HandoverLedgerService.WtsEditVoidReason, grp.EditReason))
+                        : await _db.Database.ExecuteSqlRawAsync(
+                            "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0} AND StartTime>={3} AND StartTime<{4}",
+                            grp.UserId, _editAt.Value, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
                     if (_nVoid != 1)
                     { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
                 }
@@ -1072,7 +1150,7 @@ namespace MES.Web.Services
                         WtsCode                 = wtsCodeValue,
                         HtspSubGroup            = grp.IsHtsp ? row.HtspSubGroup : null,
                         StepNC                  = processGroup == "TARO" && !string.IsNullOrWhiteSpace(row.StepNC) ? row.StepNC.Trim() : null,   // [TARO-NC-MA 2026-11-06] đã kiểm ở CheckGroupQtyAsync
-                        WorkerId                = grp.UserId,
+                        WorkerId                = row.Cu && row.OldWorkerId != null ? row.OldWorkerId.Value : grp.UserId,   // [L7-WTS-CU 2026-11-19] sửa dòng người khác: giữ NGƯỜI LÀM gốc (hiệu suất không nhảy sang người sửa)
                         // [FIX-NONGC-MACHINE] Non-GC (HTSP/KCS/PKG) chưa có khái niệm máy → để NULL, cột Máy hiện "—".
                         MachineUsed             = grp.IsGc ? row.MachineUsed : null,
                         QtyDone                 = row.QtyDone,
@@ -1525,15 +1603,28 @@ namespace MES.Web.Services
                     .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup, l.NgCaseId }).FirstOrDefaultAsync();   // [GOI9-OFF-CANHBAO] + vụ
                 if (wl == null || wl.IsVoided)
                 { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
-                if (wl.WorkerId != row.UserId)
-                { result.ErrorMsg = "Chỉ xoá được dòng WTS của chính mình."; return result; }
-                // [WTS-QUYEN-MAY-CHU] xoá dòng WTS sản xuất cũng phải còn quyền nhập WTS nhóm của dòng (đọc DB)
-                var _wgV = await PermCheck.WtsProcessGroupsAsync(_db, row.UserId);
-                if (_wgV == null) { result.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return result; }
-                if (!_wgV.Value.IsAdmin && !_wgV.Value.Groups.Contains(WtsPermKeyOfPg(wl.ProcessGroup)))
-                { result.ErrorMsg = WtsNoPermMsg(WtsPermKeyOfPg(wl.ProcessGroup)); return result; }
-                if (wl.StartTime < DateTime.Today || wl.StartTime >= DateTime.Today.AddDays(1))
-                { result.ErrorMsg = "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn."; return result; }
+                // [L7-WTS-CU 2026-11-19] dòng ngày cũ / của người khác: Admin / Sửa WTS_MASTER (đọc ma trận DB) + lý do ≥ 3 ký tự → xoá được, vẫn K5 + khoá PO bên dưới.
+                //   Không có quyền cao hơn → chữ báo y cũ. Đường quyền cao hơn không cần quyền nhập WTS nhóm dòng (B1).
+                bool cu = IsCu(row.UserId, wl.WorkerId, wl.StartTime);
+                if (cu)
+                {
+                    var _wgC = await PermCheck.WtsProcessGroupsAsync(_db, row.UserId);
+                    if (_wgC == null) { result.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return result; }
+                    if (!await CanCuAsync(_db, row.UserId))
+                    {
+                        result.ErrorMsg = wl.WorkerId != row.UserId ? "Chỉ xoá được dòng WTS của chính mình." : "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn.";
+                        return result;
+                    }
+                    if (CuReasonError(row.Reason) is string _rsV) { result.ErrorMsg = _rsV; return result; }
+                }
+                else
+                {
+                    // [WTS-QUYEN-MAY-CHU] xoá dòng WTS sản xuất cũng phải còn quyền nhập WTS nhóm của dòng (đọc DB)
+                    var _wgV = await PermCheck.WtsProcessGroupsAsync(_db, row.UserId);
+                    if (_wgV == null) { result.ErrorMsg = "Tài khoản không hoạt động — đăng nhập lại."; return result; }
+                    if (!_wgV.Value.IsAdmin && !_wgV.Value.Groups.Contains(WtsPermKeyOfPg(wl.ProcessGroup)))
+                    { result.ErrorMsg = WtsNoPermMsg(WtsPermKeyOfPg(wl.ProcessGroup)); return result; }
+                }
                 int detId = wl.KhPlanDetailId;   // PO thật của dòng (dòng WTS append-only: PO không đổi)
 
                 // [GN-WTS-CAP][K5] Workflow ON: xoá dòng WTS mà làm ô nào mới âm thì chặn
@@ -1596,7 +1687,11 @@ namespace MES.Web.Services
                     if (!blocked)
                     {
                         // [WTS-VOID-PO] dưới khoá PO: đúng 1 dòng còn hiệu lực (tab khác vừa sửa / xoá → 0 dòng → Rollback, báo tải lại)
-                        var n = await _db.Database.ExecuteSqlRawAsync(
+                        var n = cu
+                            ? await _db.Database.ExecuteSqlRawAsync(   // [L7-WTS-CU] quyền cao hơn: huỷ đúng WtsLogId còn hiệu lực (người khác / ngày cũ), ghi lý do + người huỷ
+                                "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason={3}, VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0",
+                                row.UserId, DateTime.Now, row.WtsLogId.Value, CuVoidReason("Xóa dòng", row.Reason))
+                            : await _db.Database.ExecuteSqlRawAsync(
                             "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0 AND WorkerId={0}",   // [D8-WTS-VOID] không ghi đè người huỷ trước
                             row.UserId, DateTime.Now, row.WtsLogId.Value);
                         if (n != 1)
@@ -1622,7 +1717,26 @@ namespace MES.Web.Services
             {
                 // [ML16-ACT 2026-10-30] Xoá dòng "Việc không ra sản phẩm": chỉ dòng của chính người đó, còn hiệu lực (trước: không kiểm,
                 //   0 dòng đổi vẫn báo xoá xong). Không số lượng → không khoá PO / K5.
-                var nA = await _db.Database.ExecuteSqlRawAsync(
+                // [L7-WTS-CU 2026-11-19] đọc dòng trước: ngày cũ / của người khác → Admin / Sửa WTS_MASTER + lý do (như dòng WTS); không quyền → báo đúng nghĩa
+                var al = await _db.WorkerActivityLogs.AsNoTracking().Where(a => a.ActivityLogId == row.ActivityLogId.Value)
+                    .Select(a => new { a.WorkerId, a.WorkDate, a.IsVoided }).FirstOrDefaultAsync();
+                if (al == null || al.IsVoided)
+                { result.ErrorMsg = "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
+                bool cuA = al.WorkerId != row.UserId || al.WorkDate != DateOnly.FromDateTime(DateTime.Today);
+                if (cuA)
+                {
+                    if (!await CanCuAsync(_db, row.UserId))
+                    {
+                        result.ErrorMsg = al.WorkerId != row.UserId ? "Chỉ xoá được việc không ra sản phẩm của chính mình." : "Chỉ được xoá việc không ra sản phẩm của ngày hôm nay. Ngày cũ cần quyền cao hơn.";
+                        return result;
+                    }
+                    if (CuReasonError(row.Reason) is string _rsA) { result.ErrorMsg = _rsA; return result; }
+                }
+                var nA = cuA
+                    ? await _db.Database.ExecuteSqlRawAsync(   // [L7-WTS-CU] quyền cao hơn: đúng dòng còn hiệu lực, ghi lý do + người huỷ
+                        "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason={3}, VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
+                        row.UserId, DateTime.Now, row.ActivityLogId.Value, CuVoidReason("Xóa dòng", row.Reason))
+                    : await _db.Database.ExecuteSqlRawAsync(
                     "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Xóa dòng', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0} AND WorkDate={3}",   // [WTS-VOID-PO] + chỉ ngày hôm nay (như dòng WTS)
                     row.UserId, DateTime.Now, row.ActivityLogId.Value, DateTime.Today);   // cột date so với DateTime.Today (00:00) — như WorkDate = hôm nay
                 if (nA != 1)

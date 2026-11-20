@@ -2,6 +2,7 @@
 //   HieuSuat_Index) — từng lời báo phải Y NGUYÊN chữ bản cũ (chép từ SaveGroupAsync / CheckGroupQtyAsync / SaveRowAsync /
 //   CheckMachineOverlapAsync / VoidSavedRow của trang trước khi tách), số ghi DB đúng, 1 giao dịch (lỗi 1 dòng → không dòng nào ghi).
 //   [RS-E14] thêm: mã WTS ngoài snapshot quy trình → chặn.
+using MES.Web.Constants;   // [L7-WTS-CU] SystemPermissions.WtsMaster (W24)
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
@@ -468,10 +469,11 @@ public static class WtsScen
             int n0 = WtsCount(db, false);
             g = Gc(); g.UserId = 3; var e1 = Row(1, 5, 0, T.AddHours(3), T.AddHours(4)); e1.IsEditing = true; e1.WtsLogId = a.WtsLogId; g.Rows.Add(e1);
             var r = await s.SaveGroupAsync(g);
-            Ok(!r.Ok && r.ErrorMsg!.Contains("Dòng WTS này đã bị sửa / xoá ở nơi khác") && !wa.IsVoided && WtsCount(db, false) == n0, "Sửa dòng của người khác: không huỷ dòng cũ, không ghi dòng mới", r.ErrorMsg);
+            // [L7-WTS-CU 2026-11-19] đáp án đổi: người KHÔNG có quyền cao hơn (u3 nhóm XUONG) sửa dòng người khác / ngày cũ → lời báo đúng nghĩa (trước: "đã bị sửa / xoá ở nơi khác (tab khác)" — A2-11)
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuNoPermEditOther && !wa.IsVoided && WtsCount(db, false) == n0, "Sửa dòng của người khác (không quyền cao hơn): không huỷ dòng cũ, không ghi dòng mới, báo đúng nghĩa", r.ErrorMsg);
             g = Gc(machine: "M5"); var e2 = Row(2, 1, 0, T.AddHours(4), T.AddHours(5)); e2.IsEditing = true; e2.WtsLogId = 900; g.Rows.Add(e2);
             r = await s.SaveGroupAsync(g);
-            Ok(!r.Ok && r.ErrorMsg!.Contains("Dòng WTS này đã bị sửa / xoá ở nơi khác") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 900).IsVoided && WtsCount(db, false) == n0, "Sửa dòng ngày cũ: không huỷ, không ghi", r.ErrorMsg);
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuNoPermEditOld && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 900).IsVoided && WtsCount(db, false) == n0, "Sửa dòng ngày cũ (không quyền cao hơn): không huỷ, không ghi, báo đúng nghĩa", r.ErrorMsg);
             // sửa dòng gửi vụ KHÁC cùng PO (không phải vụ của dòng cũ trong DB) → không nhận, vụ mới (rà độc lập 01/11)
             g = Gc(machine: "M9"); var q1 = Row(1, 1, 1, T.AddHours(9), T.AddHours(10), cat: 1); g.Rows.Add(q1); r = await s.SaveGroupAsync(g); db.Fixup();
             g = Gc(machine: "M10"); var q2 = Row(1, 1, 1, T.AddHours(10), T.AddHours(11), cat: 2); g.Rows.Add(q2); r = await s.SaveGroupAsync(g); db.Fixup();
@@ -1075,6 +1077,108 @@ public static class WtsScen
             Ok(r.Ok && WtsCount(db) == n0 + 1, "Chạy thử T.Chạy = 0: vẫn lưu như cũ (không đổi luật, chỉ chặn âm / quá cột)", r.ErrorMsg);
             Ok(QtyRule.ClampTime(-3) == 0 && QtyRule.ClampTime(null) == null && QtyRule.ClampTime(1_000_000_000m) == QtyRule.TimeMax && QtyRule.ClampTime(12.5m) == 12.5m,
                "ClampTime (trang): −3 → 0, 1e9 → trần cột, số thường giữ");
+        }
+
+
+        // [L7-WTS-CU 2026-11-19] Nguồn: CLAUDE quét Fable 15/11 (A2-01 Trung); HÙNG 15/11 15:32 chốt A → Gói 25. Admin / Sửa WTS_MASTER sửa-xoá WTS ngày cũ / của người khác,
+        //   lý do ≥ 3 ký tự, vẫn K5; dòng sửa giữ người làm + ngày; không quyền → chữ cũ; nhập mới ngày cũ vẫn chặn. Bản 7439e3e (Gói 24): các ca "được" SAI (chặn hết) → đúng là SAI.
+        Console.WriteLine("[W24] L7-WTS-CU — quyền cao hơn (Admin / Sửa WTS_MASTER) sửa / xoá WTS ngày cũ hoặc của người khác: lý do ≥ 3, vẫn K5, giữ người làm + ngày; không quyền → chặn chữ cũ");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            // u11: chỉ Sửa WTS_MASTER (không nhóm WTS nào) — B1: đi đường quyền cao hơn không cần quyền nhóm dòng
+            var gM = new UserGroup { GroupId = 92, GroupCode = "WTSMASTER", GroupName = "Quản WTS (thử)", IsActive = true, Permissions = FuzzPerm.Json(SystemPermissions.WtsMaster) };
+            db.UserGroups.List.Add(gM); db.Users.List.Add(new User { UserId = 11, Username = "u11", FullName = "U11", IsActive = true, Group = gM, GroupId = 92 }); db.Fixup();
+            var Y = T.AddDays(-1);
+            // dòng ngày cũ của u2: 900 (PO2 OFF), 902 (PO2 OFF, máy M3), 903 (PO2 OFF)
+            foreach (var (id, mch) in new[] { (900L, "M1"), (902L, "M3"), (903L, "M4") })
+                db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = id, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = mch, WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(id - 900), EndTime = Y.AddHours(id - 899), CreatedAt = Y.AddHours(id - 899), ProductionMode = "serial" });
+            db.Fixup();
+            // (1) Admin xoá dòng ngày cũ của người khác: không lý do / lý do ngắn → chặn; lý do đủ → xoá, ghi lý do + người huỷ
+            var v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, UserId = 1 });
+            Ok(!v.Ok && v.ErrorMsg == WtsSaveService.CuReasonMsg && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 900).IsVoided, "W24a Admin xoá dòng ngày cũ người khác KHÔNG lý do: chặn, dòng còn", v.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, UserId = 1, Reason = " ab " });
+            Ok(!v.Ok && v.ErrorMsg == WtsSaveService.CuReasonMsg, "W24a lý do 2 ký tự (sau Trim): chặn", v.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, UserId = 1, Reason = new string('x', 151) });
+            Ok(!v.Ok && (v.ErrorMsg ?? "").Contains("dài quá 150"), "W24a lý do 151 ký tự: chặn (cột VoidReason 200)", v.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, UserId = 1, Reason = "nhập nhầm NC" });
+            var w900 = db.WtsProductionLogs.List.First(x => x.WtsLogId == 900);
+            Ok(v.Ok && w900.IsVoided && w900.VoidReason == "Xóa dòng (quyền cao hơn): nhập nhầm NC" && w900.VoidedBy == 1 && v.DetailIds.SequenceEqual(new[] { 2 }),
+               "W24a Admin xoá dòng ngày cũ của u2 có lý do: xoá, VoidReason ghi lý do, VoidedBy = Admin, DetailIds PO thật", v.ErrorMsg);
+            // (2) u3 (XUONG, không quyền cao hơn) xoá dòng của u2 hôm nay dù có lý do → chữ cũ; u2 xoá dòng ngày cũ của mình → chữ cũ
+            var g = Gc(); var a = Row(1, 10, 0, T, T.AddHours(1)); g.Rows.Add(a); var r = await s.SaveGroupAsync(g); Ok(r.Ok, "u2 lưu NC1 OK 10 PO1 (ON)", r.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, UserId = 3, Reason = "thử xoá" });
+            Ok(!v.Ok && v.ErrorMsg == "Chỉ xoá được dòng WTS của chính mình." && !db.WtsProductionLogs.List.First(x => x.WtsLogId == a.WtsLogId).IsVoided, "W24b u3 (không quyền cao hơn) xoá dòng u2: chặn chữ cũ", v.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 903, UserId = 2, Reason = "thử xoá" });
+            Ok(!v.Ok && v.ErrorMsg == "Chỉ được xoá WTS của ngày hôm nay. Ngày cũ cần quyền cao hơn." && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 903).IsVoided, "W24b u2 xoá dòng ngày cũ của mình: chặn chữ cũ", v.ErrorMsg);
+            // (3) B1: u11 chỉ Sửa WTS_MASTER (không quyền WTS_GC) xoá dòng GC của u2 hôm nay có lý do → được
+            g = Gc(nc: "NC1", machine: "M2"); var a2 = Row(1, 2, 0, T.AddHours(1), T.AddHours(2)); g.Rows.Add(a2); r = await s.SaveGroupAsync(g); Ok(r.Ok, "u2 lưu NC1 OK 2 (dòng 2)", r.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a2.WtsLogId, UserId = 11, Reason = "tổ trưởng báo sai" });
+            var wa2 = db.WtsProductionLogs.List.First(x => x.WtsLogId == a2.WtsLogId);
+            Ok(v.Ok && wa2.IsVoided && wa2.VoidedBy == 11 && wa2.VoidReason!.StartsWith("Xóa dòng (quyền cao hơn): "), "W24c u11 (chỉ Sửa WTS_MASTER, không nhóm WTS) xoá dòng GC của u2 có lý do: được (B1)", v.ErrorMsg);
+            // (4) K5 vẫn giữ: NC2 đã dùng số NC1 → Admin xoá NC1 (có lý do) bị chặn + gợi ý
+            g = Gc(nc: "NC2", machine: "M2"); var b = Row(1, 10, 0, T.AddHours(2), T.AddHours(3)); g.Rows.Add(b); r = await s.SaveGroupAsync(g); Ok(r.Ok, "u2 lưu NC2 OK 10", r.ErrorMsg);
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = a.WtsLogId, UserId = 1, Reason = "thử K5" });
+            Ok(!v.Ok && (v.ErrorMsg ?? "").StartsWith("Không xoá được: xoá xong sẽ làm sai số ở Gia công NC2: chưa làm = -10") && (v.ErrorMsg ?? "").Contains("nên kiểm tra theo các bước sau")
+               && !db.WtsProductionLogs.List.First(x => x.WtsLogId == a.WtsLogId).IsVoided, "W24d Admin xoá NC1 của u2 khi NC2 đã dùng: K5 chặn như cũ + gợi ý (quyền cao hơn không bỏ K5)", v.ErrorMsg);
+            // (5) Admin sửa dòng NC2 của u2 (hôm nay): không lý do → chặn; có lý do → dòng mới giữ WorkerId = 2, dòng cũ huỷ "Sửa lại (quyền cao hơn): …", sổ ghép giờ gốc
+            int n0 = WtsCount(db, false);
+            var wb = db.WtsProductionLogs.List.First(x => x.WtsLogId == b.WtsLogId); var bCreated = wb.CreatedAt;
+            g = Gc(nc: "NC2", machine: "M2"); g.UserId = 1; var eb = Row(1, 8, 0, T.AddHours(2), T.AddHours(3)); eb.IsEditing = true; eb.WtsLogId = b.WtsLogId; g.Rows.Add(eb);
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuReasonMsg && !wb.IsVoided && WtsCount(db, false) == n0 && eb.IsEditing && eb.WtsLogId == b.WtsLogId, "W24e Admin sửa dòng u2 KHÔNG lý do: chặn, không ghi, DTO giữ trạng thái", r.ErrorMsg);
+            g = Gc(nc: "NC2", machine: "M2"); g.UserId = 1; g.EditReason = "u2 đếm thừa 2 chiếc"; eb = Row(1, 8, 0, T.AddHours(2), T.AddHours(3)); eb.IsEditing = true; eb.WtsLogId = b.WtsLogId; g.Rows.Add(eb);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            var nb = db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == eb.WtsLogId);
+            Ok(r.Ok && nb != null && nb.WorkerId == 2 && nb.QtyOk == 8 && wb.IsVoided && wb.VoidReason == "Sửa lại (quyền cao hơn): u2 đếm thừa 2 chiếc" && wb.VoidedBy == 1 && wb.VoidedAt == nb.CreatedAt,
+               "W24e Admin sửa dòng u2 có lý do: dòng mới GIỮ người làm u2, OK 8; dòng cũ huỷ lý do + VoidedBy Admin, VoidedAt = CreatedAt dòng mới", r.ErrorMsg + $" | worker {nb?.WorkerId} ok {nb?.QtyOk} void '{wb.VoidReason}'");
+            var inp = await new HandoverLedgerService(db).GetInputForDetailAsync(1);
+            var nbIn = inp?.Wts.FirstOrDefault(w => w.Id == eb.WtsLogId);
+            Ok(nbIn != null && nbIn.Saved == bCreated && nbIn.Vers != null && nbIn.Vers.Count == 2, "W24e sổ ghép dòng sửa (tiền tố 'Sửa lại') → giờ lưu GỐC + 2 bản", $"saved {nbIn?.Saved:HH:mm:ss.fff} gốc {bCreated:HH:mm:ss.fff} vers {nbIn?.Vers?.Count}");
+            var led = await new HandoverLedgerService(db).GetLedgerForDetailAsync(1);
+            Ok(led != null && led.Balanced && led.G("GC").Steps.First(st => st.Code == "NC2").Ok == 8, "W24e sổ PO1 cân, NC2 OK = 8 sau sửa", led == null ? "null" : string.Join(";", led.G("GC").Steps.Select(st => st.Code + "=" + st.Ok)));
+            // (6) Admin sửa dòng NGÀY CŨ của u2 (902, PO2 OFF): WorkDate hôm qua + giờ hôm qua → được; đổi sang hôm nay → chặn "giữ nguyên ngày"; dòng MỚI ngày cũ vẫn chặn
+            g = Gc(nc: "NC1", machine: "M3"); g.UserId = 1; g.WorkDate = Y.Date; g.EditReason = "sửa số ngày hôm qua"; var e9 = Row(2, 3, 0, Y.AddHours(2), Y.AddHours(3)); e9.IsEditing = true; e9.WtsLogId = 902; g.Rows.Add(e9);
+            r = await s.SaveGroupAsync(g); db.Fixup();
+            var n9 = db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == e9.WtsLogId); var w902 = db.WtsProductionLogs.List.First(x => x.WtsLogId == 902);
+            Ok(r.Ok && n9 != null && n9.WorkerId == 2 && n9.StartTime.Date == Y.Date && n9.QtyOk == 3 && w902.IsVoided && w902.VoidedBy == 1, "W24f Admin sửa dòng ngày cũ của u2 (có lý do, giữ ngày): được — dòng mới ngày hôm qua, người làm u2", r.ErrorMsg);
+            g = Gc(nc: "NC1", machine: "M4"); g.UserId = 1; g.WorkDate = Y.Date; g.EditReason = "dời ngày"; var e10 = Row(2, 1, 0, T.AddHours(5), T.AddHours(6)); e10.IsEditing = true; e10.WtsLogId = 903; g.Rows.Add(e10);
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Sửa WTS ngày cũ / của người khác: giữ nguyên ngày của dòng") && !db.WtsProductionLogs.List.First(x => x.WtsLogId == 903).IsVoided, "W24f sửa dòng ngày cũ mà giờ mới rơi sang hôm nay: chặn, không huỷ", r.ErrorMsg);
+            g = Gc(nc: "NC1", machine: "M5"); g.UserId = 1; g.WorkDate = Y.Date; g.EditReason = "nhập bù"; g.Rows.Add(Row(2, 1, 0, Y.AddHours(6), Y.AddHours(7)));
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("Chỉ được nhập WTS cho ngày hôm nay"), "W24f Admin nhập dòng MỚI cho ngày cũ: vẫn chặn (chốt A chỉ nói sửa-xoá)", r.ErrorMsg);
+            // (7) u2 (chủ dòng, không quyền cao hơn) sửa dòng ngày cũ của mình → chữ đúng nghĩa (W12 cũng đổi)
+            g = Gc(nc: "NC1", machine: "M4"); g.WorkDate = Y.Date; var e11 = Row(2, 1, 0, Y.AddHours(3), Y.AddHours(4)); e11.IsEditing = true; e11.WtsLogId = 903; g.Rows.Add(e11);
+            r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuNoPermEditOld, "W24g u2 sửa dòng ngày cũ của mình: chặn, báo cần Admin / Sửa WTS tiêu chuẩn", r.ErrorMsg);
+            // (8) Việc không ra SP: dòng 950 của u1 hôm qua → u1 là chủ nhưng ngày cũ → cần lý do; u2 xoá việc của u1 hôm nay → chữ đúng nghĩa
+            db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "VS", TaskName = "Vệ sinh máy", IsActive = true });
+            db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = 950, WorkerId = 2, WorkDate = DateOnly.FromDateTime(Y), WtsCode = "VS", StartTime = Y.AddHours(9), EndTime = Y.AddHours(10), CreatedAt = Y });
+            db.Fixup();
+            var va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = 950, UserId = 1 });
+            Ok(!va.Ok && va.ErrorMsg == WtsSaveService.CuReasonMsg, "W24h Admin xoá việc không ra SP ngày cũ của u2 không lý do: chặn", va.ErrorMsg);
+            va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = 950, UserId = 1, Reason = "ghi nhầm ngày" });
+            var a950 = db.WorkerActivityLogs.List.First(x => x.ActivityLogId == 950);
+            Ok(va.Ok && a950.IsVoided && a950.VoidReason == "Xóa dòng (quyền cao hơn): ghi nhầm ngày" && a950.VoidedBy == 1, "W24h có lý do: xoá, ghi lý do + người huỷ", va.ErrorMsg);
+            var ra = await s.SaveActivityAsync(new WtsSaveService.WtsActivityRequest { UserId = 1, WtsCode = "VS", StartTime = DateTime.Today.AddHours(16), EndTime = DateTime.Today.AddHours(16.5) });
+            var act = db.WorkerActivityLogs.List.Last();
+            va = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { ActivityLogId = act.ActivityLogId, UserId = 2, Reason = "thử" });
+            Ok(ra.Ok && !va.Ok && va.ErrorMsg == "Chỉ xoá được việc không ra sản phẩm của chính mình." && !act.IsVoided, "W24h u2 xoá việc của u1 hôm nay (không quyền cao hơn): chặn đúng nghĩa", va.ErrorMsg);
+            // (10) rà độc lập R-02: nhóm trộn dòng sửa cu + dòng MỚI → chặn cả nhóm (dòng mới sẽ ghi người sửa); dòng 2 trong nhóm cu lỗi → dòng cũ không huỷ (1 giao dịch)
+            g = Gc(nc: "NC1", machine: "M3"); g.UserId = 1; g.WorkDate = Y.Date; g.EditReason = "thử trộn"; var e12 = Row(2, 2, 0, Y.AddHours(2), Y.AddHours(3)); e12.IsEditing = true; e12.WtsLogId = n9!.WtsLogId; g.Rows.Add(e12);
+            g.Rows.Add(Row(2, 1, 0, Y.AddHours(3), Y.AddHours(4)));
+            int n1 = WtsCount(db, false); r = await s.SaveGroupAsync(g);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Nhóm sửa WTS ngày cũ / của người khác chỉ gồm dòng đang sửa") && !n9.IsVoided && WtsCount(db, false) == n1, "W24j nhóm trộn dòng sửa cu + dòng mới: chặn cả nhóm, không ghi gì (R-02)", r.ErrorMsg);
+            g = Gc(nc: "NC1", machine: "M3"); g.UserId = 1; g.WorkDate = Y.Date; g.EditReason = "thử 2 dòng"; var e13 = Row(2, 2, 0, Y.AddHours(2), Y.AddHours(3)); e13.IsEditing = true; e13.WtsLogId = n9.WtsLogId; g.Rows.Add(e13);
+            var e14 = Row(2, 1, 0, Y.AddHours(3), Y.AddHours(4)); e14.IsEditing = true; e14.WtsLogId = 903; g.Rows.Add(e14);
+            bool fired = false;   // "người khác" huỷ dòng 903 đúng lúc nhóm đang chờ khoá PO → UPDATE dòng 2 trả 0 → rollback cả nhóm (lỗi TRONG giao dịch)
+            Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = nme => { if (fired || nme != "MES_PO_2") return; fired = true; db.WtsProductionLogs.List.First(x => x.WtsLogId == 903).IsVoided = true; db.Fixup(); };
+            try { r = await s.SaveGroupAsync(g); } finally { Microsoft.EntityFrameworkCore.DatabaseFacade.OnAppLock = null; }
+            Ok(fired && !r.Ok && (r.ErrorMsg ?? "").Contains("đã bị sửa / xoá ở nơi khác") && !n9.IsVoided && WtsCount(db, false) == n1 && e13.IsEditing && e13.WtsLogId == n9.WtsLogId,
+               "W24k nhóm 2 dòng cu, dòng 2 bị người khác huỷ trong lúc chờ khoá → rollback: dòng 1 không huỷ / không ghi mới, DTO giữ trạng thái", $"{r.Ok} | {r.ErrorMsg} | n9 void {n9.IsVoided} count {WtsCount(db, false)} vs {n1}");
+            // (9) dòng đã huỷ / không có: đường cũ (báo tải lại), kể cả Admin có lý do
+            v = await s.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = 900, UserId = 1, Reason = "xoá lần 2" });
+            Ok(!v.Ok && v.ErrorMsg == "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang." && w900.VoidedBy == 1 && w900.VoidReason == "Xóa dòng (quyền cao hơn): nhập nhầm NC", "W24i xoá lại dòng đã huỷ: báo tải lại, không ghi đè người / lý do huỷ trước", v.ErrorMsg);
         }
 
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");

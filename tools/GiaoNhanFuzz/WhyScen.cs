@@ -338,11 +338,17 @@ public static class WhyScen
             var p1 = HandoverWhy.Plan(input, HandoverWhy.OpVoidReceive(rid2), new HashSet<string> { "R:" + rid2 }, loopOp: true);
             var s1 = p1.Steps.FirstOrDefault(x => x.Kind == "WTS" && x.Id == w.LogId);
             var v0 = await svc.VoidReceiveAsync(rid2, "huy thu y12", U, all);
-            var del = await new WtsSaveService(db, new HandoverLedgerService(db)).VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.LogId, UserId = U, KhPlanDetailId = det });
-            Ok(s1 != null && (s1.Hint ?? "").Contains("ngày trước hôm nay") && row.EndTime.Date == DateTime.Today && !v0.Ok && v0.Error.Contains("ngày trước hôm nay")
-               && !del.Ok && (del.ErrorMsg ?? "").Contains("hôm nay"),
-               "Y12a ca qua đêm (bắt đầu hôm qua 22:00, kết thúc hôm nay): bước xoá dòng WTS báo \"dòng ngày trước hôm nay\" (lời báo chặn cũng có); máy chủ thật không cho xoá",
-               $"{s1?.Hint} | {v0.Error} | xoá: {del.ErrorMsg}");
+            // [L7-WTS-CU 2026-11-19] Gói 25: người nhập (u2, không quyền cao hơn) vẫn bị chặn chữ "hôm nay"; Admin (U) không lý do → bắt lý do; Admin có lý do → xoá được
+            var wsv = new WtsSaveService(db, new HandoverLedgerService(db));
+            var del2 = await wsv.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.LogId, UserId = 2, KhPlanDetailId = det, Reason = "thử" });
+            var del = await wsv.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.LogId, UserId = U, KhPlanDetailId = det });
+            Ok(s1 != null && (s1.Hint ?? "").Contains("ngày trước hôm nay") && (s1.Hint ?? "").Contains("Sửa WTS tiêu chuẩn") && row.EndTime.Date == DateTime.Today && !v0.Ok && v0.Error.Contains("ngày trước hôm nay")
+               && !del2.Ok && del2.ErrorMsg == "Chỉ xoá được dòng WTS của chính mình." && !del.Ok && del.ErrorMsg == WtsSaveService.CuReasonMsg,
+               "Y12a ca qua đêm (bắt đầu hôm qua 22:00, kết thúc hôm nay): bước xoá dòng WTS báo \"dòng ngày trước hôm nay\" + nhờ Admin / Sửa WTS tiêu chuẩn; người khác bị chặn; Admin không lý do → bắt lý do",
+               $"{s1?.Hint} | {v0.Error} | xoá u2: {del2.ErrorMsg} | xoá Admin: {del.ErrorMsg}");
+            var del3 = await wsv.VoidRowAsync(new WtsSaveService.WtsVoidRequest { WtsLogId = w.LogId, UserId = U, KhPlanDetailId = det, Reason = "gỡ theo gợi ý" });
+            var v2 = await svc.VoidReceiveAsync(rid2, "huy thu y12", U, all);
+            Ok(del3.Ok && row.IsVoided && v2.Ok, "Y12a' [L7-WTS-CU] Admin xoá dòng ngày cũ CÓ lý do → được, rồi huỷ lần nhận theo gợi ý → được (chuỗi gỡ thông)", $"{del3.ErrorMsg} | {v2.Error}");
         }
         {   // bước WTSV (sửa dòng về số trước): như Y9, dòng sửa bắt đầu hôm qua 22:00
             var (db, det, rid2, led, svc) = await Dung("P-Y12C");

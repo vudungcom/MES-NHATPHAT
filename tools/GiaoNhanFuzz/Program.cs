@@ -15,7 +15,8 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Console.WriteLine($"CPU
 
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
-if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }   // [A1-SCEN 2026-11-15] điểm ghi số lượng / khoá / đồng thời (Gói 22: A1-01, A1-02)
+if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
+if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-SCEN 2026-11-19] Sổ luật ↔ code / Workflow ON-OFF (Gói 25: L7-WTS-CU)   // [A1-SCEN 2026-11-15] điểm ghi số lượng / khoá / đồng thời (Gói 22: A1-01, A1-02)
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "bu") { return await BuScen.Run(); }

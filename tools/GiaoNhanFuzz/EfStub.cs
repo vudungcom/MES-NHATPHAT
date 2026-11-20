@@ -336,15 +336,19 @@ namespace Microsoft.EntityFrameworkCore
             // [WTS-SVC] Làm thật câu huỷ dòng WTS / hoạt động của WtsSaveService (trước ở trang HieuSuat_Index):
             //   "UPDATE WtsProductionLogs SET IsVoided=1, VoidReason=N'…', VoidedBy={0}, VoidedAt={1} WHERE WtsLogId={2} AND IsVoided=0"
             //   → trả số dòng đổi (1 / 0) như SQL Server, để kiểm được [D8-WTS-VOID] (dòng đã huỷ ở nơi khác thì không ghi dòng mới).
-            var mv = System.Text.RegularExpressions.Regex.Match(sql, @"^UPDATE\s+(WtsProductionLogs|WorkerActivityLogs)\s+SET\s+IsVoided=1,\s*VoidReason=N'([^']*)',\s*VoidedBy=\{0\},\s*VoidedAt=\{1\}\s+WHERE\s+(WtsLogId|ActivityLogId)=\{2\}\s+AND\s+IsVoided=0");
+            // [L7-WTS-CU 2026-11-19] + VoidReason={3} (lý do là tham số — đường quyền cao hơn: không lọc WorkerId / ngày; args[3] = chữ lý do)
+            var mv = System.Text.RegularExpressions.Regex.Match(sql, @"^UPDATE\s+(WtsProductionLogs|WorkerActivityLogs)\s+SET\s+IsVoided=1,\s*VoidReason=(?:N'([^']*)'|\{3\}),\s*VoidedBy=\{0\},\s*VoidedAt=\{1\}\s+WHERE\s+(WtsLogId|ActivityLogId)=\{2\}\s+AND\s+IsVoided=0");
             if (mv.Success && args.Length >= 3)   // [WTS-VOID-PO 2026-11-01] + điều kiện "AND WorkerId={0}" / "AND StartTime>={3} AND StartTime<{4}" làm thật như SQL
             {
+                bool reasonParam = sql.Contains("VoidReason={3}");
+                if (reasonParam && (args.Length < 4 || args[3] is not string)) throw new InvalidOperationException("EfStub: VoidReason={3} cần tham số chuỗi: " + sql);
+                string reasonText = reasonParam ? (string)args[3] : mv.Groups[2].Value;
                 bool byWorker = sql.Contains("AND WorkerId={0}");
                 bool byDay    = sql.Contains("AND StartTime>={3} AND StartTime<{4}");
                 bool byWDate  = sql.Contains("AND WorkDate={3}");
                 // [WTS-VOID-PO] câu có điều kiện lạ (stub không làm thật được) → báo lỗi, không lặng lẽ bỏ qua (rà độc lập 01/11)
                 var rest = sql.Substring(mv.Index + mv.Length).Replace("AND WorkerId={0}", "").Replace("AND StartTime>={3} AND StartTime<{4}", "").Replace("AND WorkDate={3}", "");
-                if (rest.Trim().Length > 0 || (byDay && args.Length < 5) || (byWDate && args.Length < 4))
+                if (rest.Trim().Length > 0 || (byDay && args.Length < 5) || (byWDate && args.Length < 4) || (reasonParam && (byDay || byWDate)))
                     throw new InvalidOperationException("EfStub: câu UPDATE huỷ dòng có điều kiện chưa làm thật được: " + sql);
                 var set = _c.AllSets().FirstOrDefault(s => s.ElementType.Name + "s" == mv.Groups[1].Value);
                 var keyP = set?.ElementType.GetProperty(mv.Groups[3].Value);
@@ -360,7 +364,7 @@ namespace Microsoft.EntityFrameworkCore
                         if (byDay) { var st = (DateTime)t.GetProperty("StartTime")!.GetValue(it)!; if (st < (DateTime)args[3] || st >= (DateTime)args[4]) continue; }
                         if (byWDate && !Equals(t.GetProperty("WorkDate")!.GetValue(it), args[3] is DateTime wd ? DateOnly.FromDateTime(wd) : args[3])) continue;
                         t.GetProperty("IsVoided")!.SetValue(it, true);
-                        t.GetProperty("VoidReason")?.SetValue(it, mv.Groups[2].Value);
+                        t.GetProperty("VoidReason")?.SetValue(it, reasonText);   // [L7-WTS-CU] chữ N'…' hoặc tham số {3}
                         t.GetProperty("VoidedBy")?.SetValue(it, Convert.ToInt32(args[0]));
                         t.GetProperty("VoidedAt")?.SetValue(it, (DateTime)args[1]);
                         n++;

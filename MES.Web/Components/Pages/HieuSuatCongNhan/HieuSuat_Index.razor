@@ -126,6 +126,15 @@
                 @* [GN-WTS-CAP][K5] Lời báo khi xoá làm sai số giao nhận *@
                 <div class="alert alert-warning py-2 small" style="@VoidBlockStyle">@_voidBlockMsg</div>
 
+                @* [L7-WTS-CU 2026-11-19] dòng ngày cũ / của người khác: bắt lý do ≥ 3 ký tự (máy chủ kiểm lại; ghi VoidReason "Xóa dòng (quyền cao hơn): …") *@
+                @if (IsCuRow(vr))
+                {
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold mb-0">Lý do xoá <span class="text-danger">*</span> <small class="text-muted">(WTS ngày cũ / của người khác — ≥ 3 ký tự)</small></label>
+                        <input class="form-control form-control-sm" maxlength="150" @bind="_voidReason" placeholder="Vd: công nhân nhập nhầm NC, đã xác nhận với tổ trưởng" />
+                    </div>
+                }
+
                 <table class="table table-sm table-bordered small mb-0">
 
                     <tr><th class="text-muted" style="width:90px">Thời gian</th><td>@vr.StartTime.ToString("HH:mm") — @vr.EndTime.ToString("HH:mm") (@vr.Minutes ph)</td></tr>
@@ -256,6 +265,23 @@ else
                            @bind="_workDate" @bind:after="OnWorkDateChanged" disabled="@_anySaving" />
 
                 </div>
+
+                @* [L7-WTS-CU 2026-11-19] Admin / người có Sửa WTS tiêu chuẩn: chọn người để xem + Sửa / Xoá WTS của người khác / ngày cũ (kèm lý do; máy chủ kiểm lại
+                   quyền + lý do + K5). Người thường không thấy ô này — luật L7 (WTS) Sổ luật tab chính; Hùng 15/11 15:32 chốt A. *@
+                @if (_canCu)
+                {
+                    <div class="col-auto">
+                        <label class="form-label small mb-0 fw-semibold">Xem WTS của</label>
+                        <input list="cuViewUsers" class="form-control form-control-sm" style="width:230px;" value="@_viewUserText"
+                               @onchange="OnViewUserChanged" disabled="@_anySaving" placeholder="Gõ tên / tài khoản…" autocomplete="off" />
+                        <datalist id="cuViewUsers">
+                            @foreach (var u in _viewUsers)
+                            {
+                                <option value="@u.Text"></option>
+                            }
+                        </datalist>
+                    </div>
+                }
 
                 <div class="d-flex align-items-center gap-1 flex-wrap">
 
@@ -420,19 +446,24 @@ else
 
                     <span class="badge bg-warning text-dark">
 
-                        <i class="bi bi-lock me-1"></i>Ngày cũ — chỉ xem
+                        <i class="bi bi-lock me-1"></i>@(_canCu ? "Ngày cũ — chỉ Sửa / Xoá kèm lý do" : "Ngày cũ — chỉ xem")
 
                     </span>
 
                 }
+                @* [L7-WTS-CU 2026-11-19] đang xem WTS của người khác: không nhập mới, chỉ Sửa / Xoá kèm lý do *@
+                @if (ViewingOther)
+                {
+                    <span class="badge bg-info text-dark"><i class="bi bi-person me-1"></i>WTS của @_viewUserName — chỉ Sửa / Xoá kèm lý do</span>
+                }
 
-                <button class="btn btn-sm btn-outline-primary" @onclick='() => AddGroup(false)' disabled="@(!IsToday)">
+                <button class="btn btn-sm btn-outline-primary" @onclick='() => AddGroup(false)' disabled="@(!CanAddNew)">
 
                     <i class="bi bi-plus-lg me-1"></i>Thêm nhóm
 
                 </button>
                 @* [ML16-ACT 2026-10-30] Master list 16 + 11: việc không ra sản phẩm (họp, vệ sinh, chờ vật tư, sửa hàng…) — chỉ Mã CV + giờ *@
-                <button class="btn btn-sm btn-outline-secondary" @onclick="OpenActivityNew" disabled="@(!IsToday || _act != null)">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="OpenActivityNew" disabled="@(!CanAddNew || _act != null)">
                     <i class="bi bi-plus-lg me-1"></i>Việc không ra sản phẩm
                 </button>
 
@@ -791,7 +822,8 @@ else
 
                                 <td class="text-center">
 
-                                    @if (IsToday)
+                                    @* [L7-WTS-CU 2026-11-19] Admin / Sửa WTS tiêu chuẩn: nút hiện cả ngày cũ / người khác (máy chủ kiểm quyền + lý do) *@
+                                    @if (IsToday && !ViewingOther || _canCu && (row.ActivityLogId == null || !IsCuRow(row)))
 
                                     {
 
@@ -971,6 +1003,15 @@ else
                             </label>
 
                         </div>
+
+                        @* [L7-WTS-CU 2026-11-19] nhóm sửa dòng ngày cũ / của người khác: lý do bắt buộc (máy chủ kiểm ≥ 3 ký tự, ghi VoidReason dòng cũ) *@
+                        @if (grp.CuRow)
+                        {
+                            <div class="ms-2" style="min-width:260px">
+                                <div style="font-size:10px;color:#b02a37;margin-bottom:2px">Lý do sửa <b>*</b> (WTS ngày cũ / của người khác)</div>
+                                <input class="form-control form-control-sm" maxlength="150" @bind="grp.EditReason" placeholder="≥ 3 ký tự" />
+                            </div>
+                        }
 
                         @* Nút xóa nhóm *@
 
@@ -2529,6 +2570,9 @@ else
 
                     <div class="d-flex align-items-center gap-2 px-3 pb-2 flex-wrap">
 
+                        @* [L7-WTS-CU 2026-11-19] nhóm sửa dòng ngày cũ / của người khác: không thêm dòng mới (rà độc lập R-02 — dòng thêm sẽ ghi người sửa; máy chủ cũng chặn) *@
+                        @if (!grp.CuRow)
+                        {
                         <button class="btn btn-sm btn-outline-secondary py-0"
 
                                 style="font-size:11px" @onclick="() => AddSubRow(grp)">
@@ -2536,6 +2580,7 @@ else
                             <i class="bi bi-plus me-1"></i>Thêm số KH
 
                         </button>
+                        }
 
                         <div class="ms-auto d-flex align-items-center gap-1">
 
@@ -4039,6 +4084,32 @@ else
 
     private DateTime _workDate = DateTime.Today;
 
+    // [L7-WTS-CU 2026-11-19] "Quyền cao hơn" sửa / xoá WTS ngày cũ hoặc của người khác — Admin hoặc Sửa WTS_MASTER (trang chỉ ẩn / hiện; máy chủ WtsSaveService
+    //   kiểm lại quyền + lý do + K5). Nguồn: CLAUDE quét Fable 15/11 (A2-01); HÙNG 15/11 15:32 chốt A → Gói 25.
+    private bool _canCu = false;
+    private int _viewUserId;                       // người đang xem WTS (mặc định chính mình)
+    private string _viewUserText = "";             // chữ ô "Xem WTS của"
+    private string _viewUserName = "";
+    private List<(int Id, string Text)> _viewUsers = new();
+    private string? _voidReason;                   // lý do xoá (modal)
+    private bool ViewingOther => _viewUserId != _currentUserId;
+    /// <summary>Được nhập dòng / nhóm / việc mới: chỉ hôm nay và chỉ của chính mình (chốt A chỉ nói sửa-xoá).</summary>
+    private bool CanAddNew => IsToday && !ViewingOther && _canSubmitOwn;
+    private bool _canSubmitOwn = false;            // có quyền nhập WTS nhóm nào đó (như _canSubmit cũ) — người chỉ có Sửa WTS_MASTER vào trang để Sửa / Xoá, không nhập mới
+    /// <summary>Dòng đã lưu là "ngày cũ / của người khác" so với người đăng nhập → Sửa / Xoá cần lý do.</summary>
+    private bool IsCuRow(WtsRow r) => ViewingOther || r.StartTime.Date != DateTime.Today;
+    private async Task OnViewUserChanged(ChangeEventArgs e)
+    {
+        var txt = (e.Value?.ToString() ?? "").Trim();
+        var hit = _viewUsers.FirstOrDefault(u => string.Equals(u.Text, txt, StringComparison.OrdinalIgnoreCase));
+        if (hit.Id == 0)   // gõ không khớp → về chính mình
+            hit = _viewUsers.FirstOrDefault(u => u.Id == _currentUserId);
+        if (hit.Id == 0) { _viewUserId = _currentUserId; _viewUserText = ""; _viewUserName = ""; }
+        else { _viewUserId = hit.Id; _viewUserText = hit.Id == _currentUserId ? "" : hit.Text; _viewUserName = hit.Text; }
+        _act = null; _voidConfirmRow = null;
+        await OnWorkDateChanged();   // nạp lại dòng đã lưu của người đó (xoá form đang gõ)
+    }
+
     // Data
 
     private List<KhPlanDetailRow> _allRows = new(); // tất cả phiếu KH
@@ -4540,10 +4611,19 @@ else
                   || _perms.TryGetValue(SystemPermissions.WtsDongGoi, out var p4) && p4.CanView
 
                   || gc == "ADMIN";
+        _canSubmitOwn = _canSubmit;   // [L7-WTS-CU] quyền nhập mới của chính mình (giữ như cũ)
 
         _canViewReport = (_perms.TryGetValue(SystemPermissions.WtsReport, out var pr) && pr.CanView)
 
                       || gc == "ADMIN";
+
+        // [L7-WTS-CU 2026-11-19] quyền cao hơn (chỉ để hiện ô chọn người + nút; máy chủ kiểm lại) + danh sách người để chọn
+        _viewUserId = _currentUserId;
+        _canCu = gc == "ADMIN" || (_perms.TryGetValue(SystemPermissions.WtsMaster, out var pcu) && pcu.CanEdit);
+        if (_canCu) _canSubmit = true;   // người chỉ có Sửa WTS_MASTER (không nhóm WTS) vẫn vào trang để Sửa / Xoá; nhập mới vẫn theo _canSubmitOwn
+        if (_canCu)
+            _viewUsers = (await Db.Users.AsNoTracking().OrderByDescending(u => u.IsActive).ThenBy(u => u.FullName).Select(u => new { u.UserId, u.FullName, u.Username, u.IsActive }).ToListAsync())
+                .Select(u => (u.UserId, $"{(string.IsNullOrWhiteSpace(u.FullName) ? u.Username : u.FullName)} ({u.Username}){(u.IsActive ? "" : " — đã nghỉ")}")).ToList();   // R-04: cả người đã nghỉ (dòng cũ của họ vẫn cần gỡ)
 
         if (_canSubmit)
 
@@ -4782,7 +4862,7 @@ else
 
             .Include(x => x.Worker)
 
-            .Where(x => x.WorkerId == _currentUserId
+            .Where(x => x.WorkerId == _viewUserId   // [L7-WTS-CU] người đang xem (mặc định chính mình)
 
                      && x.StartTime >= start && x.StartTime < end
 
@@ -4798,7 +4878,7 @@ else
 
         var actLogs = await Db.WorkerActivityLogs
 
-            .Where(x => x.WorkerId == _currentUserId
+            .Where(x => x.WorkerId == _viewUserId   // [L7-WTS-CU]
 
                      && x.WorkDate == workDate
 
@@ -5057,7 +5137,7 @@ else
 
     {
 
-        if (!IsToday) return; // Không cho thêm dòng ngày cũ
+        if (!CanAddNew) return; // Không cho thêm dòng ngày cũ · [L7-WTS-CU] / của người khác
 
         // StartTime = EndTime của dòng đã lưu cuối cùng (continuous timeline)
 
@@ -5187,6 +5267,7 @@ else
         };
 
         row.IsEditing = true;
+        grp.CuRow = IsCuRow(row);   // [L7-WTS-CU] dòng ngày cũ / của người khác → nhóm hiện ô Lý do (máy chủ bắt ≥ 3 ký tự)
 
         grp.SubRows.Add(row);
 
@@ -5236,6 +5317,7 @@ else
 
         _voidConfirmRow = row; // hiện modal confirm
         _voidBlockMsg   = null; // [GN-WTS-CAP]
+        _voidReason     = null; // [L7-WTS-CU]
 
     }
 
@@ -5273,7 +5355,8 @@ else
     {
         var res = await WtsSaveSvc.VoidRowAsync(new WtsSaveService.WtsVoidRequest
         {
-            WtsLogId = row.WtsLogId, ActivityLogId = row.ActivityLogId, KhPlanDetailId = row.KhPlanDetailId, UserId = _currentUserId
+            WtsLogId = row.WtsLogId, ActivityLogId = row.ActivityLogId, KhPlanDetailId = row.KhPlanDetailId, UserId = _currentUserId,
+            Reason = _voidReason,   // [L7-WTS-CU] lý do khi dòng ngày cũ / của người khác (máy chủ kiểm)
         });
         if (!res.Ok) { _voidBlockMsg = res.ErrorMsg; return false; }
         await LoadSavedRowsAsync();
@@ -5867,7 +5950,7 @@ else
 
     {
 
-        if (!IsToday) return;
+        if (!CanAddNew) return;   // [L7-WTS-CU] đang xem người khác / ngày cũ: không nhập mới
 
         var lastSaved = _rows.LastOrDefault(r => r.Saved && r.IsOvertime == isOT);
 
@@ -5914,6 +5997,7 @@ else
     private void AddSubRow(WtsGroup grp)
 
     {
+        if (grp.CuRow) return;   // [L7-WTS-CU] nhóm sửa dòng ngày cũ / của người khác: không thêm dòng (R-02)
 
         // StartTime = EndTime của sub-row cuối
 
@@ -7292,6 +7376,7 @@ else
             IsGc = IsGcGroup, IsHtsp = IsHtspGroup, HandoverGroupCode = HandoverGroupCode,
             NC = grp.NC, MachineUsed = grp.MachineUsed, ProductionMode = grp.ProductionMode, HtspSubGroup = grp.HtspSubGroup,
             UserId = _currentUserId, CaId = _selectedCaId, WorkDate = _workDate,
+            EditReason = grp.EditReason,   // [L7-WTS-CU] lý do sửa dòng ngày cũ / của người khác
         };
         foreach (var sub in grp.SubRows)
         {
@@ -8414,6 +8499,9 @@ else
         // Nhóm nhỏ HTSP: "Taro" | "Bavia" | "Rua" — chỉ dùng khi IsHtspGroup
 
         public string HtspSubGroup { get; set; } = "";
+        /// <summary>[L7-WTS-CU 2026-11-19] nhóm mở từ dòng ngày cũ / của người khác (Admin / Sửa WTS tiêu chuẩn) → cần lý do.</summary>
+        public bool CuRow { get; set; }
+        public string? EditReason { get; set; }
 
         // Tăng ca — không validate khung giờ ca, ghi IsOvertime=true vào DB
 
