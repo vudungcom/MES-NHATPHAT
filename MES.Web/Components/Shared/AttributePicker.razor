@@ -22,7 +22,7 @@
                    @onfocus="OpenDropdown"
                    @onclick="OpenDropdown"
                    @onblur="HideDropdown"
-                   placeholder="@Placeholder" maxlength="500"
+                   placeholder="@Placeholder" maxlength="@MaxLength"
                    disabled="@Disabled"
                    readonly="@(!AllowFreeText)" />
             
@@ -68,7 +68,7 @@
         <input class="form-control form-control-sm @InputCssClass"
                value="@_value"
                @oninput="OnInputChanged"
-               placeholder="@Placeholder" maxlength="500"
+               placeholder="@Placeholder" maxlength="@MaxLength"
                disabled="@Disabled"
                readonly="@(!AllowFreeText)" />
     }
@@ -106,6 +106,9 @@
 @code {
     [Parameter] public string Label { get; set; } = "";
     [Parameter] public string? Placeholder { get; set; }
+    /// <summary>[ATTR-MAX-KH 2026-11-20] gói nhỏ G23-GHI-NHO L11: trần ô gõ tự do — mặc định 500 (= cột PartMasterAttribute.Value); Mã VL / Cấu hình phôi
+    ///   truyền 100 (= cột Kế hoạch KhPlanDetails.Material / MaterialConfig — giá trị mặc định chép sang KH; trước gõ 101–500 thì Tạo KH bị từ chối). Nguồn: CLAUDE rà độc lập Gói 23 (L11).</summary>
+    [Parameter] public int MaxLength { get; set; } = 500;
     [Parameter] public bool IsRequired { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public bool AllowFreeText { get; set; } = true; 

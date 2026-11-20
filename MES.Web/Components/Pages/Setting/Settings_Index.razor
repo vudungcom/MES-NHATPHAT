@@ -549,10 +549,14 @@
             }
 
             DongPopupUser();
-            await LoadDataAsync();
             thongBaoThanhCong = "Lưu thông tin người dùng thành công.";
         }, Logger, "lưu người dùng");
-        if (errU != null) popupLoi = errU;
+        if (errU != null) { popupLoi = errU; return; }
+        if (isHienThiPopupUser) return;   // lưu không thành (lời trong popup) → không nạp lại
+        // [SET-LOAD-SAU 2026-11-20] gói nhỏ G23-GHI-NHO L14: đã lưu + đóng popup → lỗi nạp lại danh sách báo ở khung trang (trước ghi vào popupLoi của popup đã đóng — không ai thấy)
+        //   Nguồn: CLAUDE rà độc lập Gói 23 (L14); Hùng 20/11 18:12.
+        var errL = await UiSafe.RunAsync(LoadDataAsync, Logger, "tải lại danh sách người dùng");
+        if (errL != null) { thongBaoThanhCong = ""; thongBaoLoi = "Đã lưu, nhưng " + errL; }
     }
 
     // ==== Logic Reset PIN ====
@@ -647,8 +651,10 @@
             }
 
             DongPopupGroup();
-            await LoadDataAsync();
         }, Logger, "lưu nhóm");
-        if (errG != null) popupLoi = errG;
+        if (errG != null) { popupLoi = errG; return; }
+        if (isHienThiPopupGroup) return;   // lưu không thành (lời trong popup) → không nạp lại
+        var errL = await UiSafe.RunAsync(LoadDataAsync, Logger, "tải lại danh sách nhóm");   // [SET-LOAD-SAU] L14
+        if (errL != null) { thongBaoThanhCong = ""; thongBaoLoi = "Đã lưu, nhưng " + errL; }
     }
 }

@@ -15,6 +15,7 @@ public static class WtsSvcHelp
         bool gc = pg == "GC";
         bool htsp = pg is "TARO" or "BAVIA" or "WASHING";
         var end = DateTime.Now; var start = end.AddMinutes(-1); _slot++;
+        if (start.Date != end.Date) { start = end.Date; end = start.AddMinutes(1); }   // [WTS-NGAY-DONG 2026-11-20] chạy qua nửa đêm: dòng bắt đầu đúng hôm nay (máy chủ chặn dòng mới bắt đầu ngày cũ)
         var grp = new WtsSaveService.WtsSaveGroup
         {
             IsGc = gc, IsHtsp = htsp,

@@ -1,13 +1,17 @@
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MES.Web.Services;
 
 public class CaLamViecService
 {
     private readonly AppDbContext _db;
-    public CaLamViecService(AppDbContext db) { _db = db; }
+    // [CA-LOG-ILOGGER 2026-11-20] gói nhỏ G23-GHI-NHO L7: lỗi hệ thống khi lưu / xoá ca ghi ILogger (trước UiSafe.Text(ex, null) — không ghi đâu cả).
+    //   Logger tuỳ chọn: DI tự truyền; bộ kiểm tạo service không cần logger. Nguồn: CLAUDE rà độc lập Gói 23 (L7); Hùng 20/11 18:12.
+    private readonly ILogger? _log;
+    public CaLamViecService(AppDbContext db, ILogger<CaLamViecService>? log = null) { _db = db; _log = log; }
 
     public Task<List<CaLamViec>> GetAllAsync()
         => _db.CaLamViecs
@@ -102,7 +106,7 @@ public class CaLamViecService
                 ca.CaId = 0;
                 ca.NghiGiaiLaos.Clear();   // rà độc lập vòng 2: EF đã tự nối navigation ca ↔ giờ nghỉ — gỡ, không thì bấm Lưu lại chèn giờ nghỉ 2 lần
                 foreach (var n in nghiList) { n.CaId = 0; n.NghiId = 0; n.Ca = null; }
-                return (false, "Không lưu được ca mới: " + UiSafe.Text(ex, null, "lưu ca"));   // [C-11 2026-11-16]
+                return (false, "Không lưu được ca mới: " + UiSafe.Text(ex, _log, "lưu ca"));   // [C-11 2026-11-16]
             }
         }
         else
@@ -139,7 +143,7 @@ public class CaLamViecService
                 foreach (var en in _db.ChangeTracker.Entries<CaLamViec_NghiGiaiLao>().Where(x => x.State != EntityState.Unchanged).ToList()) en.State = EntityState.Detached;
                 foreach (var en in _db.ChangeTracker.Entries<CaLamViecChangeLog>().Where(x => x.State != EntityState.Unchanged).ToList()) en.State = EntityState.Detached;
                 foreach (var n in nghiList) { n.NghiId = 0; n.Ca = null; }
-                return (false, UiSafe.Text(ex, null, "lưu ca"));
+                return (false, UiSafe.Text(ex, _log, "lưu ca"));
             }
         }
     }
@@ -194,8 +198,9 @@ public class CaLamViecService
             await trx.CommitAsync();
             await trx.DisposeAsync();
         }
-        catch (Exception)
+        catch (Exception exDel)
         {
+            _log?.LogWarning(exDel, "Xoá ca {CaId} không được (thường do dòng WTS đang dùng ca)", id);   // [CA-LOG-ILOGGER]
             await trx.RollbackAsync();   // [CA-LOG]
             await trx.DisposeAsync();
             if (logDel != null) _db.Entry(logDel).State = EntityState.Detached;   // [CA-LOG] lần lưu sau trong cùng phiên trang không ghi lại dòng log này

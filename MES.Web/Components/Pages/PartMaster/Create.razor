@@ -95,13 +95,13 @@ else
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
                         <input class="form-control form-control-sm" @bind="_material"
-                               placeholder="VD: SS400, MSP-12-A5052-MID..." maxlength="500" />
+                               placeholder="VD: SS400, MSP-12-A5052-MID..." maxlength="100" />
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label small fw-bold mb-1">Cấu hình phôi (Material Config)</label>
                         <input class="form-control form-control-sm" @bind="_materialConfig"
-                               placeholder="VD: B12x82x97..." maxlength="500" />
+                               placeholder="VD: B12x82x97..." maxlength="100" />   @* [ATTR-MAX-KH 2026-11-20] Mã VL / Cấu hình phôi ≤ 100 = cột Kế hoạch (rà độc lập L5) *@
                     </div>
 
                     <div class="mb-3">
@@ -245,6 +245,7 @@ else
         catch (Exception ex)
         {
             // [UI-SAFE 2026-11-16] (BP1-15) DbUpdateException (2 người cùng tạo 1 Part No, chữ dài) → câu Việt thay lỗi EF tiếng Anh
+            if (ex is Microsoft.EntityFrameworkCore.DbUpdateException) Logger.LogWarning(ex, "Tạo Part Master lỗi DB");   // [CA-LOG-ILOGGER 2026-11-20] G23-GHI-NHO L7: nhánh lỗi DB trước không ghi log
             _errorGeneral = ex is Microsoft.EntityFrameworkCore.DbUpdateException
                 ? "Không tạo được: Part No vừa được người khác tạo hoặc dữ liệu không hợp lệ với cột DB — tải lại danh sách rồi kiểm tra."
                 : UiSafe.Text(ex, Logger, "tạo Part Master");

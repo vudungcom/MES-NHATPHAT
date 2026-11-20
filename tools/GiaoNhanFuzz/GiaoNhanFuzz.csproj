@@ -22,7 +22,9 @@
     <Compile Include="../../MES.Web/Services/QtyRule.cs" />   <!-- [B3-SO-NGUYEN] chỉ số nguyên -->
     <Compile Include="../../MES.Web/Services/PermCheck.cs" />   <!-- [RS-C1][RS-C2] kiểm quyền ma trận ở máy chủ -->
     <Compile Include="../../MES.Web/Services/UiSafe.cs" />   <!-- [UI-SAFE 2026-11-16] Gói 23 bọc handler trang -->
-    <Compile Include="../../MES.Web/Services/LenCheck.cs" />   <!-- [LEN-CHECK 2026-11-16] Gói 23 kiểm độ dài chữ ở service -->
+    <Compile Include="../../MES.Web/Services/LenCheck.cs" />
+    <Compile Include="../../MES.Web/Data/SeedData.cs" />   <!-- [G26-SCEN 2026-11-20] Gói 26: SEED-DEMO -->
+    <Compile Include="../../MES.Web/Services/FileLoggerProvider.cs" />   <!-- [G26-SCEN] LOG-FILE -->   <!-- [LEN-CHECK 2026-11-16] Gói 23 kiểm độ dài chữ ở service -->
     <!-- [RS-C1][RS-E8] kịch bản `quyen`: service danh mục thật (kiểm quyền máy chủ, mã CV / khách hàng trùng, đổi / xoá mã đang dùng) -->
     <Compile Include="../../MES.Web/Services/AuthService.cs" />
     <Compile Include="../../MES.Web/Services/PasswordHasher.cs" />

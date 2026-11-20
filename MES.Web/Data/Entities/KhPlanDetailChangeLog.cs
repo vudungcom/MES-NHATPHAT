@@ -12,6 +12,7 @@ public class KhPlanDetailChangeLog
     public long ChangeId { get; set; }
 
     public int KhPlanDetailId { get; set; }
+    /// <summary>[EF-FK-CHANGELOG 2026-11-20] Không còn là khoá ngoại (AppDbContext Ignore) — DB không có FK; log giữ Id PO kể cả khi PO đã xoá. Không dùng navigation này.</summary>
     public KhPlanDetail? KhPlanDetail { get; set; }
 
     [Required, MaxLength(50)]

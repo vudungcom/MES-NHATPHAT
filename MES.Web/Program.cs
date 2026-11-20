@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+// [LOG-FILE 2026-11-20] Gói 26: log ra file logs\mes-yyyyMMdd.log (mục "Logging:File" — appsettings.Production.json), từ Warning, giữ 30 ngày; console giữ như cũ.
+//   Nguồn: CLAUDE quét Fable 15/11 (QF-F); HÙNG 20/11 18:32 OK.
+builder.Logging.AddProvider(FileLoggerProvider.FromConfig(builder.Configuration, builder.Environment.ContentRootPath));
 
 // ==== Blazor Server ====
 builder.Services.AddRazorComponents()
@@ -110,6 +113,10 @@ PartStepGuard.SessionLockOpener = PmSaveLockSql.OpenAsync;
 UiSafe.Fallback = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.UiSafe");
 // [PIN-HASH] log khi chưa nâng được PIN sang hash (cột hẹp) đi vào logger thay Console
 { var _pinLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.PinHash"); AuthService.PinUpgradeLog = m => _pinLog.LogWarning("{Msg}", m); }
+
+// [SEED-DEMO 2026-11-20] cảnh báo lúc seed DB trống (mật khẩu admin mặc định) đi vào log (cả file) — Gói 26
+//   Nguồn: CLAUDE quét Fable 14/11 (C-07); HÙNG 20/11 18:32 OK (B4).
+{ var _seedLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.Seed"); SeedData.Warn = m => _seedLog.LogWarning("{Msg}", m); }
 
 // ==== Auto-create DB + seed (prototype only) ====
 using (var scope = app.Services.CreateScope())

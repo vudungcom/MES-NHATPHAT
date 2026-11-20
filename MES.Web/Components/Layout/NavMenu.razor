@@ -197,7 +197,9 @@
     private bool CanView(string sectionCode)
     {
         if (isAdmin) return true;
-        return _permissions.TryGetValue(sectionCode, out var p) && p.CanView;
+        // [NAV-XEM-SUA 2026-11-20] gói nhỏ G23-GHI-NHO L3: menu hiện khi có Xem HOẶC Sửa — cùng điều kiện trang (trước: chỉ tick Sửa thì menu ẩn mà trang vẫn mở).
+        //   Nguồn: CLAUDE rà độc lập Gói 23 (L3); Hùng 20/11 18:12 chốt làm hết nhóm A + G25 mục B.
+        return _permissions.TryGetValue(sectionCode, out var p) && (p.CanView || p.CanEdit);
     }
 
     private bool CanViewPartMaster()

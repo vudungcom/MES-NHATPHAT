@@ -151,6 +151,26 @@
     </div>
 }
 
+@* [VIEW-DOI-HOI 2026-11-20] hỏi trước khi đổi "Xem WTS của" lúc có dòng gõ dở (modal trên trang, không dùng hộp confirm của trình duyệt) *@
+@if (_pendingView is { } pvw)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="max-width:440px;">
+            <div class="mes-modal-header">
+                <h5 class="mb-0 text-warning"><i class="bi bi-exclamation-triangle-fill me-2"></i>Đang có dòng gõ dở</h5>
+                <button class="btn-close" @onclick="CancelPendingView"></button>
+            </div>
+            <div class="mes-modal-body">
+                <p class="mb-0" id="viewSwitchMsg">Đang có dòng WTS / việc gõ dở chưa lưu. Đổi sang xem WTS của <b>@(pvw.Id == _currentUserId ? "chính mình" : pvw.Text)</b> sẽ <b>XOÁ</b> các dòng đó.</p>
+            </div>
+            <div class="mes-modal-footer d-flex justify-content-end gap-2">
+                <button class="btn btn-secondary btn-sm" id="viewSwitchStay" @onclick="CancelPendingView">Ở lại, giữ dòng đang gõ</button>
+                <button class="btn btn-warning btn-sm" id="viewSwitchGo" @onclick="ConfirmPendingViewAsync">Vẫn đổi</button>
+            </div>
+        </div>
+    </div>
+}
+
 @* ── Modal confirm xóa WTS ── *@
 
 @if (_voidConfirmRow != null)
@@ -334,7 +354,7 @@ else
                 {
                     <div class="col-auto">
                         <label class="form-label small mb-0 fw-semibold">Xem WTS của</label>
-                        <input list="cuViewUsers" class="form-control form-control-sm" style="width:230px;" value="@_viewUserText"
+                        <input list="cuViewUsers" class="form-control form-control-sm" style="width:230px;" value="@_viewUserText" @key="_viewInputKey"
                                @onchange="OnViewUserChanged" disabled="@_anySaving" placeholder="Gõ tên / tài khoản…" autocomplete="off" />
                         <datalist id="cuViewUsers">
                             @foreach (var u in _viewUsers)
@@ -885,7 +905,8 @@ else
                                 <td class="text-center">
 
                                     @* [L7-WTS-CU 2026-11-19] Admin / Sửa WTS tiêu chuẩn: nút hiện cả ngày cũ / người khác (máy chủ kiểm quyền + lý do) *@
-                                    @if (IsToday && !ViewingOther || _canCu && (row.ActivityLogId == null || !IsCuRow(row)))
+                                    @* [ACT-SUA-CU 2026-11-20] R-03: việc không ra SP ngày cũ / của người khác cũng Sửa được bằng quyền cao hơn *@
+                                    @if (IsToday && !ViewingOther || _canCu)
 
                                     {
 
@@ -1271,15 +1292,8 @@ else
                                             @* [GN-WTS-CAP] Danh sách PO đi qua PriorityRows (Gate 1 snapshot + Gate 2 đã nhận hàng SX của nhóm,
                                                xếp Gấp → STD → PO). Trước: đọc thẳng _allRows nên 2 ô tích "Hiện phiếu chưa có quy trình /
                                                chưa nhận hàng" hiện trên màn hình nhưng không có tác dụng. *@
-                                            @foreach (var det in PriorityRows.Where(r =>
-
-                                                (string.IsNullOrEmpty(grp.PartNo) || r.PartNo == grp.PartNo) &&
-
-                                                (string.IsNullOrEmpty(sub.PoFilter)  ||
-
-                                                 r.PurchaseOrder.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase) ||
-
-                                                 r.PartNo.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase))))
+                                            @* [PO-DL-NHE 2026-11-20] Gói 27: danh sách tính 1 lần (PriorityRows nhớ), ô trống 50 PO ưu tiên đầu, gõ chữ tối đa 100 *@
+                                            @foreach (var det in PoOptions(grp, sub))
 
                                             {
 
@@ -4162,12 +4176,41 @@ else
     private bool _canSubmitOwn = false;            // có quyền nhập WTS nhóm nào đó (như _canSubmit cũ) — người chỉ có Sửa WTS_MASTER vào trang để Sửa / Xoá, không nhập mới
     /// <summary>Dòng đã lưu là "ngày cũ / của người khác" so với người đăng nhập → Sửa / Xoá cần lý do.</summary>
     private bool IsCuRow(WtsRow r) => ViewingOther || r.StartTime.Date != DateTime.Today;
+    private int _viewInputKey;   // [VIEW-DOI-HOI] đổi → vẽ lại ô "Xem WTS của" về chữ cũ khi người dùng bấm Huỷ
+    /// <summary>[VIEW-DOI-HOI 2026-11-20] có nhóm đang gõ dở (chưa lưu) — đổi người xem / nạp lại sẽ xoá.</summary>
+    //   Rà độc lập (G27N L3): tính cả form "Việc không ra sản phẩm" đang mở và dòng phát sinh.
+    private bool HasUnsavedInput => _act != null || _groups.Any(g => g.CuRow || !string.IsNullOrWhiteSpace(g.PartNo) || !string.IsNullOrWhiteSpace(g.NC)
+        || g.SubRows.Any(s => s.KhPlanDetailId.HasValue || !string.IsNullOrWhiteSpace(s.PO) || s.QtyOk != 0 || s.QtyNg != 0 || !string.IsNullOrWhiteSpace(s.Notes)
+                           || s.ExtraItems.Any(x => x.Minutes > 0 || !string.IsNullOrWhiteSpace(x.Notes))));
+    /// <summary>[VIEW-DOI-HOI] người đang chờ xác nhận đổi sang (modal trên trang — rà độc lập G27N-T1: không dùng JS confirm vì chặn mạch / quá 1 phút ném lỗi).</summary>
+    private (int Id, string Text)? _pendingView;
     private async Task OnViewUserChanged(ChangeEventArgs e)
     {
         var txt = (e.Value?.ToString() ?? "").Trim();
         var hit = _viewUsers.FirstOrDefault(u => string.Equals(u.Text, txt, StringComparison.OrdinalIgnoreCase));
         if (hit.Id == 0)   // gõ không khớp → về chính mình
             hit = _viewUsers.FirstOrDefault(u => u.Id == _currentUserId);
+        // [VIEW-DOI-HOI 2026-11-20] gói nhỏ G25-GHI-NHO R-09: đổi người xem mà đang có nhóm gõ dở → hỏi trước (trước: xoá form không hỏi).
+        //   Cùng người thì không làm gì. Nguồn: CLAUDE rà độc lập Gói 25 (R-09); Hùng 20/11 18:12 chốt làm hết nhóm A + G25 mục B.
+        int target = hit.Id == 0 ? _currentUserId : hit.Id;
+        if (target == _viewUserId) { _viewInputKey++; return; }
+        if (HasUnsavedInput)
+        {
+            _pendingView = (target, hit.Text ?? "");   // hỏi bằng modal trên trang; ô quay về chữ cũ tới khi bấm "Vẫn đổi"
+            _viewInputKey++;
+            return;
+        }
+        await ApplyViewUserAsync(hit);
+    }
+    private void CancelPendingView() { _pendingView = null; }
+    private async Task ConfirmPendingViewAsync()
+    {
+        if (_pendingView is not { } pv) return;
+        _pendingView = null;
+        await ApplyViewUserAsync(pv);
+    }
+    private async Task ApplyViewUserAsync((int Id, string Text) hit)
+    {
         if (hit.Id == 0) { _viewUserId = _currentUserId; _viewUserText = ""; _viewUserName = ""; }
         else { _viewUserId = hit.Id; _viewUserText = hit.Id == _currentUserId ? "" : hit.Text; _viewUserName = hit.Text; }
         _act = null; _voidConfirmRow = null;
@@ -4266,19 +4309,43 @@ else
 
     /// </summary>
 
-    private IEnumerable<KhPlanDetailRow> PriorityRows => _allRows
-
-        .Where(r => _showWithoutSnapshot || _hasSnapshotForGroup.Contains(r.KhPlanDetailId))
-
-        // [WORKFLOW] Phiếu ApplyWorkflow=false: bỏ qua handover gate
-
-        .Where(r => !r.ApplyWorkflow || _showWithoutHandover || _hasReceivedForGroup.Contains(r.KhPlanDetailId))
-
-        .OrderBy(r => r.Priority == "Gấp" ? 0 : 1)
-
-        .ThenBy(r => r.STD)
-
-        .ThenBy(r => r.PurchaseOrder);
+    // [PO-DL-NHE 2026-11-20] Gói 27 (quét Fable BW1-09 / C-15): trước là thuộc tính LINQ (Where + 3 OrderBy trên tới 20.000 PO) tính lại ở MỌI lần vẽ
+    //   trang (mỗi phím gõ số lượng) cho MỖI dòng con, và mỗi datalist đổ đủ mọi PO vào DOM. Nay: nhớ danh sách đã lọc + xếp, chỉ tính lại khi
+    //   _allRows / 2 ô tích / tập "có quy trình" / tập "đã nhận hàng" đổi (so tham chiếu + số phần tử); datalist: ô trống 50 PO đầu (Gấp → STD → PO),
+    //   gõ chữ thì tìm trên toàn bộ, tối đa 100 dòng. Chỉ hiển thị — lọc / xếp / luật Gate 1–2 giữ y cũ; máy chủ vẫn kiểm PO khi lưu.
+    //   Nguồn: CLAUDE quét Fable 15/11 (BW1-09); HÙNG 20/11 18:32 OK (B7).
+    private List<KhPlanDetailRow>? _prCache;
+    private (object, int, bool, bool, object, int, object, int) _prKey;
+    private List<KhPlanDetailRow> PriorityRows
+    {
+        get
+        {
+            var k = ((object)_allRows, _allRows.Count, _showWithoutSnapshot, _showWithoutHandover, (object)_hasSnapshotForGroup, _hasSnapshotForGroup.Count, (object)_hasReceivedForGroup, _hasReceivedForGroup.Count);
+            if (_prCache != null && ReferenceEquals(k.Item1, _prKey.Item1) && ReferenceEquals(k.Item5, _prKey.Item5) && ReferenceEquals(k.Item7, _prKey.Item7)
+                && k.Item2 == _prKey.Item2 && k.Item3 == _prKey.Item3 && k.Item4 == _prKey.Item4 && k.Item6 == _prKey.Item6 && k.Item8 == _prKey.Item8)
+                return _prCache;
+            _prKey = k;
+            return _prCache = _allRows
+                .Where(r => _showWithoutSnapshot || _hasSnapshotForGroup.Contains(r.KhPlanDetailId))
+                // [WORKFLOW] Phiếu ApplyWorkflow=false: bỏ qua handover gate
+                .Where(r => !r.ApplyWorkflow || _showWithoutHandover || _hasReceivedForGroup.Contains(r.KhPlanDetailId))
+                .OrderBy(r => r.Priority == "Gấp" ? 0 : 1)
+                .ThenBy(r => r.STD)
+                .ThenBy(r => r.PurchaseOrder)
+                .ToList();
+        }
+    }
+    public const int PoOptEmpty = 50, PoOptTyped = 100;   // [PO-DL-NHE]
+    /// <summary>[PO-DL-NHE] Gợi ý PO cho datalist 1 dòng con (cùng điều kiện lọc cũ: Part của nhóm + chữ đang gõ trong PO / Part No).</summary>
+    private IEnumerable<KhPlanDetailRow> PoOptions(WtsGroup grp, WtsRow sub)
+    {
+        var q = PriorityRows.Where(r =>
+            (string.IsNullOrEmpty(grp.PartNo) || r.PartNo == grp.PartNo) &&
+            (string.IsNullOrEmpty(sub.PoFilter) ||
+             r.PurchaseOrder.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase) ||
+             r.PartNo.Contains(sub.PoFilter, StringComparison.OrdinalIgnoreCase)));
+        return q.Take(string.IsNullOrEmpty(sub.PoFilter) ? PoOptEmpty : PoOptTyped);
+    }
 
     // Toggle hiển thị phiếu chưa có snapshot — mặc định OFF
 
@@ -4763,7 +4830,9 @@ else
 
         if (!_allRows.Any()) return;
 
-        var detailIds = _allRows.Select(r => r.KhPlanDetailId).ToList();
+        // [PO-DL-NHE 2026-11-20] Gói 27 (BW2-11): không gửi danh sách tới 20.000 id KH vào SQL (IN quá dài) — đọc id PO có snapshot (DISTINCT, theo chỉ mục)
+        //   rồi giao với danh sách PO đang có ở C#. Kết quả y cũ. Nguồn: CLAUDE quét Fable 15/11 (BW2-11); HÙNG 20/11 18:12 (Gói 27).
+        var detailIds = _allRows.Select(r => r.KhPlanDetailId).ToHashSet();
 
         // Query theo nhóm — chỉ lấy phiếu có snapshot phù hợp
 
@@ -4779,7 +4848,6 @@ else
 
             withSnap = await Db.KhPlanRouteSnapshotMachining
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
@@ -4791,7 +4859,6 @@ else
 
             withSnap = await Db.KhPlanRouteSnapshotMachining
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
@@ -4803,19 +4870,16 @@ else
 
             var taro  = await Db.KhPlanRouteSnapshotTaro
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
             var bavia = await Db.KhPlanRouteSnapshotBavia
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
             var rua   = await Db.KhPlanRouteSnapshotWashing
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
@@ -4829,7 +4893,6 @@ else
 
             withSnap = await Db.KhPlanRouteSnapshotInspection
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
@@ -4841,7 +4904,6 @@ else
 
             withSnap = await Db.KhPlanRouteSnapshotPackaging
 
-                .Where(s => detailIds.Contains(s.KhPlanDetailId))
 
                 .Select(s => s.KhPlanDetailId).Distinct().ToListAsync();
 
@@ -4857,7 +4919,7 @@ else
 
         foreach (var id in withSnap)
 
-            _hasSnapshotForGroup.Add(id);
+            if (detailIds.Contains(id)) _hasSnapshotForGroup.Add(id);   // [PO-DL-NHE] giao ở C#
 
     }
 
@@ -5597,6 +5659,11 @@ else
         public Dictionary<DateTime, int> Worked { get; set; } = new();
         public HashSet<DateTime> Manual { get; set; } = new();
         public int Rev { get; set; }
+        // [ACT-SUA-CU 2026-11-20] sửa dòng ngày cũ / của người khác (quyền cao hơn): lý do bắt buộc, giữ ca dòng gốc
+        public bool       Cu      { get; set; }
+        public string?    Reason  { get; set; }
+        public bool       CaFixed { get; set; }
+        public CaLamViec? CaKeep  { get; set; }
     }
     private ActForm? _act;
 
@@ -5610,7 +5677,7 @@ else
     private List<LineBreak> ActTouching()
     {
         var sp = ActSpan();
-        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(SelectedCa, sp.Value.S, sp.Value.E);
+        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(_act?.CaFixed == true ? _act.CaKeep : SelectedCa, sp.Value.S, sp.Value.E);   // [ACT-SUA-CU] ca dòng gốc
     }
     private void SyncActNghi() => SyncActNghi(false);
     private void SyncActNghi(bool justTicked)
@@ -5672,6 +5739,7 @@ else
         (ActTasks.FirstOrDefault(t => string.Equals(t.TaskCode, _act.WtsCode.Trim(), StringComparison.OrdinalIgnoreCase))?.TaskName ?? "");
     private string ActSaveCls => _act?.Done == true ? "btn btn-sm btn-outline-success" : "btn btn-sm btn-primary";
     private string ActSaveText => _act?.Busy == true ? "Đang xử lý..." : (_act?.Done == true ? "Đã lưu ✓" : "Lưu");
+    private string ActReasonStyle => _act?.Cu == true ? "min-width:220px" : "display:none";   // [ACT-SUA-CU] (luật Razor: không lồng nháy trong style)
     private string ActTitle => _act?.ActivityLogId != null ? "Sửa việc không ra sản phẩm" : "Việc không ra sản phẩm";
 
     private void OpenActivityNew()
@@ -5684,9 +5752,10 @@ else
 
     private async Task OpenActivityEditAsync(WtsRow row)
     {
-        if (!IsToday) return;
+        if (!IsToday && !_canCu) return;   // [ACT-SUA-CU] quyền cao hơn mở sửa ngày cũ / người khác
         _act = new ActForm
         {
+            Cu            = IsCuRow(row),   // [ACT-SUA-CU] cần lý do
             ActivityLogId = row.ActivityLogId,
             WtsCode       = row.WtsCode ?? "",
             Start         = row.StartTime.ToString("HH:mm"),
@@ -5696,6 +5765,12 @@ else
             PoText        = row.RefKhPlanDetailId.HasValue ? (_allRows.FirstOrDefault(r => r.KhPlanDetailId == row.RefKhPlanDetailId) is { } _rd ? ActPoKey(_rd) : "") : "",   // [ACT-PODUP]
             NgCaseId      = row.NgCaseId,
         };
+        // [ACT-SUA-CU] R-10: dòng cu giữ ca đã lưu ở khoảng nghỉ dòng gốc (dòng không chạm nghỉ → ca đang chọn, như máy chủ)
+        if (_act.Cu && row.Breaks.FirstOrDefault(b => b.CaId != null)?.CaId is int _caA)
+        {
+            _act.CaFixed = true;
+            _act.CaKeep = _caList.FirstOrDefault(c => c.CaId == _caA) ?? await Db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == _caA);
+        }
         // [ML17-XN] mở lại đúng phần làm thông nghỉ đã lưu của dòng
         if (row.Breaks.Any(b => b.WorkedMin > 0))
         {
@@ -5797,8 +5872,9 @@ else
                 Notes             = _act.Notes,
                 RefKhPlanDetailId = _act.RefId,
                 NgCaseId          = _act.NgCaseId,
-                CaId              = SelectedCa?.CaId,   // [ML17-XN][CA-NGHI-HIST] ca + giờ nghỉ lúc lưu chép vào WtsBreakWorkLogs
+                CaId              = _act.CaFixed ? _act.CaKeep?.CaId : SelectedCa?.CaId,   // [ML17-XN][CA-NGHI-HIST] ca + giờ nghỉ lúc lưu chép vào WtsBreakWorkLogs · [ACT-SUA-CU] ca dòng gốc
                 Breaks            = ActBreaks().Select(b => new WorkMinutes.SentBreak { BreakStart = b.BreakStart, BreakEnd = b.BreakEnd, WorkedMin = b.WorkedMin }).ToList(),
+                EditReason        = _act.Reason,   // [ACT-SUA-CU] lý do sửa dòng ngày cũ / của người khác
             });
             if (!res.Ok) { _act.Error = res.ErrorMsg; return; }
             await LoadSavedRowsAsync();
@@ -5860,6 +5936,11 @@ else
                             <option value="@c.Id" selected="@(_act.NgCaseId == c.Id)">@c.Label</option>
                         }
                     </select>
+                </div>
+                @* [ACT-SUA-CU 2026-11-20] sửa việc ngày cũ / của người khác: lý do bắt buộc (máy chủ kiểm 3–150) *@
+                <div class="col-auto" style="@ActReasonStyle">
+                    <label class="form-label small mb-0 text-danger">Lý do sửa *</label>
+                    <input class="form-control form-control-sm" maxlength="150" @bind="_act.Reason" placeholder="≥ 3 ký tự" />
                 </div>
                 <div class="col-auto">
                     <button class="@ActSaveCls" @onclick="SaveActivityAsync" disabled="@_act.Busy">@ActSaveText</button>
@@ -7900,13 +7981,13 @@ else
 
         // Reload flow (+ sổ trần) cho tất cả PO đang có trong session (v0.8) — [RA-SOCHUNG 2026-10-31] bỏ qty summary tự cộng (không ai đọc)
 
-        _ncFlowCache.Clear();
-
-        foreach (var po in _rows.Where(r => r.KhPlanDetailId.HasValue)
-
-                                 .Select(r => r.KhPlanDetailId!.Value)
-
-                                 .Distinct())
+        // [PO-DL-NHE 2026-11-20] Gói 27 (BW2-11): trước xoá cache + nạp lại flow + sổ TUẦN TỰ cho MỌI PO có dòng trong ngày (10 PO = ~20 truy vấn
+        //   mỗi lần Lưu). Nay chỉ nạp lại PO vừa ghi (máy chủ trả DetailIds) + PO đang mở trong form nhập; cache PO khác giữ (chỉ hiển thị trần —
+        //   máy chủ vẫn kiểm trần / K5 lúc lưu). Nguồn: CLAUDE quét Fable 15/11 (BW2-11); HÙNG 20/11 18:12.
+        var _reloadIds = savedDetailIds
+            .Concat(_groups.SelectMany(g => g.SubRows).Where(s => s.KhPlanDetailId.HasValue).Select(s => s.KhPlanDetailId!.Value))
+            .Distinct().ToList();
+        foreach (var po in _reloadIds)
 
         {
 

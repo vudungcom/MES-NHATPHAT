@@ -80,22 +80,36 @@ public class ThietBiService
         thietBi.CreatedBy = currentUserId;
         thietBi.IsActive = true;
 
-        _db.ThietBis.Add(thietBi);
-        await _db.SaveChangesAsync();
-
-        _db.ThietBiChangeLogs.Add(new ThietBiChangeLog
+        // [TB-TAO-1TX 2026-11-20] gói nhỏ G23-GHI-NHO L15: máy + dòng lịch sử "Tạo mới" 1 giao dịch; lỗi → quay lại + gỡ bản EF (trước: lỗi thì máy vẫn
+        //   Added trong DbContext dùng chung cả phiên trang → bấm Lưu lại / thao tác khác chèn lại máy lỗi). Nguồn: CLAUDE rà độc lập Gói 23 (L15); Hùng 20/11 18:12.
+        await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
         {
-            ThietBiId = thietBi.ThietBiId,
-            FieldName = "Tạo mới",
-            OldValue = null,
-            NewValue = $"{thietBi.SoMay} - {thietBi.TenMay} ({thietBi.BoPhan})",
-            Reason = "Khởi tạo thiết bị",
-            ChangedAt = DateTime.Now,
-            ChangedBy = currentUserId
-        });
-        await _db.SaveChangesAsync();
+            _db.ThietBis.Add(thietBi);
+            await _db.SaveChangesAsync();
 
-        return (true, null);
+            _db.ThietBiChangeLogs.Add(new ThietBiChangeLog
+            {
+                ThietBiId = thietBi.ThietBiId,
+                FieldName = "Tạo mới",
+                OldValue = null,
+                NewValue = $"{thietBi.SoMay} - {thietBi.TenMay} ({thietBi.BoPhan})",
+                Reason = "Khởi tạo thiết bị",
+                ChangedAt = DateTime.Now,
+                ChangedBy = currentUserId
+            });
+            await _db.SaveChangesAsync();
+            if (tx != null) await tx.CommitAsync();
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            if (tx != null) { try { await tx.RollbackAsync(); } catch { } }
+            foreach (var en in _db.ChangeTracker.Entries<ThietBi>().Where(x => x.State == EntityState.Added || ReferenceEquals(x.Entity, thietBi)).ToList()) en.State = EntityState.Detached;
+            foreach (var en in _db.ChangeTracker.Entries<ThietBiChangeLog>().Where(x => x.State == EntityState.Added).ToList()) en.State = EntityState.Detached;
+            thietBi.ThietBiId = 0;
+            return (false, UiSafe.Text(ex, null, "thêm thiết bị"));
+        }
     }
 
     public async Task<(bool Success, string? Error)> UpdateAsync(

@@ -1,5 +1,12 @@
 @page "/"
 @attribute [Authorize]
+@using System.Security.Claims
+@using MES.Web.Constants
+@using MES.Web.Services
+@inject AuthenticationStateProvider AuthState
+@inject UserService UserSvc
+@* [HOME-THE-QUYEN 2026-11-20] gói nhỏ G23-GHI-NHO L2: thẻ module chỉ hiện khi có quyền Xem / Sửa mục đó (cùng điều kiện menu trái NavMenu) — trước hiện cho mọi người,
+   bấm vào gặp "Truy cập bị từ chối". Thẻ "Hiệu suất công nhân" luôn hiện như menu. Nguồn: CLAUDE rà độc lập Gói 23 (L2); Hùng 20/11 18:32 OK (B9). *@
 
 <PageTitle>Trang chủ - MES</PageTitle>
 
@@ -11,69 +18,84 @@
 
     <div class="row g-4 mb-4">
         <!-- Card 1: Kế Hoạch -->
-        <div class="col-md-6 col-xl-4">
-            <a href="kh-plan" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-primary">
-                        <i class="bi bi-calendar-check fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0">Kế Hoạch</h5>
+        @if (CanView("KE_HOACH"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="kh-plan" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-primary">
+                            <i class="bi bi-calendar-check fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0">Kế Hoạch</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Nhập phiếu KH mới, xem danh sách, sửa deadline hàng loạt</p>
                     </div>
-                    <p class="text-muted small mb-0">Nhập phiếu KH mới, xem danh sách, sửa deadline hàng loạt</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 2: Part Master -->
-        <div class="col-md-6 col-xl-4">
-            <a href="part-master" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-primary">
-                        <i class="bi bi-file-earmark-ruled fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0">Part Master</h5>
+        @if (CanViewPartMaster())
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="part-master" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-primary">
+                            <i class="bi bi-file-earmark-ruled fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0">Part Master</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Quản lý mã Part No, quy trình gia công, taro, bavia, rửa và KCS</p>
                     </div>
-                    <p class="text-muted small mb-0">Quản lý mã Part No, quy trình gia công, taro, bavia, rửa và KCS</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 3: Kho -->
-        <div class="col-md-6 col-xl-4">
-            <a href="kho" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-primary">
-                        <i class="bi bi-box-seam fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0">Kho</h5>
+        @if (CanView("KHO"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="kho" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-primary">
+                            <i class="bi bi-box-seam fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0">Kho</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Xem tồn kho, nhập/xuất phôi (sẽ có ở phase 2)</p>
                     </div>
-                    <p class="text-muted small mb-0">Xem tồn kho, nhập/xuất phôi (sẽ có ở phase 2)</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 4: Danh sách thiết bị -->
-        <div class="col-md-6 col-xl-4">
-            <a href="thiet-bi" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-danger">
-                        <i class="bi bi-wrench-adjustable fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0 text-dark">Danh sách thiết bị</h5>
+        @if (CanView("THIET_BI"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="thiet-bi" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-danger">
+                            <i class="bi bi-wrench-adjustable fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0 text-dark">Danh sách thiết bị</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Quản lý 46 máy móc, trạng thái vận hành và nhật ký dừng máy</p>
                     </div>
-                    <p class="text-muted small mb-0">Quản lý 46 máy móc, trạng thái vận hành và nhật ký dừng máy</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 5: Hiệu suất máy -->
-        <div class="col-md-6 col-xl-4">
-            <a href="hieu-suat-may" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-secondary">
-                        <i class="bi bi-cpu fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0 text-dark">Hiệu suất máy</h5>
+        @if (CanView(SystemPermissions.HieuSuatMay))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="hieu-suat-may" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-secondary">
+                            <i class="bi bi-cpu fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0 text-dark">Hiệu suất máy</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Downtime, utilization, báo cáo tỷ lệ chạy (chứa mở)</p>
                     </div>
-                    <p class="text-muted small mb-0">Downtime, utilization, báo cáo tỷ lệ chạy (chứa mở)</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 6: Hiệu suất công nhân -->
         <div class="col-md-6 col-xl-4">
@@ -89,43 +111,52 @@
         </div>
 
         <!-- Card 7: Sơ đồ tổ chức -->
-        <div class="col-md-6 col-xl-4">
-            <a href="so-do-to-chuc" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-primary">
-                        <i class="bi bi-diagram-3 fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0 text-dark">Sơ đồ tổ chức</h5>
+        @if (CanView("SO_DO_TC"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="so-do-to-chuc" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-primary">
+                            <i class="bi bi-diagram-3 fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0 text-dark">Sơ đồ tổ chức</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Cơ cấu 30 phòng ban, bộ phận, tổ nhóm và người phụ trách</p>
                     </div>
-                    <p class="text-muted small mb-0">Cơ cấu 30 phòng ban, bộ phận, tổ nhóm và người phụ trách</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 8: Quản lý Đồ gá -->
-        <div class="col-md-6 col-xl-4">
-            <a href="do-ga" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card">
-                    <div class="d-flex align-items-center mb-2 text-success">
-                        <i class="bi bi-tools fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0 text-dark">Quản lý Đồ gá</h5>
+        @if (CanView("DO_GA"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="do-ga" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card">
+                        <div class="d-flex align-items-center mb-2 text-success">
+                            <i class="bi bi-tools fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0 text-dark">Quản lý Đồ gá</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Theo dõi 441 bộ đồ gá & phụ kiện, quản lý mượn trả và tồn kho</p>
                     </div>
-                    <p class="text-muted small mb-0">Theo dõi 441 bộ đồ gá & phụ kiện, quản lý mượn trả và tồn kho</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
 
         <!-- Card 9: WTS Tiêu chuẩn (MỚI) -->
-        <div class="col-md-6 col-xl-4">
-            <a href="wts-tieu-chuan" class="text-decoration-none">
-                <div class="card h-100 p-3 shadow-sm border-0 module-card border-start border-4 border-primary">
-                    <div class="d-flex align-items-center mb-2 text-primary">
-                        <i class="bi bi-list-check fs-4 me-2"></i>
-                        <h5 class="fw-bold mb-0 text-dark">WTS Tiêu chuẩn</h5>
+        @if (CanView("WTS_MASTER"))
+        {
+            <div class="col-md-6 col-xl-4">
+                <a href="wts-tieu-chuan" class="text-decoration-none">
+                    <div class="card h-100 p-3 shadow-sm border-0 module-card border-start border-4 border-primary">
+                        <div class="d-flex align-items-center mb-2 text-primary">
+                            <i class="bi bi-list-check fs-4 me-2"></i>
+                            <h5 class="fw-bold mb-0 text-dark">WTS Tiêu chuẩn</h5>
+                        </div>
+                        <p class="text-muted small mb-0">Danh mục 35 công việc chuẩn cho Taro, Bavia, Rửa, KCS, Đóng gói, NC</p>
                     </div>
-                    <p class="text-muted small mb-0">Danh mục 35 công việc chuẩn cho Taro, Bavia, Rửa, KCS, Đóng gói, NC</p>
-                </div>
-            </a>
-        </div>
+                </a>
+            </div>
+        }
     </div>
 
     <div class="alert alert-info d-flex align-items-center py-2" role="alert">
@@ -148,3 +179,29 @@
         border-color: #cbd5e1;
     }
 </style>
+
+@code {
+    // [HOME-THE-QUYEN] cùng cách tính NavMenu (Admin thấy hết; Xem ∨ Sửa — [NAV-XEM-SUA])
+    private bool isAdmin;
+    private Dictionary<string, (bool CanView, bool CanEdit)> _permissions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        isAdmin = user.IsInRole("ADMIN")
+               || user.FindFirst("GroupCode")?.Value == "ADMIN"
+               || user.FindFirst(ClaimTypes.Role)?.Value == "ADMIN"
+               || user.Identity?.Name?.ToLower() == "admin";
+        if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
+        {
+            try { _permissions = await UserSvc.GetAllUserPermissionsAsync(uid); }
+            catch (Exception) { _permissions = new(); }   // lỗi đọc quyền: chỉ ẩn thẻ (trang vẫn tự kiểm quyền)
+        }
+    }
+
+    private bool CanView(string sectionCode)
+        => isAdmin || (_permissions.TryGetValue(sectionCode, out var p) && (p.CanView || p.CanEdit));
+
+    private bool CanViewPartMaster()
+        => CanView("PART_TAO_MOI") || CanView("PART_GC") || CanView("PART_HTSP") || CanView("PART_KCS") || CanView("PART_DONGGOI");
+}

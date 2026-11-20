@@ -447,7 +447,7 @@
                             <label class="form-label fw-semibold">Mã công việc <span class="text-danger">*</span></label>
                             <input type="text" class="form-control form-control-sm font-monospace text-uppercase text-danger fw-bold"
                                    placeholder="VD: 1V"
-                                   @bind="itemDangSua.TaskCode" maxlength="50" />
+                                   @bind="itemDangSua.TaskCode" maxlength="@MES.Web.Services.StandardWtsTaskService.TaskCodeMax" />   @* [WTS-MA-20] *@
                         </div>
                         <div class="col-9">
                             <label class="form-label fw-semibold">Tên công việc <span class="text-danger">*</span></label>

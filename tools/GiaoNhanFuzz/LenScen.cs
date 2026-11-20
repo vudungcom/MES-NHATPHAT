@@ -204,7 +204,7 @@ public static class LenScen
             var wts = new StandardWtsTaskService(db, auth);
             StandardWtsTask T(string code, string catName = "KCS", string? ghiChu = null) => new() { TaskCode = code, TaskName = "Viec", CategoryCode = "KCS", CategoryName = catName, DefaultUnit = "Chi tiết", GhiChu = ghiChu, IsProductiveTask = true };
             var w1 = await wts.CreateAsync(T(S(51, 'W')), 1, "1111");
-            Ok(!w1.Success && Viet(w1.Error) && w1.Error!.Contains("Mã công việc dài quá 50"), "WTS chuẩn: mã 51 → từ chối (trước: DbUpdateException không bắt → trang chết)", w1.Error);
+            Ok(!w1.Success && Viet(w1.Error) && w1.Error!.Contains("Mã công việc dài quá 20"), "WTS chuẩn: mã 51 → từ chối (trước: DbUpdateException không bắt → trang chết) — đáp án đổi 20/11 [WTS-MA-20]: trần 20", w1.Error);
             var w2 = await wts.CreateAsync(T("9K", catName: S(151)), 1, "1111");
             Ok(!w2.Success && Viet(w2.Error) && w2.Error!.Contains("Tên nhóm công đoạn dài quá 150"), "WTS chuẩn: tên nhóm 151 → từ chối", w2.Error);
             var w3 = await wts.CreateAsync(T("9K", ghiChu: S(500)), 1, "1111");
@@ -309,6 +309,38 @@ public static class LenScen
         }
 
         Console.WriteLine($"Tổng phép kiểm: {checks}");
+
+        // [WTS-MA-20][WTS-TAO-1TX][TB-TAO-1TX][CA-LOG-ILOGGER 2026-11-20] gói nhỏ G23 / G24-GHI-NHO. Nguồn: CLAUDE rà độc lập Gói 23 (L7, L10, L15) + Gói 24; Hùng 20/11 18:12.
+        Console.WriteLine("[LN10] mã công việc ≤ 20 (cột WtsCode / WtsTaskCode khâu sau); Tạo công việc / thiết bị 1 giao dịch — lỗi DB lần ghi lịch sử → không còn công việc / máy, bản EF sạch, lưu lại được");
+        {
+            var db = Seed(); var auth = new AuthService(db);
+            var wts = new StandardWtsTaskService(db, auth);
+            StandardWtsTask T(string code) => new() { TaskCode = code, TaskName = "Viec", CategoryCode = "KCS", CategoryName = "KCS", DefaultUnit = "Chi tiết", IsProductiveTask = true };
+            var a1 = await wts.CreateAsync(T(S(21, 'W')), 1, "1111");
+            Ok(!a1.Success && a1.Error!.Contains("Mã công việc dài quá 20"), "[LN10a] mã 21 → từ chối (WorkerActivityLogs.WtsCode 20)", a1.Error);
+            var a2 = await wts.CreateAsync(T(S(20, 'W')), 1, "1111");
+            Ok(a2.Success, "[LN10a] mã đúng 20 → được", a2.Error);
+            int n0 = db.StandardWtsTasks.List.Count, l0 = db.StandardWtsTaskChangeLogs.List.Count;
+            int fire = 0; Microsoft.EntityFrameworkCore.DbContext.OnSave = () => ++fire == 2 ? new DbUpdateException("gia loi DB luc ghi lich su") : null;
+            (bool Success, string? Error) a3; var m3 = T("8Q");
+            try { a3 = await wts.CreateAsync(m3, 1, "1111"); } finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; }
+            Ok(!a3.Success && a3.Error!.StartsWith("Chưa thêm công việc tiêu chuẩn được") && !a3.Error!.Contains("gia loi") && fire == 2, "[LN10b] Tạo công việc: lỗi DB ở lần ghi lịch sử → (false, câu Việt), không ném", a3.Error);
+            Ok(db.StandardWtsTasks.List.Count == n0 && db.StandardWtsTaskChangeLogs.List.Count == l0 && db.StandardWtsTasks.Added.Count == 0 && db.StandardWtsTaskChangeLogs.Added.Count == 0 && m3.TaskId == 0,
+               "[LN10b]   giao dịch quay lại: không còn công việc 8Q (trước: có công việc mà không có dòng Tạo mới), bản EF sạch", $"task {n0}→{db.StandardWtsTasks.List.Count} log {l0}→{db.StandardWtsTaskChangeLogs.List.Count}");
+            var a4 = await wts.CreateAsync(T("8Q"), 1, "1111");
+            Ok(a4.Success && db.StandardWtsTasks.List.Count(t => t.TaskCode == "8Q") == 1 && db.StandardWtsTaskChangeLogs.List.Count == l0 + 1, "[LN10b]   lưu lại sau lỗi: 1 công việc + 1 dòng lịch sử", a4.Error);
+
+            var tb = new ThietBiService(db, auth);
+            int t0 = db.ThietBis.List.Count, tl0 = db.ThietBiChangeLogs.List.Count; fire = 0;
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = () => ++fire == 2 ? new DbUpdateException("gia loi DB luc ghi lich su may") : null;
+            (bool Success, string? Error) b1; var mm = new ThietBi { SoMay = "MX1", TenMay = "May X" };
+            try { b1 = await tb.CreateAsync(mm, 1); } finally { Microsoft.EntityFrameworkCore.DbContext.OnSave = null; }
+            Ok(!b1.Success && b1.Error!.StartsWith("Chưa thêm thiết bị được") && !b1.Error!.Contains("gia loi") && db.ThietBis.List.Count == t0 && db.ThietBiChangeLogs.List.Count == tl0 && db.ThietBis.Added.Count == 0 && mm.ThietBiId == 0,
+               "[LN10c] Thêm thiết bị: lỗi DB lần ghi lịch sử → quay lại, không còn máy, bản EF sạch (trước: máy kẹt Added trong DbContext phiên trang)", $"{b1.Error} may {t0}→{db.ThietBis.List.Count}");
+            var b2 = await tb.CreateAsync(mm, 1);
+            Ok(b2.Success && db.ThietBis.List.Count(x => x.SoMay == "MX1") == 1 && db.ThietBiChangeLogs.List.Count == tl0 + 1, "[LN10c]   bấm Lưu lại (cùng đối tượng form): 1 máy + 1 dòng lịch sử", b2.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

@@ -166,11 +166,11 @@ else
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Mã VL (Material)</label>
-                        <AttributePicker Label="" Placeholder="VD: SS400, AL6061..." Attributes="@(_attrGroups.GetValueOrDefault("Material"))" @bind-Value="_material" @bind-IsSetAsDefault="_setDefaultMaterial" Disabled="@(!_canEditA)" />
+                        <AttributePicker Label="" Placeholder="VD: SS400, AL6061..." Attributes="@(_attrGroups.GetValueOrDefault("Material"))" MaxLength="100" @bind-Value="_material" @bind-IsSetAsDefault="_setDefaultMaterial" Disabled="@(!_canEditA)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Cấu hình phôi (Material Config)</label>
-                        <AttributePicker Label="" Placeholder="VD: B12x82x97..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))" @bind-Value="_materialConfig" @bind-IsSetAsDefault="_setDefaultConfig" Disabled="@(!_canEditA)" />
+                        <AttributePicker Label="" Placeholder="VD: B12x82x97..." Attributes="@(_attrGroups.GetValueOrDefault("MaterialConfig"))" MaxLength="100" @bind-Value="_materialConfig" @bind-IsSetAsDefault="_setDefaultConfig" Disabled="@(!_canEditA)" />
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold mb-1">Ghi chú phôi</label>
@@ -2512,21 +2512,21 @@ else
         {
             var perms = await UserSvc.GetAllUserPermissionsAsync(_currentUserId);
             
-            _canViewA = perms.TryGetValue("PART_TAO_MOI", out var pvA) && pvA.CanView;
+            _canViewA = perms.TryGetValue("PART_TAO_MOI", out var pvA) && (pvA.CanView || pvA.CanEdit);   // [NAV-XEM-SUA 2026-11-20] có Sửa vùng thì xem được vùng đó (như menu / Index_PartMaster)
             _canEditA = perms.TryGetValue("PART_TAO_MOI", out var pA) && pA.CanEdit;
             
             _canDelete = await UserSvc.GetCanDeleteAsync(_currentUserId, MES.Web.Constants.SystemPermissions.PartTaoMoi);
 
-            _canViewB = perms.TryGetValue("PART_GC", out var pvB) && pvB.CanView;
+            _canViewB = perms.TryGetValue("PART_GC", out var pvB) && (pvB.CanView || pvB.CanEdit);
             _canEditB = perms.TryGetValue("PART_GC", out var pB) && pB.CanEdit;
 
-            _canViewC = perms.TryGetValue("PART_HTSP", out var pvC) && pvC.CanView;
+            _canViewC = perms.TryGetValue("PART_HTSP", out var pvC) && (pvC.CanView || pvC.CanEdit);
             _canEditC = perms.TryGetValue("PART_HTSP", out var pC) && pC.CanEdit;
 
-            _canViewD = perms.TryGetValue("PART_KCS", out var pvD) && pvD.CanView;
+            _canViewD = perms.TryGetValue("PART_KCS", out var pvD) && (pvD.CanView || pvD.CanEdit);
             _canEditD = perms.TryGetValue("PART_KCS", out var pD) && pD.CanEdit;
 
-            _canViewE = perms.TryGetValue("PART_DONGGOI", out var pvE) && pvE.CanView;
+            _canViewE = perms.TryGetValue("PART_DONGGOI", out var pvE) && (pvE.CanView || pvE.CanEdit);
             _canEditE = perms.TryGetValue("PART_DONGGOI", out var pE) && pE.CanEdit;
 
             // [STD-UPDATE] Quyền nút "Update TG chuẩn" (cần CanEdit)

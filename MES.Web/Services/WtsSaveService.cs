@@ -480,11 +480,14 @@ namespace MES.Web.Services
 
         /// <summary>[WTS-SUA-NHANH] R-10: khoảng nghỉ dòng sửa chạm theo CA DÒNG GỐC; phút làm thông = trang gửi (đúng khoảng) → đã lưu dòng gốc → 0.
         ///   Phút đã lưu bị kẹp vào phần chồng mới; phút trang gửi để nguyên (WorkMinutes.Verify báo nếu sai).</summary>
-        private async Task<List<WorkMinutes.SentBreak>> CuBreaksAsync(CaLamViec? ca, long oldId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
+        private Task<List<WorkMinutes.SentBreak>> CuBreaksAsync(CaLamViec? ca, long oldId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
+            => CuBreaksAsync(ca, oldId, null, s, e, sent);
+        /// <summary>[ACT-SUA-CU] bản chung dòng WTS (wtsId) / việc không ra SP (actId).</summary>
+        private async Task<List<WorkMinutes.SentBreak>> CuBreaksAsync(CaLamViec? ca, long? wtsId, long? actId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
         {
             var calc = WorkMinutes.Touching(ca, s, e);
             if (calc.Count == 0) return new();
-            var oldB = await _db.WtsBreakWorkLogs.AsNoTracking().Where(x => x.WtsLogId == oldId).ToListAsync();
+            var oldB = await _db.WtsBreakWorkLogs.AsNoTracking().Where(x => wtsId != null ? x.WtsLogId == wtsId : x.ActivityLogId == actId).ToListAsync();
             return calc.Select(c =>
             {
                 var fromPage = sent?.FirstOrDefault(x => x.BreakStart == c.BreakStart && x.BreakEnd == c.BreakEnd);
@@ -621,6 +624,10 @@ namespace MES.Web.Services
 
                 // [LEN-CHECK 2026-11-16] (BW1-01 / BW2-03) phát sinh: Mã WTS PS ≤ 50, tên ≤ 250, Nội dung PS ≤ 500 (cột WtsExtraItems) — kiểm TRƯỚC
                 //   vòng ghi; trước: ghi thẳng → SqlException "String or binary data would be truncated" (tiếng Anh, có tên bảng), cả nhóm rollback.
+                // [WTS-GHICHU-LEN 2026-11-20] gói nhỏ G23-GHI-NHO L16: Ghi chú dòng WTS ≤ 500 (cột WtsProductionLogs.Notes) — trước chưa kiểm (Sửa nhanh đã kiểm).
+                //   Nguồn: CLAUDE rà độc lập Gói 23 (L16); Hùng 20/11 18:12 chốt làm hết nhóm A + G25 mục B.
+                if (sub.Notes != null) sub.Notes = sub.Notes.Trim();   // rà độc lập G27N L6: lưu đúng chuỗi đã đếm (bỏ dấu cách đầu / cuối)
+                if (LenCheck.Over(sub.Notes, NotesMax, "Ghi chú") is string _nLen) { sub.ErrorMsg = _nLen; grp.ErrorMsg = "Có hàng ghi chú dài quá cột — " + _nLen; return Fail(); }
                 foreach (var _ei in sub.ExtraItems.Where(e => e.Minutes > 0))
                 {
                     var _eLen = LenCheck.FirstOver((_ei.WtsCode, 50, "Mã WTS phát sinh"), (_ei.WtsName, 250, "Tên việc phát sinh"), (_ei.Notes, 500, "Nội dung PS"));
@@ -1160,6 +1167,10 @@ namespace MES.Web.Services
             // [L7-WTS-CU 2026-11-19] dòng SỬA đi đường quyền cao hơn (đã kiểm ở SaveGroupOnceAsync: quyền + lý do + giữ ngày) được lưu cho ngày cũ; dòng mới vẫn chặn
             if (grp.WorkDate.Date != DateTime.Today && !row.Cu)
             { row.ErrorMsg = "Chỉ được nhập WTS cho ngày hôm nay. Ngày cũ cần quyền cao hơn."; return; }
+            // [WTS-NGAY-DONG 2026-11-20] gói nhỏ G25-GHI-NHO R-06: dòng không đi đường quyền cao hơn phải BẮT ĐẦU trong hôm nay (trước chỉ kiểm WorkDate của nhóm —
+            //   gọi thẳng service với WorkDate hôm nay + giờ hôm qua thì lọt; trang luôn gửi cùng ngày nên chỉ là chặn cứng ở máy chủ). Nguồn: CLAUDE rà độc lập Gói 25 (R-06).
+            if (!row.Cu && row.StartTime.Date != DateTime.Today)
+            { row.ErrorMsg = "Chỉ được nhập WTS cho ngày hôm nay. Ngày cũ cần quyền cao hơn."; return; }
 
             // Validate chung
             if (row.Minutes <= 0)
@@ -1579,9 +1590,17 @@ namespace MES.Web.Services
             //   ca + giờ nghỉ lúc lưu chép vào WtsBreakWorkLogs (trước: phút của dòng tính theo ca ĐANG CHỌN mỗi lần mở trang).
             public int?     CaId              { get; set; }
             public List<WorkMinutes.SentBreak> Breaks { get; set; } = new();
+            /// <summary>[ACT-SUA-CU 2026-11-20] Lý do khi sửa việc ngày cũ / của người khác (Admin / Sửa WTS_MASTER) — 3–150 ký tự.</summary>
+            public string?  EditReason        { get; set; }
         }
 
         public const int ActivityNotesMax = 500;
+        // [ACT-SUA-CU 2026-11-20] gói nhỏ G25-GHI-NHO R-03: "Việc không ra sản phẩm" ngày cũ / của người khác sửa được bằng quyền cao hơn như dòng WTS (Gói 25 L7):
+        //   Admin / Sửa WTS_MASTER + lý do 3–150; dòng mới GIỮ người làm + ngày; khoá + kiểm trùng giờ theo người làm gốc; VoidReason "Sửa lại (quyền cao hơn): …";
+        //   không cần quyền nhóm của mã (B1); ca giờ nghỉ = ca đã lưu ở khoảng nghỉ dòng gốc (R-10). Không số lượng, không đụng sổ.
+        //   Nguồn: CLAUDE rà độc lập Gói 25 20/11 (R-03); HÙNG 20/11 18:12 (gói nhỏ ghi nhớ G25).
+        public const string ActNoPermEditOther = "Dòng việc không ra sản phẩm này của người khác — chỉ Admin hoặc người có quyền Sửa WTS tiêu chuẩn mới sửa được (kèm lý do).";
+        public const string ActNoPermEditOld   = "Dòng việc không ra sản phẩm này của ngày cũ — chỉ Admin hoặc người có quyền Sửa WTS tiêu chuẩn mới sửa được (kèm lý do).";
 
         // [RS-D10c 2026-10-31] Lưu "Việc không ra sản phẩm" bị chọn làm nạn nhân deadlock (1205, hoặc khoá người nhập −3): SQL đã rollback.
         //   Trước: báo "Lỗi khi lưu: … deadlocked", người dùng bấm lại. Nay: tự lưu lại (giao dịch mới: khoá lại, kiểm trùng giờ lại),
@@ -1611,14 +1630,37 @@ namespace MES.Web.Services
             // [ML17-MIN] giờ tròn phút (form gõ giờ:phút — chỉ chặn số lẻ giây từ nơi khác). Biến cục bộ: req không bị sửa (lưu lại khi deadlock an toàn).
             var reqStart = WorkMinutes.RoundToMinute(req.StartTime);
             var reqEnd   = WorkMinutes.RoundToMinute(req.EndTime);
-            if (reqStart.Date != today)
+            // [ACT-SUA-CU] sửa dòng ngày cũ / của người khác: đọc dòng cũ TRƯỚC (không tin trang) → quyền cao hơn + lý do, giữ ngày + người làm
+            WorkerActivityLog? _oldA = req.ActivityLogId == null ? null
+                : await _db.WorkerActivityLogs.AsNoTracking().FirstOrDefaultAsync(a => a.ActivityLogId == req.ActivityLogId.Value);
+            bool cuA = _oldA != null && !_oldA.IsVoided && IsCu(req.UserId, _oldA.WorkerId, _oldA.StartTime);
+            int worker = cuA ? _oldA!.WorkerId : req.UserId;
+            int? caUse = req.CaId;
+            IReadOnlyList<WorkMinutes.SentBreak> sentUse = req.Breaks;
+            if (cuA)
+            {
+                if (!await CanCuAsync(_db, req.UserId)) return Fail(_oldA!.WorkerId != req.UserId ? ActNoPermEditOther : ActNoPermEditOld);
+                if (CuReasonError(req.EditReason) is string _rsA) return Fail(_rsA);
+                if (reqStart.Date != _oldA!.StartTime.Date)
+                    return Fail($"Sửa việc ngày cũ / của người khác: giữ nguyên ngày của dòng ({_oldA.StartTime:dd/MM/yyyy}) — chỉ sửa giờ, mã, ghi chú, PO.");
+                // R-10: ca = ca đã lưu ở khoảng nghỉ dòng gốc (dòng không chạm nghỉ thì giữ ca trang gửi)
+                var _oldCa = await _db.WtsBreakWorkLogs.AsNoTracking().Where(b => b.ActivityLogId == _oldA.ActivityLogId && b.CaId != null).Select(b => b.CaId).FirstOrDefaultAsync();
+                if (_oldCa != null)
+                {
+                    var _caK = await CuCaAsync(_oldCa);
+                    caUse = _caK?.CaId;
+                    sentUse = await CuBreaksAsync(_caK, null, _oldA.ActivityLogId, reqStart, reqEnd, req.Breaks);
+                }
+            }
+            var day = cuA ? _oldA!.StartTime.Date : today;
+            if (reqStart.Date != day)
                 return Fail("Việc không ra sản phẩm chỉ nhập cho ngày hôm nay.");
             if (reqEnd <= reqStart)
                 return Fail("T.Kết thúc phải sau T.Bắt đầu.");
-            if (reqEnd > today.AddDays(1))
-                return Fail("T.Kết thúc phải trong ngày hôm nay.");
+            if (reqEnd > day.AddDays(1))
+                return Fail(cuA ? "T.Kết thúc phải trong ngày của dòng." : "T.Kết thúc phải trong ngày hôm nay.");
             // [ML17-XN][CA-NGHI-HIST] khoảng nghỉ dòng chạm: máy chủ tự tính từ ca + giờ, so với bộ trang gửi
-            var _vb = await VerifyBreaksAsync(req.CaId, new() { (reqStart, reqEnd, (IReadOnlyList<WorkMinutes.SentBreak>)req.Breaks) });
+            var _vb = await VerifyBreaksAsync(caUse, new() { (reqStart, reqEnd, sentUse) });
             if (_vb.Error != null) return Fail(_vb.Error);
             var _actBreaks = _vb.Rows[0];
             var notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
@@ -1634,7 +1676,7 @@ namespace MES.Web.Services
                 .FirstOrDefault(t => string.Equals((t.TaskCode ?? "").Trim(), code, StringComparison.OrdinalIgnoreCase));   // so mã không phân biệt hoa thường (như SQL Server)
             if (task == null) return Fail($"Mã CV {code} không có trong WTS tiêu chuẩn hoặc đã ngưng dùng.");
             if (task.TaskCode.Trim().Length > 20) return Fail($"Mã CV {task.TaskCode} dài quá 20 ký tự (cột WtsCode) — nhờ Admin đặt mã ngắn hơn.");
-            if (!wg.Value.IsAdmin)
+            if (!wg.Value.IsAdmin && !cuA)   // [ACT-SUA-CU] quyền cao hơn không cần quyền nhóm của mã (B1)
             {
                 var allowed = wg.Value.Groups.Count > 0 && await _db.WtsCategoryGroupMappings.AsNoTracking()
                     .AnyAsync(m => m.CategoryCode == task.CategoryCode && wg.Value.Groups.Contains(m.ProcessGroup));
@@ -1652,10 +1694,12 @@ namespace MES.Web.Services
 
             await using var trx = await _db.Database.BeginTransactionAsync();
             // Khoá theo người nhập: 2 tab cùng lưu không lọt trùng giờ (LockOwner = Transaction, nhả khi Commit / Rollback)
-            if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + req.UserId, deadlockThrows: true))   // [RS-D10c]
-                return Fail("Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây.");
+            // [ACT-SUA-CU] sửa dòng người khác: khoá thêm người làm gốc, tăng dần theo id (như SaveGroupOnceAsync)
+            foreach (var _wk in new[] { req.UserId, worker }.Distinct().OrderBy(x => x))
+            if (!await PoGuard.TryLockInTransactionAsync(_db, "WTS_WORKER_" + _wk, deadlockThrows: true))   // [RS-D10c]
+                return Fail(_wk == req.UserId ? "Bạn đang lưu WTS ở tab khác — bấm Lưu lại sau vài giây." : "Người làm dòng này đang lưu WTS — bấm Lưu lại sau vài giây.");
 
-            if (req.ActivityLogId != null)
+            if (req.ActivityLogId != null && !cuA)
             {
                 var old = await _db.WorkerActivityLogs.AsNoTracking().FirstOrDefaultAsync(a => a.ActivityLogId == req.ActivityLogId.Value);
                 if (old == null || old.WorkerId != req.UserId)
@@ -1669,7 +1713,7 @@ namespace MES.Web.Services
             // Trùng giờ với dòng WTS / việc khác của chính người này (chạm mép không tính)
             var s0 = reqStart; var e0 = reqEnd;
             var prodHit = await _db.WtsProductionLogs.AsNoTracking()
-                .Where(w => w.WorkerId == req.UserId && !w.IsVoided && w.StartTime < e0 && w.EndTime > s0)
+                .Where(w => w.WorkerId == worker && !w.IsVoided && w.StartTime < e0 && w.EndTime > s0)   // [ACT-SUA-CU] người làm gốc
                 .OrderBy(w => w.StartTime)
                 .Select(w => new { w.StartTime, w.EndTime, Code = w.NC ?? w.WtsCode, w.KhPlanDetailId })
                 .FirstOrDefaultAsync();
@@ -1677,10 +1721,10 @@ namespace MES.Web.Services
             {
                 var po = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == prodHit.KhPlanDetailId)
                     .Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
-                return Fail($"Trùng giờ với dòng WTS của bạn {prodHit.StartTime:HH:mm}–{prodHit.EndTime:HH:mm} (PO {po} · {prodHit.Code}) — sửa giờ cho khỏi chồng nhau.");
+                return Fail($"Trùng giờ với dòng WTS {(worker == req.UserId ? "của bạn" : "của người làm")} {prodHit.StartTime:HH:mm}–{prodHit.EndTime:HH:mm} (PO {po} · {prodHit.Code}) — sửa giờ cho khỏi chồng nhau.");
             }
             var actHit = await _db.WorkerActivityLogs.AsNoTracking()
-                .Where(a => a.WorkerId == req.UserId && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0
+                .Where(a => a.WorkerId == worker && !a.IsVoided && a.StartTime < e0 && a.EndTime > s0   // [ACT-SUA-CU] người làm gốc
                          && (req.ActivityLogId == null || a.ActivityLogId != req.ActivityLogId.Value))
                 .OrderBy(a => a.StartTime)
                 .Select(a => new { a.StartTime, a.EndTime, a.WtsCode })
@@ -1690,7 +1734,11 @@ namespace MES.Web.Services
 
             if (req.ActivityLogId != null)
             {
-                var n = await _db.Database.ExecuteSqlRawAsync(
+                var n = cuA   // [ACT-SUA-CU] quyền cao hơn: huỷ theo id còn hiệu lực, ghi lý do + người sửa
+                    ? await _db.Database.ExecuteSqlRawAsync(
+                        "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason={3}, VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0",
+                        req.UserId, DateTime.Now, req.ActivityLogId.Value, CuVoidReason(HandoverLedgerService.WtsEditVoidReason, req.EditReason))
+                    : await _db.Database.ExecuteSqlRawAsync(
                     "UPDATE WorkerActivityLogs SET IsVoided=1, VoidReason=N'Sửa lại', VoidedBy={0}, VoidedAt={1} WHERE ActivityLogId={2} AND IsVoided=0 AND WorkerId={0}",
                     req.UserId, DateTime.Now, req.ActivityLogId.Value);
                 if (n != 1)
@@ -1699,7 +1747,7 @@ namespace MES.Web.Services
 
             var log = new WorkerActivityLog
             {
-                WorkerId          = req.UserId,
+                WorkerId          = worker,   // [ACT-SUA-CU] sửa dòng người khác: giữ người làm gốc
                 WorkDate          = DateOnly.FromDateTime(reqStart),
                 StartTime         = reqStart,
                 EndTime           = reqEnd,

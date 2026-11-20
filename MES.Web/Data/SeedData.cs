@@ -13,8 +13,20 @@ public static class SeedData
     /// - 5 PartMaster + PartMasterAttribute (default cho Material/Config/Location)
     /// - 1 FileStorage
     /// </summary>
+    // [SEED-DEMO 2026-11-20] Gói 26 (C-07): DB TRỐNG mới seed. LUÔN tạo 7 nhóm + tài khoản admin (không có admin thì không vào được để cấu hình);
+    //   Nguồn: CLAUDE quét Fable 14/11 (C-07); HÙNG 15/11 15:32 (câu 4) + 21:19 → Gói 26; HÙNG 20/11 18:32 OK đề xuất (B4).
+    //   mật khẩu admin = biến môi trường MES_ADMIN_INIT_PW (≥ 6 ký tự), không đặt thì "admin123" + ghi cảnh báo vào log (đổi ngay sau lần đầu).
+    //   Dữ liệu MẪU (kh01 / vt01 / kho01 mật khẩu 123456, 3 khách, 5 Part) CHỈ seed khi MES_SEED_DEMO=1 — trước: DB trống là có 4 tài khoản mẫu
+    //   mật khẩu đoán được + khách / Part giả lẫn vào dữ liệu thật. DB đã có dữ liệu (máy Hùng, máy khách restore bản backup): không đổi gì.
+    public const string DemoEnv = "MES_SEED_DEMO", AdminPwEnv = "MES_ADMIN_INIT_PW";
+    /// <summary>[SEED-DEMO] Ghi cảnh báo lúc seed (Program gán logger); null = Console.</summary>
+    public static Action<string>? Warn;
+    public static bool DemoOn => Environment.GetEnvironmentVariable(DemoEnv) == "1";
+
     public static void EnsureSeeded(AppDbContext db)
     {
+        // [SEED-DEMO] mẫu chỉ khi DB thật sự MỚI (chưa có tài khoản nào) — rà độc lập Gói 26 L1: DB đã có người dùng mà bật MES_SEED_DEMO=1 thì không thêm khách / Part mẫu
+        bool demo = DemoOn && !db.Users.Any();
         // ==== UserGroup ====
         if (!db.UserGroups.Any())
         {
@@ -33,15 +45,21 @@ public static class SeedData
         // ==== User ====
         if (!db.Users.Any())
         {
+            // [SEED-DEMO] admin luôn có; mật khẩu lấy biến môi trường nếu đặt
+            var envPw = (Environment.GetEnvironmentVariable(AdminPwEnv) ?? "").Trim();
+            bool envOk = envPw.Length >= 6;
+            if (!envOk)
+                (Warn ?? Console.WriteLine)($"[SEED-DEMO] DB trống: tạo tài khoản admin mật khẩu mặc định \"admin123\" — đổi ngay sau khi đăng nhập (hoặc đặt biến {AdminPwEnv} ≥ 6 ký tự trước lần chạy đầu).");
             var adminGroup = db.UserGroups.First(g => g.GroupCode == "ADMIN");
-            var planningGroup = db.UserGroups.First(g => g.GroupCode == "PLANNING");
-            var supplierGroup = db.UserGroups.First(g => g.GroupCode == "SUPPLIER");
-            var warehouseGroup = db.UserGroups.First(g => g.GroupCode == "WAREHOUSE");
+            // [SEED-DEMO] rà độc lập Gói 26 L2: 3 nhóm mẫu chỉ tra khi seed tài khoản mẫu (thiếu nhóm thì app không khởi động — có từ trước)
+            var planningGroup = demo ? db.UserGroups.First(g => g.GroupCode == "PLANNING") : null;
+            var supplierGroup = demo ? db.UserGroups.First(g => g.GroupCode == "SUPPLIER") : null;
+            var warehouseGroup = demo ? db.UserGroups.First(g => g.GroupCode == "WAREHOUSE") : null;
 
             var defaultHash = PasswordHasher.Hash("123456");
-            var adminHash = PasswordHasher.Hash("admin123");
+            var adminHash = PasswordHasher.Hash(envOk ? envPw : "admin123");   // [SEED-DEMO]
 
-            db.Users.AddRange(
+            db.Users.Add(
                 new User
                 {
                     Username = "admin",
@@ -49,13 +67,15 @@ public static class SeedData
                     PasswordHash = adminHash,
                     GroupId = adminGroup.GroupId,
                     IsActive = true
-                },
+                });
+            if (demo)   // [SEED-DEMO] tài khoản mẫu chỉ khi MES_SEED_DEMO=1
+            db.Users.AddRange(
                 new User
                 {
                     Username = "kh01",
                     FullName = "Nguyễn Văn KH",
                     PasswordHash = defaultHash,
-                    GroupId = planningGroup.GroupId,
+                    GroupId = planningGroup!.GroupId,
                     IsActive = true
                 },
                 new User
@@ -63,7 +83,7 @@ public static class SeedData
                     Username = "vt01",
                     FullName = "Trần Thị Vật Tư",
                     PasswordHash = defaultHash,
-                    GroupId = supplierGroup.GroupId,
+                    GroupId = supplierGroup!.GroupId,
                     IsActive = true
                 },
                 new User
@@ -71,7 +91,7 @@ public static class SeedData
                     Username = "kho01",
                     FullName = "Lê Văn Kho",
                     PasswordHash = defaultHash,
-                    GroupId = warehouseGroup.GroupId,
+                    GroupId = warehouseGroup!.GroupId,
                     IsActive = true
                 }
             );
@@ -79,7 +99,7 @@ public static class SeedData
         }
 
         // ==== Customer ====
-        if (!db.Customers.Any())
+        if (demo && !db.Customers.Any())   // [SEED-DEMO] khách mẫu chỉ khi MES_SEED_DEMO=1
         {
             db.Customers.AddRange(
                 new Customer
@@ -108,7 +128,7 @@ public static class SeedData
         }
 
         // ==== PartMaster + PartMasterAttribute ====
-        if (!db.PartMasters.Any())
+        if (demo && !db.PartMasters.Any() && db.Customers.Any(c => c.CustomerCode == "QM") && db.Customers.Any(c => c.CustomerCode == "KOSTAL"))   // [SEED-DEMO] Part mẫu chỉ khi MES_SEED_DEMO=1 (cần đủ khách mẫu)
         {
             var qm = db.Customers.First(c => c.CustomerCode == "QM");
             var kostal = db.Customers.First(c => c.CustomerCode == "KOSTAL");

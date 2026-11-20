@@ -28,6 +28,8 @@
             </AuthorizeView>
         </div>
         <div class="mes-content">
+            @* [C-10-GRACE 2026-11-20] Gói 26: 8–30 ngày máy chủ chưa xác minh bản quyền (mất mạng) → chỉ băng vàng, vẫn dùng đủ; quá 30 ngày mới khoá (khối dưới). *@
+            <div class="alert alert-warning py-2 small mb-2" style="@OfflineWarnStyle"><i class="bi bi-wifi-off me-1"></i>@_offlineWarn</div>
             @* ======= KHỐI LỆNH CHẶN GIAO DIỆN KHI HẾT HẠN ======= *@
             @if (_isBlocked && !IsAboutPage)
             {
@@ -39,6 +41,8 @@
                             Thời gian dùng thử đã kết thúc hoặc bản quyền máy chủ không hợp lệ. 
                             Vui lòng kích hoạt bản quyền để mở khóa hệ thống.
                         </p>
+                        @* [C-10-GRACE 2026-11-20] rà độc lập Gói 26 L3: nói rõ lý do khoá (vd quá 30 ngày mất mạng — dữ liệu giữ nguyên) *@
+                        <p class="small text-danger mb-3" style="@LockMsgStyle">@_lockMsg</p>
                         <a href="/about" class="btn btn-danger px-4 py-2 fw-bold shadow-sm rounded-pill">
                             <i class="bi bi-key-fill me-2"></i> Tới trang Kích hoạt Bản quyền
                         </a>
@@ -62,6 +66,10 @@
 
 @code {
     private bool _isBlocked = false;
+    private string? _offlineWarn;   // [C-10-GRACE]
+    private string? _lockMsg;       // [C-10-GRACE] lý do khoá từ bản quyền (Message)
+    private string LockMsgStyle => string.IsNullOrEmpty(_lockMsg) ? "display:none" : "display:block";
+    private string OfflineWarnStyle => string.IsNullOrEmpty(_offlineWarn) || _isBlocked ? "display:none" : "display:block";
     
     // Kiểm tra xem User có đang ở trang About không
     // [RS-E11 2026-10-30] So ĐÚNG đường dẫn /about — trước: Uri.Contains("/about") nên thêm "?x=/about" vào bất kỳ trang nào là qua khoá bản quyền
@@ -75,5 +83,7 @@
         
         // Cờ khóa bật lên khi Status không phải là Active
         _isBlocked = license.Status != ServerLicenseHelper.LicenseStatus.Active;
+        _offlineWarn = license.OfflineWarning;   // [C-10-GRACE]
+        _lockMsg = _isBlocked ? license.Message : null;   // [C-10-GRACE]
     }
 }

@@ -1334,6 +1334,56 @@ public static class WtsScen
             Ok(!r.Ok && (r.ErrorMsg ?? "").Contains("thiếu mã CV") && !r2.Ok && (r2.ErrorMsg ?? "").Contains("không rõ nhóm"), "W25p dòng cũ thiếu mã CV / nhóm lạ: báo rõ, không ghi", r.ErrorMsg + " | " + r2.ErrorMsg);
         }
 
+
+        // [ACT-SUA-CU][WTS-NGAY-DONG 2026-11-20] gói nhỏ G25-GHI-NHO R-03 + R-06. Nguồn: CLAUDE rà độc lập Gói 25 (R-03, R-06); HÙNG 20/11 18:12.
+        Console.WriteLine("[W26] ACT-SUA-CU — Admin / Sửa WTS_MASTER sửa việc không ra SP ngày cũ / của người khác (lý do, giữ người làm + ngày, ca dòng gốc); WTS-NGAY-DONG dòng mới bắt đầu ngày cũ → chặn");
+        {
+            var db = await SeedAsync(); var s = Svc(db);
+            var gM = new UserGroup { GroupId = 93, GroupCode = "WTSM2", GroupName = "Quản WTS 2", IsActive = true, Permissions = FuzzPerm.Json(SystemPermissions.WtsMaster) };
+            db.UserGroups.List.Add(gM); db.Users.List.Add(new User { UserId = 12, Username = "u12", FullName = "U12", IsActive = true, Group = gM, GroupId = 93 });
+            var ca2 = new CaLamViec { CaId = 2, TenCa = "C2", GioBatDau = new TimeOnly(7, 0), GioKetThuc = new TimeOnly(16, 0), IsActive = true };
+            var ng2 = new CaLamViec_NghiGiaiLao { NghiId = 21, CaId = 2, NghiBatDau = new TimeOnly(12, 0), NghiKetThuc = new TimeOnly(13, 0), GhiChu = "Trưa" };
+            ca2.NghiGiaiLaos.Add(ng2); db.CaLamViecs.List.Add(ca2); db.CaLamViec_NghiGiaiLaos.List.Add(ng2);
+            db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", CategoryName = "Việc chung", TaskCode = "VS", TaskName = "Vệ sinh máy", IsActive = true });
+            var Y = DateTime.Today.AddDays(-1);
+            db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = 999960, WorkerId = 2, WorkDate = DateOnly.FromDateTime(Y), WtsCode = "VS", WtsName = "Vệ sinh máy", StartTime = Y.AddHours(11.5), EndTime = Y.AddHours(13.5), CreatedAt = Y });
+            db.WtsBreakWorkLogs.List.Add(new WtsBreakWorkLog { Id = 9999601, ActivityLogId = 999960, CaId = 2, NghiId = 21, BreakName = "Trưa", BreakStart = Y.AddHours(12), BreakEnd = Y.AddHours(13), OverlapMin = 60, WorkedMin = 15, CreatedAt = Y });
+            db.Fixup();
+            WtsSaveService.WtsActivityRequest A(int u, DateTime st, DateTime en, string? why) => new() { ActivityLogId = 999960, UserId = u, WtsCode = "VS", StartTime = st, EndTime = en, CaId = 1, EditReason = why };
+            var r = await s.SaveActivityAsync(A(3, Y.AddHours(11.5), Y.AddHours(13.5), "thử"));
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.ActNoPermEditOther, "[W26a] u3 (không quyền cao hơn) sửa việc của u2 hôm qua: chặn đúng nghĩa", r.ErrorMsg);
+            r = await s.SaveActivityAsync(A(1, Y.AddHours(11.5), Y.AddHours(13.5), null));
+            Ok(!r.Ok && r.ErrorMsg == WtsSaveService.CuReasonMsg, "[W26a] Admin không lý do: chặn", r.ErrorMsg);
+            r = await s.SaveActivityAsync(A(1, T.AddHours(3), T.AddHours(4), "dời ngày"));
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Sửa việc ngày cũ / của người khác: giữ nguyên ngày"), "[W26b] dời sang hôm nay: chặn", r.ErrorMsg);
+            r = await s.SaveActivityAsync(A(12, Y.AddHours(11), Y.AddHours(13.5), "tổ trưởng báo sai giờ")); db.Fixup();
+            var oldA = db.WorkerActivityLogs.List.First(a => a.ActivityLogId == 999960);
+            var newA = db.WorkerActivityLogs.List.Where(a => !a.IsVoided && a.StartTime == Y.AddHours(11)).OrderByDescending(a => a.ActivityLogId).FirstOrDefault();
+            var bA = newA == null ? new List<WtsBreakWorkLog>() : db.WtsBreakWorkLogs.List.Where(b => b.ActivityLogId == newA.ActivityLogId).ToList();
+            Ok(r.Ok && newA != null && newA.WorkerId == 2 && newA.WorkDate == DateOnly.FromDateTime(Y) && oldA.IsVoided && oldA.VoidedBy == 12
+               && oldA.VoidReason == "Sửa lại (quyền cao hơn): tổ trưởng báo sai giờ" && bA.Count == 1 && bA[0].CaId == 2 && bA[0].WorkedMin == 15,
+               "[W26c] u12 (chỉ Sửa WTS_MASTER, không nhóm mã) sửa việc của u2 hôm qua: giữ người làm + ngày, lý do + người sửa, ca 2 + làm thông 15 phút gốc", r.ErrorMsg + $" | {newA?.WorkerId} brk {bA.Count} ca {bA.FirstOrDefault()?.CaId} w {bA.FirstOrDefault()?.WorkedMin}");
+            // trùng giờ theo NGƯỜI LÀM gốc: u2 có dòng WTS hôm qua 14:00–15:00 → sửa việc sang 14:30 chồng → chặn
+            db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 999961, KhPlanDetailId = 2, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M1", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = Y.AddHours(14), EndTime = Y.AddHours(15), CreatedAt = Y.AddHours(15) });
+            db.Fixup();
+            var reqO = A(1, Y.AddHours(14.5), Y.AddHours(15.5), "chồng giờ"); reqO.ActivityLogId = newA!.ActivityLogId;
+            r = await s.SaveActivityAsync(reqO);
+            Ok(!r.Ok && (r.ErrorMsg ?? "").StartsWith("Trùng giờ với dòng WTS"), "[W26d] trùng giờ kiểm theo người làm gốc (u2), không theo Admin", r.ErrorMsg);
+            // R-06: dòng WTS MỚI (không sửa) WorkDate hôm nay mà giờ bắt đầu hôm qua → chặn
+            var g = Gc(nc: "NC1", machine: "M12"); g.Rows.Add(Row(1, 1, 0, Y.AddHours(20), Y.AddHours(21)));
+            int n0 = WtsCount(db, false);
+            var rr = await s.SaveGroupAsync(g);
+            Ok(!rr.Ok && (rr.ErrorMsg ?? "").Contains("Chỉ được nhập WTS cho ngày hôm nay") && WtsCount(db, false) == n0, "[W26e] dòng mới bắt đầu hôm qua (WorkDate hôm nay): chặn, không ghi (R-06)", rr.ErrorMsg);
+            // [WTS-GHICHU-LEN] G23-GHI-NHO L16: ghi chú dòng WTS 501 → chặn trước khi ghi (cột 500); 500 → được
+            var gN = Gc(nc: "NC1", machine: "M13"); var rN = Row(1, 1, 0, T.AddHours(1), T.AddHours(1.5)); rN.Notes = new string('g', 501); gN.Rows.Add(rN);
+            int n1 = WtsCount(db, false);
+            var rn = await s.SaveGroupAsync(gN);
+            Ok(!rn.Ok && (rn.ErrorMsg ?? "").Contains("Ghi chú dài quá 500") && WtsCount(db, false) == n1, "[W26f] ghi chú 501 ký tự: chặn, không ghi (L16)", rn.ErrorMsg);
+            var gN2 = Gc(nc: "NC1", machine: "M13"); var rN2 = Row(1, 1, 0, T.AddHours(1), T.AddHours(1.5)); rN2.Notes = new string('g', 500); gN2.Rows.Add(rN2);
+            var rn2 = await s.SaveGroupAsync(gN2);
+            Ok(rn2.Ok && WtsCount(db, false) == n1 + 1, "[W26f] ghi chú đúng 500: lưu được", rn2.ErrorMsg);
+        }
+
         Console.WriteLine(fails == 0 ? "\nKẾT QUẢ: ĐẠT hết" : $"\nKẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

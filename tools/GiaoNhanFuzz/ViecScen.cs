@@ -130,12 +130,12 @@ public static class ViecScen
             var r2 = await s.SaveActivityAsync(Req(UGc, "VS", D.AddHours(15), D.AddHours(16), edit: old.ActivityLogId));
             Eq(r2.ErrorMsg, "Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại.", "Sửa lại dòng đã huỷ (tab cũ): chặn");
             var r3 = await s.SaveActivityAsync(Req(8, "VS", D.AddHours(15), D.AddHours(16), edit: neu.ActivityLogId));
-            Eq(r3.ErrorMsg, "Không tìm thấy dòng cần sửa của bạn — tải lại trang.", "Sửa dòng của người khác: chặn");
+            Eq(r3.ErrorMsg, WtsSaveService.ActNoPermEditOther, "Sửa dòng của người khác (không quyền cao hơn): chặn — đáp án đổi 20/11 [ACT-SUA-CU] (trước: 'Không tìm thấy dòng cần sửa của bạn')");
             db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = 900, WorkerId = UGc, WorkDate = DateOnly.FromDateTime(D.AddDays(-1)), WtsCode = "VS", WtsName = "Vệ sinh máy",
                                                                    StartTime = D.AddDays(-1).AddHours(9), EndTime = D.AddDays(-1).AddHours(10), CreatedAt = D.AddDays(-1) });
             db.Fixup();
             var r4 = await s.SaveActivityAsync(Req(UGc, "VS", D.AddHours(15), D.AddHours(16), edit: 900));
-            Eq(r4.ErrorMsg, "Chỉ sửa được dòng của ngày hôm nay.", "Sửa dòng hôm qua: chặn");
+            Eq(r4.ErrorMsg, WtsSaveService.ActNoPermEditOld, "Sửa dòng hôm qua (không quyền cao hơn): chặn — đáp án đổi 20/11 [ACT-SUA-CU] (trước: 'Chỉ sửa được dòng của ngày hôm nay.')");
             Ok(Acts(db, false) == n0 + 2 && db.WorkerActivityLogs.List.Count(a => a.ActivityLogId == 900 && !a.IsVoided) == 1, "3 lần bị chặn không ghi / huỷ gì");
         }
 

@@ -1376,7 +1376,7 @@ else
         foreach (var (grp, key) in GroupPermKey)
         {
             allPerms.TryGetValue(key, out var p);
-            _canViewGroup[grp] = p.CanView;
+            _canViewGroup[grp] = p.CanView || p.CanEdit;   // [NAV-XEM-SUA 2026-11-20] có Sửa thì xem được (như menu)
             _canEditGroup[grp] = p.CanEdit;
         }
         _canView      = _canViewGroup.Values.Any(v => v);

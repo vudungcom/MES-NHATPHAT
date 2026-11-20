@@ -520,7 +520,7 @@ else
         {
             var perms = await UserSvc.GetAllUserPermissionsAsync(uid);
             if (perms.TryGetValue("KE_HOACH", out var p))
-            { _canView = p.CanView; _canEdit = p.CanEdit; }
+            { _canView = p.CanView || p.CanEdit; _canEdit = p.CanEdit; }   // [NAV-XEM-SUA 2026-11-20] có Sửa thì xem được (như các trang khác / PermCheck.CanViewAsync)
         }
 
         if (_canView) _pageError = await UiSafe.RunAsync(Reload, Logger, "tải danh sách Kế hoạch");   // [UI-SAFE] (BK-05)

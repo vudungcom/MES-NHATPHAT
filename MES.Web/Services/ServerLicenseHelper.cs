@@ -40,7 +40,13 @@ namespace MES.Web.Services
         private static string GetApiKey() => DecryptXor(_eApiKey, _k1.Concat(_k2).Concat(_k3).ToArray());
 
         private const int TRIAL_MINUTES = 21600;       // 15 ngày
-        private const int OFFLINE_GRACE_DAYS = 7;
+        // [C-10-GRACE 2026-11-20] Gói 26: mất mạng máy chủ (không xác minh được bản quyền online) — ngày 1–7 bình thường; ngày 8–30 vẫn dùng đủ,
+        //   chỉ hiện băng vàng nhắc nối mạng (MainLayout); quá 30 ngày mới KHOÁ GIAO DIỆN (trừ trang Giới thiệu / Kích hoạt). Trước: quá 7 ngày khoá
+        //   cả xưởng. Khoá chỉ là chặn giao diện — KHÔNG xoá / sửa dữ liệu nào (file này không có lệnh DB nào); có mạng lại, lần kiểm ngầm 24 giờ
+        //   (LicenseBackgroundWorker) xác minh xong là mở. Nguồn: CLAUDE quét Fable 15/11 (C-10 Trung); HÙNG 15/11 15:10 câu 6 "theo đề xuất nhưng
+        //   chỉ khoá, KHÔNG được xoá dữ liệu của họ"; HÙNG 20/11 18:32 OK 7 / 30 ngày.
+        private const int OFFLINE_WARN_DAYS = 7;
+        private const int OFFLINE_LOCK_DAYS = 30;
 
         private static string GetPersistentFolder()
         {
@@ -331,6 +337,11 @@ namespace MES.Web.Services
 
             public string _hwid { get; set; } = "";
             public string _chk { get; set; } = "";
+
+            /// <summary>[C-10-GRACE] Số ngày chưa xác minh online (tính lúc đọc, không lưu cache, không vào checksum); &gt; 7 = hiện băng vàng.</summary>
+            [System.Text.Json.Serialization.JsonIgnore] public int OfflineDays { get; set; }
+            /// <summary>[C-10-GRACE] Băng vàng: đang dùng bình thường nhưng đã quá 7 ngày chưa xác minh — chữ cho MainLayout; null = không cần.</summary>
+            [System.Text.Json.Serialization.JsonIgnore] public string OfflineWarning { get; set; }
         }
 
         private static string _cachedHwId = null;
@@ -375,6 +386,30 @@ namespace MES.Web.Services
 
         // ============================================================
         // UI CACHE:
+        /// <summary>[C-10-GRACE 2026-11-20] Bản quyền ĐÃ KÍCH HOẠT, xét số ngày chưa xác minh online: ≤ 7 bình thường; 8–30 băng vàng (OfflineWarning),
+        ///   vẫn Active; &gt; 30 → Status Error (MainLayout khoá giao diện, trừ /about). Hàm thuần (không đọc file / DB) — bộ kiểm `g26` gọi thẳng.
+        ///   Nguồn: CLAUDE quét Fable 15/11 (C-10); HÙNG 15/11 15:10 câu 6 + 20/11 18:32 OK.</summary>
+        public static void ApplyOfflineGrace(LicenseInfo info, DateTime now)
+        {
+            if (info == null || info.Status != LicenseStatus.Active || info.LastOnlineVerify == DateTime.MinValue) return;
+            var days = (now - info.LastOnlineVerify).TotalDays;
+            info.OfflineDays = (int)Math.Ceiling(Math.Max(0, days));   // rà độc lập Gói 26 L4: ngày thứ 8 hiện "8 ngày" (trước làm tròn xuống "7")
+            if (days > OFFLINE_LOCK_DAYS)
+            {
+                info.Status = LicenseStatus.Error;
+                info.Message =
+                    $"Đã quá {OFFLINE_LOCK_DAYS} ngày không xác minh bản quyền. " +
+                    "Vui lòng kết nối Internet máy chủ. Dữ liệu vẫn giữ nguyên — có mạng lại là mở.";
+            }
+            else if (days > OFFLINE_WARN_DAYS)
+            {
+                int left = Math.Max(0, OFFLINE_LOCK_DAYS - info.OfflineDays);
+                info.OfflineWarning =
+                    $"Máy chủ đã {info.OfflineDays} ngày chưa xác minh bản quyền (không có Internet). " +
+                    $"Vẫn dùng bình thường; còn khoảng {left} ngày trước khi hệ thống tạm khoá giao diện — nhờ IT nối mạng máy chủ.";
+            }
+        }
+
         // CHỈ ĐỌC LOCAL. KHÔNG BAO GIỜ GỌI INTERNET.
         // ============================================================
         public static LicenseInfo GetCachedLicenseState()
@@ -479,18 +514,10 @@ namespace MES.Web.Services
             }
 
             // LICENSE ĐÃ KÍCH HOẠT:
-            // vẫn cho user dùng local. Chỉ báo lỗi sau >7 ngày
-            // không có lần xác minh ONLINE thành công.
+            // vẫn cho user dùng local. [C-10-GRACE] >7 ngày không xác minh ONLINE thành công: chỉ băng vàng; >30 ngày: khoá giao diện (không xoá dữ liệu).
             if (info.Status == LicenseStatus.Active)
             {
-                if (info.LastOnlineVerify != DateTime.MinValue &&
-                    (DateTime.Now - info.LastOnlineVerify).TotalDays > OFFLINE_GRACE_DAYS)
-                {
-                    info.Status = LicenseStatus.Error;
-                    info.Message =
-                        $"Đã quá {OFFLINE_GRACE_DAYS} ngày không xác minh bản quyền. " +
-                        "Vui lòng kết nối Internet máy chủ.";
-                }
+                ApplyOfflineGrace(info, DateTime.Now);   // [C-10-GRACE]
 
                 info._hwid = GetHardwareId();
                 return info;

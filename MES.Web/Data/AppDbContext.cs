@@ -275,11 +275,11 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         // ==== KhPlanDetailChangeLog ====
         mb.Entity<KhPlanDetailChangeLog>().HasIndex(x => new { x.KhPlanDetailId, x.FieldName, x.ChangedAt });
         mb.Entity<KhPlanDetailChangeLog>().HasIndex(x => x.ImportBatchId);
-        mb.Entity<KhPlanDetailChangeLog>()
-            .HasOne(x => x.KhPlanDetail)
-            .WithMany()
-            .HasForeignKey(x => x.KhPlanDetailId)
-            .OnDelete(DeleteBehavior.NoAction);
+        // [EF-FK-CHANGELOG 2026-11-20] Gói 27 (quét Fable câu 13): BỎ khoá ngoại KhPlanDetailChangeLogs → KhPlanDetails khỏi model EF — DB đã DROP FK này
+        //   (Architecture-Decisions v0.5.1; SQL chỉ đọc Hùng chạy 15/11 15:13: 17 FK vào KhPlanDetails, không có FK này). Model lệch DB thì dựng DB mới bằng
+        //   EnsureCreated sẽ tạo lại FK → xoá / tách PO lỗi khoá ngoại (log append-only trỏ Id PO đã xoá). Navigation KhPlanDetail không chỗ nào dùng → Ignore.
+        //   Không SQL (DB đã đúng). Nguồn: CLAUDE quét Fable 15/11 (BK câu hỏi + câu 13); HÙNG 15/11 15:32 chốt; 20/11 18:12 (Gói 27).
+        mb.Entity<KhPlanDetailChangeLog>().Ignore(x => x.KhPlanDetail);
         mb.Entity<KhPlanDetailChangeLog>()
             .HasOne(x => x.ChangedByUser)
             .WithMany()

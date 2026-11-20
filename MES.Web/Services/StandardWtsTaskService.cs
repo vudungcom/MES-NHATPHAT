@@ -121,7 +121,14 @@ public class StandardWtsTaskService
                 ChangedAt = nowR,
                 ChangedBy = currentUserId
             });
-            await _db.SaveChangesAsync();
+            // [WTS-TAO-1TX] rà độc lập G27N L7: nhánh khôi phục cũng gỡ bản EF khi lỗi (1 lần SaveChanges = 1 giao dịch)
+            try { await _db.SaveChangesAsync(); }
+            catch (Exception exR)
+            {
+                foreach (var en in _db.ChangeTracker.Entries<StandardWtsTask>().Where(x => x.State != EntityState.Unchanged || ReferenceEquals(x.Entity, deleted)).ToList()) en.State = EntityState.Detached;
+                foreach (var en in _db.ChangeTracker.Entries<StandardWtsTaskChangeLog>().Where(x => x.State == EntityState.Added).ToList()) en.State = EntityState.Detached;
+                return (false, UiSafe.Text(exR, null, "khôi phục công việc tiêu chuẩn"));
+            }
             return (true, null);
         }
 
@@ -130,6 +137,11 @@ public class StandardWtsTaskService
         model.CreatedAt = now;
         model.CreatedBy = currentUserId;
 
+        // [WTS-TAO-1TX 2026-11-20] gói nhỏ G24-GHI-NHO: dòng công việc + dòng lịch sử "Tạo mới" trong 1 giao dịch (trước 2 lần SaveChanges rời —
+        //   lỗi lần 2 thì có công việc mà không có lịch sử). Lỗi → quay lại + gỡ bản EF (DbContext dùng chung cả phiên trang). Nguồn: CLAUDE rà độc lập Gói 24; Hùng 20/11 18:12.
+        await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
         _db.StandardWtsTasks.Add(model);
         // [WTS-LOG-ID 2026-11-16] lưu trước để có TaskId — trước: log "Tạo mới" ghi TaskId = 0 (mồ côi, lịch sử không có dòng Tạo) — cùng lỗi BM1-04 Đồ gá.
         //   Nguồn: CLAUDE tự phát hiện khi làm Gói 24 (16/11, lúc sửa WTS-NHOM-TEN); vá theo mục 0 CLAUDE-RULES (vênh truy vết, không đổi số).
@@ -147,7 +159,17 @@ public class StandardWtsTaskService
         });
 
         await _db.SaveChangesAsync();
+        if (tx != null) await tx.CommitAsync();
         return (true, null);
+        }
+        catch (Exception ex)
+        {
+            if (tx != null) { try { await tx.RollbackAsync(); } catch { } }
+            foreach (var en in _db.ChangeTracker.Entries<StandardWtsTask>().Where(x => x.State == EntityState.Added || ReferenceEquals(x.Entity, model)).ToList()) en.State = EntityState.Detached;
+            foreach (var en in _db.ChangeTracker.Entries<StandardWtsTaskChangeLog>().Where(x => x.State == EntityState.Added).ToList()) en.State = EntityState.Detached;
+            model.TaskId = 0;
+            return (false, UiSafe.Text(ex, null, "thêm công việc tiêu chuẩn"));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -218,8 +240,11 @@ public class StandardWtsTaskService
 
     /// <param name="gopParts">[TARO-3T-GOP] Mã thành phần mà mã này làm thay (null = không đổi khai báo gộp; rỗng = bỏ khai gộp).</param>
     /// <summary>[LEN-CHECK 2026-11-16] Độ dài ô chữ theo cột StandardWtsTasks (Entities/StandardWtsTask.cs) — trước: SqlException không bắt → trang chết.</summary>
+    /// <summary>[WTS-MA-20 2026-11-20] gói nhỏ G23-GHI-NHO L10: mã công việc ≤ 20 ký tự — cột WorkerActivityLogs.WtsCode / PartTaroSteps.WtsTaskCode 20
+    ///   (StandardWtsTasks.TaskCode 50): mã 21–50 trước lưu được ở danh mục rồi nổ ở khâu sau. Nguồn: CLAUDE rà độc lập Gói 23 (L10); Hùng 20/11 18:12.</summary>
+    public const int TaskCodeMax = 20;
     public static string? TaskLenError(StandardWtsTask m)
-        => LenCheck.FirstOver((m.CategoryCode, 50, "Mã nhóm công đoạn"), (m.CategoryName, 150, "Tên nhóm công đoạn"), (m.TaskCode, 50, "Mã công việc"),
+        => LenCheck.FirstOver((m.CategoryCode, 50, "Mã nhóm công đoạn"), (m.CategoryName, 150, "Tên nhóm công đoạn"), (m.TaskCode, TaskCodeMax, "Mã công việc"),
                               (m.TaskName, 250, "Tên công việc"), (m.DefaultUnit, 50, "Đơn vị"), (m.GhiChu, 500, "Ghi chú"));
 
     public async Task<(bool Success, string? Error)> UpdateAsync(StandardWtsTask updatedModel, string? reason, int currentUserId, string pin, List<string>? gopParts = null)
