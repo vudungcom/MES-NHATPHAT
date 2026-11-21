@@ -191,10 +191,13 @@ public class WtsReportService
         //   mỗi dòng mang Việc (nhóm + mã) + phút CHIA (AllocMin) để bảng theo việc / theo người / theo ngày cộng ĐÚNG bằng tổng trên;
         //   mỗi người-ngày có phút kế hoạch theo ca + "chưa khai báo". Chỉ đọc — không đổi các số tổng cũ ở trên (TotalMinutes / ProductiveMin…).
         //   Nguồn: CLAUDE đề xuất 21/11 (câu B 1–5, Hùng OK 09:46).
+        // [G30-RPT-MAUSO 2026-11-21] % có ích / vô ích / chưa khai báo tính trên GIỜ CHUẨN theo ca mỗi người-ngày (WtsReportDay.BaseMin =
+        //   phút làm + giờ ca chưa khai báo), không còn trên phút đã khai báo; chỉ ngày có dòng WTS; dòng không ghi ca lấy ca từ khoảng nghỉ đã lưu.
+        //   Nguồn: HÙNG 21/11 16:03 (35 phút khai báo không thể là 100%) + 16:10 (chỉ ngày có WTS) + 16:19 "ok làm đi" mockup HH5sobEdA8pFNjGCaDGJKR.
         var taskNames = allWtsTasks.GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First().TaskName ?? "", StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows) SetTask(r, taskNames);
-        var days = await BuildDaysAsync(rows);
+        var days = await BuildDaysAsync(rows, await LoadCoverAfterAsync(dateTo, endDt, workerId));
 
         return new WtsReportResult
         {
@@ -253,9 +256,29 @@ public class WtsReportService
     //   Σ phút chia dòng có ích = phút có ích người-ngày, Σ dòng vô ích = phút vô ích (câu B2 Hùng OK 21/11).
     //   Kế hoạch: ca của ngày = ca có nhiều phút nhất trên các dòng sản xuất hôm đó (dòng Việc không ra SP không lưu ca); khung ca trừ giờ nghỉ
     //   HIỆN TẠI của ca. Chưa khai báo = phút kế hoạch không có dòng nào phủ. Ngày không có ca → null (hiện "—") (câu B1 Hùng OK 21/11).
-    async Task<List<WtsReportDay>> BuildDaysAsync(List<WtsReportRow> rows)
+    /// <summary>[G30-RPT-MAUSO] rà độc lập 21/11 (Cao 1): dòng bắt đầu SAU ngày cuối kỳ (tới 24h sau) — CHỈ dùng để phủ "chưa khai báo" của ca qua
+    ///   đêm ngày cuối kỳ (không vào bảng, không vào số tổng). Trước: phần ca sau 0h của ngày cuối kỳ thành "chưa khai báo" giả → % có ích tụt
+    ///   (xem 1 Ngày ca đêm luôn sai, khác thanh của ngày đó ở xem Tuần).</summary>
+    async Task<List<WtsReportRow>> LoadCoverAfterAsync(DateOnly dateTo, DateTime endDt, int? workerId)
     {
-        var caIds = rows.Where(r => r.CaId != null).Select(r => r.CaId!.Value).Distinct().ToList();
+        var lim = endDt.AddDays(1);
+        var pq = _db.WtsProductionLogs.Where(x => !x.IsVoided && x.StartTime > endDt && x.StartTime <= lim);
+        if (workerId.HasValue) pq = pq.Where(x => x.WorkerId == workerId.Value);
+        var p = await pq.AsNoTracking().Select(x => new { x.WtsLogId, x.WorkerId, x.StartTime, x.EndTime }).ToListAsync();
+        var aq = _db.WorkerActivityLogs.Where(x => !x.IsVoided && x.WorkDate > dateTo && x.StartTime <= lim);
+        if (workerId.HasValue) aq = aq.Where(x => x.WorkerId == workerId.Value);
+        var a = await aq.AsNoTracking().Select(x => new { x.ActivityLogId, x.WorkerId, x.StartTime, x.EndTime }).ToListAsync();
+        var bw = await WorkMinutesStore.ForWtsAsync(_db, p.Select(x => x.WtsLogId));
+        var ba = await WorkMinutesStore.ForActivityAsync(_db, a.Select(x => x.ActivityLogId));
+        return p.Select(x => new WtsReportRow { WorkerId = x.WorkerId, StartTime = x.StartTime, EndTime = x.EndTime, Breaks = WorkMinutesStore.Get(bw, x.WtsLogId).ToList() })
+            .Concat(a.Select(x => new WtsReportRow { WorkerId = x.WorkerId, StartTime = x.StartTime, EndTime = x.EndTime, Breaks = WorkMinutesStore.Get(ba, x.ActivityLogId).ToList() }))
+            .ToList();
+    }
+
+    async Task<List<WtsReportDay>> BuildDaysAsync(List<WtsReportRow> rows, List<WtsReportRow> coverAfter)
+    {
+        // [G30-RPT-MAUSO] ca của dòng việc không ra SP (dòng này không lưu ca) = ca của khoảng nghỉ ĐÃ LƯU dòng chạm (câu a — Hùng 21/11 16:10 không phản đối đề xuất)
+        var caIds = rows.Select(r => r.CaId ?? BreakCaOf(r)).Where(c => c != null).Select(c => c!.Value).Distinct().ToList();
         var cas = caIds.Count == 0 ? new List<CaLamViec>()
             : await _db.CaLamViecs.Include(c => c.NghiGiaiLaos).AsNoTracking().Where(c => caIds.Contains(c.CaId)).ToListAsync();
         var caMap = cas.ToDictionary(c => c.CaId);
@@ -263,8 +286,8 @@ public class WtsReportService
         // [G29-RPT] rà độc lập 21/11 (Cao 1, Trung 3): phần phủ của "chưa khai báo" lấy MỌI dòng của người đó chạm khung ca (cả dòng xếp sang ngày
         //   khác — ca qua đêm: dòng sau 0h đang xếp theo ngày giờ bắt đầu, câu RPT-1 chờ khách); kế hoạch trừ thêm khoảng nghỉ ĐÃ LƯU của các dòng
         //   (ca đổi giờ nghỉ sau khi lưu không sinh "chưa khai báo" giả).
-        var ivByRow = rows.ToDictionary(r => r, RowWorkIv);
-        var byWorker = rows.GroupBy(r => r.WorkerId).ToDictionary(g => g.Key, g => g.ToList());
+        var ivByRow = rows.Concat(coverAfter).ToDictionary(r => r, RowWorkIv);
+        var byWorker = rows.Concat(coverAfter).GroupBy(r => r.WorkerId).ToDictionary(g => g.Key, g => g.ToList());   // [G30-RPT-MAUSO] + dòng sau kỳ (chỉ phủ)
         foreach (var g in rows.GroupBy(r => (r.WorkerId, r.WorkDate)).OrderBy(g => g.Key.WorkDate).ThenBy(g => g.First().WorkerName))
         {
             var list = g.ToList();
@@ -276,12 +299,21 @@ public class WtsReportService
             {
                 WorkerId = g.Key.WorkerId, WorkerName = list[0].WorkerName, Day = g.Key.WorkDate,
                 WorkMin = all.Work, ProductiveMin = Math.Min(pro.Work, all.Work), WasteMin = all.Work - Math.Min(pro.Work, all.Work),
+                BreakWorkedMin = all.Worked,
             };
             var caId = list.Where(r => r.CaId != null).GroupBy(r => r.CaId!.Value)
                 .Select(x => (Id: x.Key, Min: x.Sum(r => r.Minutes))).OrderByDescending(x => x.Min).ThenBy(x => x.Id).Select(x => (int?)x.Id).FirstOrDefault();
+            // [G30-RPT-MAUSO] không có dòng sản xuất ghi ca → lấy ca từ khoảng nghỉ đã lưu của các dòng (dòng việc không ra SP); vẫn không có → "không rõ ca"
+            //   rà độc lập 21/11 (Thấp 3): cùng cách ca chính — ca nhiều PHÚT nhất (trước: nhiều dòng nhất)
+            caId ??= list.Select(r => (Ca: BreakCaOf(r), r.Minutes)).Where(x => x.Ca != null).GroupBy(x => x.Ca!.Value)
+                .Select(x => (Id: x.Key, Min: x.Sum(y => y.Minutes))).OrderByDescending(x => x.Min).ThenBy(x => x.Id).Select(x => (int?)x.Id).FirstOrDefault();
             // ca qua đêm mà mọi dòng sản xuất của ca đó trong nhóm bắt đầu sau 0h (trước giờ kết thúc ca) = đuôi ca của hôm trước → không tính kế hoạch lần 2
             var tail = caId != null && caMap.TryGetValue(caId.Value, out var ca0) && ca0.IsOvernight
-                && list.Where(r => r.CaId == caId).All(r => TimeOnly.FromDateTime(r.StartTime) < ca0.GioKetThuc);
+                && list.Where(r => (r.CaId ?? BreakCaOf(r)) == caId).All(r => TimeOnly.FromDateTime(r.StartTime) < ca0.GioKetThuc);
+            if (tail && caMap.TryGetValue(caId!.Value, out var caT))
+            {   // [G30-RPT-MAUSO] rà độc lập 21/11 (Trung 2): đuôi ca đêm hôm trước — ca đã biết (giờ ca nằm ở kế hoạch hôm trước), KHÔNG phải "không rõ ca"
+                d.IsTail = true; d.CaId = caT.CaId; d.CaName = caT.TenCa; d.CaLabel = caT.Label;
+            }
             if (!tail && caId != null && caMap.TryGetValue(caId.Value, out var ca))
             {
                 var s = g.Key.WorkDate.ToDateTime(ca.GioBatDau);
@@ -301,10 +333,14 @@ public class WtsReportService
                     d.Breaks = WorkMinutes.BreakSegments(ca, s, e).Select(b => (b.Start, b.End)).ToList();
                 }
             }
+            d.BaseMin = d.WorkMin + (d.UnaccountedMin ?? 0);   // [G30-RPT-MAUSO] giờ chuẩn = phút làm (đã gồm làm thông nghỉ + làm ngoài ca) + giờ ca chưa khai báo
             res.Add(d);
         }
         return res;
     }
+
+    /// <summary>[G30-RPT-MAUSO] Ca của 1 dòng theo khoảng nghỉ đã lưu (WtsBreakWorkLogs.CaId) — dùng khi dòng không có CaId (việc không ra SP).</summary>
+    static int? BreakCaOf(WtsReportRow r) => (r.Breaks ?? new()).Select(b => b.CaId).FirstOrDefault(c => c != null);
 
     /// <summary>[G29-RPT] Tập phút làm của 1 dòng (cùng cách WorkMinutes.Day): ngoài khoảng nghỉ dòng chạm + khúc làm thông.</summary>
     static List<(DateTime S, DateTime E)> RowWorkIv(WtsReportRow r)
@@ -495,6 +531,13 @@ public class WtsReportDay
     public DateTime? PlanStart      { get; set; }
     public DateTime? PlanEnd        { get; set; }
     public List<(DateTime S, DateTime E)> Breaks { get; set; } = new();
+    /// <summary>[G30-RPT-MAUSO] Ngày chỉ là đuôi ca qua đêm của hôm trước (dòng sau 0h): có ca, không kế hoạch riêng (giờ ca tính ở hôm trước).</summary>
+    public bool      IsTail         { get; set; }
+    /// <summary>[G30-RPT-MAUSO] Phút làm thông nghỉ trong ngày (đã nằm trong WorkMin).</summary>
+    public int       BreakWorkedMin { get; set; }
+    /// <summary>[G30-RPT-MAUSO] Giờ chuẩn = WorkMin + UnaccountedMin (= giờ ca − nghỉ + làm thông nghỉ + làm ngoài ca). Không rõ ca → = WorkMin.
+    ///   Mẫu số của mọi % có ích / vô ích / chưa khai báo. Chỉ ngày có dòng WTS (Hùng 21/11 16:10: ngày không có WTS bỏ, không cần lịch nghỉ).</summary>
+    public int       BaseMin        { get; set; }
 }
 
 public class WtsReportResult

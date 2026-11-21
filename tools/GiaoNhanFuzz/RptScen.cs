@@ -8,6 +8,11 @@
 //                      người đứng máy = đếm từng phút; Chạy + Dừng + Rảnh = kế hoạch (khung − nghỉ), % trên kế hoạch.
 //   P4 [HSM-QUYEN][RPT-4] không quyền → rỗng; khoảng > 93 ngày / Từ > Đến → lời báo.
 //   Nguồn: HÙNG 21/11 09:46 OK mockup WTS Report + Hiệu suất máy (câu B theo đề xuất CLAUDE).
+//   [G30-SCEN 2026-11-21] P1 / P2 thêm giờ chuẩn BaseMin (= phút làm + chưa khai báo) + phút làm thông nghỉ của người-ngày; P2 ca dòng việc không ra SP
+//   lấy từ khoảng nghỉ đã lưu; P1c [G30-RPT-MAUSO] đáp án tính tay: ngày chỉ có việc không ra SP chạm nghỉ ca → có ca, giờ chuẩn 480;
+//   không chạm nghỉ → không rõ ca, giờ chuẩn = phút khai báo; làm thông nghỉ 60 → giờ chuẩn 540 (> ca 480), % không vượt 100.
+//   P1d [G30-RPT-MAUSO] rà độc lập 21/11: ca đêm ngày CUỐI kỳ — dòng sau 0h (ngoài kỳ) vẫn phủ chưa khai báo; ngày đuôi ca đêm = có ca (IsTail), không "không rõ ca".
+//   Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19 "ok làm đi".
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
@@ -72,7 +77,7 @@ public static class RptScen
 
     public static async Task<int> Run()
     {
-        await P1(); await P1b(); await P2(); await P3(); await P4();
+        await P1(); await P1b(); await P1c(); await P1d(); await P2(); await P3(); await P4();
         Console.WriteLine($"Tổng phép kiểm: {checks}");
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
@@ -113,10 +118,70 @@ public static class RptScen
         Say(dB1.WorkMin == 240 && dB1.ProductiveMin == 210 && dB1.WasteMin == 30 && dB1.UnaccountedMin == 240, "P1 B1: 240 / 210 / 30, chưa khai báo 240",
             $"{dB1.WorkMin}/{dB1.ProductiveMin}/{dB1.WasteMin} ckb {dB1.UnaccountedMin}");
         Say(dA2.WorkMin == 480 && dA2.UnaccountedMin == 0 && res.Days.Count == 3, "P1 A2: 480, chưa khai báo 0; 3 người-ngày", $"{dA2.WorkMin}/{dA2.UnaccountedMin} n {res.Days.Count}");
+        Say(dA1.BaseMin == 480 && dB1.BaseMin == 480 && dA2.BaseMin == 480, "P1 [G30] giờ chuẩn mỗi người-ngày = 480 (A1 330 + 150, B1 240 + 240, A2 480 + 0)",
+            $"{dA1.BaseMin}/{dB1.BaseMin}/{dA2.BaseMin}");
         var hl = res.Rows.Where(x => x.WorkerId == 2 && x.TaskKey == "GC|serial").ToList();
         Say(hl.Count == 4 && hl.Sum(x => x.AllocMin) == 660 && hl.All(x => x.TaskLabel == "Gia công · Hàng loạt") && res.Rows.Count(x => x.TaskKey == "GC|trial") == 1
             && res.Rows.First(x => x.ActivityLogId == a1.ActivityLogId).TaskKey == "ACT|HOP29" && res.Rows.First(x => x.ActivityLogId == a1.ActivityLogId).GroupLabel == "Việc không ra SP",
             "P1 việc: A Hàng loạt 4 dòng 660; Chạy thử 1 dòng; HOP29 nhóm Việc không ra SP", $"{hl.Count}/{hl.Sum(x => x.AllocMin)}");
+    }
+
+    // ── P1c [G30-RPT-MAUSO] giờ chuẩn theo ca: ca từ nghỉ đã lưu, không rõ ca, làm thông nghỉ ──────────────────────
+    static async Task P1c()
+    {
+        Console.WriteLine("[P1c] G30-RPT-MAUSO — giờ chuẩn theo ca (đáp án tính tay)");
+        var db = await WtsScen.SeedAsync();
+        AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
+        Task(db, "SUA30", true); Task(db, "HOP30", false);
+        A(db, 4, "SUA30", D1.AddHours(8), D1.AddHours(13), 9);              // chỉ việc không ra SP, chạm nghỉ trưa (đã lưu ca 9) → làm 08–12 = 240
+        A(db, 5, "HOP30", D1.AddHours(9), D1.AddHours(10), 9);              // không chạm nghỉ → không có khoảng nghỉ đã lưu → không rõ ca
+        P(db, 2, "M30", "serial", D1.AddHours(8), D1.AddHours(17), 80, 0, "NC01", 9, 60);   // làm thông nghỉ trưa 60
+        AddCa(db, 7, new TimeOnly(7, 0), new TimeOnly(16, 0), (11, 0, 12, 0));
+        A(db, 3, "SUA30", D1.AddHours(7), D1.AddHours(12), 7);              // ca 7 CHỈ có trên dòng việc không ra SP (không dòng sản xuất nào trong kỳ dùng) → vẫn nạp ca
+        db.Fixup();
+        var res = await new WtsReportService(db).GetReportAsync(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1), null, 1);
+        WtsReportDay Dd(int w) => res.Days.First(d => d.WorkerId == w);
+        var a = Dd(4); var b = Dd(5); var c = Dd(2); var e = Dd(3);
+        Say(a.CaId == 9 && a.WorkMin == 240 && a.PlanMin == 480 && a.UnaccountedMin == 240 && a.BaseMin == 480,
+            "P1c chỉ việc không ra SP chạm nghỉ: ca lấy từ nghỉ đã lưu → kế hoạch 480, chưa khai báo 240, giờ chuẩn 480 (trước: không ca)",
+            $"ca {a.CaId} làm {a.WorkMin} kh {a.PlanMin} ckb {a.UnaccountedMin} chuẩn {a.BaseMin}");
+        Say(e.CaId == 7 && e.WorkMin == 240 && e.PlanMin == 480 && e.UnaccountedMin == 240 && e.BaseMin == 480,
+            "P1c ca chỉ có trên dòng việc không ra SP (07–16, nghỉ 11–12): vẫn nạp ca → kế hoạch 480, chưa khai báo 240, giờ chuẩn 480",
+            $"ca {e.CaId} làm {e.WorkMin} kh {e.PlanMin} ckb {e.UnaccountedMin} chuẩn {e.BaseMin}");
+        A(db, 3, "SUA30", D2.AddHours(7), D2.AddHours(12), 7);                                   // 240 phút, nghỉ ca 7
+        A(db, 3, "HOP30", D2.AddHours(11) + TimeSpan.FromMinutes(55), D2.AddHours(12) + TimeSpan.FromMinutes(5), 9);   // 2 dòng ngắn chạm nghỉ ca 9
+        A(db, 3, "HOP30", D2.AddHours(12) + TimeSpan.FromMinutes(55), D2.AddHours(13) + TimeSpan.FromMinutes(5), 9);
+        db.Fixup();
+        var r2 = await new WtsReportService(db).GetReportAsync(DateOnly.FromDateTime(D2), DateOnly.FromDateTime(D2), null, 1);
+        var f = r2.Days.First(d => d.WorkerId == 3);
+        Say(f.CaId == 7, "P1c ca dự phòng theo PHÚT (1 dòng 240 phút ca 7 thắng 2 dòng ngắn ca 9; rà độc lập Thấp 3)", $"ca {f.CaId}");
+        Say(b.CaId == null && b.PlanMin == null && b.UnaccountedMin == null && b.WorkMin == 60 && b.BaseMin == 60,
+            "P1c không chạm nghỉ → không rõ ca: giờ chuẩn = phút khai báo 60", $"ca {b.CaId} kh {b.PlanMin} ckb {b.UnaccountedMin} chuẩn {b.BaseMin}");
+        Say(c.WorkMin == 540 && c.PlanMin == 480 && c.UnaccountedMin == 0 && c.BaseMin == 540 && c.BreakWorkedMin == 60 && c.ProductiveMin <= c.BaseMin,
+            "P1c làm thông nghỉ 60: làm 540, kế hoạch 480, chưa khai báo 0 → giờ chuẩn 540, có ích 540 = 100% (không vượt)",
+            $"làm {c.WorkMin} kh {c.PlanMin} ckb {c.UnaccountedMin} chuẩn {c.BaseMin} thông {c.BreakWorkedMin}");
+    }
+
+    // ── P1d [G30-RPT-MAUSO] ca đêm ngày cuối kỳ + ngày đuôi ca ───────────────────────────────────────────────
+    static async Task P1d()
+    {
+        Console.WriteLine("[P1d] G30-RPT-MAUSO — ca đêm 22:00–06:00 ở ngày cuối kỳ; ngày đuôi ca đêm");
+        var db = await WtsScen.SeedAsync();
+        AddCa(db, 6, new TimeOnly(22, 0), new TimeOnly(6, 0));
+        P(db, 2, "M31", "serial", D1.AddHours(22), D2.AddHours(2), 10, 0, "NC01", 6);   // ngày 1 22:00 → 02:00 (240)
+        P(db, 2, "M31", "serial", D2.AddHours(2), D2.AddHours(6), 10, 0, "NC01", 6);    // bắt đầu ngày 2 02:00 → 06:00 (240)
+        db.Fixup();
+        var svc = new WtsReportService(db);
+        var one = await svc.GetReportAsync(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1), null, 1);
+        var d1 = one.Days.Single();
+        Say(one.Rows.Count == 1 && d1.WorkMin == 240 && d1.PlanMin == 480 && d1.UnaccountedMin == 0 && d1.BaseMin == 240,
+            "P1d xem riêng ngày 1 (cuối kỳ): dòng 02–06 ngày 2 (ngoài kỳ) vẫn phủ → chưa khai báo 0, giờ chuẩn 240 = 100% (trước: chưa khai báo 240 giả)",
+            $"dòng {one.Rows.Count} làm {d1.WorkMin} kh {d1.PlanMin} ckb {d1.UnaccountedMin} chuẩn {d1.BaseMin}");
+        var two = await svc.GetReportAsync(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D2), null, 1);
+        var a = two.Days.First(d => d.Day == DateOnly.FromDateTime(D1)); var b = two.Days.First(d => d.Day == DateOnly.FromDateTime(D2));
+        Say(a.UnaccountedMin == 0 && a.BaseMin == 240 && b.IsTail && b.CaId == 6 && b.UnaccountedMin == null && b.BaseMin == 240 && !a.IsTail,
+            "P1d xem 2 ngày: ngày 1 giống xem riêng (chưa KB 0); ngày 2 = đuôi ca đêm (có ca 6, không kế hoạch riêng), giờ chuẩn 240",
+            $"D1 ckb {a.UnaccountedMin} chuẩn {a.BaseMin} · D2 đuôi {b.IsTail} ca {b.CaId} ckb {b.UnaccountedMin} chuẩn {b.BaseMin}");
     }
 
     // ── P1b rà độc lập 21/11: ca đêm (dòng sau 0h) + ca đổi giờ nghỉ sau khi lưu ─────────────────────────────
@@ -210,6 +275,7 @@ public static class RptScen
             foreach (var g in res.Rows.GroupBy(r => (r.WorkerId, r.WorkDate)))
             {
                 var mins = new Dictionary<DateTime, (bool any, bool pro)>();
+                var normal = new HashSet<DateTime>();   // [G30] phút ngoài nghỉ của ít nhất 1 dòng → làm thông nghỉ = phút làm − phút ngoài nghỉ
                 var own = new Dictionary<WtsReportRow, int>();
                 foreach (var r in g)
                 {
@@ -224,6 +290,7 @@ public static class RptScen
                             if (b.WorkedMin > 0 && m >= cs && m < cs.AddMinutes(b.WorkedMin) && m < b.BreakEnd && m < r.EndTime) inChunk = true;
                         }
                         if (inBrk && !inChunk) continue;
+                        if (!inBrk) normal.Add(m);
                         c++;
                         mins.TryGetValue(m, out var v);
                         mins[m] = (true, v.pro || r.IsProductiveTask);
@@ -237,12 +304,15 @@ public static class RptScen
                 Ok(g.All(r => r.AllocMin >= 0 && r.AllocMin <= own[r]), $"P2 r{round} mỗi dòng 0 ≤ chia ≤ phút làm của dòng", string.Join(",", g.Select(r => $"{r.AllocMin}/{own[r]}")));
                 var d = res.Days.FirstOrDefault(x => x.WorkerId == g.Key.WorkerId && x.Day == g.Key.WorkDate);
                 Ok(d != null && d.WorkMin == dAll && d.ProductiveMin == dPro && d.WasteMin == dAll - dPro, $"P2 r{round} người-ngày {g.Key.WorkerId} {g.Key.WorkDate}: số ngày = đếm phút");
-                // kế hoạch / chưa khai báo: ca = ca nhiều phút nhất trên dòng sản xuất
+                Ok(d != null && d.BreakWorkedMin == dAll - normal.Count, $"P2 r{round} [G30] làm thông nghỉ người-ngày = đếm phút {dAll - normal.Count}", $"{d?.BreakWorkedMin}");
+                // kế hoạch / chưa khai báo: ca = ca nhiều phút nhất trên dòng sản xuất; [G30] không có → ca khoảng nghỉ đã lưu nhiều dòng nhất
                 var caId = g.Where(r => r.CaId != null).GroupBy(r => r.CaId!.Value).Select(x => (x.Key, x.Sum(r => r.Minutes))).OrderByDescending(x => x.Item2).ThenBy(x => x.Key).Select(x => (int?)x.Key).FirstOrDefault();
-                if (caId == null) { Ok(d?.PlanMin == null && d?.UnaccountedMin == null, $"P2 r{round} không ca → kế hoạch / chưa khai báo trống"); continue; }
+                int? BrkCa(WtsReportRow r) => r.Breaks.Select(b => b.CaId).FirstOrDefault(c => c != null);
+                caId ??= g.Where(r => BrkCa(r) != null).GroupBy(r => BrkCa(r)!.Value).Select(x => (x.Key, x.Sum(r => r.Minutes))).OrderByDescending(x => x.Item2).ThenBy(x => x.Key).Select(x => (int?)x.Key).FirstOrDefault();
+                if (caId == null) { Ok(d?.PlanMin == null && d?.UnaccountedMin == null && d?.BaseMin == dAll, $"P2 r{round} không ca → kế hoạch / chưa khai báo trống, giờ chuẩn = phút làm"); continue; }
                 var caE = db.CaLamViecs.List.First(c => c.CaId == caId);
-                if (caE.IsOvernight && g.Where(r => r.CaId == caId).All(r => TimeOnly.FromDateTime(r.StartTime) < caE.GioKetThuc))
-                { Ok(d?.PlanMin == null, $"P2 r{round} đuôi ca đêm (dòng sau 0h) → không tính kế hoạch lần 2", $"{d?.PlanMin}"); continue; }
+                if (caE.IsOvernight && g.Where(r => (r.CaId ?? BrkCa(r)) == caId).All(r => TimeOnly.FromDateTime(r.StartTime) < caE.GioKetThuc))
+                { Ok(d?.PlanMin == null && d?.BaseMin == dAll && d?.IsTail == true && d?.CaId == caId, $"P2 r{round} đuôi ca đêm (dòng sau 0h) → không tính kế hoạch lần 2, giờ chuẩn = phút làm, có ca (đuôi)", $"{d?.PlanMin}/{d?.BaseMin}/{d?.IsTail}"); continue; }
                 var ws = g.Key.WorkDate.ToDateTime(caE.GioBatDau); var we = (caE.IsOvernight ? g.Key.WorkDate.AddDays(1) : g.Key.WorkDate).ToDateTime(caE.GioKetThuc);
                 var brks = WorkMinutes.BreakSegments(caE, ws, we);
                 var saved = res.Rows.Where(r => r.WorkerId == g.Key.WorkerId && r.StartTime < we && r.EndTime > ws).SelectMany(r => r.Breaks).ToList();
@@ -252,7 +322,9 @@ public static class RptScen
                     if (brks.Any(b => m >= b.Start && m < b.End) || saved.Any(b => m >= b.BreakStart && m < b.BreakEnd)) continue;
                     plan++; if (!wMins[g.Key.WorkerId].Contains(m)) gap++;
                 }
+                Ok(!d!.IsTail && d.CaId == caId, $"P2 r{round} ngày có kế hoạch: ca {caId}, không phải đuôi", $"{d.CaId}/{d.IsTail}");
                 Ok(d!.PlanMin == plan && d.UnaccountedMin == gap, $"P2 r{round} ca {caId}: kế hoạch {plan}, chưa khai báo {gap}", $"{d.PlanMin}/{d.UnaccountedMin}");
+                Ok(d.BaseMin == dAll + gap && d.ProductiveMin <= d.BaseMin, $"P2 r{round} [G30] giờ chuẩn = làm {dAll} + chưa khai báo {gap}", $"{d.BaseMin}");
             }
             Ok(res.TotalMinutes == totAll && res.ProductiveMin == totPro, $"P2 r{round} tổng cũ (TotalMinutes / ProductiveMin) = đếm phút", $"{res.TotalMinutes}/{totAll} {res.ProductiveMin}/{totPro}");
         }

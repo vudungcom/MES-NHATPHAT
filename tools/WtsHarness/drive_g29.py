@@ -20,6 +20,10 @@
 #   STEP M3 [G29-HSM-KY]    bấm M29B: Các lần dừng "Kẹt dao" 60; Ai đứng máy A 360, B 210
 #   STEP M4 [G29-HSM-MAUSO] về tất cả, bấm ô M29A ngày 1 → trang Ngày đúng ngày, ca G29; M29A 37.5% (180/480 — trước: 180/540 = 33.3%)
 #   Bản cũ (HEAD bdc3fd9): không có tab mới / nút Tuần → SAI là đúng.
+#   [G30-RPT-MAUSO 21/11] % trên GIỜ CHUẨN theo ca (= làm + chưa khai báo): tuần 1.050 + 390 = 1.440; A 780 / 960 = 81,3 %, B 210 / 480 = 43,8 %
+#     (trước 96,3 % / 87,5 % trên phút khai báo); A riêng 960; ngày 1 A 480 → 300 / 480 = 62,5 %. Ô số đầu = "Giờ chuẩn (theo ca)".
+#     STEP R6 [G30-RPT-MAUSO] nút Năm → "Năm yyyy", A / B giữ 81,3 % / 43,8 %. Bản Gói 29 (e92bf01): R1 / R2 / R4 / R6 SAI đúng chỗ đổi.
+#     Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19.
 # Chạy trên harness VỪA khởi động: python3 drive_g29.py <port> <nhãn>
 import sys, asyncio, json, re, urllib.request, datetime
 from playwright.async_api import async_playwright
@@ -51,17 +55,25 @@ async def main():
             print("STEP R1 G29-RPT — tất cả công nhân, tuần này")
             await pg.click("button:has-text('WTS Report')"); await pg.wait_for_timeout(2500)
             k = await kpis(pg)
-            ok(k == ["1.050", "990", "60", "390", "251 / 1"], "R1 ô số tuần: 1.050 / 990 / 60 / 390 / 251 / 1", k)
+            ok(k == ["1.440", "990", "60", "390", "251 / 1"], "R1 ô số tuần: giờ chuẩn 1.440 (1.050 + 390) / 990 / 60 / 390 / 251 / 1", k)
             body = await pg.locator("body").inner_text()
             ia = body.find("Công nhân A29"); ib = body.find("Công nhân B29")
             ok(0 <= ib < ia, "R1 bảng người: B29 (thấp hơn) đứng trước A29", (ia, ib))
-            ok("87,5%" in body and "96,3%" in body, "R1 % có ích B 87,5% · A 96,3%", body[:500])
+            ok("43,8%" in body and "81,3%" in body and "87,5%" not in body and "96,3%" not in body, "R1 [G30] % có ích trên giờ chuẩn: B 43,8% · A 81,3% (không còn 87,5 / 96,3)", body[:500])
+            ok("Giờ chuẩn (theo ca)" in body and "Vô ích đã khai báo" in body and "Không rõ ca" not in body, "R1 [G30] ô Giờ chuẩn + chú thích 3 phần, không người nào 'Không rõ ca'", body[:600])
             await pg.screenshot(path=f"{OUT}_g29_r1.png", full_page=True)
 
             print("STEP R2 G29-RPT — chọn Công nhân A29")
             await pg.fill("#rptWorker", "Công nhân A29"); await pg.locator("#rptWorker").dispatch_event("change"); await pg.wait_for_timeout(1500)
             k = await kpis(pg)
-            ok(k[:4] == ["810", "780", "30", "150"], "R2 ô số A29: 810 / 780 / 30 / 150", k)
+            ok(k[:4] == ["960", "780", "30", "150"], "R2 ô số A29: giờ chuẩn 960 (810 + 150) / 780 / 30 / 150", k)
+            b2 = await pg.locator("body").inner_text()
+            ok("81,3%" in b2 and "Tổng = giờ chuẩn" in b2 and "Giờ ca không có dòng WTS" in b2, "R2 [G30] A 81,3%; bảng theo việc có dòng Chưa KB + Tổng = giờ chuẩn", b2[b2.find("Theo việc"):b2.find("Theo việc") + 700])
+            bars = await pg.locator("button:has-text('/ 480')").all_inner_texts()
+            b1 = [x for x in bars if "300 · 30 · 150 / 480" in x]
+            ok(len(b1) == 1 and "62,5%" in b1[0], "R2 [G30] thanh từng ngày: ngày 1 300 · 30 · 150 / 480 → 62,5% (trước 90,9% trên khai báo)", bars)
+            hd = [x for x in await pg.locator("div.rounded.border.small").all_inner_texts() if "khai báo 330" in x]
+            ok(len(hd) == 1 and "chuẩn 480" in hd[0] and "chưa KB 150" in hd[0] and "62,5%" in hd[0], "R2 [G30] đầu nhóm ngày 1 chi tiết: chuẩn 480, chưa KB 150, 62,5%", hd)
             body = await pg.locator("body").inner_text()
             def has_row(lbl, mins):
                 return re.search(re.escape(lbl) + r"[^\n]*\n?[^\n]*?\b" + mins + r"\b", body) is not None
@@ -83,7 +95,8 @@ async def main():
             await pg.locator("button", has_text=lbl).first.click(); await pg.wait_for_timeout(2500)
             k = await kpis(pg)
             body = await pg.locator("body").inner_text()
-            ok(k[:4] == ["330", "300", "30", "150"] and "Dòng thời gian trong ngày" in body, "R4 ngày 1: 330 / 300 / 30 / 150 + dòng thời gian", (k, body[:300]))
+            ok(k[:4] == ["480", "300", "30", "150"] and "Dòng thời gian trong ngày" in body, "R4 ngày 1: giờ chuẩn 480 / 300 / 30 / 150 + dòng thời gian", (k, body[:300]))
+            ok("62,5%" in body, "R4 [G30] ngày 1 có ích 300 / 480 = 62,5%", body[:800])
             ok(await pg.locator("div.position-absolute[title*='Hàng loạt']").count() >= 2, "R4 dòng thời gian có khối Hàng loạt")
             await pg.screenshot(path=f"{OUT}_g29_r4.png", full_page=True)
 
@@ -95,6 +108,13 @@ async def main():
             ok(k[2] == "30" and k[0] == "30", "R5 tìm HOP29: vô ích 30 (HOP29 của B chồng sản xuất = 0)", k)
             n = await pg.locator("div.border.rounded", has=pg.locator("div.fw-semibold", has_text="Dòng khớp tìm nhanh")).locator("tbody tr").count()
             ok(n == 2, "R5 bảng Dòng khớp tìm nhanh: 2 dòng", n)
+            await pg.fill("#rptSearch", ""); await pg.wait_for_timeout(1000)
+
+            print("STEP R6 G30-RPT-MAUSO — nút Năm")
+            await pg.click("button:has-text('Năm')"); await pg.wait_for_timeout(2500)
+            body = await pg.locator("body").inner_text()
+            ok(f"Năm {mon.year}" in body and "43,8%" in body and "81,3%" in body, "R6 Năm: nhãn Năm + A 81,3% / B 43,8%", body[:600])
+            await pg.screenshot(path=f"{OUT}_g30_r6.png", full_page=True)
         except Exception as e:
             ok(False, "R! lỗi khi bấm", repr(e)); await pg.screenshot(path=f"{OUT}_g29_rerr.png", full_page=True)
 

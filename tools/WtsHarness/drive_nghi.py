@@ -118,7 +118,9 @@ async def main():
         if await pg.locator("button:has-text('Bảng phụ')").count(): await pg.click("button:has-text('Bảng phụ')"); await pg.wait_for_timeout(800)
         body = await pg.locator("body").inner_text()
         await pg.screenshot(path=f"{OUT}_nghi_d6.png", full_page=True)
-        ok(("Phút làm đã khai báo" in body or "Tổng phút làm" in body) and "Làm thông nghỉ (phút)" in body, "báo cáo có thẻ phút làm + bảng Làm thông nghỉ", body[:300])
+        # [G30-RPT-MAUSO 21/11] đáp án đổi: ô đầu = "Giờ chuẩn (theo ca)", dòng phụ ghi "khai báo …" + "làm thông nghỉ …" (phút làm thông nghỉ nằm trong giờ chuẩn)
+        ok("Giờ chuẩn (theo ca)" in body and "khai báo" in body and "làm thông nghỉ" in body and "Làm thông nghỉ (phút)" in body,
+           "báo cáo có ô Giờ chuẩn (dòng phụ: khai báo + làm thông nghỉ) + bảng Làm thông nghỉ", body[:400])
         await pg.close()
 
         print("[D7] HTSP nhóm 2 dòng 11:30–13:30 qua trưa, tích làm thông 40 → chia khúc 12:00–12:40 cho dòng con theo thứ tự thời gian")
