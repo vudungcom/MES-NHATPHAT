@@ -1,0 +1,491 @@
+@* [G29-HSM-KY 2026-11-21] Hiệu suất máy theo tuần / tháng / tự chọn — mockup https://claude.ai/artifact/CeAoFry7m7H8wT5z6PZ1wp (Hùng 21/11 09:46 OK):
+   tất cả máy (bảng máy xếp % chạy thấp → cao, máy × ngày, dừng do đâu) → 1 máy (từng ngày, các lần dừng, máy làm hàng gì, ai đứng máy).
+   Số: MachineEfficiencyService.GetPeriodAsync — mỗi ngày tính y trang ngày rồi cộng; % trên phút kế hoạch (khung ca − nghỉ); ngày tính = ngày xưởng
+   có WTS. Chỉ đọc, máy chủ kiểm quyền Xem HIEU_SUAT_MAY. Ô "Tìm nhanh" [G29-TIMNHANH] lọc máy theo số máy / tên / nhóm / loại / PO / Part / NC /
+   người đứng máy / lý do dừng. Bấm ô ngày → mở trang ngày (dòng thời gian cũ) đúng ngày + ca. Nguồn: HÙNG 21/11 08:17 + 09:46; CLAUDE đề xuất câu B1–B4. *@
+@using System.Globalization
+@using MES.Web.Data.Entities
+@using MES.Web.Services
+@inject MachineEfficiencyService EffSvc
+@inject ILogger<MayBaoCaoKy> Logger
+
+<div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
+    <h1 class="mb-1">Hiệu suất máy</h1>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-end gap-3">
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="kyMay">Máy</label>
+                <input id="kyMay" class="form-control form-control-sm" style="width:200px" list="kyMayList" placeholder="-- Tất cả máy --" value="@_machineText" @onchange="OnMachineChange" />
+                @if (_machineNotFound)
+                {
+                    <div class="small text-danger">Không có máy này — đang xem tất cả</div>
+                }
+                <datalist id="kyMayList">
+                    @foreach (var m in MachineOptions())
+                    {
+                        <option value="@m.Label"></option>
+                    }
+                </datalist>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold mb-1" for="kyCa">Ca</label>
+                <select id="kyCa" class="form-select form-select-sm" style="width:230px" @onchange="OnCaChange" disabled="@_loading">
+                    @foreach (var ca in CaList)
+                    {
+                        <option value="@ca.CaId" selected="@(ca.CaId == _caId)">@ca.TenCa (@ca.Label)</option>
+                    }
+                    <option value="-1" selected="@(_caId == -1)">Toàn ngày (00:00–23:59)</option>
+                </select>
+            </div>
+            @if (Mode == "custom")
+            {
+                <div class="d-flex align-items-end gap-2">
+                    <div><label class="form-label small fw-semibold mb-1" for="kyFrom">Từ ngày</label><input id="kyFrom" type="date" class="form-control form-control-sm" @bind="_customFrom" /></div>
+                    <div><label class="form-label small fw-semibold mb-1" for="kyTo">Đến ngày</label><input id="kyTo" type="date" class="form-control form-control-sm" @bind="_customTo" /></div>
+                    <button type="button" class="btn btn-primary btn-sm" @onclick="LoadAsync" disabled="@_loading"><i class="bi bi-search me-1"></i>Xem</button>
+                </div>
+            }
+            else
+            {
+                <div class="d-flex align-items-center gap-1">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Kỳ trước" @onclick="Prev" disabled="@_loading"><i class="bi bi-chevron-left"></i></button>
+                    <span class="fw-semibold px-2">@PeriodLabel</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Kỳ sau" @onclick="Next" disabled="@_loading"><i class="bi bi-chevron-right"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-primary ms-1" @onclick="LoadAsync" disabled="@_loading" title="Tải lại"><i class="bi bi-arrow-clockwise"></i></button>
+                </div>
+            }
+            <div class="ms-auto">
+                <label class="form-label small fw-semibold mb-1" for="kySearch"><i class="bi bi-search me-1"></i>Tìm nhanh</label>
+                <div class="d-flex gap-1">
+                    <input id="kySearch" class="form-control form-control-sm" style="width:260px" placeholder="Máy, PO, Part, người, lý do dừng…" value="@_search" @oninput="OnSearch" />
+                    @if (_search.Length > 0)
+                    {
+                        <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Xoá tìm nhanh" @onclick="ClearSearch"><i class="bi bi-x-lg"></i></button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_error != null)
+{
+    <div class="alert alert-warning my-2">@_error</div>
+}
+@if (_loading)
+{
+    <div class="text-muted small my-2"><span class="spinner-border spinner-border-sm me-1"></span>Đang tải…</div>
+}
+@if (_result != null && !_loading && _error == null)
+{
+    @Breadcrumb()
+    @if (_result.Days.Count == 0)
+    {
+        <div class="text-center py-5 text-muted">Kỳ này xưởng chưa có dòng WTS nào.</div>
+    }
+    else if (_machineId == 0)
+    {
+        @AllView()
+    }
+    else
+    {
+        @OneView()
+    }
+}
+
+@code {
+    [Parameter] public int ViewerUserId { get; set; }
+    /// <summary>week | month | custom (Ngày do trang HieuSuatMay_Index tự vẽ).</summary>
+    [Parameter] public string Mode { get; set; } = "week";
+    [Parameter] public List<CaLamViec> CaList { get; set; } = new();
+    /// <summary>Bấm 1 ngày → trang ngày (ngày, CaId; -1 = toàn ngày).</summary>
+    [Parameter] public EventCallback<(DateOnly Day, int CaId)> OnOpenDay { get; set; }
+    /// <summary>Ca đang chọn ở trang ngày (> 0 CaId, -1 toàn ngày) — mặc định cho báo cáo kỳ (rà độc lập 21/11 L16).</summary>
+    [Parameter] public int InitialCaId { get; set; } = -3;
+    /// <summary>Báo trang cha đang tải / xong (trang cha khoá nút "Xem theo" — không tải chồng trên cùng DbContext).</summary>
+    [Parameter] public EventCallback<bool> OnBusy { get; set; }
+
+    static readonly CultureInfo Vi = CultureInfo.GetCultureInfo("vi-VN");
+    const string CR = "#198754", CD = "#dc3545", CI = "#ced4da";
+
+    string? _loadedMode;
+    DateTime _anchor = DateTime.Today;
+    DateTime _customFrom = DateTime.Today.AddDays(-6);
+    DateTime _customTo = DateTime.Today;
+    int _caId = -3;          // -3 chưa chọn, -1 toàn ngày, > 0 CaId
+    string _search = "";
+    int _machineId;
+    string _machineText = "";
+    bool _machineNotFound;
+    bool _loading;
+    string? _error;
+    MachinePeriodResult? _result;
+    List<MachinePeriodRow> _rows = new();
+
+    DateOnly From => Mode switch
+    {
+        "week" => DateOnly.FromDateTime(_anchor.AddDays(-(((int)_anchor.DayOfWeek + 6) % 7))),
+        "month" => new DateOnly(_anchor.Year, _anchor.Month, 1),
+        _ => DateOnly.FromDateTime(_customFrom),
+    };
+    DateOnly To => Mode switch
+    {
+        "week" => From.AddDays(6),
+        "month" => new DateOnly(_anchor.Year, _anchor.Month, 1).AddMonths(1).AddDays(-1),
+        _ => DateOnly.FromDateTime(_customTo),
+    };
+    string PeriodLabel => Mode switch
+    {
+        "week" => $"Tuần {ISOWeek.GetWeekOfYear(From.ToDateTime(TimeOnly.MinValue))} · {From:dd/MM} – {To:dd/MM/yyyy}",
+        "month" => $"Tháng {From:MM/yyyy}",
+        _ => $"{From:dd/MM} – {To:dd/MM/yyyy}",
+    };
+    CaLamViec? SelCa => CaList.FirstOrDefault(c => c.CaId == _caId);
+    TimeOnly FromTime => SelCa?.GioBatDau ?? new TimeOnly(0, 0);
+    TimeOnly ToTime => SelCa?.GioKetThuc ?? new TimeOnly(23, 59);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_caId == -3) _caId = InitialCaId == -1 || CaList.Any(c => c.CaId == InitialCaId) ? InitialCaId : (CaList.Count > 0 ? CaList[0].CaId : -1);
+        if (_loadedMode != Mode && !_loading)
+        {
+            if (Mode == "custom" && _loadedMode != null) { _customFrom = _anchor.AddDays(-6); _customTo = _anchor; }
+            _loadedMode = Mode;
+            await LoadAsync();
+        }
+    }
+
+    async Task LoadAsync()
+    {
+        if (_loading) return;
+        _loading = true; _error = null; _result = null;
+        await OnBusy.InvokeAsync(true);
+        StateHasChanged();
+        try
+        {
+            var r = await EffSvc.GetPeriodAsync(From, To, FromTime, ToTime, SelCa, ViewerUserId);   // [HSM-QUYEN] máy chủ kiểm quyền Xem
+            if (r.Error != null) { _error = r.Error; return; }
+            _result = r;
+            Recompute();
+        }
+        catch (Exception ex) { _error = UiSafe.Text(ex, Logger, "tải hiệu suất máy theo kỳ"); }   // chỉ đọc
+        finally { _loading = false; await OnBusy.InvokeAsync(false); }
+        if (_loadedMode != Mode && Mode != null) { _loadedMode = Mode; await LoadAsync(); }   // đổi chế độ trong lúc đang tải → tải lại theo chế độ mới
+    }
+
+    void Recompute()
+    {
+        IEnumerable<MachinePeriodRow> q = _result?.Rows ?? new();
+        var s = (_search ?? "").Trim().ToLowerInvariant();
+        if (s.Length > 0)
+        {
+            var parts = s.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            q = q.Where(r => parts.All(p => r.SearchText.Contains(p)));
+        }
+        _rows = q.OrderBy(r => r.PlanMinutes <= 0 ? 101 : r.RunPct).ThenBy(r => r.Machine.SoMay).ToList();
+    }
+    void OnSearch(ChangeEventArgs e) { _search = e.Value?.ToString() ?? ""; Recompute(); }
+    void ClearSearch() { _search = ""; Recompute(); }
+    async Task OnCaChange(ChangeEventArgs e) { if (_loading) return; if (int.TryParse(e.Value?.ToString(), out var id)) { _caId = id; await LoadAsync(); } }
+    async Task Prev() { if (_loading) return; _anchor = Mode == "month" ? _anchor.AddMonths(-1) : _anchor.AddDays(-7); await LoadAsync(); }
+    async Task Next() { if (_loading) return; _anchor = Mode == "month" ? _anchor.AddMonths(1) : _anchor.AddDays(7); await LoadAsync(); }
+
+    List<(int Id, string Label)> MachineOptions()
+        => (_result?.Rows ?? new()).Select(r => (r.Machine.ThietBiId, string.IsNullOrWhiteSpace(r.Machine.TenMay) ? r.Machine.SoMay : $"{r.Machine.SoMay} — {r.Machine.TenMay}"))
+           .OrderBy(x => x.Item2).ToList();
+    void OnMachineChange(ChangeEventArgs e)
+    {
+        _machineText = (e.Value?.ToString() ?? "").Trim();
+        var hit = MachineOptions().FirstOrDefault(x => string.Equals(x.Label, _machineText, StringComparison.OrdinalIgnoreCase));
+        if (hit.Id == 0) hit = MachineOptions().FirstOrDefault(x => x.Label.StartsWith(_machineText + " ", StringComparison.OrdinalIgnoreCase) || string.Equals(x.Label, _machineText, StringComparison.OrdinalIgnoreCase));
+        _machineId = _machineText.Length == 0 ? 0 : hit.Id;
+        _machineNotFound = _machineId == 0 && _machineText.Length > 0;   // giữ chữ + báo (rà độc lập 21/11 L11)
+    }
+    void PickMachine(int id) { _machineNotFound = false; _machineId = id; _machineText = MachineOptions().FirstOrDefault(x => x.Id == id).Label ?? ""; }
+    void BackAll() { _machineId = 0; _machineText = ""; _machineNotFound = false; }
+    async Task OpenDay(DateOnly d) => await OnOpenDay.InvokeAsync((d, _caId));
+
+    // ── chữ / số ────────────────────────────────────────────────────────────────────────────────────────────
+    static string N(double v) => Math.Round(v).ToString("N0", Vi);
+    static string N(decimal v) => v.ToString("#,0.##", Vi);
+    static string Pct(double a, double b) => b <= 0 ? "—" : (a * 100.0 / b).ToString("0.0", Vi) + "%";
+    static string W(double part, double whole) => (whole <= 0 ? 0 : Math.Clamp(part * 100.0 / whole, 0, 100)).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+    static readonly string[] Thu = { "CN", "T2", "T3", "T4", "T5", "T6", "T7" };
+    static string DayLabel(DateOnly d) => $"{Thu[(int)d.DayOfWeek]} {d:dd/MM}";
+    static string DownBadge(MachineDownEvent d) => d.IsMaintenance ? "badge bg-warning text-dark" : "badge bg-danger";
+    static string DownText(MachineDownEvent d) => d.IsMaintenance ? "Bảo trì" : "Hỏng";
+    static string CellTitle(MachinePeriodRow r, DateOnly d) => $"{r.Machine.SoMay} {DayLabel(d)}";
+    static string Name(ThietBi m) => string.IsNullOrWhiteSpace(m.TenMay) ? m.LoaiMay : m.TenMay;
+    static string HeatStyle(double pct, bool has)
+    {
+        if (!has) return "background:#f8f9fa;color:#adb5bd";
+        var (bg, fg) = pct >= 80 ? ("#146c43", "#fff") : pct >= 65 ? ("#52a874", "#fff") : pct >= 50 ? ("#a3d3b4", "#212529") : pct >= 30 ? ("#dcefe2", "#212529") : ("#fdf0ef", "#8b1e12");
+        return $"background:{bg};color:{fg}";
+    }
+
+    double SumPlan => _rows.Sum(r => r.PlanMinutes);
+    double SumRun => _rows.Sum(r => r.RunMinutes);
+    double SumDown => _rows.Sum(r => r.DownMinutes);
+    double SumIdle => _rows.Sum(r => r.IdleMinutes);
+
+    RenderFragment Kpi(string label, string val, string sub, string color, string bg) => __builder =>
+    {
+        <div class="col">
+            <div class="h-100 rounded border px-3 py-2" style="background:@bg">
+                <div class="small text-muted">@label</div>
+                <div class="fs-4 fw-bold" style="color:@color">@val</div>
+                <div class="text-muted" style="font-size:.75rem">@sub</div>
+            </div>
+        </div>
+    };
+    RenderFragment KpiRow(double plan, double run, double down, double idle, decimal ok, decimal ng, string planSub) => __builder =>
+    {
+        <div class="row row-cols-2 row-cols-md-5 g-2 mb-3">
+            @(Kpi("Phút kế hoạch", N(plan), planSub, "#212529", "#fff"))
+            @(Kpi("Máy chạy", Pct(run, plan), $"{N(run)} ph có WTS trên máy", CR, "#f0fdf4"))
+            @(Kpi("Máy dừng", Pct(down, plan), $"{N(down)} ph hỏng / bảo trì", "#b02a37", "#fdf0ef"))
+            @(Kpi("Máy rảnh", Pct(idle, plan), $"{N(idle)} ph không WTS, không dừng", "#5c636a", "#f8f9fa"))
+            @(Kpi("OK / NG trên máy", $"{N(ok)} / {N(ng)}", ok + ng > 0 ? $"tỉ lệ NG {Pct((double)ng, (double)(ok + ng))}" : "không có sản lượng", "#212529", "#fff"))
+        </div>
+    };
+    static string DonutDash(double part, double whole) => (whole <= 0 ? 0 : 2 * Math.PI * 62 * part / whole).ToString("0.##", CultureInfo.InvariantCulture) + " " + (2 * Math.PI * 62).ToString("0.##", CultureInfo.InvariantCulture);
+    static string DonutOff(double before, double whole) => (whole <= 0 ? 0 : -2 * Math.PI * 62 * before / whole).ToString("0.##", CultureInfo.InvariantCulture);
+    static string DonutAria(double run, double down, double idle) => $"Chạy {Pct(run, run + down + idle)}, dừng {Pct(down, run + down + idle)}, rảnh {Pct(idle, run + down + idle)}";
+    RenderFragment Donut(double run, double down, double idle) => __builder =>
+    {
+        var tot = run + down + idle;
+        <svg width="150" height="150" viewBox="0 0 160 160" role="img" aria-label="@DonutAria(run, down, idle)">
+            <circle cx="80" cy="80" r="62" fill="none" stroke="#e9ecef" stroke-width="22"></circle>
+            <circle cx="80" cy="80" r="62" fill="none" stroke="@CR" stroke-width="22" stroke-dasharray="@DonutDash(run, tot)" stroke-dashoffset="0" transform="rotate(-90 80 80)"></circle>
+            <circle cx="80" cy="80" r="62" fill="none" stroke="@CD" stroke-width="22" stroke-dasharray="@DonutDash(down, tot)" stroke-dashoffset="@DonutOff(run, tot)" transform="rotate(-90 80 80)"></circle>
+            <circle cx="80" cy="80" r="62" fill="none" stroke="@CI" stroke-width="22" stroke-dasharray="@DonutDash(idle, tot)" stroke-dashoffset="@DonutOff(run + down, tot)" transform="rotate(-90 80 80)"></circle>
+            <text x="80" y="80" text-anchor="middle" font-size="22" font-weight="700" fill="#212529">@Pct(run, tot)</text>
+            <text x="80" y="99" text-anchor="middle" font-size="11" fill="#5c636a">máy chạy</text>
+        </svg>
+    };
+    RenderFragment Legend3(double run, double down, double idle) => __builder =>
+    {
+        <div class="d-flex flex-column gap-2 small" style="min-width:150px">
+            <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@CR"></span><span class="flex-grow-1">Chạy</span><b>@N(run) ph</b></div>
+            <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@CD"></span><span class="flex-grow-1">Dừng</span><b>@N(down) ph</b></div>
+            <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@CI"></span><span class="flex-grow-1">Rảnh</span><b>@N(idle) ph</b></div>
+        </div>
+    };
+    RenderFragment Stack(double run, double down, double idle, double scale, int h) => __builder =>
+    {
+        <div class="d-flex rounded overflow-hidden" style="height:@(h)px;background:#f1f3f5;width:@W(run + down + idle, scale)">
+            <div style="width:@W(run, run + down + idle);background:@CR"></div>
+            <div style="width:@W(down, run + down + idle);background:@CD"></div>
+            <div style="width:@W(idle, run + down + idle);background:@CI"></div>
+        </div>
+    };
+
+    RenderFragment Breadcrumb() => __builder =>
+    {
+        <div class="small text-muted mb-2">
+            @if (_machineId == 0)
+            {
+                <b class="text-dark">Tất cả máy</b>
+                <span> · @_rows.Count máy · @(_result?.Days.Count ?? 0) ngày xưởng có WTS · phút kế hoạch = khung ca − giờ nghỉ (giờ nghỉ máy vẫn chạy / đang dừng tính vào chạy / dừng)</span>
+            }
+            else
+            {
+                <button type="button" class="btn btn-link btn-sm p-0 align-baseline" @onclick="BackAll">Tất cả máy</button>
+                <span> › </span><b class="text-dark">@_machineText</b>
+            }
+            @if (_search.Trim().Length > 0)
+            {
+                <span class="ms-2 badge bg-info text-dark">Đang lọc: "@_search.Trim()" — @_rows.Count máy khớp</span>
+            }
+        </div>
+    };
+
+    // ── TẤT CẢ MÁY ─────────────────────────────────────────────────────────────────────────────────────────
+    RenderFragment AllView() => __builder =>
+    {
+        var days = _result!.Days;
+        var downs = _rows.SelectMany(r => r.Downs.Select(d => (d.Reason, r.Machine.SoMay, d.Minutes))).GroupBy(x => x.Reason)
+            .Select(g => (Reason: g.Key, Machines: string.Join(", ", g.Select(x => x.SoMay).Distinct()), Min: g.Sum(x => x.Minutes))).Where(x => x.Min > 0).OrderByDescending(x => x.Min).ToList();
+        var dTot = downs.Sum(x => x.Min); var dMax = downs.Count == 0 ? 1 : downs[0].Min;
+        @(KpiRow(SumPlan, SumRun, SumDown, SumIdle, _rows.Sum(r => r.Ok), _rows.Sum(r => r.Ng), $"{_rows.Count} máy × {days.Count} ngày"))
+        <div class="row g-3 mb-3">
+            <div class="col-lg-8">
+                <div class="border rounded p-3 h-100 bg-white">
+                    <div class="fw-semibold mb-2">Từng máy <span class="small text-muted fw-normal">— xếp % chạy thấp → cao; bấm số máy để xem riêng</span></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0" style="font-size:.85rem">
+                            <thead class="table-light"><tr><th>Máy</th><th>Nhóm</th><th style="width:220px">Chạy / dừng / rảnh</th><th class="text-end">% chạy</th><th class="text-end">Dừng (ph)</th><th>Dừng nhiều nhất</th><th class="text-end">OK</th><th class="text-end">NG</th><th class="text-end">Người</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in _rows)
+                                {
+                                    var id = r.Machine.ThietBiId;
+                                    var top = r.TopDown;
+                                    <tr @key="id">
+                                        <td><button type="button" class="btn btn-link btn-sm p-0 fw-bold" @onclick="() => PickMachine(id)">@r.Machine.SoMay</button><div class="text-muted" style="font-size:.72rem">@Name(r.Machine)</div></td>
+                                        <td>@r.Machine.BoPhan</td>
+                                        <td>@(Stack(r.RunMinutes, r.DownMinutes, r.IdleMinutes, r.PlanMinutes, 14))</td>
+                                        <td class="text-end fw-bold">@Pct(r.RunMinutes, r.PlanMinutes)</td>
+                                        <td class="text-end">@(r.DownMinutes > 0 ? N(r.DownMinutes) : "—")</td>
+                                        <td class="small">@(top == null ? "—" : $"{top.Reason} {N(top.Minutes)}")</td>
+                                        <td class="text-end">@N(r.Ok)</td>
+                                        <td class="text-end">@N(r.Ng)</td>
+                                        <td class="text-end">@r.WorkerCount</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4 d-flex flex-column gap-3">
+                <div class="border rounded p-3 bg-white">
+                    <div class="fw-semibold mb-2">Cả xưởng</div>
+                    <div class="d-flex align-items-center gap-3">@Donut(SumRun, SumDown, SumIdle)@Legend3(SumRun, SumDown, SumIdle)</div>
+                </div>
+                <div class="border rounded p-3 bg-white">
+                    <div class="fw-semibold mb-2">Dừng do đâu <span class="small text-muted fw-normal">— @N(dTot) ph, theo lý do ghi ở Thiết bị</span></div>
+                    @if (downs.Count == 0)
+                    {
+                        <div class="small text-muted">Không có lần dừng trong kỳ.</div>
+                    }
+                    @foreach (var x in downs.Take(10))
+                    {
+                        <div class="d-flex align-items-center gap-2 py-1 small">
+                            <span style="width:140px" class="text-truncate" title="@x.Machines">@x.Reason<br /><span class="text-muted" style="font-size:.72rem">@x.Machines</span></span>
+                            <div class="flex-grow-1 rounded" style="height:14px;background:#f1f3f5"><div class="rounded" style="height:14px;width:@W(x.Min, dMax);background:@CD"></div></div>
+                            <span style="width:90px" class="text-end"><b>@N(x.Min)</b> ph · @Pct(x.Min, dTot)</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        @Heatmap()
+    };
+
+    RenderFragment Heatmap() => __builder =>
+    {
+        var days = _result!.Days;
+        <div class="border rounded p-3 bg-white mb-3">
+            <div class="fw-semibold mb-2">Máy × ngày <span class="small text-muted fw-normal">— % chạy; bấm 1 ô để mở dòng thời gian ngày đó</span></div>
+            <div class="table-responsive">
+                <table class="table table-sm table-borderless mb-0 text-center" style="font-size:.8rem">
+                    <thead class="table-light"><tr><th class="text-start">Máy</th>@foreach (var d in days) {<th class="fw-normal">@DayLabel(d)</th>}<th class="text-end">Cả kỳ</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in _rows)
+                        {
+                            <tr @key="r.Machine.ThietBiId">
+                                <td class="text-start fw-bold">@r.Machine.SoMay</td>
+                                @foreach (var d in days)
+                                {
+                                    var pd = r.PerDay.FirstOrDefault(x => x.Day == d);
+                                    var dd = d;
+                                    <td class="p-0"><button type="button" class="btn btn-sm w-100 border border-white fw-semibold rounded-0" style="@HeatStyle(pd?.RunPct ?? 0, pd != null && pd.Plan > 0)" title="@CellTitle(r, d)" @onclick="() => OpenDay(dd)">@(pd != null && pd.Plan > 0 ? Math.Round(pd.RunPct) + "%" : "—")</button></td>
+                                }
+                                <td class="text-end fw-bold">@Pct(r.RunMinutes, r.PlanMinutes)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex flex-wrap gap-1 align-items-center small text-muted mt-2">
+                <span>% chạy:</span>
+                <span class="px-2" style="@HeatStyle(10, true)">&lt;30</span><span class="px-2" style="@HeatStyle(40, true)">30–49</span><span class="px-2" style="@HeatStyle(55, true)">50–64</span><span class="px-2" style="@HeatStyle(70, true)">65–79</span><span class="px-2" style="@HeatStyle(90, true)">≥80</span>
+            </div>
+        </div>
+    };
+
+    // ── 1 MÁY ───────────────────────────────────────────────────────────────────────────────────────────────
+    RenderFragment OneView() => __builder =>
+    {
+        var r = (_result?.Rows ?? new()).FirstOrDefault(x => x.Machine.ThietBiId == _machineId);
+        if (r == null) return;
+        var scale = r.PerDay.Count == 0 ? 1 : Math.Max(1, r.PerDay.Max(p => p.Plan));
+        @(KpiRow(r.PlanMinutes, r.RunMinutes, r.DownMinutes, r.IdleMinutes, r.Ok, r.Ng, $"{r.PerDay.Count} ngày · {r.Machine.BoPhan} · {Name(r.Machine)} · trạng thái hiện tại: {r.Machine.TrangThai}"))
+        <div class="row g-3 mb-3">
+            <div class="col-lg-4">
+                <div class="border rounded p-3 h-100 bg-white">
+                    <div class="fw-semibold mb-2">Thời gian của máy <span class="small text-muted fw-normal">trên phút kế hoạch</span></div>
+                    <div class="d-flex align-items-center gap-3">@Donut(r.RunMinutes, r.DownMinutes, r.IdleMinutes)@Legend3(r.RunMinutes, r.DownMinutes, r.IdleMinutes)</div>
+                </div>
+            </div>
+            <div class="col-lg-8">
+                <div class="border rounded p-3 h-100 bg-white">
+                    <div class="fw-semibold mb-2">Từng ngày <span class="small text-muted fw-normal">— bấm 1 ngày để xem dòng thời gian</span></div>
+                    @foreach (var p in r.PerDay)
+                    {
+                        var dd = p.Day;
+                        <button type="button" class="btn btn-light w-100 d-flex align-items-center gap-2 py-1 px-1 mb-1 border-0 text-start" @onclick="() => OpenDay(dd)">
+                            <span style="width:70px" class="small">@DayLabel(p.Day)</span>
+                            <span class="flex-grow-1">@(Stack(p.Run, p.Down, p.Idle, scale, 20))</span>
+                            <span style="width:130px" class="small text-muted text-end">@N(p.Run) · @N(p.Down) · @N(p.Idle)</span>
+                            <span style="width:56px" class="small fw-bold text-end">@Pct(p.Run, p.Plan)</span>
+                        </button>
+                    }
+                    <div class="small text-muted mt-1">phút: chạy · dừng · rảnh — % chạy</div>
+                </div>
+            </div>
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-white">
+                    <div class="fw-semibold mb-2">Các lần dừng <span class="small text-muted fw-normal">— hỏng / bảo trì trong kỳ</span></div>
+                    @if (r.Downs.Count == 0)
+                    {
+                        <div class="small text-muted">Không có lần dừng.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm align-middle mb-0" style="font-size:.85rem">
+                            <thead class="table-light"><tr><th>Từ</th><th>Đến</th><th class="text-end">Phút</th><th>Loại</th><th>Lý do</th><th>Người báo</th></tr></thead>
+                            <tbody>
+                                @foreach (var d in r.Downs)
+                                {
+                                    <tr>
+                                        <td class="text-nowrap">@d.Start.ToString("dd/MM HH:mm")</td>
+                                        <td class="text-nowrap">@(d.End?.ToString("dd/MM HH:mm") ?? "đang dừng")</td>
+                                        <td class="text-end fw-bold">@N(d.Minutes)</td>
+                                        <td><span class="@DownBadge(d)">@DownText(d)</span></td>
+                                        <td>@d.Reason</td>
+                                        <td>@(string.IsNullOrEmpty(d.ReportedBy) ? "—" : d.ReportedBy)</td>
+                                    </tr>
+                                }
+                                <tr class="fw-bold"><td colspan="2">Tổng</td><td class="text-end">@N(r.Downs.Sum(x => x.Minutes))</td><td colspan="3" class="text-muted fw-normal small">phút trong khung ca các ngày được tính</td></tr>
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="border rounded p-3 h-100 bg-white">
+                    <div class="fw-semibold mb-2">Máy làm hàng gì <span class="small text-muted fw-normal">— theo PO / NC</span></div>
+                    <table class="table table-sm align-middle mb-0" style="font-size:.85rem">
+                        <thead class="table-light"><tr><th>PO</th><th>Part No</th><th>NC</th><th class="text-end">Phút chạy</th><th class="text-end">% chạy</th><th class="text-end">OK</th><th class="text-end">NG</th></tr></thead>
+                        <tbody>
+                            @foreach (var p in r.ByPo)
+                            {
+                                <tr><td><code>@(string.IsNullOrEmpty(p.Po) ? "—" : p.Po)</code></td><td>@p.Part</td><td>@p.NC</td><td class="text-end fw-bold">@N(p.RunMinutes)</td><td class="text-end">@Pct(p.RunMinutes, r.RunMinutes)</td><td class="text-end">@N(p.Ok)</td><td class="text-end">@N(p.Ng)</td></tr>
+                            }
+                            <tr class="fw-bold"><td>Tổng</td><td></td><td></td><td class="text-end">@N(r.RunMinutes)</td><td class="text-end">@(r.RunMinutes > 0 ? "100%" : "—")</td><td class="text-end">@N(r.Ok)</td><td class="text-end">@N(r.Ng)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="border rounded p-3 bg-white mb-3" style="max-width:640px">
+            <div class="fw-semibold mb-2">Ai đứng máy <span class="small text-muted fw-normal">— mỗi người đủ phút của mình; 2 người cùng lúc thì máy chỉ tính 1 lần</span></div>
+            <table class="table table-sm align-middle mb-0" style="font-size:.85rem">
+                <thead class="table-light"><tr><th>Công nhân</th><th class="text-end">Phút đứng máy</th><th class="text-end" title="Phút đứng máy so với phút máy chạy (máy dừng mà vẫn ghi WTS thì có thể quá 100%)">So với giờ máy chạy</th></tr></thead>
+                <tbody>
+                    @foreach (var w in r.ByWorker)
+                    {
+                        <tr><td class="fw-semibold">@w.WorkerName</td><td class="text-end">@N(w.Minutes)</td><td class="text-end">@Pct(w.Minutes, r.RunMinutes)</td></tr>
+                    }
+                </tbody>
+            </table>
+            <div class="small text-muted mt-1">Xem việc từng người: trang Nhập WTS › WTS Report, gõ tên vào ô Công nhân.</div>
+        </div>
+    };
+}

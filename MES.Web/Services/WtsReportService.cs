@@ -127,6 +127,7 @@ public class WtsReportService
                 IsOvertime      = p.IsOvertime,
                 IsProductiveTask = true, // production logs luôn là có ích
                 RowType         = WtsRowType.Production,
+                WtsLogId        = p.WtsLogId, ProcessGroup = p.ProcessGroup ?? "", ProductionMode = p.ProductionMode, CaId = p.CaId,   // [G29-RPT]
             });
         }
 
@@ -166,6 +167,7 @@ public class WtsReportService
                 Notes           = a.Notes ?? "",
                 IsProductiveTask = isProductive,
                 RowType         = WtsRowType.Activity,
+                ActivityLogId   = a.ActivityLogId,   // [G29-RPT]
             });
         }
 
@@ -185,6 +187,15 @@ public class WtsReportService
         }
         var wasteMin      = totalMin - productiveMin;
 
+        // [G29-RPT 2026-11-21] Báo cáo theo kỳ (mockup https://claude.ai/artifact/HH5sobEdA8pFNjGCaDGJKR, Hùng 21/11 09:46 "ok làm"):
+        //   mỗi dòng mang Việc (nhóm + mã) + phút CHIA (AllocMin) để bảng theo việc / theo người / theo ngày cộng ĐÚNG bằng tổng trên;
+        //   mỗi người-ngày có phút kế hoạch theo ca + "chưa khai báo". Chỉ đọc — không đổi các số tổng cũ ở trên (TotalMinutes / ProductiveMin…).
+        //   Nguồn: CLAUDE đề xuất 21/11 (câu B 1–5, Hùng OK 09:46).
+        var taskNames = allWtsTasks.GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First().TaskName ?? "", StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows) SetTask(r, taskNames);
+        var days = await BuildDaysAsync(rows);
+
         return new WtsReportResult
         {
             Rows          = rows,
@@ -193,8 +204,179 @@ public class WtsReportService
             WasteMin      = wasteMin,
             RawMinutes    = rawMin,
             BreakWorkedMinutes = workedMin,
+            Days          = days,   // [G29-RPT]
         };
     }
+
+    // ── [G29-RPT 2026-11-21] Việc của 1 dòng: nhóm + mã + chữ hiện ─────────────────────────────────────────────
+    //   Gia công: gom theo Hàng loạt / Chạy thử (KHÔNG theo NC — NC mỗi PO một khác, cộng lại không có nghĩa; câu B5 Hùng OK 21/11).
+    //   HTSP / KCS / Đóng gói: theo mã CV (không phân biệt hoa thường). Việc không ra SP: theo mã việc (không mã → theo tên).
+    public static string GroupLabelOf(string processGroup) => (processGroup ?? "").ToUpperInvariant() switch
+    {
+        "GC" => "Gia công", "TARO" => "Taro", "BAVIA" => "Bavia", "WASHING" => "Rửa", "KCS" => "KCS", "PKG" => "Đóng gói",
+        "" => "Việc không ra SP", var x => x,
+    };
+
+    static void SetTask(WtsReportRow r, Dictionary<string, string> taskNames)
+    {
+        if (r.RowType == WtsRowType.Activity)
+        {
+            r.GroupLabel = GroupLabelOf("");
+            var code = (r.WtsCode ?? "").Trim();
+            r.TaskKey = "ACT|" + (code.Length > 0 ? code.ToUpperInvariant() : "#" + (r.WtsName ?? "").Trim().ToUpperInvariant());
+            r.TaskCode = code;
+            r.TaskLabel = (r.WtsName ?? "").Trim();
+            if (r.TaskLabel.Length == 0 && code.Length > 0 && taskNames.TryGetValue(code, out var tn0)) r.TaskLabel = tn0;
+            return;
+        }
+        var pg = (r.ProcessGroup ?? "").ToUpperInvariant();
+        r.GroupLabel = GroupLabelOf(pg);
+        if (pg == "GC")
+        {
+            var mode = r.ProductionMode == "trial" ? "trial" : r.ProductionMode == "serial" ? "serial" : "";
+            r.TaskKey = "GC|" + mode;
+            r.TaskCode = "";
+            r.TaskLabel = mode == "trial" ? "Gia công · Chạy thử" : mode == "serial" ? "Gia công · Hàng loạt" : "Gia công";
+            return;
+        }
+        var c = (r.WtsCode ?? "").Trim();
+        if (c.Length == 0) c = (r.NC ?? "").Trim();   // [G29-RPT] dòng HTSP / KCS / Đóng gói cũ (trước [FIX-NONGC-NC]) chở mã CV ở cột NC (rà độc lập 21/11 L9)
+        r.TaskKey = pg + "|" + c.ToUpperInvariant();
+        r.TaskCode = c;
+        r.TaskLabel = c.Length > 0 && taskNames.TryGetValue(c, out var tn) ? tn : "";
+    }
+
+    // ── [G29-RPT] Người-ngày: chia phút + kế hoạch theo ca + chưa khai báo ─────────────────────────────────────
+    //   Tập phút LÀM của 1 dòng = [BĐ, KT) trừ các khoảng nghỉ đã lưu của dòng, cộng khúc làm thông (đúng cách WorkMinutes.Day gộp) →
+    //   hợp các dòng = phút làm người-ngày (= TotalMinutes cũ). Khoảng có nhiều dòng phủ (đứng 2 máy): chia ĐỀU cho các dòng phủ; có dòng
+    //   có ích phủ thì chỉ chia cho dòng có ích (giữ luật cũ "phút có cả có ích lẫn vô ích → có ích"). Làm tròn theo phần dư lớn nhất để
+    //   Σ phút chia dòng có ích = phút có ích người-ngày, Σ dòng vô ích = phút vô ích (câu B2 Hùng OK 21/11).
+    //   Kế hoạch: ca của ngày = ca có nhiều phút nhất trên các dòng sản xuất hôm đó (dòng Việc không ra SP không lưu ca); khung ca trừ giờ nghỉ
+    //   HIỆN TẠI của ca. Chưa khai báo = phút kế hoạch không có dòng nào phủ. Ngày không có ca → null (hiện "—") (câu B1 Hùng OK 21/11).
+    async Task<List<WtsReportDay>> BuildDaysAsync(List<WtsReportRow> rows)
+    {
+        var caIds = rows.Where(r => r.CaId != null).Select(r => r.CaId!.Value).Distinct().ToList();
+        var cas = caIds.Count == 0 ? new List<CaLamViec>()
+            : await _db.CaLamViecs.Include(c => c.NghiGiaiLaos).AsNoTracking().Where(c => caIds.Contains(c.CaId)).ToListAsync();
+        var caMap = cas.ToDictionary(c => c.CaId);
+        var res = new List<WtsReportDay>();
+        // [G29-RPT] rà độc lập 21/11 (Cao 1, Trung 3): phần phủ của "chưa khai báo" lấy MỌI dòng của người đó chạm khung ca (cả dòng xếp sang ngày
+        //   khác — ca qua đêm: dòng sau 0h đang xếp theo ngày giờ bắt đầu, câu RPT-1 chờ khách); kế hoạch trừ thêm khoảng nghỉ ĐÃ LƯU của các dòng
+        //   (ca đổi giờ nghỉ sau khi lưu không sinh "chưa khai báo" giả).
+        var ivByRow = rows.ToDictionary(r => r, RowWorkIv);
+        var byWorker = rows.GroupBy(r => r.WorkerId).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var g in rows.GroupBy(r => (r.WorkerId, r.WorkDate)).OrderBy(g => g.Key.WorkDate).ThenBy(g => g.First().WorkerName))
+        {
+            var list = g.ToList();
+            var ivs = list.Select(r => ivByRow[r]).ToList();
+            Allocate(list, ivs);
+            var all = WorkMinutes.Day(list.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+            var pro = WorkMinutes.Day(list.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+            var d = new WtsReportDay
+            {
+                WorkerId = g.Key.WorkerId, WorkerName = list[0].WorkerName, Day = g.Key.WorkDate,
+                WorkMin = all.Work, ProductiveMin = Math.Min(pro.Work, all.Work), WasteMin = all.Work - Math.Min(pro.Work, all.Work),
+            };
+            var caId = list.Where(r => r.CaId != null).GroupBy(r => r.CaId!.Value)
+                .Select(x => (Id: x.Key, Min: x.Sum(r => r.Minutes))).OrderByDescending(x => x.Min).ThenBy(x => x.Id).Select(x => (int?)x.Id).FirstOrDefault();
+            // ca qua đêm mà mọi dòng sản xuất của ca đó trong nhóm bắt đầu sau 0h (trước giờ kết thúc ca) = đuôi ca của hôm trước → không tính kế hoạch lần 2
+            var tail = caId != null && caMap.TryGetValue(caId.Value, out var ca0) && ca0.IsOvernight
+                && list.Where(r => r.CaId == caId).All(r => TimeOnly.FromDateTime(r.StartTime) < ca0.GioKetThuc);
+            if (!tail && caId != null && caMap.TryGetValue(caId.Value, out var ca))
+            {
+                var s = g.Key.WorkDate.ToDateTime(ca.GioBatDau);
+                var e = (ca.IsOvernight ? g.Key.WorkDate.AddDays(1) : g.Key.WorkDate).ToDateTime(ca.GioKetThuc);
+                if (e > s)
+                {
+                    var mine = byWorker[g.Key.WorkerId].Where(r => r.StartTime < e && r.EndTime > s).ToList();
+                    var plan = Sub((s, e), WorkMinutes.BreakSegments(ca, s, e).Select(b => (b.Start, b.End))
+                        .Concat(mine.SelectMany(r => r.Breaks).Select(b => (b.BreakStart, b.BreakEnd))));
+                    var gap = new List<(DateTime S, DateTime E)>();
+                    var cover = mine.SelectMany(r => ivByRow[r]).ToList();
+                    foreach (var p in plan) gap.AddRange(Sub(p, cover));
+                    d.CaId = ca.CaId; d.CaName = ca.TenCa; d.CaLabel = ca.Label;
+                    d.PlanMin = RoundMin(Measure(plan));
+                    d.UnaccountedMin = RoundMin(Measure(gap));
+                    d.PlanStart = s; d.PlanEnd = e;
+                    d.Breaks = WorkMinutes.BreakSegments(ca, s, e).Select(b => (b.Start, b.End)).ToList();
+                }
+            }
+            res.Add(d);
+        }
+        return res;
+    }
+
+    /// <summary>[G29-RPT] Tập phút làm của 1 dòng (cùng cách WorkMinutes.Day): ngoài khoảng nghỉ dòng chạm + khúc làm thông.</summary>
+    static List<(DateTime S, DateTime E)> RowWorkIv(WtsReportRow r)
+    {
+        if (r.EndTime <= r.StartTime) return new();
+        var brk = (r.Breaks ?? new()).Select(b => (b.BreakStart, b.BreakEnd)).ToList();
+        var iv = Sub((r.StartTime, r.EndTime), brk);
+        foreach (var b in r.Breaks ?? new())
+        {
+            if (b.WorkedMin <= 0) continue;
+            var c = WorkMinutes.WorkedChunk(r.StartTime, b);
+            var ce = c.E < r.EndTime ? c.E : r.EndTime;
+            var be = ce < b.BreakEnd ? ce : b.BreakEnd;
+            if (be > c.S) iv.Add((c.S, be));
+        }
+        return Union(iv);
+    }
+
+    static void Allocate(List<WtsReportRow> list, List<List<(DateTime S, DateTime E)>> ivs)
+    {
+        var share = new double[list.Count];
+        var cuts = ivs.SelectMany(x => x).SelectMany(x => new[] { x.S, x.E }).Distinct().OrderBy(x => x).ToList();
+        for (int k = 0; k + 1 < cuts.Count; k++)
+        {
+            var a = cuts[k]; var b = cuts[k + 1];
+            var len = (b - a).TotalMinutes;
+            if (len <= 0) continue;
+            var cov = new List<int>();
+            for (int i = 0; i < list.Count; i++)
+                if (ivs[i].Any(x => x.S <= a && x.E >= b)) cov.Add(i);
+            if (cov.Count == 0) continue;
+            var pro = cov.Where(i => list[i].IsProductiveTask).ToList();
+            var who = pro.Count > 0 ? pro : cov;
+            foreach (var i in who) share[i] += len / who.Count;
+        }
+        var all = WorkMinutes.Day(list.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+        var proDay = WorkMinutes.Day(list.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+        var pT = Math.Min(proDay.Work, all.Work);
+        RoundTo(list, share, i => list[i].IsProductiveTask, pT);
+        RoundTo(list, share, i => !list[i].IsProductiveTask, all.Work - pT);
+    }
+
+    /// <summary>Làm tròn phần dư lớn nhất: Σ AllocMin các dòng chọn = đúng target (không lệch 1 phút khi cộng bảng).</summary>
+    static void RoundTo(List<WtsReportRow> list, double[] share, Func<int, bool> pick, int target)
+    {
+        var idx = Enumerable.Range(0, list.Count).Where(pick).ToList();
+        if (idx.Count == 0) return;
+        foreach (var i in idx) list[i].AllocMin = (int)Math.Floor(share[i] + 1e-9);
+        var left = target - idx.Sum(i => list[i].AllocMin);
+        var order = idx.OrderByDescending(i => share[i] - Math.Floor(share[i] + 1e-9)).ThenByDescending(i => share[i]).ThenBy(i => i).ToList();
+        for (int k = 0; left > 0 && order.Count > 0; k++, left--) list[order[k % order.Count]].AllocMin++;
+        for (int k = 0; left < 0 && order.Count > 0; k++)
+        {
+            var i = order[order.Count - 1 - (k % order.Count)];
+            if (list[i].AllocMin > 0) { list[i].AllocMin--; left++; }
+            if (k > 10 * order.Count) break;
+        }
+    }
+
+    static int RoundMin(double m) => (int)Math.Round(m, MidpointRounding.AwayFromZero);
+    static List<(DateTime S, DateTime E)> Union(IEnumerable<(DateTime S, DateTime E)> iv)
+    {
+        var res = new List<(DateTime S, DateTime E)>();
+        foreach (var x in iv.Where(x => x.E > x.S).OrderBy(x => x.S))
+        {
+            if (res.Count > 0 && x.S <= res[^1].E) { if (x.E > res[^1].E) res[^1] = (res[^1].S, x.E); }
+            else res.Add(x);
+        }
+        return res;
+    }
+    static List<(DateTime S, DateTime E)> Sub((DateTime S, DateTime E) a, IEnumerable<(DateTime S, DateTime E)> cut) => WorkMinutes.Minus(a, cut);
+    static double Measure(IEnumerable<(DateTime S, DateTime E)> iv) => Union(iv).Sum(x => (x.E - x.S).TotalMinutes);
 
     /// <summary>Danh sách công nhân có WTS log trong khoảng ngày (để populate dropdown).</summary>
     public async Task<List<(int Id, string Name)>> GetWorkersWithLogsAsync(
@@ -280,6 +462,39 @@ public class WtsReportRow
     public WtsRowType RowType         { get; set; }
     public int?      RefKhPlanDetailId { get; set; }   // [ML16-ACT] dòng việc không ra SP: PO tham chiếu (giờ sửa)
     public long?     NgCaseId          { get; set; }   // [ML16-ACT] vụ lỗi đang sửa
+    // [G29-RPT 2026-11-21] báo cáo theo kỳ: id dòng gốc, nhóm việc, việc (mã), ca, phút chia (Σ theo người-ngày = phút làm)
+    public long?     WtsLogId          { get; set; }
+    public long?     ActivityLogId     { get; set; }
+    public string    ProcessGroup      { get; set; } = "";
+    public string?   ProductionMode    { get; set; }
+    public int?      CaId              { get; set; }
+    public string    GroupLabel        { get; set; } = "";
+    public string    TaskKey           { get; set; } = "";
+    public string    TaskCode          { get; set; } = "";
+    public string    TaskLabel         { get; set; } = "";
+    /// <summary>[G29-RPT] Phút làm CHIA cho dòng: khoảng nhiều dòng phủ chia đều (ưu tiên dòng có ích) — Σ người-ngày = phút làm gộp.</summary>
+    public int       AllocMin          { get; set; }
+}
+
+/// <summary>[G29-RPT 2026-11-21] 1 người-ngày: phút làm / có ích / vô ích (= Σ AllocMin) + kế hoạch theo ca + chưa khai báo.</summary>
+public class WtsReportDay
+{
+    public int       WorkerId       { get; set; }
+    public string    WorkerName     { get; set; } = "";
+    public DateOnly  Day            { get; set; }
+    public int       WorkMin        { get; set; }
+    public int       ProductiveMin  { get; set; }
+    public int       WasteMin       { get; set; }
+    public int?      CaId           { get; set; }
+    public string?   CaName         { get; set; }
+    public string?   CaLabel        { get; set; }
+    /// <summary>Phút kế hoạch = khung ca trừ giờ nghỉ ca; null = ngày không có ca trên dòng WTS.</summary>
+    public int?      PlanMin        { get; set; }
+    /// <summary>Phút kế hoạch không có dòng WTS nào phủ; null = không có ca.</summary>
+    public int?      UnaccountedMin { get; set; }
+    public DateTime? PlanStart      { get; set; }
+    public DateTime? PlanEnd        { get; set; }
+    public List<(DateTime S, DateTime E)> Breaks { get; set; } = new();
 }
 
 public class WtsReportResult
@@ -291,6 +506,8 @@ public class WtsReportResult
     /// <summary>[ML17-XN] Giờ thô gộp người-ngày + phút làm thông nghỉ gộp (TotalMinutes = phút làm).</summary>
     public int                RawMinutes    { get; set; }
     public int                BreakWorkedMinutes { get; set; }
+    /// <summary>[G29-RPT] Từng người-ngày (kế hoạch ca, chưa khai báo, có ích / vô ích).</summary>
+    public List<WtsReportDay> Days          { get; set; } = new();
     public double EfficiencyPct => TotalMinutes == 0 ? 0 : Math.Round((double)ProductiveMin / TotalMinutes * 100, 1);
 
     /// <summary>[ML17-XN 2026-11-01] Phút làm thông nghỉ theo ngày · người · khoảng nghỉ · PO (mỗi dòng WTS / việc × khoảng nghỉ có làm).</summary>

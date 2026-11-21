@@ -141,10 +141,26 @@
 }
 else
 {
-    if (_pageError != null)
+    if (_pageError != null && _mode == "day")
     {
         <div class="alert alert-warning shadow-sm my-2">@_pageError</div>
     }
+@* [G29-HSM-KY 2026-11-21] Xem theo Ngày (trang cũ: dòng thời gian từng máy) | Tuần | Tháng | Tự chọn (component MayBaoCaoKy). Hùng 21/11 09:46 OK mockup. *@
+<div class="d-flex align-items-center gap-2 mb-2">
+    <span class="small fw-semibold text-muted">Xem theo</span>
+    <div class="btn-group">
+        <button type="button" class="@_clsModeDay" @onclick="SetModeDay" disabled="@_modeBusy">Ngày</button>
+        <button type="button" class="@_clsModeWeek" @onclick="SetModeWeek" disabled="@_modeBusy">Tuần</button>
+        <button type="button" class="@_clsModeMonth" @onclick="SetModeMonth" disabled="@_modeBusy">Tháng</button>
+        <button type="button" class="@_clsModeCustom" @onclick="SetModeCustom" disabled="@_modeBusy">Tự chọn</button>
+    </div>
+</div>
+if (_mode != "day")
+{
+    <MayBaoCaoKy ViewerUserId="_currentUserId" Mode="@_mode" CaList="_caList" OnOpenDay="OpenDayFromKy" InitialCaId="_selectedCaId" OnBusy="OnKyBusy" />
+}
+else
+{
 @* ── Header + Pie tổng ── *@
 
 <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
@@ -162,7 +178,7 @@ else
     <div class="card shadow-sm @_pieCls" style="min-width:200px;">
         <div class="card-body p-2 text-center">
             <div class="small fw-semibold text-muted mb-1">Tổng hiệu suất — @(_result?.Rows.Count ?? 0) máy</div>
-            @if (_result != null) { @BuildPieSvg(_result.RunPct, _result.DownPct, _result.BreakPct, _result.IdlePct, 90) }
+            @if (_result != null) { @BuildPieSvg(_result.RunPct, _result.DownPct, 0, _result.IdlePct, 90) }
             <div class="d-flex justify-content-center gap-2 mt-1 flex-wrap" style="font-size:.7rem;">
                 <span><span class="legend-dot bg-success me-1"></span>Chạy @(_result?.RunPct ?? 0)%</span>
                 <span><span class="legend-dot bg-danger me-1"></span>Dừng @(_result?.DownPct ?? 0)%</span>
@@ -423,7 +439,7 @@ else
             <div class="gantt-header-l">
                 <div style="flex:1;">@ColHeader("SoMay", "Số máy")</div>
                 <div style="width:64px; text-align:center;">@ColHeader("BoPhan", "Nhóm")</div>
-                <span style="font-size:.65rem; color:#6c757d; margin-left:auto; padding-right:4px;">OEE</span>
+                <span style="font-size:.65rem; color:#6c757d; margin-left:auto; padding-right:4px;">% chạy</span>
             </div>
             @RenderLeftRows(groupedRows)
         </div>
@@ -565,6 +581,7 @@ else if (!_loading)
     </div>
 
 }
+} @* end [G29-HSM-KY] else (_mode == "day") *@
 }
 
 @code {
@@ -578,6 +595,32 @@ else if (!_loading)
 
 
     // ── State ──────────────────────────────────────────────────────────────
+
+    // [G29-HSM-KY 2026-11-21] Chế độ xem: day = trang cũ; week / month / custom = MayBaoCaoKy
+    private string _mode = "day";
+    private bool _kyBusy;                                   // báo cáo kỳ đang tải (component con báo lên)
+    private bool _modeBusy => _loading || _kyBusy;
+    private void OnKyBusy(bool b) => _kyBusy = b;
+    private string ModeCls(string m) => _mode == m ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline-secondary";
+    private string _clsModeDay => ModeCls("day");
+    private string _clsModeWeek => ModeCls("week");
+    private string _clsModeMonth => ModeCls("month");
+    private string _clsModeCustom => ModeCls("custom");
+    private async Task SetModeDay() { if (_mode == "day" || _modeBusy) return; _mode = "day"; await LoadDataAsync(); }
+    private void SetModeWeek() { if (!_modeBusy) _mode = "week"; }   // không chuyển khi đang tải — 1 DbContext / phiên (rà độc lập 21/11 Trung 4)
+    private void SetModeMonth() { if (!_modeBusy) _mode = "month"; }
+    private void SetModeCustom() { if (!_modeBusy) _mode = "custom"; }
+    /// <summary>[G29-HSM-KY] Bấm 1 ngày ở báo cáo tuần / tháng → trang ngày đúng ngày + ca (CaId -1 = toàn ngày).</summary>
+    private async Task OpenDayFromKy((DateOnly Day, int CaId) x)
+    {
+        _selectedDate = x.Day;
+        _customRange = false;
+        var ca = _caList.FirstOrDefault(c => c.CaId == x.CaId);
+        if (ca != null) { _selectedCaId = ca.CaId; ApplyCaToTime(ca); }
+        else { _selectedCaId = -1; _fromTime = new(0, 0); _toTime = new(23, 59); }
+        _mode = "day";
+        await LoadDataAsync();
+    }
 
     private DateOnly _selectedDate = DateOnly.FromDateTime(DateTime.Today);
 
@@ -1222,7 +1265,7 @@ else if (!_loading)
                     var olCls = hasOl ? "row-ol" : "";
                     <div class="gantt-cell-l @olCls" @key="row.Machine.ThietBiId">
                         <code style="font-size:.78rem;min-width:36px;">@row.Machine.SoMay</code>
-                        <div class="oee-bar-wrap" title="OEE @row.RunPct%">
+                        <div class="oee-bar-wrap" title="Máy chạy @row.RunPct% phút kế hoạch">
                             <div class="oee-bar-fill" style="width:@_OeePct(row.RunPct)%;background:@OeeColor(row.RunPct);"></div>
                         </div>
                         <span style="font-size:.68rem;color:#868e96;min-width:28px;">@row.RunPct%</span>
@@ -1251,7 +1294,7 @@ else if (!_loading)
         {
             var coll2 = _collapsedGroups.Contains(kv.Key);
             <div class="gantt-cell-r grp-hdr gantt-min" style="display:flex;align-items:center;padding:0 8px;font-size:.72rem;color:#868e96;">
-                @kv.Key &nbsp;·&nbsp; avg OEE @(kv.Value.Count > 0 ? kv.Value.Average(r => r.RunPct).ToString("F1") : "0")%
+                @kv.Key &nbsp;·&nbsp; TB % chạy @(kv.Value.Count > 0 ? kv.Value.Average(r => r.RunPct).ToString("F1") : "0")%
             </div>
             @if (!coll2)
             {
@@ -1337,12 +1380,12 @@ else if (!_loading)
                 }
             </div>
             <div class="col-md-2 text-center">
-                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-pie-chart me-1"></i>OEE</div>
-                @BuildPieSvg(row.RunPct, row.DownPct, row.BreakPct, row.IdlePct, 70)
+                <div class="small fw-semibold text-muted mb-1"><i class="bi bi-pie-chart me-1"></i>% trên phút kế hoạch</div>
+                @BuildPieSvg(row.RunPct, row.DownPct, 0, row.IdlePct, 70)   @* [G29-HSM-MAUSO] % trên phút kế hoạch (khung − nghỉ): bánh chỉ Chạy / Dừng / Rảnh *@
                 <div class="mt-1" style="font-size:.72rem;">
                     <div><span class="legend-dot bg-success me-1"></span>Chạy <b>@row.RunPct%</b></div>
                     <div><span class="legend-dot bg-danger me-1"></span>Dừng <b>@row.DownPct%</b></div>
-                    @if (row.BreakPct > 0) { <div><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ <b>@row.BreakPct%</b></div> }
+                    @if (row.BreakMinutes > 0) { <div><span class="legend-dot me-1" style="background:#d8b4fe;"></span>Nghỉ <b>@Math.Round(row.BreakMinutes) ph</b> (không tính %)</div> }
                     <div><span class="legend-dot bg-secondary me-1"></span>Rảnh <b>@row.IdlePct%</b></div>
                 </div>
             </div>

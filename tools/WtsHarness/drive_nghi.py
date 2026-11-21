@@ -114,9 +114,11 @@ async def main():
         print("[D6] Báo cáo: Tổng phút làm = phút làm, bảng Làm thông nghỉ")
         await pg.click("button:has-text('WTS Report')"); await pg.wait_for_timeout(1500)
         await pg.click("button:has-text('Xem báo cáo')"); await pg.wait_for_timeout(2500)
+        # [G29-RPT 2026-11-21] đáp án đổi: báo cáo làm lại — ô "Phút làm đã khai báo" (trước "Tổng phút làm"); bảng Làm thông nghỉ nằm trong "Bảng phụ" (bấm mở)
+        if await pg.locator("button:has-text('Bảng phụ')").count(): await pg.click("button:has-text('Bảng phụ')"); await pg.wait_for_timeout(800)
         body = await pg.locator("body").inner_text()
         await pg.screenshot(path=f"{OUT}_nghi_d6.png", full_page=True)
-        ok("Tổng phút làm" in body and "Làm thông nghỉ (phút)" in body, "báo cáo có thẻ Tổng phút làm + bảng Làm thông nghỉ", body[:300])
+        ok(("Phút làm đã khai báo" in body or "Tổng phút làm" in body) and "Làm thông nghỉ (phút)" in body, "báo cáo có thẻ phút làm + bảng Làm thông nghỉ", body[:300])
         await pg.close()
 
         print("[D7] HTSP nhóm 2 dòng 11:30–13:30 qua trưa, tích làm thông 40 → chia khúc 12:00–12:40 cho dòng con theo thứ tự thời gian")

@@ -25,10 +25,29 @@ public class MachineEfficiencyService
         //   viewerUserId = 0 chỉ còn ở bộ kiểm cũ → coi như không quyền. Nguồn: CLAUDE quét Fable 15/11 (BM1-09); Hùng 15/11 15:10 OK câu 9.
         if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay))
             return EmptyResult(date, fromTime, toTime);
-        var dayStart = date.ToDateTime(fromTime);
+        // [G29-HSM-KY 2026-11-21] Tách phần ĐỌC DB (LoadAsync, theo khoảng ngày) khỏi phần TÍNH 1 ngày (ComputeDay) để báo cáo tuần / tháng
+        //   (GetPeriodAsync) dùng đúng cùng cách tính với trang ngày. Ngày lẻ: đọc đúng khung 1 ngày như trước → số không đổi.
+        var data = await LoadAsync(date, date, fromTime, toTime);
+        if (data == null) return EmptyResult(date, fromTime, toTime);
+        return ComputeDay(data, date, fromTime, toTime, selectedCa);
+    }
+
+    /// <summary>[G29-HSM-KY] Dữ liệu đọc 1 lần cho cả khoảng ngày.</summary>
+    sealed class LoadedData
+    {
+        public List<ThietBi> Machines = new();
+        public List<WtsProductionLog> Wts = new();
+        public Dictionary<long, List<LineBreak>> Brk = new();
+        public List<ThietBiChangeLog> Down = new();
+        public Dictionary<int, string> Reporter = new();
+    }
+
+    async Task<LoadedData?> LoadAsync(DateOnly fromDate, DateOnly toDate, TimeOnly fromTime, TimeOnly toTime)
+    {
+        var dayStart = fromDate.ToDateTime(fromTime);
         // [RPT-3 2026-10-30] Ca vắt đêm (vd 20:00–05:00): giờ kết thúc sang ngày hôm sau — trước: chỉ queryEnd được nới,
         //   dayEnd vẫn cùng ngày → tổng phút âm, mọi đoạn WTS bị cắt hết, hiệu suất 0 %.
-        var dayEnd   = toTime < fromTime ? date.AddDays(1).ToDateTime(toTime) : date.ToDateTime(toTime);
+        var dayEnd   = toTime < fromTime ? toDate.AddDays(1).ToDateTime(toTime) : toDate.ToDateTime(toTime);
 
         // ── 1. Danh sách máy active ─────────────────────────────────────
         var machines = await _db.ThietBis
@@ -36,16 +55,14 @@ public class MachineEfficiencyService
             .OrderBy(t => t.BoPhan).ThenBy(t => t.SoMay)
             .AsNoTracking().ToListAsync();
 
-        if (!machines.Any()) return EmptyResult(date, fromTime, toTime);
+        if (!machines.Any()) return null;
 
         var allSoMay      = machines.Select(m => m.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var allMachineIds = machines.Select(m => m.ThietBiId).ToList();
 
         // ── 2. WTS logs (tận dụng filtered index MachineUsed+StartTime+EndTime) ──
-        // Ca vắt đêm: query mở rộng thêm 1 ngày để bắt phần sang ngày hôm sau
-        var queryEnd = toTime < fromTime
-            ? date.AddDays(1).ToDateTime(toTime)
-            : dayEnd;
+        // Ca vắt đêm: khung đã nới sang ngày hôm sau ở dayEnd (queryEnd = dayEnd)
+        var queryEnd = dayEnd;
 
         var wtsLogs = await _db.WtsProductionLogs
             .Include(x => x.Worker)
@@ -71,6 +88,24 @@ public class MachineEfficiencyService
                      && x.ThoiGianBatDau < queryEnd
                      && (x.ThoiGianKetThuc == null || x.ThoiGianKetThuc > dayStart))
             .AsNoTracking().ToListAsync();
+
+        // [G29-HSM-KY] người báo (bảng Các lần dừng): tra tên riêng — không Include (ChangedBy int bắt buộc → INNER JOIN làm mất lần dừng
+        //   có người báo không còn trong Users, ảnh hưởng cả trang ngày; rà độc lập 21/11 L5)
+        var byIds = downLogs.Select(x => x.ChangedBy).Distinct().ToList();
+        var names = byIds.Count == 0 ? new Dictionary<int, string>()
+            : (await _db.Users.AsNoTracking().Where(u => byIds.Contains(u.UserId)).Select(u => new { u.UserId, u.FullName }).ToListAsync()).ToDictionary(x => x.UserId, x => x.FullName);
+        return new LoadedData { Machines = machines, Wts = filteredWts, Brk = brkW, Down = downLogs, Reporter = names };
+    }
+
+    /// <summary>[G29-HSM-KY] Tính 1 ngày từ dữ liệu đã đọc (giữ nguyên cách tính cũ của GetAsync; lọc lại đúng khung ngày đó).</summary>
+    MachineEfficiencyResult ComputeDay(LoadedData data, DateOnly date, TimeOnly fromTime, TimeOnly toTime, CaLamViec? selectedCa)
+    {
+        var dayStart = date.ToDateTime(fromTime);
+        var dayEnd   = toTime < fromTime ? date.AddDays(1).ToDateTime(toTime) : date.ToDateTime(toTime);
+        var machines = data.Machines;
+        var filteredWts = data.Wts.Where(x => x.StartTime < dayEnd && x.EndTime > dayStart).ToList();
+        var brkW = data.Brk;
+        var downLogs = data.Down.Where(x => x.ThoiGianBatDau < dayEnd && (x.ThoiGianKetThuc == null || x.ThoiGianKetThuc > dayStart)).ToList();
 
         // ── 4. Nghỉ giải lao — convert sang DateTime segments ────────────
         var breakSegs = selectedCa != null
@@ -128,6 +163,7 @@ public class MachineEfficiencyService
                     Start = s, End = e,
                     Type  = isMaint ? SegmentType.Maintenance : SegmentType.Breakdown,
                     Reason = x.Reason ?? "", IsOpen = !x.ThoiGianKetThuc.HasValue,
+                    DownLogId = x.ChangeId,   // [G29-HSM-KY]
                 };
             }).Where(s => s.End > s.Start).ToList();
 
@@ -144,6 +180,7 @@ public class MachineEfficiencyService
                 LogMinutes   = wtsForMachine.ToDictionary(x => x.WtsLogId, x => WorkMinutes.Line(x.StartTime, x.EndTime, WorkMinutesStore.Get(brkW, x.WtsLogId))),   // [ML17-XN]
                 Machine      = m,
                 Segments     = segments,
+                RawRunSegments = wtsSegs,   // [G29-HSM-KY] đoạn làm của từng dòng (chưa cắt dừng / gộp người) — phút đứng máy từng người
                 WtsDetails   = wtsForMachine,
                 TotalMinutes = totalMin,
                 RunMinutes   = runMin,
@@ -165,6 +202,122 @@ public class MachineEfficiencyService
             BreakMinutes = rows.Sum(r => r.BreakMinutes),
             IdleMinutes  = rows.Sum(r => r.IdleMinutes),
         };
+    }
+
+    // ═══ [G29-HSM-KY 2026-11-21] Báo cáo tuần / tháng / tự chọn (mockup https://claude.ai/artifact/CeAoFry7m7H8wT5z6PZ1wp) ═══
+    //   Nguồn: HÙNG 21/11 08:17 (báo cáo máy lấy theo WTS) + 09:46 OK mockup + câu B theo đề xuất CLAUDE.
+    //   Mỗi ngày tính y trang ngày (ComputeDay, cùng khung giờ + ca đang chọn) rồi cộng. Ngày được tính = ngày trong kỳ xưởng có ít nhất
+    //   1 dòng WTS (sản xuất hoặc việc không ra SP) — phần mềm chưa có lịch nghỉ / lễ (câu B2 Hùng OK 21/11). % trên phút kế hoạch
+    //   (khung − nghỉ, câu B1). OK / NG: mỗi dòng WTS tính 1 lần, vào ngày đầu tiên dòng đó chạm khung. Chỉ đọc.
+    public const int PeriodMaxDays = 93;
+
+    public async Task<MachinePeriodResult> GetPeriodAsync(DateOnly from, DateOnly to, TimeOnly fromTime, TimeOnly toTime,
+        CaLamViec? selectedCa, int viewerUserId)
+    {
+        var res = new MachinePeriodResult { From = from, To = to, FromTime = fromTime, ToTime = toTime };
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay)) return res;   // [HSM-QUYEN]
+        if (to < from) { res.Error = "Ngày \"Từ\" phải trước hoặc bằng ngày \"Đến\"."; return res; }
+        if (to.DayNumber - from.DayNumber + 1 > PeriodMaxDays) { res.Error = $"Khoảng xem tối đa {PeriodMaxDays} ngày."; return res; }
+        if (fromTime == toTime) { res.Error = "Khung giờ trống."; return res; }
+
+        // ngày d được tính khi có dòng WTS / việc không ra SP CHẠM khung giờ của d (rà độc lập 21/11 Trung 2: trước theo ngày giờ bắt đầu →
+        //   đuôi ca đêm sau 0h làm Chủ nhật thành ngày kế hoạch rảnh giả)
+        DateTime WinS(DateOnly d) => d.ToDateTime(fromTime);
+        DateTime WinE(DateOnly d) => toTime < fromTime ? d.AddDays(1).ToDateTime(toTime) : d.ToDateTime(toTime);
+        var qS = WinS(from); var qE = WinE(to);
+        var iv = (await _db.WtsProductionLogs.Where(x => !x.IsVoided && x.StartTime < qE && x.EndTime > qS).Select(x => new { x.StartTime, x.EndTime }).ToListAsync())
+            .Select(x => (x.StartTime, x.EndTime)).ToList();
+        iv.AddRange((await _db.WorkerActivityLogs.Where(x => !x.IsVoided && x.StartTime < qE && x.EndTime > qS).Select(x => new { x.StartTime, x.EndTime }).ToListAsync())
+            .Select(x => (x.StartTime, x.EndTime)));
+        var days = Enumerable.Range(0, to.DayNumber - from.DayNumber + 1).Select(i => from.AddDays(i))
+            .Where(d => iv.Any(x => x.StartTime < WinE(d) && x.EndTime > WinS(d))).ToList();
+        res.Days = days;
+        if (days.Count == 0) return res;
+
+        var data = await LoadAsync(days[0], days[^1], fromTime, toTime);
+        if (data == null) return res;
+
+        var acc = data.Machines.ToDictionary(m => m.ThietBiId, m => new MachinePeriodRow { Machine = m });
+        var qtyDone = new HashSet<long>();
+        var workerIds = data.Machines.ToDictionary(m => m.ThietBiId, _ => new HashSet<int>());
+        var downInfo = data.Down.ToDictionary(x => x.ChangeId);
+        foreach (var d in days)
+        {
+            var day = ComputeDay(data, d, fromTime, toTime, selectedCa);
+            foreach (var r in day.Rows)
+            {
+                var a = acc[r.Machine.ThietBiId];
+                var pd = new MachinePeriodDay { Day = d, Total = r.TotalMinutes, Run = r.RunMinutes, Down = r.DownMinutes, Break = r.BreakMinutes, Idle = r.IdleMinutes };
+                a.PerDay.Add(pd);
+                a.TotalMinutes += r.TotalMinutes; a.RunMinutes += r.RunMinutes; a.DownMinutes += r.DownMinutes; a.BreakMinutes += r.BreakMinutes; a.IdleMinutes += r.IdleMinutes;
+                // dừng: theo lần dừng (ChangeId)
+                foreach (var g in r.Segments.Where(x => x.Type is SegmentType.Breakdown or SegmentType.Maintenance).GroupBy(x => x.DownLogId))
+                {
+                    var ev = a.Downs.FirstOrDefault(x => x.ChangeId == g.Key);
+                    if (ev == null)
+                    {
+                        downInfo.TryGetValue(g.Key, out var lg);
+                        ev = new MachineDownEvent
+                        {
+                            ChangeId = g.Key, Start = lg?.ThoiGianBatDau ?? g.Min(x => x.Start), End = lg?.ThoiGianKetThuc,
+                            Reason = string.IsNullOrWhiteSpace(g.First().Reason) ? "(không ghi lý do)" : g.First().Reason.Trim(),
+                            IsMaintenance = g.First().Type == SegmentType.Maintenance, ReportedBy = lg != null && data.Reporter.TryGetValue(lg.ChangedBy, out var rn) ? rn : "",
+                        };
+                        a.Downs.Add(ev);
+                    }
+                    ev.Minutes += g.Sum(x => x.Minutes);
+                }
+                // chạy theo PO / Part / NC (đoạn Chạy đã cắt dừng + nghỉ, 2 người cùng máy tính 1 lần)
+                foreach (var g in r.Segments.Where(x => x.Type == SegmentType.Running).GroupBy(x => (x.PurchaseOrder, x.PartNo, x.NC)))
+                {
+                    var po = a.ByPo.FirstOrDefault(x => x.Po == g.Key.PurchaseOrder && x.Part == g.Key.PartNo && x.NC == g.Key.NC);
+                    if (po == null) { po = new MachinePoStat { Po = g.Key.PurchaseOrder, Part = g.Key.PartNo, NC = g.Key.NC }; a.ByPo.Add(po); }
+                    po.RunMinutes += g.Sum(x => x.Minutes);
+                }
+                // người đứng máy: mỗi người đủ phút của mình (hợp đoạn làm các dòng của người đó)
+                foreach (var g in r.RawRunSegments.GroupBy(x => (x.WorkerId, x.WorkerName)))
+                {
+                    var w = a.ByWorker.FirstOrDefault(x => x.WorkerId == g.Key.WorkerId);
+                    if (w == null) { w = new MachineWorkerStat { WorkerId = g.Key.WorkerId, WorkerName = g.Key.WorkerName }; a.ByWorker.Add(w); }
+                    w.Minutes += UnionMinutes(g.Select(x => (x.Start, x.End)));
+                }
+                // OK / NG: dòng WTS tính 1 lần (ngày đầu tiên chạm khung)
+                foreach (var l in r.WtsDetails)
+                {
+                    if (!qtyDone.Add(l.WtsLogId)) continue;
+                    var ok = l.QtyOk ?? 0; var ng = l.QtyNg ?? 0;
+                    a.Ok += ok; a.Ng += ng; workerIds[r.Machine.ThietBiId].Add(l.WorkerId);
+                    var po = a.ByPo.FirstOrDefault(x => x.Po == (l.KhPlanDetail?.PurchaseOrder ?? "") && x.Part == (l.KhPlanDetail?.PartNo ?? "") && x.NC == (l.NC ?? ""));
+                    if (po == null) { po = new MachinePoStat { Po = l.KhPlanDetail?.PurchaseOrder ?? "", Part = l.KhPlanDetail?.PartNo ?? "", NC = l.NC ?? "" }; a.ByPo.Add(po); }
+                    po.Ok += ok; po.Ng += ng;
+                }
+            }
+        }
+        foreach (var a in acc.Values)
+        {
+            a.WorkerCount = workerIds[a.Machine.ThietBiId].Count;
+            a.Downs = a.Downs.OrderBy(x => x.Start).ToList();
+            a.ByPo = a.ByPo.OrderByDescending(x => x.RunMinutes).ThenBy(x => x.Po).ToList();
+            a.ByWorker = a.ByWorker.OrderByDescending(x => x.Minutes).ThenBy(x => x.WorkerName).ToList();
+            a.SearchText = string.Join(" ", new[] { a.Machine.SoMay, a.Machine.TenMay, a.Machine.MaMay, a.Machine.BoPhan, a.Machine.LoaiMay }
+                .Concat(a.ByPo.SelectMany(x => new[] { x.Po, x.Part, x.NC })).Concat(a.ByWorker.Select(x => x.WorkerName)).Concat(a.Downs.Select(x => x.Reason))
+                .Where(x => !string.IsNullOrWhiteSpace(x))).ToLowerInvariant();
+        }
+        res.Rows = acc.Values.ToList();
+        return res;
+    }
+
+    static double UnionMinutes(IEnumerable<(DateTime S, DateTime E)> iv)
+    {
+        double tot = 0; DateTime? cs = null, ce = null;
+        foreach (var x in iv.Where(x => x.E > x.S).OrderBy(x => x.S))
+        {
+            if (cs == null) { cs = x.S; ce = x.E; continue; }
+            if (x.S <= ce) { if (x.E > ce) ce = x.E; continue; }
+            tot += (ce!.Value - cs.Value).TotalMinutes; cs = x.S; ce = x.E;
+        }
+        if (cs != null) tot += (ce!.Value - cs.Value).TotalMinutes;
+        return tot;
     }
 
     /// <summary>
@@ -258,6 +411,7 @@ public record TimelineSegment
     public long        WtsLogId      { get; init; }
     public string      Reason        { get; init; } = "";
     public bool        IsOpen        { get; init; }
+    public int         DownLogId     { get; init; }   // [G29-HSM-KY] ThietBiChangeLogs.ChangeId của đoạn dừng
     public double Minutes => (End - Start).TotalMinutes;
 }
 
@@ -265,6 +419,8 @@ public class MachineRow
 {
     public ThietBi                Machine      { get; set; } = null!;
     public List<TimelineSegment>  Segments     { get; set; } = new();
+    /// <summary>[G29-HSM-KY] Đoạn làm từng dòng WTS trên máy (cắt theo khung, trước khi dừng / nghỉ che) — phút đứng máy từng người.</summary>
+    public List<TimelineSegment>  RawRunSegments { get; set; } = new();
     public List<WtsProductionLog> WtsDetails   { get; set; } = new();
     /// <summary>[ML17-XN] Phút từng dòng WTS (WorkMinutes.Line với giờ nghỉ đã lưu) — cột Phút bảng chi tiết máy.</summary>
     public Dictionary<long, LineMin> LogMinutes { get; set; } = new();
@@ -274,10 +430,14 @@ public class MachineRow
     public double BreakMinutes  { get; set; }
     public double IdleMinutes   { get; set; }
 
-    public double RunPct   => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes   / TotalMinutes * 100, 1);
-    public double DownPct  => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes  / TotalMinutes * 100, 1);
+    // [G29-HSM-MAUSO 2026-11-21] % chạy / dừng / rảnh tính trên phút KẾ HOẠCH = khung giờ − nghỉ ca (trước: trên cả khung kể cả nghỉ →
+    //   % chạy bị kéo thấp). Chạy + Dừng + Rảnh = 100 %. BreakPct vẫn trên cả khung (chỉ để hiện phút nghỉ).
+    //   Nguồn: CLAUDE đề xuất câu B1 mockup Hiệu suất máy; HÙNG 21/11 09:46 OK.
+    public double PlanMinutes => Math.Max(0, TotalMinutes - BreakMinutes);
+    public double RunPct   => PlanMinutes <= 0 ? 0 : Math.Round(RunMinutes   / PlanMinutes * 100, 1);
+    public double DownPct  => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes  / PlanMinutes * 100, 1);
     public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
-    public double IdlePct  => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes  / TotalMinutes * 100, 1);
+    public double IdlePct  => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes  / PlanMinutes * 100, 1);
 }
 
 public class MachineEfficiencyResult
@@ -292,8 +452,89 @@ public class MachineEfficiencyResult
     public double BreakMinutes  { get; set; }
     public double IdleMinutes   { get; set; }
 
-    public double RunPct   => TotalMinutes == 0 ? 0 : Math.Round(RunMinutes   / TotalMinutes * 100, 1);
-    public double DownPct  => TotalMinutes == 0 ? 0 : Math.Round(DownMinutes  / TotalMinutes * 100, 1);
+    // [G29-HSM-MAUSO 2026-11-21] như MachineRow: % trên phút kế hoạch (khung − nghỉ)
+    public double PlanMinutes => Math.Max(0, TotalMinutes - BreakMinutes);
+    public double RunPct   => PlanMinutes <= 0 ? 0 : Math.Round(RunMinutes   / PlanMinutes * 100, 1);
+    public double DownPct  => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes  / PlanMinutes * 100, 1);
     public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
-    public double IdlePct  => TotalMinutes == 0 ? 0 : Math.Round(IdleMinutes  / TotalMinutes * 100, 1);
+    public double IdlePct  => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes  / PlanMinutes * 100, 1);
+}
+
+// ── [G29-HSM-KY 2026-11-21] DTO báo cáo theo kỳ ─────────────────────────────────────────────────────────────
+public class MachinePeriodResult
+{
+    public DateOnly From { get; set; }
+    public DateOnly To   { get; set; }
+    public TimeOnly FromTime { get; set; }
+    public TimeOnly ToTime   { get; set; }
+    public string?  Error { get; set; }
+    /// <summary>Ngày được tính (xưởng có WTS).</summary>
+    public List<DateOnly> Days { get; set; } = new();
+    public List<MachinePeriodRow> Rows { get; set; } = new();
+}
+
+public class MachinePeriodRow
+{
+    public ThietBi Machine { get; set; } = null!;
+    public double TotalMinutes { get; set; }
+    public double RunMinutes   { get; set; }
+    public double DownMinutes  { get; set; }
+    public double BreakMinutes { get; set; }
+    public double IdleMinutes  { get; set; }
+    public double PlanMinutes => Math.Max(0, TotalMinutes - BreakMinutes);
+    public double RunPct  => PlanMinutes <= 0 ? 0 : Math.Round(RunMinutes  / PlanMinutes * 100, 1);
+    public double DownPct => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes / PlanMinutes * 100, 1);
+    public double IdlePct => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes / PlanMinutes * 100, 1);
+    public decimal Ok { get; set; }
+    public decimal Ng { get; set; }
+    public int WorkerCount { get; set; }
+    public List<MachinePeriodDay>   PerDay   { get; set; } = new();
+    public List<MachineDownEvent>   Downs    { get; set; } = new();
+    public List<MachinePoStat>      ByPo     { get; set; } = new();
+    public List<MachineWorkerStat>  ByWorker { get; set; } = new();
+    /// <summary>Chữ thường gộp (máy, nhóm, loại, PO, Part, NC, người, lý do dừng) — ô Tìm nhanh.</summary>
+    public string SearchText { get; set; } = "";
+    public MachineDownEvent? TopDown => Downs.GroupBy(x => x.Reason).Select(g => new MachineDownEvent { Reason = g.Key, Minutes = g.Sum(x => x.Minutes) })
+        .OrderByDescending(x => x.Minutes).FirstOrDefault();
+}
+
+public class MachinePeriodDay
+{
+    public DateOnly Day { get; set; }
+    public double Total { get; set; }
+    public double Run   { get; set; }
+    public double Down  { get; set; }
+    public double Break { get; set; }
+    public double Idle  { get; set; }
+    public double Plan => Math.Max(0, Total - Break);
+    public double RunPct => Plan <= 0 ? 0 : Math.Round(Run / Plan * 100, 1);
+}
+
+public class MachineDownEvent
+{
+    public int ChangeId { get; set; }
+    public DateTime Start { get; set; }
+    public DateTime? End { get; set; }
+    public string Reason { get; set; } = "";
+    public bool IsMaintenance { get; set; }
+    public string ReportedBy { get; set; } = "";
+    /// <summary>Phút dừng tính trong khung giờ các ngày được tính.</summary>
+    public double Minutes { get; set; }
+}
+
+public class MachinePoStat
+{
+    public string Po { get; set; } = "";
+    public string Part { get; set; } = "";
+    public string NC { get; set; } = "";
+    public double RunMinutes { get; set; }
+    public decimal Ok { get; set; }
+    public decimal Ng { get; set; }
+}
+
+public class MachineWorkerStat
+{
+    public int WorkerId { get; set; }
+    public string WorkerName { get; set; } = "";
+    public double Minutes { get; set; }
 }

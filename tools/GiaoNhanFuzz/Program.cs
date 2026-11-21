@@ -29,6 +29,7 @@ if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VUL
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
 if (args.Length > 0 && args[0] == "g26") { return await G26Scen.Run(); }
+if (args.Length > 0 && args[0] == "rpt") { return await RptScen.Run(); }   // [G29-SCEN 2026-11-21] Gói 29: báo cáo WTS theo kỳ + hiệu suất máy theo kỳ (đếm từng phút)
 if (args.Length > 0 && args[0] == "g28") { return await G28Scen.Run(); }   // [G28-SCEN 2026-11-20] Gói 28: sửa lỗi ngầm (Workflow báo Giao nhận, chữ Taro, đăng nhập, độ dài, đổi loại dừng, log, bản quyền)   // [G26-SCEN 2026-11-20] Gói 26: seed mẫu / bản quyền mất mạng / log ra file
 if (args.Length > 0 && args[0] == "len") { return await LenScen.Run(); }   // [LEN-SCEN 2026-11-16] độ dài chữ theo cột DB ở service (LenCheck) + UiSafe
 if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   // [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16] quyền máy chủ + danh mục + quy trình trống + khoá cấp số KH
