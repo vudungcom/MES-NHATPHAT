@@ -2217,7 +2217,21 @@ else
     {
         if (!_showReceiveModal || _expandedTxId == 0) return;
         var p = _pendingTxs.FirstOrDefault(x => x.HandoverTxId == _expandedTxId);
-        if (p == null || p.ToCell == null || !RecvMustLoi(p)) return;
+        if (p == null || p.ToCell == null) return;
+        // [G21-OFF-LYDO 2026-11-20] Workflow vừa tắt (ON → OFF) khi đang nhận dở phiếu đã TỰ chuyển sang ô Hàng lỗi (lý do còn đúng câu tự điền
+        //   "Workflow ON: …"): trả về ô bên giao chỉ định + xoá câu tự điền (trước: ô Hàng lỗi + lý do "Workflow ON" ở lại khi đã OFF — lưu thành
+        //   lần nhận Hàng lỗi với lý do sai). Người dùng tự chọn / tự gõ lý do khác thì giữ. Chỉ giao diện — máy chủ không đổi.
+        //   Nguồn: CLAUDE rà độc lập Gói 21 14/11 (G21-GHI-NHO 3); HÙNG 20/11 22:51 OK Gói 28.
+        if (!RecvMustLoi(p))
+        {
+            if (_selectedRow?.ApplyWorkflow != true && _receiveCellReason == RecvMustLoiReason && _receiveCell == HandoverCell.Loi && p.ToCell != HandoverCell.Loi)   // rà độc lập Gói 28 N3: chỉ khi Workflow đã tắt
+            {
+                _receiveCellReason = "";
+                SelectRecvCell(p, p.ToCell);
+                _receiveCell = "";   // về "ô chỉ định" (RecvCellOf lấy p.ToCell) như lúc mới bung phiếu
+            }
+            return;
+        }
         if (!string.IsNullOrEmpty(_receiveCell) && RecvCellOpts(p).Contains(_receiveCell)) return;   // đã chọn ô còn hợp lệ (gồm ô Hàng lỗi) → giữ
         SelectRecvCell(p, HandoverCell.Loi);   // ô cũ (ô chỉ định / ô đã chọn nay bị ẩn) → Hàng lỗi: dồn số + lý do điền sẵn như chọn tay
     }

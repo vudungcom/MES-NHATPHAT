@@ -2915,7 +2915,7 @@ namespace MES.Web.Services
                     LamHoNc = m.Pg == "TARO" && lamHo.TryGetValue(m.Code.Trim(), out var lhNc) ? lhNc : null,   // [TARO-LAMHO-NC]
                 };
                 if (line.LamHoNc != null)
-                    line.Note = (line.Note == null ? "" : line.Note + " · ") + $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công) — không tính vào Đã làm của HTSP";
+                    line.Note = (line.Note == null ? "" : line.Note + " · ") + $"Taro làm hộ {NcName(line.LamHoNc)} ({LamHoViTri(row, line.LamHoNc)}) — không tính vào Đã làm của HTSP";   // [G21-NOTE-TARO]
                 if (unit.Gop != null)
                     line.Note = (line.Note == null ? "" : line.Note + " · ") + (line.IsGop
                         ? $"mã gộp — làm thay {string.Join(" + ", unit.Parts.Select(p => p.Code))}"
@@ -3290,7 +3290,7 @@ namespace MES.Web.Services
                 Note = pg == "GC"
                     ? $"Nhận vào NC: {line.Note}. Máy đồng dạng gộp chung số với NC chính."
                     : line.LamHoNc != null   // [TARO-LAMHO-NC]
-                    ? $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công): nhận vào mã = hàng Gia công giao theo NC cho HTSP làm NC này (phần OK lúc nhận) − chiếc đã NG ở mã khác cùng NC mà mã này chưa làm. Không tính vào Chưa làm / Đã làm của HTSP."
+                    ? $"Taro làm hộ {NcName(line.LamHoNc)} ({LamHoViTri(row, line.LamHoNc)}): nhận vào mã = hàng {LamHoNguon(row, line.LamHoNc)} cho HTSP làm NC này (phần OK lúc nhận) − chiếc đã NG ở mã khác cùng NC mà mã này chưa làm. Không tính vào Chưa làm / Đã làm của HTSP."   // [G21-NOTE-TARO]
                     : "Nhận vào mã = hàng nhận vào sản xuất của nhóm − chiếc đã rời nhóm (NG ở mã khác, trả hàng lỗi) mà mã này chưa làm; không vượt Chưa làm của cả nhóm.",
                 Result = line.Waiting ?? 0
             };
@@ -3304,7 +3304,7 @@ namespace MES.Web.Services
                 var gName = unit.FirstOrDefault(x => x.IsGop)?.Code is string gc ? Bo(gc) : null;
                 var pNames = unit.Where(x => !x.IsGop).Select(x => Bo(x.Code)).ToList();
                 if (gName != null && pNames.Count > 0)
-                    ex.Note = (line.LamHoNc != null ? $"Taro làm hộ {NcName(line.LamHoNc)} (máy loại trừ giữa chuỗi Gia công) — vào = hàng Gia công giao theo NC cho HTSP làm NC này. " : "")
+                    ex.Note = (line.LamHoNc != null ? $"Taro làm hộ {NcName(line.LamHoNc)} ({LamHoViTri(row, line.LamHoNc)}) — vào = hàng giao theo NC cho HTSP làm NC này. " : "")   // [G21-NOTE-TARO]
                             + $"Mã {Bo(line.Code)} thuộc bộ {gName} = {string.Join(" + ", pNames)}: "
                             + (line.IsGop
                                ? (line.GopDone > 0   // rà độc lập Gói 21 vòng 1 Thấp 2: theo số hạng "Nhận vào bộ"; vòng 2 Thấp 2: chưa làm mã lẻ nào → phép tính chỉ "Nhận vào"
@@ -3658,6 +3658,22 @@ namespace MES.Web.Services
         public static bool IsTaroPhoiLoi(InTx t, string purpose) => purpose == HandoverPurpose.NgReturn && t.From == "HTSP" && IsVao(t.FromNC);
         /// <summary>[KHO-TARO-THANG] Đoạn làm hộ đầu chuỗi (NC nguồn @VAO) có Taro — PO đi đường Kho giao thẳng Taro. null = không có (đường cũ).</summary>
         public static LedgerLamHoRun? KhoTaroRun(LedgerRow row) => row.LamHoRuns.FirstOrDefault(r => r.HasTaro && IsVao(r.FromNc));
+        /// <summary>[G21-NOTE-TARO 2026-11-20] Chữ vị trí đoạn Taro làm hộ của NC <paramref name="nc"/>: đoạn ĐẦU chuỗi (Kho giao thẳng Taro, phôi lỗi phát hiện
+        ///   khi đang làm trả thẳng Kho) hay đoạn GIỮA chuỗi (Gia công giao theo NC). Trước: mọi chỗ ghi "máy loại trừ giữa chuỗi Gia công" — sai với đoạn đầu chuỗi.
+        ///   Chỉ chữ giải thích (Explain.Note / Note bước), không đổi số. Nguồn: CLAUDE rà độc lập Gói 21 14/11 (G21-GHI-NHO 5); HÙNG 20/11 22:51 OK Gói 28.</summary>
+        public static string LamHoViTri(LedgerRow row, string? nc)
+            => LamHoDauChuoi(row, nc)
+                ? "máy loại trừ đầu chuỗi Gia công — Kho giao thẳng phôi cho Taro, phôi lỗi phát hiện khi đang làm trả thẳng Kho"
+                : "máy loại trừ giữa chuỗi Gia công";
+        /// <summary>[G21-NOTE-TARO] NC thuộc đoạn làm hộ ĐẦU chuỗi (NC nguồn @VAO).</summary>
+        public static bool LamHoDauChuoi(LedgerRow row, string? nc)
+        {
+            var run = string.IsNullOrWhiteSpace(nc) ? null : row.LamHoRuns.FirstOrDefault(r => r.Ncs.Any(x => string.Equals(x, nc.Trim(), StringComparison.OrdinalIgnoreCase)));
+            return run != null && IsVao(run.FromNc);
+        }
+        /// <summary>[G21-NOTE-TARO] Nguồn hàng vào đoạn Taro làm hộ: "Kho giao thẳng" (đoạn đầu chuỗi) / "Gia công giao theo NC" (đoạn giữa chuỗi).</summary>
+        public static string LamHoNguon(LedgerRow row, string? nc)
+            => LamHoDauChuoi(row, nc) ? "Kho giao thẳng" : "Gia công giao theo NC";
 
         // ================================================================
         // [SUA-XL-GIU 2026-11-10] HÀNG SỬA ĐẠT KHÔNG QUAY LẠI NC / NHÓM ĐÃ LÀM XONG NHẬN LÀ ĐÃ LÀM

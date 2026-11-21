@@ -19,9 +19,16 @@ namespace MES.Web.Services
         private readonly ConcurrentDictionary<string, FileLogger> _loggers = new();
         private DateTime _cleanedFor = DateTime.MinValue;
 
-        public FileLoggerProvider(string dir, LogLevel min = LogLevel.Warning, int keepDays = 30)
+        // [LOG-TRAN 2026-11-20] Trần dung lượng 1 file / ngày (mặc định 50 MB, mục "Logging:File:MaxMBPerDay"). Trước: không trần — vòng lỗi lặp
+        //   (vd mất DB, mỗi giây vài dòng kèm stack) làm đầy ổ máy chủ trong vài ngày. Chạm trần: ghi 1 dòng báo rồi ngừng ghi tới ngày sau
+        //   (file ngày mới bắt đầu lại). Nguồn: CLAUDE rà độc lập Gói 26 20/11 (G26-27-GHI-NHO L7); HÙNG 20/11 22:51 OK Gói 28.
+        private readonly long _maxBytes;
+        private DateTime _fullFor = DateTime.MinValue;
+
+        public FileLoggerProvider(string dir, LogLevel min = LogLevel.Warning, int keepDays = 30, int maxMbPerDay = 50)
         {
             _dir = dir; _min = min; _keepDays = Math.Max(1, keepDays);
+            _maxBytes = Math.Max(1, maxMbPerDay) * 1024L * 1024L;
         }
 
         /// <summary>Đọc mục "Logging:File" (Path, MinLevel, KeepDays); Path tương đối tính từ thư mục gốc app.</summary>
@@ -33,7 +40,8 @@ namespace MES.Web.Services
             if (!Path.IsPathRooted(path)) path = Path.Combine(contentRoot, path);
             var min = Enum.TryParse<LogLevel>(sec["MinLevel"], true, out var lv) ? lv : LogLevel.Warning;
             var keep = int.TryParse(sec["KeepDays"], out var k) && k > 0 ? k : 30;
-            return new FileLoggerProvider(path, min, keep);
+            var maxMb = int.TryParse(sec["MaxMBPerDay"], out var mb) && mb > 0 ? mb : 50;   // [LOG-TRAN]
+            return new FileLoggerProvider(path, min, keep, maxMb);
         }
 
         public ILogger CreateLogger(string categoryName) => _loggers.GetOrAdd(categoryName, n => new FileLogger(this, n));
@@ -52,8 +60,19 @@ namespace MES.Web.Services
                 sb.Append(Environment.NewLine);
                 lock (_lock)
                 {
+                    bool hard = level >= LogLevel.Error;   // rà độc lập Gói 28 L4: Lỗi / Nghiêm trọng vẫn ghi tới 2× trần (cảnh báo dừng ở trần)
+                    if (_fullFor == now.Date && !hard) return;   // [LOG-TRAN] hôm nay đã chạm trần
                     Directory.CreateDirectory(_dir);
-                    File.AppendAllText(Path.Combine(_dir, $"mes-{now:yyyyMMdd}.log"), sb.ToString(), Encoding.UTF8);
+                    var file = Path.Combine(_dir, $"mes-{now:yyyyMMdd}.log");
+                    var text = sb.ToString();
+                    long cur = File.Exists(file) ? new FileInfo(file).Length : 0;
+                    if (hard && cur + Encoding.UTF8.GetByteCount(text) > 2 * _maxBytes) return;
+                    if (!hard && _fullFor != now.Date && cur + Encoding.UTF8.GetByteCount(text) > _maxBytes)
+                    {
+                        _fullFor = now.Date;
+                        File.AppendAllText(file, $"{now:yyyy-MM-dd HH:mm:ss.fff} [CANH BAO] MES.Log: file nhật ký hôm nay chạm trần {_maxBytes / 1024 / 1024} MB — ngừng ghi tới ngày sau (xem các dòng phía trên).{Environment.NewLine}", Encoding.UTF8);
+                    }
+                    else File.AppendAllText(file, text, Encoding.UTF8);
                     if (_cleanedFor != now.Date) { _cleanedFor = now.Date; Clean(now); }
                 }
             }

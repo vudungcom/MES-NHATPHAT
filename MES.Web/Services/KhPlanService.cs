@@ -251,6 +251,10 @@ public class KhPlanService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>[LEN-L16 2026-11-20] Cắt giá trị ghi vào KhPlanDetailChangeLogs.OldValue / NewValue (cột 500) — chỉ cho dữ liệu cũ dài hơn cột;
+    ///   giá trị mới đã bị chặn ≤ 500 ở DetailLenError. Giá trị đầy đủ vẫn ở KhPlanDetails.</summary>
+    public static string? LogClip(string? v) => v != null && v.Length > 500 ? v[..499] + "…" : v;
+
     // [KH-UPDFIELD 2026-11-01] private: chỉ SaveEditAsync gọi (đã khoá PO MES_PO_ trong giao dịch). Trước: public — gọi thẳng = ghi SL PO không khoá.
     private async Task<int> UpdateFullAsync(
         int khPlanDetailId,
@@ -275,8 +279,8 @@ public class KhPlanService
             {
                 KhPlanDetailId = khPlanDetailId,
                 FieldName = fieldName,
-                OldValue = oldVal,
-                NewValue = newVal,
+                OldValue = LogClip(oldVal),   // [LEN-L16] giá trị cũ dài hơn cột lịch sử (dữ liệu trước Gói 28) → cắt kèm "…", không nổ
+                NewValue = LogClip(newVal),
                 ChangedBy = changedBy,
                 ChangedAt = DateTime.Now,
                 ChangeSource = "Manual",
@@ -884,10 +888,15 @@ public class KhPlanService
             { await RollbackOwnAsync(ownTx); return "Phiếu vừa thêm / bớt PO trong lúc lưu — bấm Lưu lại."; }
             var plan = await _db.KhPlans.FirstOrDefaultAsync(p => p.KhPlanId == khPlanId);
             if (plan == null) { await RollbackOwnAsync(ownTx); return "Không tìm thấy phiếu KH."; }
+            bool wfDoi = plan.ApplyWorkflow != on;   // [G21-WF-NOTIFY]
             var err = await ApplyWorkflowCoreAsync(plan, ids, on, changedBy, reason);
             if (err != null) { await RollbackOwnAsync(ownTx); return err; }
             await _db.SaveChangesAsync();
             if (ownTx != null) await ownTx.CommitAsync();
+            // [G21-WF-NOTIFY 2026-11-20] Báo mọi trang Giao nhận đang mở tính lại các PO của phiếu NGAY sau khi đổi Workflow (trước: chờ lưới 2 phút —
+            //   phiếu đang nhận dở chưa đổi ô Hàng lỗi theo luật ON / OFF; máy chủ vẫn chặn đúng lúc lưu). Chỉ màn hình, không đổi số.
+            //   Nguồn: CLAUDE rà độc lập Gói 21 14/11 (G21-GHI-NHO 1); HÙNG 20/11 22:51 OK Gói 28.
+            if (wfDoi && ownTx != null) foreach (var id in ids) HandoverChangeNotifier.Notify(id);
             return null;
         }
         finally
@@ -982,7 +991,7 @@ public class KhPlanService
                                          string? orderVl, string? location, string? materialCondition, string? partNotes, string? materialNotes)
         => LenCheck.FirstOver((po, 50, "Số PO"), (unit, 10, "Đơn vị"), (type, 100, "Loại"), (priority, 100, "Ưu tiên"), (material, 100, "Vật liệu"),
                               (materialConfig, 100, "Cấu hình phôi"), (orderVl, 50, "Order vật liệu"), (location, 50, "Vị trí"),
-                              (materialCondition, 200, "Tình trạng phôi"), (partNotes, 500, "Ghi chú hàng"), (materialNotes, 1000, "Ghi chú vật liệu"));
+                              (materialCondition, 200, "Tình trạng phôi"), (partNotes, 500, "Ghi chú hàng"), (materialNotes, 500, "Ghi chú vật liệu"));   // [LEN-L16 2026-11-20] Ghi chú vật liệu 1000 → 500: khớp ô nhập (500), cột lịch sử KhPlanDetailChangeLogs Old/NewValue 500 và cột Kho GhiChuPhoi 500 (KhoVatLieuService chép sang) — trước: 501–1000 lưu được ở KH rồi nổ khi ghi lịch sử / lưu Kho. Nguồn: CLAUDE rà độc lập Gói 23 16/11 (G23-GHI-NHO L16); HÙNG 20/11 22:51 OK Gói 28
 
     public async Task<string?> SaveEditAsync(int khPlanId, int khPlanDetailId, KhEditValues orig, KhEditValues now, int changedBy, string reason)
     {
@@ -990,7 +999,10 @@ public class KhPlanService
         // [LEN-CHECK 2026-11-16] (BK-02) kiểm độ dài TRƯỚC khoá PO + trước PIN đã nhập xong ở trang (lời Việt thay SqlException)
         if (LenCheck.Over(now.PlanNotes, 500, "Ghi chú phiếu") is string eNote) return eNote;
         if (LenCheck.Over(reason, 500, "Lý do sửa") is string eReason) return eReason;   // KhPlanDetailChangeLogs.Reason 500 (rà độc lập 16/11 T5a)
-        if (DetailLenError(null, now.Unit, now.Type, now.Priority, now.Material, now.MaterialConfig, now.OrderVL, now.Location, now.MaterialCondition, now.PartNotes, now.MaterialNotes) is string eLen) return eLen;
+        // [LEN-L16 2026-11-20] Ghi chú vật liệu chỉ kiểm trần 500 khi người dùng ĐỔI ô này (rà độc lập Gói 28 T1: PO có ghi chú cũ 501–1000 ký tự — cột vẫn 1000 —
+        //   sửa ô khác (SL, STD, Workflow…) không bị chặn). Nguồn: CLAUDE rà độc lập Gói 28 20/11 (T1); HÙNG 20/11 22:51 OK Gói 28.
+        var _mnDoi = (orig.MaterialNotes ?? "") != (now.MaterialNotes ?? "");
+        if (DetailLenError(null, now.Unit, now.Type, now.Priority, now.Material, now.MaterialConfig, now.OrderVL, now.Location, now.MaterialCondition, now.PartNotes, _mnDoi ? now.MaterialNotes : null) is string eLen) return eLen;
         if (!await PermCheck.CanEditAsync(_db, changedBy, MES.Web.Constants.SystemPermissions.KeHoach))
             return PermCheck.NoEdit("Kế hoạch");
 
@@ -1088,6 +1100,7 @@ public class KhPlanService
 
             await _db.SaveChangesAsync();
             if (ownTx != null) await ownTx.CommitAsync();
+            if (wWf && ownTx != null) foreach (var id in ids) HandoverChangeNotifier.Notify(id);   // [G21-WF-NOTIFY] Sửa phiếu đổi Workflow → trang Giao nhận tính lại ngay
             return null;
         }
         finally

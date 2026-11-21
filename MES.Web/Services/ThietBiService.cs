@@ -181,9 +181,18 @@ public class ThietBiService
                 {
                     // ĐỔI loại dừng (vd Báo hỏng → Bảo trì): chốt dòng mở tại `now`, dòng log "Trạng thái" mới mở sự cố loại mới từ `now`
                     //   (rà độc lập 16/11: ghi đè NewValue trên dòng cũ làm Hiệu suất máy đổi loại hồi tố cả khoảng đã dừng những ngày trước)
-                    openToUpdate.ThoiGianKetThuc = now;
-                    openToUpdate.SoPhutDung = Math.Max(0, (int)Math.Round((now - (openToUpdate.ThoiGianBatDau ?? now)).TotalMinutes));
-                    thoiGianBatDau = thoiGianBatDau.HasValue && thoiGianBatDau.Value > now ? thoiGianBatDau : now;
+                    // [TB-DOI-LOAI-GIO 2026-11-20] Người nhập giờ bắt đầu loại dừng mới (vd Bảo trì từ 10:00, bấm lưu 10:30): chốt dòng cũ và mở dòng mới
+                    //   Nguồn: CLAUDE rà độc lập Gói 24 16/11 (G24-GHI-NHO "dòng Trạng thái log khi đổi loại dừng"); HÙNG 20/11 22:51 OK Gói 28.
+                    //   tại GIỜ ĐÓ — phải sau giờ bắt đầu sự cố cũ (giờ tương lai đã chặn ở trên); không nhập / không hợp lệ → lấy giờ hiện tại như trước.
+                    //   Trước: luôn lấy `now` (biểu thức cũ "> now ? nhập : now" không bao giờ chọn giờ nhập vì giờ tương lai đã bị chặn) → phút dừng tính
+                    //   sai loại cho khoảng giữa giờ thật và lúc bấm lưu (Hiệu suất máy). Không đụng sổ Giao nhận.
+                    var _oldStart = openToUpdate.ThoiGianBatDau ?? now;
+                    if (thoiGianBatDau.HasValue && thoiGianBatDau.Value < _oldStart)   // rà độc lập Gói 28 L3: trước giờ dừng cũ → báo (trước: lặng lẽ lấy giờ hiện tại)
+                        return (false, $"Đổi loại dừng: giờ bắt đầu loại mới ({thoiGianBatDau.Value:HH:mm dd/MM}) phải sau giờ bắt đầu lần dừng đang mở ({_oldStart:HH:mm dd/MM}) — để nguyên giờ cũ thì lấy giờ hiện tại.");
+                    var _cut = thoiGianBatDau.HasValue && thoiGianBatDau.Value > _oldStart && thoiGianBatDau.Value <= now ? thoiGianBatDau.Value : now;
+                    openToUpdate.ThoiGianKetThuc = _cut;
+                    openToUpdate.SoPhutDung = Math.Max(0, (int)Math.Round((_cut - _oldStart).TotalMinutes));
+                    thoiGianBatDau = _cut;
                 }
                 else if (!thoiGianBatDau.HasValue) thoiGianBatDau = now;   // dữ liệu cũ không có dòng mở → mở 1 dòng như trước
             }

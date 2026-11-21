@@ -399,6 +399,7 @@ public static class TaroScen
         await LamHoNhanNg();    // [T25] [LAMHO-NHAN-NG]
         await NcKeyTrung();     // [T26] [LAMHO-NCKEY]
         await LamHoOff();       // [T27] [LAMHO-OFF]
+        await QuetChoOn();      // [T29] [QUET-CHO-ON] Gói 28
         await OkBoNgCheo();     // [T24] [OKBO-NG-CHEO] ghi nhớ hành vi hiện tại
         await GopBao();         // [T28] [WTS-3T-BAO]
 
@@ -1286,6 +1287,62 @@ public static class TaroScen
     // [T27] [LAMHO-OFF 2026-11-09] Workflow OFF: các chặn vụ làm hộ (chỉ Gia công sửa, không vào ô hàng đạt / ô Hàng sửa nhóm khác, nhóm khác không ghi Kết quả sửa)
     //   KHÔNG chặn nữa — lưu được, sổ cảnh báo ở nhóm đó; số PO vẫn cân. Workflow ON y như cũ (T22 / T25). Bản 719c14c: T27a–d SAI (OFF bị chặn).
     //   Nguồn: HÙNG 09/11 08:21 ("off họ phải tự kiểm soát") + 09:18 OK làm theo đề xuất Claude.
+    // [T29] [QUET-CHO-ON 2026-11-20] Bộ quét lúc bàn giao: phiếu chờ nhận sẽ bị máy chủ chặn khi PO bật Workflow — ngoài PHIEU_CHO_O_DAT (Gói 21) thêm
+    //   (c) HTSP chỉ làm Taro hộ mà phiếu giao Hàng mới → PHIEU_CHO_HTSP_LAMHO; (d) vụ Taro làm hộ bị lỗi chỉ định ô Hàng sửa nhóm khác Gia công → PHIEU_CHO_LAMHO_SUA.
+    //   Đối chứng: máy chủ chặn nhận đúng phiếu quét báo. Bản 572cd3b: chưa có 2 loại quét → không biên dịch. Nguồn: CLAUDE rà độc lập Gói 21 (G21-GHI-NHO 4); HÙNG 20/11 22:51 OK Gói 28.
+    static async Task QuetChoOn()
+    {
+        Console.WriteLine("[T29] [QUET-CHO-ON] quét phiếu chờ sẽ bị chặn khi bật Workflow: HTSP chỉ làm Taro hộ (PHIEU_CHO_HTSP_LAMHO) · vụ làm hộ vào ô Hàng sửa nhóm khác (PHIEU_CHO_LAMHO_SUA)");
+        var G4 = new[] { ("NC01", "M1"), ("NC02", "M2"), ("NC03", "H04"), ("NC04", "M4") };
+        void On(AppDbContext db, int det) { db.KhPlanDetails.List.First(d => d.KhPlanDetailId == det).KhPlan!.ApplyWorkflow = true; db.Fixup(); }
+        {
+            var (db, det) = await LhStart("P-QC1", G4, new[] { ("3", "2T") }, 5, new[] { "NC01", "NC02" }, wfOff: true);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await Taro(db, det, "2T", "3", 5);
+            await svc.IssueSpecialAsync(det, "HTSP", "GC", 5, U, HandoverPurpose.HelpReturn, null, "NC04", "tra NC4");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await WtsSvcHelp.SaveAsync(db, det, "GC", "NC04", null, 5, 0, U);
+            var i = await svc.IssueByCellAsync(det, "GC", "HTSP", 2, U, "MOI", false, "MOI");
+            var tx = db.HandoverTransactions.List.Last().HandoverTxId;
+            var r0 = await QuetCore.ScanAsync(db, led);
+            Ok(i.Ok && !r0.Findings.Any(f => f.Kind == QuetCore.PhieuChoHtspLamHo), "T29a Workflow OFF: Gia công giao Hàng mới cho HTSP (chỉ làm Taro hộ) lưu được, quét không báo", i.Error);
+            On(db, det);
+            var r1 = await QuetCore.ScanAsync(db, led);
+            var f1 = r1.Findings.Where(f => f.Kind == QuetCore.PhieuChoHtspLamHo).ToList();
+            Ok(f1.Count == 1 && f1[0].Detail.StartsWith($"phiếu #{tx} Gia công → HTSP chỉ định ô Hàng mới, còn chờ nhận 2"), "T29b bật ON: quét báo đúng phiếu (ô chỉ định, còn chờ nhận)", string.Join(" | ", f1.Select(f => f.Detail)));
+            var rv = await svc.ReceiveAsync(tx, 2, 0, null, U);
+            Ok(!rv.Ok && rv.Error.Contains("chỉ làm Taro làm hộ"), "T29c đối chứng: HTSP nhận phiếu đó bị máy chủ chặn (đúng lý do quét báo)", rv.Error);
+            var sw = new StringWriter(); QuetCore.Write(r1, sw, "GIA");
+            Ok(sw.ToString().Contains($"({QuetCore.PhieuChoHtspLamHo}, lọc trước khi lên máy khách): 1 phiếu"), "T29c' file kết quả quét có dòng tổng PHIEU_CHO_HTSP_LAMHO");
+        }
+        {
+            var (db, det) = await LhStart("P-QC2", G4, new[] { ("3", "2T"), ("T9", "9T") }, 5, new[] { "NC01", "NC02" }, wfOff: true);
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            await svc.IssueSpecialAsync(det, "GC", "HTSP", 5, U, HandoverPurpose.HelpSend, "NC02", null, "lam ho");
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 5, 0, null, U);
+            await Taro(db, det, "2T", "3", 3, 2);
+            var cs = db.WtsProductionLogs.List.Last().NgCaseId!.Value;
+            await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "LAMHOLOI", CaseId = cs, Action = HandoverForm.AGiao, Qty = 2 });
+            await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 0, 2, null, U);   // Gia công giữ vụ làm hộ ở ô Hàng lỗi
+            var a = await svc.IssueByCellAsync(det, "GC", "HTSP", 1, U, "LOI", false, "SUA", null, null, null, null, null, cs);   // OFF: lưu được + cảnh báo (LAMHO-OFF)
+            var tx = db.HandoverTransactions.List.Last().HandoverTxId;
+            var r0 = await QuetCore.ScanAsync(db, led);
+            Ok(a.Ok && !r0.Findings.Any(f => f.Kind == QuetCore.PhieuChoLamHoSua), "T29d Workflow OFF: Gia công gửi vụ làm hộ vào ô Hàng sửa HTSP lưu được, quét không báo", a.Error);
+            On(db, det);
+            var r1 = await QuetCore.ScanAsync(db, led);
+            var f1 = r1.Findings.Where(f => f.Kind == QuetCore.PhieuChoLamHoSua).ToList();
+            Ok(f1.Count == 1 && f1[0].Detail.StartsWith($"phiếu #{tx} Gia công → HTSP mang {NgCaseNo.Format(cs)}") && f1[0].Detail.Contains("chỉ định ô Hàng sửa, còn chờ nhận 1"),
+               "T29e bật ON: quét báo đúng phiếu mang vụ làm hộ chỉ định ô Hàng sửa", string.Join(" | ", f1.Select(f => f.Detail)));
+            var rv = await svc.ReceiveAsync(tx, 1, 0, null, U);
+            Ok(!rv.Ok && rv.Error.Contains("chỉ Gia công sửa"), "T29f đối chứng: HTSP nhận như phiếu bị máy chủ chặn", rv.Error);
+            var rv2 = await svc.ReceiveAsync(tx, 0, 1, null, U, toCell: HandoverCell.Loi, toCellReason: "lam ho chi GC sua");
+            var r2 = await QuetCore.ScanAsync(db, led);
+            Ok(rv2.Ok && !r2.Findings.Any(f => f.Kind == QuetCore.PhieuChoLamHoSua), "T29g nhận vào ô Hàng lỗi (ghi lý do) → hết báo", rv2.Error);
+        }
+    }
+
     static async Task LamHoOff()
     {
         Console.WriteLine("[T27] [LAMHO-OFF] Workflow OFF: vụ làm hộ vào hàng đạt / Hàng sửa / Kết quả sửa nhóm khác → lưu được + sổ cảnh báo");

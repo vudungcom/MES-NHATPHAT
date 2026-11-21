@@ -5,6 +5,7 @@
 @using MES.Web.Services
 @inject AuthenticationStateProvider AuthState
 @inject UserService UserSvc
+@inject ILogger<Home> Logger
 @* [HOME-THE-QUYEN 2026-11-20] gói nhỏ G23-GHI-NHO L2: thẻ module chỉ hiện khi có quyền Xem / Sửa mục đó (cùng điều kiện menu trái NavMenu) — trước hiện cho mọi người,
    bấm vào gặp "Truy cập bị từ chối". Thẻ "Hiệu suất công nhân" luôn hiện như menu. Nguồn: CLAUDE rà độc lập Gói 23 (L2); Hùng 20/11 18:32 OK (B9). *@
 
@@ -195,7 +196,7 @@
         if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
         {
             try { _permissions = await UserSvc.GetAllUserPermissionsAsync(uid); }
-            catch (Exception) { _permissions = new(); }   // lỗi đọc quyền: chỉ ẩn thẻ (trang vẫn tự kiểm quyền)
+            catch (Exception ex) { _permissions = new(); Logger.LogWarning(ex, "Trang chủ: lỗi đọc quyền người dùng {Uid}", uid); }   // lỗi đọc quyền: chỉ ẩn thẻ (trang vẫn tự kiểm quyền) · [G27-L11-CHU 2026-11-20] ghi nhật ký (trước: nuốt lỗi im lặng)
         }
     }
 

@@ -46,11 +46,23 @@ namespace Microsoft.EntityFrameworkCore
         public static IQueryable<T> SqlQuery<T>(this Microsoft.EntityFrameworkCore.DatabaseFacade d, FormattableString s) => Enumerable.Empty<T>().AsQueryable();
         public static IQueryable<T> FromSqlRaw<T>(this DbSet<T> q, string s, params object[] a) where T : class => q;
         public static IQueryable<T> FromSqlInterpolated<T>(this DbSet<T> q, FormattableString s) where T : class => q;
-        public static EntityEntry<T> Entry<T>(this DbContext c, T e) where T : class => new();
+        public static EntityEntry<T> Entry<T>(this DbContext c, T e) where T : class
+        {   // [EF-GHOST 2026-11-20] trạng thái thật của stub: Added (chờ ghi) / Unchanged (bản ma sau rollback, hoặc đã ghi) / Detached; đặt Detached → gỡ
+            var set = c.Set<T>();
+            var st = set.Added.Any(x => ReferenceEquals(x, e)) ? EntityState.Added
+                   : c.Ghosts.Any(x => ReferenceEquals(x, e)) || set.List.Any(x => ReferenceEquals(x, e)) ? EntityState.Unchanged : EntityState.Detached;
+            var en = new EntityEntry<T> { Entity = e };
+            en.State = st;
+            en.OnState = s => { if (s == EntityState.Detached) { set.Added.RemoveAll(x => ReferenceEquals(x, e)); c.RemoveGhost(e); } };
+            return en;
+        }
         public static IEnumerable<EntityEntry<T>> Entries<T>(this ChangeTracker c) where T : class
         {   // [LEN-SCEN 2026-11-16] bản Added đang chờ ghi của DbSet<T> giả (Modified / Deleted: stub không theo dõi → không có)
+            //   [EF-GHOST 2026-11-20] + bản Unchanged ma (đã ghi trong giao dịch rồi rollback) — đặt Detached gỡ khỏi danh sách ma
             var set = c.Ctx.Set<T>();
-            return set.Added.ToList().Select(e => new EntityEntry<T> { Entity = e, State = EntityState.Added, OnState = s => { if (s == EntityState.Detached) set.Added.Remove(e); } }).ToList();
+            var added = set.Added.ToList().Select(e => new EntityEntry<T> { Entity = e, State = EntityState.Added, OnState = s => { if (s == EntityState.Detached) set.Added.Remove(e); } });
+            var ghosts = c.Ctx.Ghosts.OfType<T>().ToList().Select(e => new EntityEntry<T> { Entity = e, State = EntityState.Unchanged, OnState = s => { if (s == EntityState.Detached) c.Ctx.RemoveGhost(e); } });
+            return added.Concat(ghosts).ToList();
         }
         public static void Add<T>(this DbContext c, T e) where T : class { }
         public static void Remove<T>(this DbContext c, T e) where T : class { }

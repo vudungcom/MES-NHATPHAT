@@ -12,7 +12,7 @@ public static class KhScen
         Console.WriteLine((cond ? "  ĐẠT  " : "  SAI  ") + name + (info != null ? "\n         → " + info.Replace("\n", "\n           ") : ""));
         if (!cond) fails++;
     }
-    static AppDbContext Seed(bool workflow = true, int? phoi = 40)
+    internal static AppDbContext Seed(bool workflow = true, int? phoi = 40)   // [G28-SCEN] g28 dùng lại
     {
         var db = new AppDbContext();
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN" };

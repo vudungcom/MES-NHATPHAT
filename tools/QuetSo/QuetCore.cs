@@ -59,6 +59,11 @@ public static class QuetCore
     //   trả về Gia công") → chỉ có khi ghi thẳng DB; sổ Kho không có phần nhận này nên khung Đang ở đâu lệch (sổ G20-GHI-NHO mục 1 — giữ cảnh báo lệch, quét để bắt).
     //   Nguồn: CLAUDE (sổ G16-PHIEU-CHO + G20-GHI-NHO 1); HÙNG 14/11 08:28 OK Gói 21.
     public const string PhieuChoODat = "PHIEU_CHO_O_DAT";
+    /// <summary>[QUET-CHO-ON 2026-11-20] Phiếu chờ nhận sẽ bị chặn khi PO bật Workflow (2 chặn ngoài PHIEU_CHO_O_DAT): HTSP chỉ làm Taro hộ mà phiếu giao
+    ///   Hàng mới / Hàng lỗi đã xử lý (PHIEU_CHO_HTSP_LAMHO) · vụ Taro làm hộ bị lỗi chỉ định ô hàng đạt / Hàng sửa ở nhóm khác Gia công (PHIEU_CHO_LAMHO_SUA).
+    ///   Lọc trước khi lên máy khách như PHIEU_CHO_O_DAT. Nguồn: CLAUDE rà độc lập Gói 21 14/11 (G21-GHI-NHO 4); HÙNG 20/11 22:51 OK Gói 28.</summary>
+    public const string PhieuChoHtspLamHo = "PHIEU_CHO_HTSP_LAMHO";
+    public const string PhieuChoLamHoSua  = "PHIEU_CHO_LAMHO_SUA";
     public const string TraVeLa      = "TRA_VE_NHOM_LA";
 
     public sealed class Result
@@ -316,6 +321,17 @@ public static class QuetCore
             if (from is HandoverCell.Loi or HandoverCell.Sua && desig is HandoverCell.Xl or HandoverCell.Moi)
                 Add(rp, PhieuChoODat, $"phiếu #{t.HandoverTxId} {HandoverLedgerService.GroupLabel(t.FromGroupCode)} → {HandoverLedgerService.GroupLabel(t.ToGroupCode)} lấy từ ô {HandoverCell.Label(from)}"
                     + $" chỉ định ô {HandoverCell.Label(desig)}{(t.ToCell == null ? " (phiếu cũ không ghi ô)" : "")}, còn chờ nhận {left:0.##} (lập {t.IssuedAt:dd/MM HH:mm}) — Workflow ON không nhận vào ô đạt: bên nhận nhận ô Hàng lỗi, hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa");
+            // [QUET-CHO-ON 2026-11-20] (c) HTSP chỉ làm Taro hộ (HandoverService.ReceiveAsync [TARO-LAMHO-NC] rà vòng 2 L1) — phiếu thường vào ô Hàng mới / Hàng lỗi đã xử lý
+            if (t.ToGroupCode == "HTSP" && t.Purpose is not (HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn) && desig is HandoverCell.Moi or HandoverCell.Xl
+                && HandoverLedgerService.HtspOnlyLamHo(rp))
+                Add(rp, PhieuChoHtspLamHo, $"phiếu #{t.HandoverTxId} {HandoverLedgerService.GroupLabel(t.FromGroupCode)} → HTSP chỉ định ô {HandoverCell.Label(desig)}, còn chờ nhận {left:0.##} (lập {t.IssuedAt:dd/MM HH:mm})"
+                    + " — PO này HTSP chỉ làm Taro làm hộ: Workflow ON không nhận vào ô Hàng mới / Hàng lỗi đã xử lý; bên giao huỷ phiếu rồi giao đúng đường (giao theo NC / nhóm kế tiếp)");
+            // (d) vụ Taro làm hộ bị lỗi (chỉ Gia công sửa — [LAMHO-NHO-SUA]) vào ô hàng đạt / Hàng sửa ở nhóm khác Gia công
+            bool carry = from is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;
+            if (carry && t.ToGroupCode != "GC" && desig is HandoverCell.Moi or HandoverCell.Xl or HandoverCell.Sua
+                && t.NgCaseId is long lhId && rp.Cases.TryGetValue(lhId, out var lhC) && lhC.IsLamHo)
+                Add(rp, PhieuChoLamHoSua, $"phiếu #{t.HandoverTxId} {HandoverLedgerService.GroupLabel(t.FromGroupCode)} → {HandoverLedgerService.GroupLabel(t.ToGroupCode)} mang {NgCaseNo.Format(lhId)} ({lhC.LamHoTen})"
+                    + $" chỉ định ô {HandoverCell.Label(desig)}, còn chờ nhận {left:0.##} (lập {t.IssuedAt:dd/MM HH:mm}) — Workflow ON: vụ làm hộ chỉ Gia công sửa, bên nhận nhận ô Hàng lỗi rồi trả về Gia công, hoặc bên giao huỷ phiếu");
         }
         // [K5-CLOSE-NHIEU 2026-11-06] dòng từng lần huỷ phần chưa nhận khớp bộ cột cũ
         var closeSum = db.HandoverTxCloses.ToList().GroupBy(c => c.HandoverTxId).ToDictionary(g => g.Key, g => (Sum: g.Sum(c => c.Qty), N: g.Count()));
@@ -361,6 +377,8 @@ public static class QuetCore
         o.WriteLine($"  NC Taro khớp nhiều NC Gia công ({TaroNcLech}, chỉ để biết — sửa Part Master): {res.Findings.Count(f => f.Kind == TaroNcLech)} · {res.Findings.Where(f => f.Kind == TaroNcLech).Select(f => f.DetailId).Distinct().Count()} PO");   // [LAMHO-NCKEY]
         o.WriteLine($"  Phiếu Kho giao thẳng Taro / Taro trả phôi lỗi lạ ({KhoTaroLa}): {(res.Findings.Any(f => f.Kind == KhoTaroLa) ? "CÓ — báo Claude" : "không có")}");   // [KHO-TARO-THANG]
         o.WriteLine($"  Phiếu chờ nhận chỉ định ô đạt từ ô Hàng lỗi / Hàng sửa, PO bật Workflow ({PhieuChoODat}, lọc trước khi lên máy khách): {res.Findings.Count(f => f.Kind == PhieuChoODat)} phiếu · {res.Findings.Where(f => f.Kind == PhieuChoODat).Select(f => f.DetailId).Distinct().Count()} PO");   // [QUET-PHIEU-CHO]
+        o.WriteLine($"  Phiếu chờ nhận HTSP chỉ làm Taro hộ vào ô Hàng mới / Hàng lỗi đã xử lý, PO bật Workflow ({PhieuChoHtspLamHo}, lọc trước khi lên máy khách): {res.Findings.Count(f => f.Kind == PhieuChoHtspLamHo)} phiếu · {res.Findings.Where(f => f.Kind == PhieuChoHtspLamHo).Select(f => f.DetailId).Distinct().Count()} PO");   // [QUET-CHO-ON]
+        o.WriteLine($"  Phiếu chờ nhận vụ Taro làm hộ vào ô đạt / Hàng sửa nhóm khác Gia công, PO bật Workflow ({PhieuChoLamHoSua}, lọc trước khi lên máy khách): {res.Findings.Count(f => f.Kind == PhieuChoLamHoSua)} phiếu · {res.Findings.Where(f => f.Kind == PhieuChoLamHoSua).Select(f => f.DetailId).Distinct().Count()} PO");   // [QUET-CHO-ON]
         o.WriteLine($"  Trả về theo NC tới nhóm khác Gia công ({TraVeLa}, ghi ngoài phần mềm): {(res.Findings.Any(f => f.Kind == TraVeLa) ? "CÓ — báo Claude" : "không có")}");   // [QUET-PHIEU-CHO]
         o.WriteLine($"  Taro làm hộ ({LamHoTaro}, chỉ để biết): {res.Findings.Count(f => f.Kind == LamHoTaro)} đoạn · {res.Findings.Where(f => f.Kind == LamHoTaro).Select(f => f.DetailId).Distinct().Count()} PO");   // [TARO-LAMHO-NC]
         o.WriteLine($"  Số lẻ ({SoLe}, B3): {(res.Findings.Any(f => f.Kind == SoLe) ? "CÓ — báo Hùng trước khi chặn số lẻ" : "không có dòng nào (PO / phiếu / lần nhận / WTS / báo lỗi / Kết quả sửa / KCS xác nhận)")}");

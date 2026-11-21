@@ -14,6 +14,7 @@ GO
 --        Đọc bảng in ra: cột Sau của bảng giao dịch phải = 0, bảng danh mục giữ nguyên (trừ PartMasters bớt đúng số Part T1-PM-…).
 --     2. Đúng rồi thì sửa @CHAY_THAT = 1, chạy lại → COMMIT.
 --     Bước KIỂM TRƯỚC (trước BEGIN TRAN): thiếu bảng nào / bảng chết còn dòng → báo lỗi + DỪNG (SET NOEXEC ON), không xoá gì.
+--     [D1-BANG-LA] Bảng "BangNgoaiDanhSach_GIU" in ra = bảng có dòng mà script không đụng — chạy thật phải đọc rồi đặt @DA_XEM_BANG_LA = 1.
 --     Có lỗi khi xoá (khoá ngoại) → cả giao dịch tự quay lại (XACT_ABORT), DB giữ nguyên; chụp lỗi gửi Claude. Sau khi chạy xong nhớ SET NOEXEC OFF nếu bị dừng.
 --     Sau khi khoá tài khoản mà KHÔNG còn tài khoản nhóm ADMIN nào hoạt động → báo lỗi + ROLLBACK.
 --
@@ -30,6 +31,7 @@ GO
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 DECLARE @CHAY_THAT bit = 0;   -- 0 = chạy thử (ROLLBACK)  ·  1 = ghi thật (COMMIT)
+DECLARE @DA_XEM_BANG_LA bit = 0;   -- [D1-BANG-LA 2026-11-20] chạy thật mà có bảng ngoài danh sách còn dòng → phải đọc bảng in ra rồi đặt 1 (xem bước KIỂM TRƯỚC)
 
 IF OBJECT_ID('tempdb..#Dem') IS NOT NULL DROP TABLE #Dem;
 CREATE TABLE #Dem (Thu int IDENTITY(1,1) PRIMARY KEY, Bang sysname NOT NULL, Loai nvarchar(20) NOT NULL, Truoc bigint NULL, Sau bigint NULL);
@@ -76,6 +78,22 @@ END
 IF OBJECT_ID(N'dbo.KhPlanRouteSnapshotMachiningTiming', N'U') IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.KhPlanRouteSnapshotMachiningTiming)
 BEGIN
     RAISERROR(N'[D1] Bảng chết KhPlanRouteSnapshotMachiningTiming CÒN DÒNG — DỪNG, không xoá gì. Gửi Claude.', 16, 1);
+    SET NOEXEC ON;
+END
+-- [D1-BANG-LA 2026-11-20] Bảng của DB KHÔNG có trong danh sách #Dem mà đang có dòng → script GIỮ NGUYÊN (không xoá). In ra để kiểm: bảng giao dịch mới
+--   thêm sau Gói 26 (hoặc sót) sẽ còn dữ liệu test sau bản trắng. Danh mục (mọi *ChangeLogs, cấu hình nhóm WTS, mã gộp, sơ đồ tổ chức, …) giữ là đúng.
+--   Chạy thật (@CHAY_THAT = 1) mà danh sách này KHÔNG trống → phải đọc rồi đặt @DA_XEM_BANG_LA = 1, không thì DỪNG.
+--   Nguồn: CLAUDE rà độc lập Gói 26 20/11 (G26-27-GHI-NHO L9); HÙNG 20/11 22:51 OK Gói 28. Chỉ thêm bước kiểm — phần xoá / giữ không đổi.
+SELECT t.name AS BangNgoaiDanhSach_GIU, SUM(p.rows) AS SoDong
+FROM sys.tables t JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
+WHERE t.is_ms_shipped = 0 AND SCHEMA_NAME(t.schema_id) = N'dbo' AND t.name COLLATE DATABASE_DEFAULT NOT IN (SELECT Bang COLLATE DATABASE_DEFAULT FROM #Dem)
+GROUP BY t.name HAVING SUM(p.rows) > 0
+ORDER BY t.name;
+IF @CHAY_THAT = 1 AND @DA_XEM_BANG_LA = 0 AND EXISTS (
+    SELECT 1 FROM sys.tables t JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
+    WHERE t.is_ms_shipped = 0 AND SCHEMA_NAME(t.schema_id) = N'dbo' AND t.name COLLATE DATABASE_DEFAULT NOT IN (SELECT Bang COLLATE DATABASE_DEFAULT FROM #Dem) AND p.rows > 0)
+BEGIN
+    RAISERROR(N'[D1] Có bảng ngoài danh sách còn dòng (bảng "BangNgoaiDanhSach_GIU" ở trên) — đọc kỹ, đúng là danh mục cần giữ thì đặt @DA_XEM_BANG_LA = 1 rồi chạy lại. DỪNG, không xoá gì.', 16, 1);
     SET NOEXEC ON;
 END
 SELECT PartId, PartNo, PartName FROM dbo.PartMasters WHERE PartNo LIKE N'T1-PM%' ORDER BY PartNo;   -- danh sách Part test sẽ xoá

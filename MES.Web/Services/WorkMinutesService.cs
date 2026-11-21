@@ -340,8 +340,12 @@ public static class WorkMinutes
     /// — khác = ca vừa đổi giờ nghỉ (trang để cũ) → chặn; phút làm thông phải nguyên trong [0, Chồng]. Trả (bộ để ghi, lời báo).
     /// </summary>
     public static (List<LineBreak> Rows, string? Error) Verify(CaLamViec? ca, DateTime s, DateTime e, IReadOnlyList<SentBreak>? sent)
+        => VerifySegs(BreakSegments(ca, s, e), ca?.CaId, s, e, sent);
+
+    /// <summary>[CU-NGHI-LUU] Như Verify nhưng theo bộ khoảng nghỉ cho sẵn (dòng sửa quyền cao hơn: giờ nghỉ ĐÃ LƯU của dòng gốc + ca hiện tại phần còn lại).</summary>
+    public static (List<LineBreak> Rows, string? Error) VerifySegs(IEnumerable<BreakSeg> segs, int? caId, DateTime s, DateTime e, IReadOnlyList<SentBreak>? sent)
     {
-        var calc = Touching(ca, s, e);
+        var calc = TouchingSegs(segs, s, e, caId);
         sent ??= Array.Empty<SentBreak>();
         if (sent.Count != calc.Count
             || sent.Any(x => !calc.Any(c => c.BreakStart == x.BreakStart && c.BreakEnd == x.BreakEnd))
@@ -355,6 +359,22 @@ public static class WorkMinutes
             c.WorkedMin = w;
         }
         return (calc, null);
+    }
+
+    /// <summary>[CU-NGHI-LUU 2026-11-20] Khoảng nghỉ cho dòng SỬA đi đường quyền cao hơn (ngày cũ / người khác / Sửa nhanh): khoảng nghỉ dòng gốc ĐÃ LƯU
+    ///   Nguồn: CLAUDE rà độc lập Gói 25b 20/11 (G25B-GHI-NHO R25b-02 / V2-03); HÙNG 20/11 22:51 OK Gói 28 (câu B1).
+    ///   (WtsBreakWorkLogs — giờ nghỉ lúc lưu) giữ nguyên; chỉ khoảng nghỉ của ca HIỆN TẠI không chồng khoảng đã lưu nào mới lấy theo ca (dòng sửa
+    ///   kéo giờ sang khoảng nghỉ dòng gốc chưa chạm). Trước: luôn theo giờ nghỉ hiện tại của ca → ca đổi giờ nghỉ sau khi lưu thì sửa dòng cũ làm lệch
+    ///   phút làm so với lúc lưu (trái CA-NGHI-HIST "sửa ca sau không đổi số ngày cũ"). Chỉ phút làm / hiệu suất — không đụng số lượng.</summary>
+    public static List<BreakSeg> SavedSegs(CaLamViec? ca, DateTime s, DateTime e, IEnumerable<WtsBreakWorkLog> saved)
+        => SavedSegs(ca, s, e, saved.Select(x => new BreakSeg(x.BreakStart, x.BreakEnd, x.NghiId, x.BreakName)));
+    /// <summary>[CU-NGHI-LUU] Bản dùng chung trang + máy chủ: khoảng nghỉ đã lưu (BreakSeg) + khoảng ca hiện tại không chồng; chỉ khoảng chạm [s, e) như BreakSegments.</summary>
+    public static List<BreakSeg> SavedSegs(CaLamViec? ca, DateTime s, DateTime e, IEnumerable<BreakSeg> saved)
+    {
+        var keep = saved.Where(x => x.End > x.Start)
+                        .GroupBy(x => (x.Start, x.End)).Select(g => g.First()).ToList();
+        var cur = BreakSegments(ca, s, e).Where(c => !keep.Any(k => c.Start < k.End && c.End > k.Start));
+        return keep.Where(k => k.End > s && k.Start < e).Concat(cur).OrderBy(b => b.Start).ThenBy(b => b.End).ToList();
     }
 
     /// <summary>Đổi bộ khoảng nghỉ trong bộ nhớ thành dòng DB của 1 dòng cha.</summary>

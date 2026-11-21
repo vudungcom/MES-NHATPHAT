@@ -200,7 +200,16 @@ app.MapPost("/login-submit", async (HttpContext ctx, AuthService auth) =>
     string Back(string q) => "/login?" + q + (safeReturn != "/" ? "&returnUrl=" + Uri.EscapeDataString(safeReturn) : "");
     if (LoginThrottle.LockedMinutes(username, ip, now) is int waitMin)
         return Results.Redirect(Back("error=2&wait=" + waitMin));
-    var user = await auth.VerifyCredentialsAsync(username, password);
+    // [LOGIN-LOI-DB 2026-11-20] Lỗi đọc DB lúc đăng nhập (mất kết nối SQL, timeout): trước để ngoại lệ thoát → UseExceptionHandler chạy lại POST /error
+    //   (trang Razor, không có form) → trình duyệt nhận 400 trắng. Nay bắt tại chỗ, ghi nhật ký, về /login?error=4 "máy chủ lỗi khi đăng nhập (thường do mất kết nối dữ liệu)".
+    //   Không tính là lần sai (không gọi LoginThrottle.Fail). Nguồn: CLAUDE rà độc lập Gói 22 15/11 (G22-GHI-NHO 6); HÙNG 20/11 22:51 OK Gói 28.
+    MES.Web.Data.Entities.User? user;
+    try { user = await auth.VerifyCredentialsAsync(username, password); }
+    catch (Exception exLogin)
+    {
+        ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("MES.Login").LogError(exLogin, "Đăng nhập: lỗi máy chủ / đọc DB (tài khoản {User})", username);
+        return Results.Redirect(Back("error=4"));
+    }
     if (user == null)
     {
         LoginThrottle.Fail(username, ip, now);

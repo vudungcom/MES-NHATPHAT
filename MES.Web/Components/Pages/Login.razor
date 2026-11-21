@@ -24,6 +24,13 @@
             <i class="bi bi-lock"></i> Tài khoản chưa có nhóm hoặc nhóm đang bị khoá — nhờ Admin kiểm tra phân quyền.
         </div>
     }
+    @if (ErrorParam == "4")
+    {
+        @* [LOGIN-LOI-DB 2026-11-20] lỗi đọc DB lúc đăng nhập *@
+        <div class="alert alert-danger py-2 small mb-3">
+            <i class="bi bi-database-exclamation"></i> Máy chủ lỗi khi đăng nhập (thường do mất kết nối máy chủ dữ liệu) — thử lại sau ít phút; vẫn lỗi thì báo người quản trị.
+        </div>
+    }
     @if (IsLocked)
     {
         @* [RS-C4 2026-10-30] đăng nhập sai quá nhiều lần *@

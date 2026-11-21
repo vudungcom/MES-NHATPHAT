@@ -95,6 +95,8 @@ namespace MES.Web.Services
             public List<WorkMinutes.SentBreak> Breaks { get; set; } = new();
             /// <summary>[ML17-XN] Bộ khoảng nghỉ máy chủ đã kiểm (service tự gán, trang không dùng).</summary>
             public List<LineBreak>? BreakRows { get; set; }
+            /// <summary>[CU-NGHI-LUU] Dòng sửa quyền cao hơn: bộ khoảng nghỉ (đã lưu của dòng gốc + ca hiện tại phần còn lại) để kiểm — service tự gán.</summary>
+            public List<BreakSeg>? CuSegs { get; set; }
 
             // Trang tra sẵn từ snapshot (cùng hàm với phần hiển thị): GC → GcStd; non-GC → StdTimePerPc + StdSrcTable/StdSrcRowId
             public WtsSaveStd? GcStd        { get; set; }
@@ -435,10 +437,19 @@ namespace MES.Web.Services
             grp.CaId = ca?.CaId;
             row.Breaks = await CuBreaksAsync(ca, old.WtsLogId, WorkMinutes.RoundToMinute(q.StartTime), WorkMinutes.RoundToMinute(q.EndTime), null);
             grp.Rows.Add(row);
-            var res = await SaveGroupAsync(grp);
+            // [QUICK-CU-MINH 2026-11-20] Sửa nhanh LUÔN đi đường quyền cao hơn, kể cả dòng của CHÍNH người sửa hôm nay (trước: dòng mình hôm nay đi đường
+            //   thường → (a) lý do gõ trong modal không được ghi, VoidReason chỉ "Sửa lại"; (b) người chỉ có Sửa WTS_MASTER không có quyền nhóm dòng thì
+            //   bị chặn "không có quyền nhập WTS nhóm …" dù đã qua kiểm quyền cao hơn ở trên). Cờ chỉ đặt ở đây (không qua trang), gỡ trong finally.
+            //   Nguồn: CLAUDE rà độc lập Gói 25b 20/11 (G25B-GHI-NHO R25b-03); HÙNG 20/11 22:51 OK Gói 28 (câu B2 — như B1 Gói 25).
+            _quickCuLogId = old.WtsLogId;
+            WtsSaveResult res;
+            try { res = await SaveGroupAsync(grp); }
+            finally { _quickCuLogId = null; }
             if (!res.Ok && string.IsNullOrEmpty(res.ErrorMsg)) res.ErrorMsg = grp.ErrorMsg ?? row.ErrorMsg;
             return res;
         }
+        /// <summary>[QUICK-CU-MINH] Dòng đang Sửa nhanh (EditRowCuAsync) — SaveGroupOnceAsync coi là dòng quyền cao hơn dù của chính mình hôm nay.</summary>
+        private long? _quickCuLogId;
 
         /// <summary>[WTS-SUA-NHANH] Tra dòng snapshot lấy số chuẩn khi dòng gốc không ghi nguồn — cùng cách trang: GC theo NC + máy (máy đăng ký /
         ///   máy đồng dạng / NC không đăng ký máy); non-GC theo mã CV (khớp mã có số chuẩn trước, rồi NC). RefreshStdFromSnapshotAsync kiểm lại.</summary>
@@ -484,17 +495,21 @@ namespace MES.Web.Services
             => CuBreaksAsync(ca, oldId, null, s, e, sent);
         /// <summary>[ACT-SUA-CU] bản chung dòng WTS (wtsId) / việc không ra SP (actId).</summary>
         private async Task<List<WorkMinutes.SentBreak>> CuBreaksAsync(CaLamViec? ca, long? wtsId, long? actId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
+            => (await CuBreakSegsAsync(ca, wtsId, actId, s, e, sent)).Sent;
+        /// <summary>[CU-NGHI-LUU] Như CuBreaksAsync, trả thêm bộ khoảng nghỉ dùng để kiểm (giờ nghỉ đã lưu của dòng gốc + ca hiện tại phần còn lại).</summary>
+        private async Task<(List<WorkMinutes.SentBreak> Sent, List<BreakSeg> Segs)> CuBreakSegsAsync(CaLamViec? ca, long? wtsId, long? actId, DateTime s, DateTime e, IReadOnlyList<WorkMinutes.SentBreak>? sent)
         {
-            var calc = WorkMinutes.Touching(ca, s, e);
-            if (calc.Count == 0) return new();
             var oldB = await _db.WtsBreakWorkLogs.AsNoTracking().Where(x => wtsId != null ? x.WtsLogId == wtsId : x.ActivityLogId == actId).ToListAsync();
-            return calc.Select(c =>
+            var segs = WorkMinutes.SavedSegs(ca, s, e, oldB);   // [CU-NGHI-LUU]
+            var calc = WorkMinutes.TouchingSegs(segs, s, e, ca?.CaId);
+            if (calc.Count == 0) return (new(), segs);
+            return (calc.Select(c =>
             {
                 var fromPage = sent?.FirstOrDefault(x => x.BreakStart == c.BreakStart && x.BreakEnd == c.BreakEnd);
                 var fromOld  = oldB.FirstOrDefault(x => x.BreakStart == c.BreakStart && x.BreakEnd == c.BreakEnd);
                 int w = fromPage != null ? fromPage.WorkedMin : Math.Clamp(fromOld?.WorkedMin ?? 0, 0, c.OverlapMin);
                 return new WorkMinutes.SentBreak { BreakStart = c.BreakStart, BreakEnd = c.BreakEnd, WorkedMin = w };
-            }).ToList();
+            }).ToList(), segs);
         }
 
         private async Task<WtsSaveResult> SaveGroupOnceAsync(WtsSaveGroup grp)   // [RS-D10b] thân cũ của SaveGroupAsync, không đổi
@@ -552,7 +567,7 @@ namespace MES.Web.Services
                 if (OtherGroupEditMsg(_old.ProcessGroup, _permKey) is string _grpMsg)
                 { s1.ErrorMsg = _grpMsg; grp.ErrorMsg = _grpMsg; return Fail(); }
                 s1.OldWorkerId = _old.WorkerId; s1.OldStart = _old.StartTime;
-                if (!IsCu(grp.UserId, _old.WorkerId, _old.StartTime)) continue;
+                if (!IsCu(grp.UserId, _old.WorkerId, _old.StartTime) && s1.WtsLogId != _quickCuLogId) continue;   // [QUICK-CU-MINH] Sửa nhanh dòng mình hôm nay cũng đi đường này
                 _canCu ??= await CanCuAsync(_db, grp.UserId);
                 if (_canCu != true)
                 { s1.ErrorMsg = _old.WorkerId != grp.UserId ? CuNoPermEditOther : CuNoPermEditOld; grp.ErrorMsg = s1.ErrorMsg; return Fail(); }
@@ -584,7 +599,7 @@ namespace MES.Web.Services
                 var _caKeep = await CuCaAsync(_cuCa[0]);
                 grp.CaId = _caKeep?.CaId;
                 foreach (var s2 in grp.Rows)
-                    s2.Breaks = await CuBreaksAsync(_caKeep, s2.WtsLogId!.Value, WorkMinutes.RoundToMinute(s2.StartTime), WorkMinutes.RoundToMinute(s2.EndTime), s2.Breaks);
+                    (s2.Breaks, s2.CuSegs) = await CuBreakSegsAsync(_caKeep, s2.WtsLogId!.Value, null, WorkMinutes.RoundToMinute(s2.StartTime), WorkMinutes.RoundToMinute(s2.EndTime), s2.Breaks);   // [CU-NGHI-LUU] + bộ khoảng nghỉ đã lưu để kiểm
             }
 
             // Validate từng sub-row
@@ -678,7 +693,8 @@ namespace MES.Web.Services
             //   (trang để cũ khi admin vừa sửa giờ nghỉ ca → chặn); phút làm thông phải trong [0, phần chồng]. Bộ đã kiểm ghi cùng dòng WTS.
             //   Không đụng sổ số lượng / khoá PO / K5; kiểm trùng giờ máy vẫn theo giờ thô như cũ.
             {
-                var _brkErr = await VerifyBreaksAsync(grp.CaId, grp.Rows.Select(r => (r.StartTime, r.EndTime, (IReadOnlyList<WorkMinutes.SentBreak>)r.Breaks)).ToList());
+                var _brkErr = await VerifyBreaksAsync(grp.CaId, grp.Rows.Select(r => (r.StartTime, r.EndTime, (IReadOnlyList<WorkMinutes.SentBreak>)r.Breaks)).ToList(),
+                                                      grp.Rows.Select(r => r.Cu ? r.CuSegs : null).ToList());   // [CU-NGHI-LUU] dòng quyền cao hơn kiểm theo giờ nghỉ đã lưu
                 for (int i = 0; i < grp.Rows.Count; i++) grp.Rows[i].BreakRows = _brkErr.Rows[i];
                 if (_brkErr.Error != null)
                 {
@@ -780,7 +796,7 @@ namespace MES.Web.Services
         // [ML17-XN][CA-NGHI-HIST 2026-11-01] Đọc ca từ DB rồi kiểm từng dòng (WorkMinutes.Verify). Ca không còn → chặn (trang để cũ).
         //   Trả bộ khoảng nghỉ đã kiểm cho mọi dòng (theo thứ tự) + lời báo + chỉ số dòng lỗi (−1 = lỗi chung).
         private async Task<(List<List<LineBreak>> Rows, string? Error, int Index)> VerifyBreaksAsync(int? caId,
-            List<(DateTime S, DateTime E, IReadOnlyList<WorkMinutes.SentBreak> Sent)> lines)
+            List<(DateTime S, DateTime E, IReadOnlyList<WorkMinutes.SentBreak> Sent)> lines, List<List<BreakSeg>?>? segsPerLine = null)
         {
             var rows = lines.Select(_ => new List<LineBreak>()).ToList();
             CaLamViec? ca = null;
@@ -791,7 +807,9 @@ namespace MES.Web.Services
             }
             for (int i = 0; i < lines.Count; i++)
             {
-                var v = WorkMinutes.Verify(ca, lines[i].S, lines[i].E, lines[i].Sent);
+                var v = segsPerLine?[i] is { } _sg   // [CU-NGHI-LUU] dòng sửa quyền cao hơn: theo giờ nghỉ đã lưu của dòng gốc
+                    ? WorkMinutes.VerifySegs(_sg, ca?.CaId, lines[i].S, lines[i].E, lines[i].Sent)
+                    : WorkMinutes.Verify(ca, lines[i].S, lines[i].E, lines[i].Sent);
                 rows[i] = v.Rows;
                 if (v.Error != null) return (rows, v.Error, i);
             }
@@ -1217,6 +1235,11 @@ namespace MES.Web.Services
                             grp.UserId, _editAt.Value, row.WtsLogId.Value, DateTime.Today, DateTime.Today.AddDays(1));
                     if (_nVoid != 1)
                     { row.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại."; return; }
+                    // [WTS-PO-CU-NOTIFY 2026-11-20] Sửa dòng đổi PO A → B: PO A cũng đổi số (dòng cũ vừa huỷ) — báo cả PO A (trước: chỉ PO B →
+                    //   màn Giao nhận đang mở của PO A chờ lưới 2 phút, trang WTS không nạp lại trần PO A). Chỉ màn hình, không đổi số.
+                    //   Nguồn: CLAUDE rà độc lập Gói 27 / nhỏ 20/11 (G26-27-GHI-NHO L8); HÙNG 20/11 22:51 OK Gói 28.
+                    var _oldPoId = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == row.WtsLogId.Value).Select(l => l.KhPlanDetailId).FirstOrDefaultAsync();
+                    if (_oldPoId > 0) notify.Add(_oldPoId);
                 }
                 if (row.ActivityLogId.HasValue)
                 {
@@ -1633,10 +1656,19 @@ namespace MES.Web.Services
             // [ACT-SUA-CU] sửa dòng ngày cũ / của người khác: đọc dòng cũ TRƯỚC (không tin trang) → quyền cao hơn + lý do, giữ ngày + người làm
             WorkerActivityLog? _oldA = req.ActivityLogId == null ? null
                 : await _db.WorkerActivityLogs.AsNoTracking().FirstOrDefaultAsync(a => a.ActivityLogId == req.ActivityLogId.Value);
+            // [G27-L11-CHU 2026-11-20] dòng việc đang sửa đã bị huỷ (tab khác / người khác sửa trước) → báo đúng nghĩa (trước: dòng người khác / ngày cũ
+            //   đã huỷ rơi xuống đường thường → "Không tìm thấy dòng cần sửa của bạn"). Nguồn: CLAUDE rà độc lập Gói 27 / nhỏ (G26-27-GHI-NHO L11); HÙNG 20/11 22:51 OK Gói 28.
+            if (_oldA != null && _oldA.IsVoided)
+            {
+                if (IsCu(req.UserId, _oldA.WorkerId, _oldA.StartTime) && !await CanCuAsync(_db, req.UserId))   // rà độc lập Gói 28 L6: không quyền thì báo không quyền trước
+                    return Fail(_oldA.WorkerId != req.UserId ? ActNoPermEditOther : ActNoPermEditOld);
+                return Fail("Dòng này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang rồi sửa lại.");
+            }
             bool cuA = _oldA != null && !_oldA.IsVoided && IsCu(req.UserId, _oldA.WorkerId, _oldA.StartTime);
             int worker = cuA ? _oldA!.WorkerId : req.UserId;
             int? caUse = req.CaId;
             IReadOnlyList<WorkMinutes.SentBreak> sentUse = req.Breaks;
+            List<BreakSeg>? segsUse = null;   // [CU-NGHI-LUU] dòng sửa quyền cao hơn: giờ nghỉ đã lưu của dòng gốc
             if (cuA)
             {
                 if (!await CanCuAsync(_db, req.UserId)) return Fail(_oldA!.WorkerId != req.UserId ? ActNoPermEditOther : ActNoPermEditOld);
@@ -1649,7 +1681,8 @@ namespace MES.Web.Services
                 {
                     var _caK = await CuCaAsync(_oldCa);
                     caUse = _caK?.CaId;
-                    sentUse = await CuBreaksAsync(_caK, null, _oldA.ActivityLogId, reqStart, reqEnd, req.Breaks);
+                    (var _snt, segsUse) = await CuBreakSegsAsync(_caK, null, _oldA.ActivityLogId, reqStart, reqEnd, req.Breaks);   // [CU-NGHI-LUU]
+                    sentUse = _snt;
                 }
             }
             var day = cuA ? _oldA!.StartTime.Date : today;
@@ -1660,7 +1693,7 @@ namespace MES.Web.Services
             if (reqEnd > day.AddDays(1))
                 return Fail(cuA ? "T.Kết thúc phải trong ngày của dòng." : "T.Kết thúc phải trong ngày hôm nay.");
             // [ML17-XN][CA-NGHI-HIST] khoảng nghỉ dòng chạm: máy chủ tự tính từ ca + giờ, so với bộ trang gửi
-            var _vb = await VerifyBreaksAsync(caUse, new() { (reqStart, reqEnd, sentUse) });
+            var _vb = await VerifyBreaksAsync(caUse, new() { (reqStart, reqEnd, sentUse) }, new() { segsUse });   // [CU-NGHI-LUU]
             if (_vb.Error != null) return Fail(_vb.Error);
             var _actBreaks = _vb.Rows[0];
             var notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();

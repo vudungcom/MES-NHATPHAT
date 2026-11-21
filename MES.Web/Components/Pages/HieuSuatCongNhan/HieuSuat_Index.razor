@@ -2581,7 +2581,8 @@ else
 
                                         <span class="small fw-semibold">@effMin ph</span>
 
-                                        @if (SelectedCa != null && effMin != rawMin)
+                                        @* [V2-02 2026-11-20] bỏ điều kiện SelectedCa != null: nhóm sửa dòng cu tính nghỉ theo ca dòng gốc (CaOf) dù trang chưa chọn ca → chú thích phút nghỉ vẫn hiện. Nguồn: CLAUDE rà độc lập Gói 25b vòng 2 (V2-02); HÙNG 20/11 22:51 OK Gói 28 *@
+                                        @if (effMin != rawMin)
 
                                         {
 
@@ -4971,10 +4972,35 @@ else
 
     // ── Load dòng đã lưu trong ngày ─────────────────────────
 
+    /// <summary>[R08-CANCU 2026-11-20] Quyền "sửa ngày cũ / của người khác" (Admin / Sửa WTS_MASTER) đọc lại từ DB mỗi lần nạp bảng dòng đã lưu
+    ///   (trước: chỉ tính lúc mở trang — Admin rút / cấp quyền giữa phiên thì nút Sửa / Xoá ngày cũ, ô "Xem WTS của" vẫn theo quyền cũ tới khi tải lại;
+    ///   máy chủ vẫn chặn đúng). Mất quyền mà đang xem WTS người khác → về chính mình. Chỉ giao diện.
+    ///   Nguồn: CLAUDE rà độc lập Gói 25 20/11 (G25-GHI-NHO R-08); HÙNG 20/11 22:51 OK Gói 28.</summary>
+    private async Task RefreshCanCuAsync()
+    {
+        bool cu;
+        try { cu = await WtsSaveService.CanCuAsync(Db, _currentUserId); }
+        catch (Exception ex) { Logger.LogWarning(ex, "WTS: đọc lại quyền sửa ngày cũ"); return; }   // lỗi đọc: giữ quyền cũ trên trang (máy chủ vẫn kiểm)
+        if (cu == _canCu) return;
+        _canCu = cu;
+        if (cu)
+        {
+            _canSubmit = true;
+            if (_viewUsers.Count == 0)
+                _viewUsers = (await Db.Users.AsNoTracking().OrderByDescending(u => u.IsActive).ThenBy(u => u.FullName).Select(u => new { u.UserId, u.FullName, u.Username, u.IsActive }).ToListAsync())
+                    .Select(u => (u.UserId, $"{(string.IsNullOrWhiteSpace(u.FullName) ? u.Username : u.FullName)} ({u.Username}){(u.IsActive ? "" : " — đã nghỉ")}")).ToList();
+        }
+        else if (ViewingOther)
+        {
+            _viewUserId = _currentUserId; _viewUserText = ""; _viewUserName = ""; _viewInputKey++;
+        }
+    }
+
     private async Task LoadSavedRowsAsync()
 
     {
         _wtsNotice = null;   // [GOI9-OFF-CANHBAO][WTS-SUA-NHOM] rà độc lập Gói 9 (Thấp-2): đổi ngày / nạp lại bảng → bỏ lời báo cũ (lưu / xoá gán lại sau khi nạp)
+        await RefreshCanCuAsync();   // [R08-CANCU]
 
         var start = _workDate.Date;
 
@@ -5399,6 +5425,7 @@ else
             grp.CaFixed = true;
             grp.CaKeep = row.CaId == null ? null
                 : _caList.FirstOrDefault(c => c.CaId == row.CaId) ?? await Db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == row.CaId);
+            grp.CuSaved = row.Breaks.Select(b => new BreakSeg(b.BreakStart, b.BreakEnd, b.NghiId, b.BreakName)).ToList();   // [CU-NGHI-LUU] giờ nghỉ đã lưu của dòng gốc (như máy chủ)
         }
 
         grp.SubRows.Add(row);
@@ -5664,6 +5691,7 @@ else
         public string?    Reason  { get; set; }
         public bool       CaFixed { get; set; }
         public CaLamViec? CaKeep  { get; set; }
+        public List<BreakSeg>? CuSaved { get; set; }   // [CU-NGHI-LUU] giờ nghỉ đã lưu của dòng gốc
     }
     private ActForm? _act;
 
@@ -5677,7 +5705,10 @@ else
     private List<LineBreak> ActTouching()
     {
         var sp = ActSpan();
-        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(_act?.CaFixed == true ? _act.CaKeep : SelectedCa, sp.Value.S, sp.Value.E);   // [ACT-SUA-CU] ca dòng gốc
+        var caA = _act?.CaFixed == true ? _act.CaKeep : SelectedCa;
+        if (sp == null) return new List<LineBreak>();
+        var segA = _act?.CuSaved != null ? WorkMinutes.SavedSegs(caA, sp.Value.S, sp.Value.E, _act.CuSaved) : WorkMinutes.BreakSegments(caA, sp.Value.S, sp.Value.E);   // [CU-NGHI-LUU] dòng cu: giờ nghỉ đã lưu
+        return WorkMinutes.TouchingSegs(segA, sp.Value.S, sp.Value.E, caA?.CaId);   // [ACT-SUA-CU] ca dòng gốc
     }
     private void SyncActNghi() => SyncActNghi(false);
     private void SyncActNghi(bool justTicked)
@@ -5770,6 +5801,7 @@ else
         {
             _act.CaFixed = true;
             _act.CaKeep = _caList.FirstOrDefault(c => c.CaId == _caA) ?? await Db.CaLamViecs.AsNoTracking().Include(c => c.NghiGiaiLaos).FirstOrDefaultAsync(c => c.CaId == _caA);
+            _act.CuSaved = row.Breaks.Select(b => new BreakSeg(b.BreakStart, b.BreakEnd, b.NghiId, b.BreakName)).ToList();   // [CU-NGHI-LUU]
         }
         // [ML17-XN] mở lại đúng phần làm thông nghỉ đã lưu của dòng
         if (row.Breaks.Any(b => b.WorkedMin > 0))
@@ -5858,8 +5890,19 @@ else
             _act.Error = _nDup > 1 ? $"Số PO {_act.PoText} có {_nDup} dòng trong Kế hoạch — chọn đúng dòng \"PO · Part\" trong gợi ý."
                                    : $"Không tìm thấy PO {_act.PoText} — chọn trong danh sách hoặc để trống."; return;
         }
+        // [WTS-QUA-0H 2026-11-20] (G27 L2) mở sửa việc của mình trước 0h, lưu sau 0h → nay là dòng ngày cũ: bật ô Lý do + nhắc (máy chủ đòi lý do)
+        if (!_act.Cu && _canCu && _act.ActivityLogId != null && _workDate.Date != DateTime.Today)
+        {
+            _act.Cu = true;
+            if (WtsSaveService.CuReasonError(_act.Reason) != null)
+            { _act.Error = "Đã qua ngày mới — dòng đang sửa nay là dòng ngày cũ: nhập lý do (≥ 3 ký tự) rồi bấm Lưu lại."; return; }
+        }
         SyncActNghi();   // [ML17-XN] ô làm thông khớp khoảng nghỉ ca đang chọn trước khi gửi
         _act.Busy = true;
+        // [ACT-DBGATE 2026-11-20] Lưu "Việc không ra SP" qua cổng _dbGate như Lưu nhóm / Sửa / Xoá (trước: không qua cổng → bấm Lưu việc đúng lúc
+        //   lượt nạp PO / lưu nhóm đang chạy trên cùng DbContext → "A second operation was started on this context", trang báo lỗi).
+        //   Nguồn: CLAUDE rà độc lập Gói 27 / nhỏ 20/11 (G26-27-GHI-NHO L10); HÙNG 20/11 22:51 OK Gói 28.
+        await _dbGate.WaitAsync();
         try
         {
             var res = await WtsSaveSvc.SaveActivityAsync(new WtsSaveService.WtsActivityRequest
@@ -5881,7 +5924,7 @@ else
             _act = null;
         }
         catch (Exception ex) { if (_act != null) _act.Error = UiSafe.Text(ex, Logger, "lưu Việc không ra sản phẩm"); }   // [C-11 2026-11-16] không hiện SqlException thô
-        finally { if (_act != null) _act.Busy = false; }
+        finally { _dbGate.Release(); if (_act != null) _act.Busy = false; }   // [ACT-DBGATE]
     }
 
     private RenderFragment ActivityFormUi() => __builder =>
@@ -6790,10 +6833,15 @@ else
     private List<LineBreak> GroupTouching(WtsGroup grp)
     {
         var sp = GroupSpan(grp);
-        return sp == null ? new List<LineBreak>() : WorkMinutes.Touching(CaOf(grp), sp.Value.S, sp.Value.E);   // [WTS-SUA-NHANH] R-10: ca của nhóm
+        return sp == null ? new List<LineBreak>() : WorkMinutes.TouchingSegs(SegsOf(grp, sp.Value.S, sp.Value.E), sp.Value.S, sp.Value.E, CaOf(grp)?.CaId);   // [WTS-SUA-NHANH] R-10: ca của nhóm · [CU-NGHI-LUU] giờ nghỉ đã lưu
     }
     /// <summary>[WTS-SUA-NHANH 2026-11-20] Ca dùng tính nghỉ cho nhóm: nhóm sửa quyền cao hơn giữ ca dòng gốc (CaFixed), còn lại ca đang chọn.</summary>
     private CaLamViec? CaOf(WtsGroup? g) => g != null && g.CaFixed ? g.CaKeep : SelectedCa;
+    /// <summary>[CU-NGHI-LUU 2026-11-20] Khoảng nghỉ nhóm trong [from, to): nhóm sửa dòng quyền cao hơn dùng giờ nghỉ ĐÃ LƯU của dòng gốc + ca phần còn lại
+    ///   (cùng hàm máy chủ WorkMinutes.SavedSegs — trước trang tính theo ca hiện tại, máy chủ theo giờ đã lưu → phút làm thông gõ ở khoảng lệch bị bỏ lặng lẽ).
+    ///   Nguồn: CLAUDE rà độc lập Gói 28 20/11 (T2); HÙNG 20/11 22:51 OK Gói 28 (câu B1).</summary>
+    private List<BreakSeg> SegsOf(WtsGroup? g, DateTime from, DateTime to)
+        => g?.CuSaved != null ? WorkMinutes.SavedSegs(CaOf(g), from, to, g.CuSaved) : WorkMinutes.BreakSegments(CaOf(g), from, to);
 
     // Đồng bộ ô phút làm thông với khoảng nghỉ đang chạm: ô chưa sửa tay = đủ phần chồng; ô đã sửa tay giữ số, kẹp trong [0, chồng].
     //   (rà độc lập 01/11) Khoảng nghỉ MỚI chạm sau khi đã tích (đổi giờ / đổi ca / giờ kết thúc tự tính kéo dài) = 0 phút (nghỉ thật),
@@ -6825,7 +6873,7 @@ else
         var sp = grp != null ? GroupSpan(grp) : null;
         var anchor = sp?.S ?? from;
         var lo = from < anchor ? from : anchor;
-        var segs = WorkMinutes.BreakSegments(CaOf(grp), lo, lo.AddDays(2));   // [WTS-SUA-NHANH] R-10
+        var segs = SegsOf(grp, lo, lo.AddDays(2));   // [WTS-SUA-NHANH] R-10 · [CU-NGHI-LUU]
         return WorkMinutes.EffectiveBreaks(segs, anchor, grp != null && grp.ThongNghi ? grp.NghiWorked : null);
     }
 
@@ -6841,7 +6889,7 @@ else
         if (e0 <= s0) return new List<LineBreak>();
         var sp = GroupSpan(grp);
         var anchor = sp?.S ?? s0;
-        var segs = WorkMinutes.BreakSegments(CaOf(grp), s0 < anchor ? s0 : anchor, e0);   // [WTS-SUA-NHANH] R-10
+        var segs = SegsOf(grp, s0 < anchor ? s0 : anchor, e0);   // [WTS-SUA-NHANH] R-10 · [CU-NGHI-LUU]
         return WorkMinutes.SplitForLine(segs, anchor, grp.ThongNghi ? grp.NghiWorked : null, s0, e0, CaOf(grp)?.CaId);
     }
 
@@ -7578,6 +7626,20 @@ else
         if (grp.IsSaving || _anySaving) return;   // [A1-01 2026-11-15] bấm 2 lần / bấm Lưu nhóm khác khi đang lưu → bỏ (như Handover_Index [D10-DBLCLICK])
         _wtsNotice = null;   // [GOI9-OFF-CANHBAO] rà độc lập Gói 9 (Thấp-2): không giữ lời báo của lần trước
         grp.ErrorMsg = null;
+        // [WTS-QUA-0H 2026-11-20] Mở sửa dòng của mình TRƯỚC 0h, bấm Lưu SAU 0h: dòng nay là "ngày cũ" → máy chủ đòi lý do mà ô Lý do đang ẩn (cờ tính lúc mở).
+        //   Nay tính lại lúc bấm Lưu: có quyền cao hơn thì bật ô Lý do + nhắc (chưa gửi); không có quyền thì để máy chủ báo như cũ. Chỉ giao diện.
+        //   Nguồn: CLAUDE rà độc lập Gói 25b vòng 2 (V2-04) + Gói 27 / nhỏ (G26-27-GHI-NHO L2); HÙNG 20/11 22:51 OK Gói 28.
+        if (!grp.CuRow && _canCu && grp.SubRows.Any(x => x.IsEditing && x.WtsLogId.HasValue && x.StartTime.Date != DateTime.Today))
+        {
+            grp.CuRow = true;
+            // rà độc lập Gói 28 L1: như lúc mở sửa dòng cu — giữ ca + giờ nghỉ đã lưu của dòng gốc (máy chủ cũng ép, trang tính phút khớp)
+            var _r0 = grp.SubRows.First(x => x.IsEditing && x.WtsLogId.HasValue);
+            grp.CaFixed = true;
+            grp.CaKeep = _r0.CaId == null ? null : _caList.FirstOrDefault(c => c.CaId == _r0.CaId);
+            grp.CuSaved = _r0.Breaks.Select(b => new BreakSeg(b.BreakStart, b.BreakEnd, b.NghiId, b.BreakName)).ToList();
+            if (WtsSaveService.CuReasonError(grp.EditReason) != null)
+            { grp.ErrorMsg = "Đã qua ngày mới — dòng đang sửa nay là dòng ngày cũ: nhập lý do (≥ 3 ký tự) ở ô Lý do rồi bấm Lưu lại."; return; }
+        }
         grp.IsSaving = true;
         StateHasChanged();
         await _dbGate.WaitAsync();   // [BW2-02] chờ lượt nạp PO / Sửa / Xoá đang chạy xong
@@ -8794,6 +8856,8 @@ else
         ///   khoảng nghỉ / làm thông / hàng Tổng / giờ kết thúc tự tính / bộ nghỉ gửi máy chủ tính theo ca này (máy chủ cũng ép ca dòng gốc). CaFixed + CaKeep null = dòng không ca.</summary>
         public bool CaFixed { get; set; }
         public CaLamViec? CaKeep { get; set; }
+        /// <summary>[CU-NGHI-LUU] Nhóm sửa dòng quyền cao hơn: khoảng nghỉ đã lưu của dòng gốc (null = theo ca).</summary>
+        public List<BreakSeg>? CuSaved { get; set; }
 
         // Tăng ca — không validate khung giờ ca, ghi IsOvertime=true vào DB
 

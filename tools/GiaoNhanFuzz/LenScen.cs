@@ -22,7 +22,7 @@ public static class LenScen
     static bool Viet(string? s) => s != null && s.Contains("dài quá") && !s.Contains("truncated");
 
     /// <summary>u1 ADMIN (PIN 1111) + khách KH1 + PO1 (id 1, SL 40, phôi 40) quy trình NC1 → K1 → P1.</summary>
-    static AppDbContext Seed()
+    internal static AppDbContext Seed()   // [G28-SCEN] g28 dùng lại (ThietBi / PIN 1111)
     {
         var db = new AppDbContext();
         var adminG = new UserGroup { GroupId = 1, GroupCode = "ADMIN", IsActive = true };
@@ -50,7 +50,9 @@ public static class LenScen
     {
         Console.WriteLine("[LN0] LenCheck / UiSafe — helper: Over/Max/FirstOver (Trim trước khi đếm); UiSafe.Text: lỗi nghiệp vụ Việt hiện nguyên, lỗi EF / SQL → câu chung");
         {
-            Ok(LenCheck.Over(null, 5, "A") == null && LenCheck.Over("  12345  ", 5, "A") == null, "null / 5 ký tự (sau Trim) với trần 5: hợp lệ");
+            // [LEN-THO 2026-11-20] ĐÁP ÁN ĐỔI Gói 28 (G23-GHI-NHO L8, Hùng 20/11 22:51): đếm nguyên văn — "  12345  " (9 ký tự) với trần 5 nay QUÁ (trước: hợp lệ sau Trim)
+            Ok(LenCheck.Over(null, 5, "A") == null && LenCheck.Over("12345", 5, "A") == null && LenCheck.Over("  12345  ", 5, "A") is string _o9 && _o9.Contains("đang 9 ký tự"),
+               "null / đúng 5 ký tự: hợp lệ; \"  12345  \" (9 ký tự nguyên văn) với trần 5: quá (đáp án đổi Gói 28 — trước đếm sau Trim)");
             var o = LenCheck.Over("123456", 5, "Ô thử");
             Ok(o != null && o.Contains("Ô thử dài quá 5 ký tự (đang 6 ký tự)"), "6 ký tự với trần 5: lời Việt nêu tên ô + trần + độ dài", o);
             Ok(LenCheck.FirstOver(("a", 1, "A"), ("bb", 1, "B"), ("ccc", 1, "C"))?.StartsWith("B dài quá") == true, "FirstOver: trả ô vi phạm ĐẦU TIÊN (B)");
@@ -339,6 +341,10 @@ public static class LenScen
                "[LN10c] Thêm thiết bị: lỗi DB lần ghi lịch sử → quay lại, không còn máy, bản EF sạch (trước: máy kẹt Added trong DbContext phiên trang)", $"{b1.Error} may {t0}→{db.ThietBis.List.Count}");
             var b2 = await tb.CreateAsync(mm, 1);
             Ok(b2.Success && db.ThietBis.List.Count(x => x.SoMay == "MX1") == 1 && db.ThietBiChangeLogs.List.Count == tl0 + 1, "[LN10c]   bấm Lưu lại (cùng đối tượng form): 1 máy + 1 dòng lịch sử", b2.Error);
+            // [EF-GHOST 2026-11-20] stub nay có bản Unchanged ma sau rollback: lần lỗi trên (máy đã ghi rồi giao dịch quay lại) KHÔNG để lại bản ma ThietBi — service gỡ đúng
+            //   (đột biến bỏ dòng gỡ Entries<ThietBi>… Detached ở ThietBiService.CreateAsync phải SAI ở đây — trước Gói 28 lọt)
+            Ok(!db.Ghosts.OfType<ThietBi>().Any() && !db.Ghosts.OfType<StandardWtsTask>().Any(), "[LN10d] sau lỗi Tạo máy / công việc: không còn bản EF Unchanged ma (service gỡ đúng — stub EF-GHOST Gói 28)",
+               string.Join(",", db.Ghosts.Select(g => g.GetType().Name)));
         }
 
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: SAI {fails}");

@@ -28,7 +28,8 @@ if (args.Length > 0 && args[0] == "loi") { return await LoiScen.Run(); }   // [G
 if (args.Length > 0 && args[0] == "vu") { return await VuScen.Run(); }   // [VULOI] kịch bản vụ lỗi: A/B/C/D + K5 theo vụ
 if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   // [CHUOI] kịch bản đi đủ chuỗi Part Master → KH → snapshot → Kho → giao nhận + WTS bằng hàm thật
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
-if (args.Length > 0 && args[0] == "g26") { return await G26Scen.Run(); }   // [G26-SCEN 2026-11-20] Gói 26: seed mẫu / bản quyền mất mạng / log ra file
+if (args.Length > 0 && args[0] == "g26") { return await G26Scen.Run(); }
+if (args.Length > 0 && args[0] == "g28") { return await G28Scen.Run(); }   // [G28-SCEN 2026-11-20] Gói 28: sửa lỗi ngầm (Workflow báo Giao nhận, chữ Taro, đăng nhập, độ dài, đổi loại dừng, log, bản quyền)   // [G26-SCEN 2026-11-20] Gói 26: seed mẫu / bản quyền mất mạng / log ra file
 if (args.Length > 0 && args[0] == "len") { return await LenScen.Run(); }   // [LEN-SCEN 2026-11-16] độ dài chữ theo cột DB ở service (LenCheck) + UiSafe
 if (args.Length > 0 && args[0] == "quyen") { return await QuyenScen.Run(); }   // [RS-C1][RS-C2][RS-E8][RS-E15][RS-E16] quyền máy chủ + danh mục + quy trình trống + khoá cấp số KH
 if (args.Length > 0 && args[0] == "iso") { return await IsoScen.Run(); }
@@ -878,7 +879,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5{(quick ? " — sửa nhanh" : "")}] PO{po} op{op} {desc} → {se.Err}"); continue; }
                         var wOld = db.WtsProductionLogs.List.First(x => x.WtsLogId == oldId);
                         var wNew = db.WtsProductionLogs.List.First(x => x.WtsLogId == se.LogId);
-                        bool cuQ = quick && WtsSaveService.IsCu(1, w.WorkerId, w.StartTime);
+                        bool cuQ = quick;   // [QUICK-CU-MINH 2026-11-20] ĐÁP ÁN ĐỔI Gói 28 (câu B2): Sửa nhanh LUÔN đi đường quyền cao hơn kể cả dòng của chính user 1 hôm nay → VoidReason ghi lý do (trước: dòng của mình hôm nay "Sửa lại"). Lộ ở kiem trạm 21/11 00:24 seed 14784 PO44 op32
                         if (!wOld.IsVoided || wOld.VoidReason != (cuQ ? "Sửa lại (quyền cao hơn): fuzz sửa nhanh" : "Sửa lại") || (quick && wOld.VoidedBy != 1)) fails.Add($"[WtsSaveService sửa không huỷ dòng cũ / sai lý do] PO{po} op{op} {desc} → '{wOld.VoidReason}' by {wOld.VoidedBy}");
                         if (wNew.QtyOk != tot - ng2 || wNew.QtyNg != ng2) fails.Add($"[WtsSaveService sửa ghi sai số] PO{po} op{op} {desc}");
                         if (ng2 > 0 && keep != null && wNew.NgCaseId != keep) fails.Add($"[WtsSaveService sửa không giữ vụ] PO{po} op{op} {desc} → {wNew.NgCaseId}");

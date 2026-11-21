@@ -83,7 +83,7 @@ namespace Microsoft.EntityFrameworkCore
         readonly DbContext _c;
         public DbContext Ctx => _c;   // [LEN-SCEN 2026-11-16] cho Entries<T>() đọc Pending thật
         public ChangeTracker(DbContext c) { _c = c; }
-        public void Clear() { foreach (var s in _c.AllSets()) s.Pending.Clear(); }
+        public void Clear() { foreach (var s in _c.AllSets()) s.Pending.Clear(); _c.Ghosts.Clear(); }   // [EF-GHOST] Clear gỡ cả bản Unchanged ma
         public bool HasChanges() => _c.AllSets().Any(s => s.Pending.Count > 0);   // [GÓI 24] AuthService.TryUpgradePinAsync không SaveChanges "ké" khi có thay đổi chờ
     }
 
@@ -102,6 +102,23 @@ namespace Microsoft.EntityFrameworkCore
             return (DbSet<T>)s;
         }
         public IEnumerable<IStubSet> AllSets() => _sets.Values;
+        // [EF-GHOST 2026-11-20] Bản EF "Unchanged ma": EF thật — SaveChanges trong giao dịch rồi Rollback → đối tượng vẫn nằm trong ChangeTracker ở trạng thái
+        //   Unchanged (mang Id không có trong DB). Trước stub không có trạng thái này → service quên gỡ (Detached) vẫn ĐẠT (đột biến bỏ gỡ ThietBi lọt — sổ
+        //   G26-27-GHI-NHO "stub EF không phân biệt bản EF Unchanged"). Nay: rollback → các đối tượng đã ghi trong giao dịch thành bản ma; Entries<T>() / Entry()
+        //   thấy (State = Unchanged), đặt Detached / ChangeTracker.Clear() gỡ; SaveChanges sau mà bản ma bị sửa ô → ném DbUpdateException như EF thật
+        //   (UPDATE 0 dòng → DbUpdateConcurrencyException). Nguồn: CLAUDE (Gói 28 — bộ kiểm); HÙNG 20/11 22:51 OK.
+        public List<object> Ghosts = new();
+        internal readonly Dictionary<object, Dictionary<PropertyInfo, object?>> GhostVals = new(ReferenceEqualityComparer.Instance);
+        internal void AddGhosts(IEnumerable<object> saved)
+        {
+            foreach (var g in saved)
+            {
+                if (Ghosts.Any(x => ReferenceEquals(x, g))) continue;
+                Ghosts.Add(g);
+                GhostVals[g] = Scalars(g.GetType()).ToDictionary(p => p, p => p.GetValue(g));
+            }
+        }
+        internal void RemoveGhost(object g) { Ghosts.RemoveAll(x => ReferenceEquals(x, g)); GhostVals.Remove(g); }
 
         /// <summary>Tên cột khoá chính tự tăng của từng bảng (chỉ các bảng harness thêm dòng lúc chạy).</summary>
         public static readonly Dictionary<string, string> KeyName = new()
@@ -133,6 +150,9 @@ namespace Microsoft.EntityFrameworkCore
         public virtual Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
             if (OnSave?.Invoke() is Exception fake) throw fake;   // [RS-D10]
+            foreach (var g in Ghosts)   // [EF-GHOST] bản ma bị sửa ô → EF thật UPDATE 0 dòng
+                if (GhostVals.TryGetValue(g, out var gv) && gv.Any(kv => !Equals(kv.Key.GetValue(g), kv.Value)))
+                    throw new DbUpdateException($"[EF-GHOST] bản {g.GetType().Name} còn trong ChangeTracker sau rollback (Unchanged, Id không có trong DB) bị sửa — EF thật: DbUpdateConcurrencyException");
             // [ISO-FIX] kịch bản iso: ghi chứng từ số lượng mà giao dịch chưa khoá MES_PO_ → đếm
             //   Dòng thêm mang số PO (KhPlanDetailId / PlanDetailId) thì PO đó phải nằm trong tập PO giao dịch đã khoá.
             if (DatabaseFacade.TrackPoLock)
@@ -166,6 +186,8 @@ namespace Microsoft.EntityFrameworkCore
                         if (cur == 0) keyProp.SetValue(e, Convert.ChangeType(max + 1, keyProp.PropertyType));
                     }
                     s.Items.Add(e);
+                    if (Ghosts.Count > 0) RemoveGhost(e);   // [EF-GHOST] rà độc lập Gói 28 N1: bản ma được Add lại rồi ghi → không còn là ma
+                    Database.Current?.SavedInTx.Add(e);   // [EF-GHOST]
                     n++;
                     // [CHUOI] giống EF: KhPlans.Add(plan) chèn luôn plan.Details (KhPlanService.CreateAsync)
                     if (e is MES.Web.Data.Entities.KhPlan kp)
@@ -383,12 +405,13 @@ namespace Microsoft.EntityFrameworkCore
         readonly Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> _snap;
         bool _done;
         public HashSet<int> PoLocked = new();   // [ISO-FIX] các PO giao dịch này đã khoá MES_PO_<id> (sp_getapplock)
+        public List<object> SavedInTx = new();   // [EF-GHOST] đối tượng SaveChanges ghi trong giao dịch này (rollback → bản Unchanged ma)
         public static int Rollbacks;
         internal StubTransaction(DbContext c, DatabaseFacade f, Dictionary<IStubSet, (List<object>, List<Dictionary<PropertyInfo, object?>>)> snap) { _c = c; _f = f; _snap = snap; }
         public Task CommitAsync(CancellationToken ct = default) { _done = true; _f.Current = null; OnCommit?.Invoke(); return Task.CompletedTask; }
         public static Action? OnCommit;   // [KIEM-CHUA 2026-11-03] harness drive_pageerr.py: giả lỗi tải lại NGAY SAU khi giao dịch ghi xong (PAGE-ERR2)
         public static Action? OnRollback;   // [WHY-TRAN-DB] kịch bản loi L11
-        public Task RollbackAsync(CancellationToken ct = default) { if (!_done) { _c.Restore(_snap); Rollbacks++; } _done = true; _f.Current = null; OnRollback?.Invoke(); return Task.CompletedTask; }
+        public Task RollbackAsync(CancellationToken ct = default) { if (!_done) { _c.Restore(_snap); _c.AddGhosts(SavedInTx); Rollbacks++; } _done = true; _f.Current = null; OnRollback?.Invoke(); return Task.CompletedTask; }   // [EF-GHOST]
         // [WHY-TRAN-DB 2026-11-01] Giống EF thật: Dispose lần 2 không làm gì (cờ _disposed); Dispose lần đầu — kể cả sau Rollback —
         //   gỡ giao dịch hiện tại của kết nối (ClearTransaction → UseTransaction(null)), dù lúc đó là giao dịch của thao tác khác.
         bool _disposed;
@@ -396,7 +419,7 @@ namespace Microsoft.EntityFrameworkCore
         {
             if (_disposed) return;
             _disposed = true;
-            if (!_done) { _c.Restore(_snap); Rollbacks++; }
+            if (!_done) { _c.Restore(_snap); _c.AddGhosts(SavedInTx); Rollbacks++; }   // [EF-GHOST]
             _done = true; _f.Current = null;
         }
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }

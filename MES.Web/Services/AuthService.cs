@@ -21,7 +21,14 @@ public class AuthService
             .FirstOrDefaultAsync(u => u.Username == username && u.IsActive);
 
         if (user == null) return null;
-        if (!PasswordHasher.Verify(password, user.PasswordHash)) return null;
+        // [LOGIN-TRIM 2026-11-20] Mật khẩu khởi tạo / đặt lại được Trim khi lưu (BM2-04, ADMIN-RESET-MK) nhưng đăng nhập so nguyên văn → người gõ đúng
+        //   bản Admin đưa (có dấu cách đầu / cuối) bị báo sai. Nay: so nguyên văn trước, sai mà bản Trim khác thì so thêm bản Trim (mật khẩu cũ có
+        //   dấu cách đầu / cuối vẫn đăng nhập được bằng nguyên văn). Vẫn tính 1 lần sai (LoginThrottle ở Program.cs). Không đổi mật khẩu trong DB.
+        //   Nguồn: CLAUDE rà độc lập Gói 22 15/11 (G22-GHI-NHO 3); HÙNG 20/11 22:51 OK Gói 28 (câu B3).
+        var pwOk = PasswordHasher.Verify(password, user.PasswordHash);
+        if (!pwOk && password != null && password.Trim() != password && password.Trim().Length > 0)
+            pwOk = PasswordHasher.Verify(password.Trim(), user.PasswordHash);
+        if (!pwOk) return null;
 
         user.LastLoginAt = DateTime.Now;
         await _db.SaveChangesAsync();

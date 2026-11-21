@@ -10,10 +10,13 @@ namespace MES.Web.Services;
 // =====================================================================
 public static class LenCheck
 {
-    /// <summary>Trả lời báo (chữ Việt) nếu <paramref name="value"/> (sau Trim) dài quá <paramref name="max"/>; hợp lệ trả null.</summary>
+    /// <summary>Trả lời báo (chữ Việt) nếu <paramref name="value"/> (nguyên văn, CẢ dấu cách đầu / cuối) dài quá <paramref name="max"/>; hợp lệ trả null.</summary>
+    // [LEN-THO 2026-11-20] Đếm độ dài NGUYÊN VĂN (trước: sau Trim). Vài service lưu chữ chưa Trim → chữ có dấu cách đầu / cuối qua được kiểm mà vẫn nổ
+    //   SqlException "truncated" ở cột. Ô nhập đã có maxlength cùng số (đếm nguyên văn) nên người dùng không thấy khác; service Trim trước khi lưu
+    //   thì đếm nguyên văn chỉ chặt hơn đúng phần dấu cách thừa. Nguồn: CLAUDE rà độc lập Gói 23 16/11 (G23-GHI-NHO L8); HÙNG 20/11 22:51 OK Gói 28.
     public static string? Over(string? value, int max, string tenO)
     {
-        var n = value?.Trim().Length ?? 0;
+        var n = value?.Length ?? 0;
         return n > max ? $"{tenO} dài quá {max} ký tự (đang {n} ký tự) — rút ngắn rồi lưu lại." : null;
     }
 

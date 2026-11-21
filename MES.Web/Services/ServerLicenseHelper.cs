@@ -403,10 +403,13 @@ namespace MES.Web.Services
             }
             else if (days > OFFLINE_WARN_DAYS)
             {
-                int left = Math.Max(0, OFFLINE_LOCK_DAYS - info.OfflineDays);
+                // [G27-L11-CHU 2026-11-20] số ngày còn lại tính từ giờ thật (trước: 30 − ngày làm tròn lên → ngày thứ 30 báo "còn khoảng 0 ngày" dù chưa khoá).
+                //   Nguồn: CLAUDE rà độc lập Gói 27 / nhỏ 20/11 (G26-27-GHI-NHO L11); HÙNG 20/11 22:51 OK Gói 28. Chỉ chữ băng vàng, không đổi mốc khoá.
+                var leftD = OFFLINE_LOCK_DAYS - days;
+                string leftTxt = leftD < 1 ? "chưa tới 1 ngày" : $"khoảng {(int)Math.Floor(leftD)} ngày";
                 info.OfflineWarning =
                     $"Máy chủ đã {info.OfflineDays} ngày chưa xác minh bản quyền (không có Internet). " +
-                    $"Vẫn dùng bình thường; còn khoảng {left} ngày trước khi hệ thống tạm khoá giao diện — nhờ IT nối mạng máy chủ.";
+                    $"Vẫn dùng bình thường; còn {leftTxt} trước khi hệ thống tạm khoá giao diện — nhờ IT nối mạng máy chủ.";
             }
         }
 
@@ -771,4 +774,4 @@ namespace MES.Web.Services
             }
         }
     }
-}
+}
