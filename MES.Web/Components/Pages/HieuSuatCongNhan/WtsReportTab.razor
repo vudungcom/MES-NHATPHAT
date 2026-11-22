@@ -8,7 +8,9 @@
    [G30-RPT-MAUSO 2026-11-21] Mọi % có ích / vô ích / chưa khai báo chia cho GIỜ CHUẨN theo ca (Σ WtsReportDay.BaseMin của người-ngày trong phạm vi
    = phút làm + giờ ca chưa khai báo; làm thông nghỉ + làm ngoài ca đã nằm trong phút làm), không còn chia cho phút khai báo; biểu đồ tròn 3 phần;
    chỉ ngày có dòng WTS. Đang tìm nhanh: không còn giờ ca → % trên phút của dòng khớp. Thêm nút Năm.
-   Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19 "ok làm đi" (mockup HH5sobEdA8pFNjGCaDGJKR bản G30). *@
+   Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19 "ok làm đi" (mockup HH5sobEdA8pFNjGCaDGJKR bản G30).
+   [G31-LOC-NHOM 2026-11-22] Ô "Nhóm" (nhóm của công nhân ở Cài đặt phân quyền): lọc theo NGƯỜI nên giữ giờ chuẩn (khác Tìm nhanh lọc theo dòng).
+   Nguồn: HÙNG 22/11 08:29 + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm 22/11. *@
 @using System.Globalization
 @using MES.Web.Services
 @inject WtsReportService ReportSvc
@@ -63,6 +65,7 @@
     string _workerText = "";
     bool _workerNotFound;
     int _workerId;
+    string _groupKey = "";          // [G31-LOC-NHOM] "" = tất cả nhóm; "g<GroupId>" / "none" = chưa có nhóm
     string _search = "";
     bool _loading;
     string? _error;
@@ -120,6 +123,9 @@
         var all = _result?.Rows ?? new List<WtsReportRow>();
         IEnumerable<WtsReportRow> q = all;
         if (_workerId != 0) q = q.Where(r => r.WorkerId == _workerId);
+        if (_groupKey.Length > 0 && !GroupOptions().Any(g => g.Key == _groupKey)) _groupKey = "";   // kỳ mới không có nhóm đã chọn → bỏ lọc (rà độc lập 22/11 L5)
+        var inGroup = GroupWorkers();
+        if (inGroup != null) q = q.Where(r => inGroup.Contains(r.WorkerId));   // [G31-LOC-NHOM]
         var s = (_search ?? "").Trim();
         if (s.Length > 0)
         {
@@ -128,12 +134,26 @@
         }
         _rows = q.OrderBy(r => r.WorkDate).ThenBy(r => r.WorkerName).ThenBy(r => r.StartTime).ToList();
         // [G30-RPT-MAUSO] rà độc lập 21/11 (Thấp 5): tính 1 lần mỗi lần lọc (xem Năm: hàng chục nghìn người-ngày; trước quét lại mỗi lần vẽ)
-        _scopeDays = (_result?.Days ?? new()).Where(d => _workerId == 0 || d.WorkerId == _workerId).ToList();
+        _scopeDays = (_result?.Days ?? new()).Where(d => (_workerId == 0 || d.WorkerId == _workerId) && (inGroup == null || inGroup.Contains(d.WorkerId))).ToList();
         _dayOf = _workerId == 0 ? new() : _scopeDays.GroupBy(d => d.Day).ToDictionary(g => g.Key, g => g.First());
         var ud = _scopeDays.Where(d => d.UnaccountedMin != null).ToList();
         _unacc = s.Length > 0 || _result == null || ud.Count == 0 ? null : ud.Sum(d => d.UnaccountedMin!.Value);
     }
     List<WtsReportDay> _scopeDays = new();
+    // [G31-LOC-NHOM] nhóm → tập công nhân (theo dòng đã tải); null = không lọc nhóm
+    static string GroupKeyOf(WtsReportRow r) => r.WorkerGroupId == null ? "none" : "g" + r.WorkerGroupId.Value;
+    HashSet<int>? GroupWorkers() => _groupKey.Length == 0 ? null
+        : (_result?.Rows ?? new()).Where(r => GroupKeyOf(r) == _groupKey).Select(r => r.WorkerId).ToHashSet();
+    List<(string Key, string Name)> GroupOptions() => (_result?.Rows ?? new()).GroupBy(GroupKeyOf)
+        .Select(g => (g.Key, g.First().WorkerGroupName)).OrderBy(x => x.Item2).ToList();
+    string GroupName => GroupOptions().FirstOrDefault(x => x.Key == _groupKey).Name ?? "";
+    void OnGroupChange(ChangeEventArgs e)
+    {
+        _groupKey = e.Value?.ToString() ?? ""; _openDays.Clear();
+        var inG = GroupWorkers();   // người đang xem không thuộc nhóm mới → về tất cả công nhân của nhóm (rà độc lập 22/11 L6)
+        if (_workerId != 0 && inG != null && !inG.Contains(_workerId)) { _workerId = 0; _workerText = ""; _workerNotFound = false; }
+        Recompute();
+    }
     Dictionary<DateOnly, WtsReportDay> _dayOf = new();
     int? _unacc;
     static bool NoCa(WtsReportDay d) => d.UnaccountedMin == null && !d.IsTail;   // không rõ ca (đuôi ca đêm hôm trước thì đã biết ca)
@@ -176,7 +196,8 @@
     }
     List<(int Id, string Label)> WorkerOptions()
     {
-        var src = _workers.Concat((_result?.Rows ?? new()).Select(r => (r.WorkerId, r.WorkerName))).DistinctBy(x => x.Item1).ToList();
+        var inGroup = GroupWorkers();   // [G31-LOC-NHOM] đang chọn nhóm → chỉ người của nhóm đó (có dòng trong kỳ)
+        var src = _workers.Concat((_result?.Rows ?? new()).Select(r => (r.WorkerId, r.WorkerName))).DistinctBy(x => x.Item1).Where(x => inGroup == null || inGroup.Contains(x.Item1)).ToList();
         var dup = src.GroupBy(x => x.Item2, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return src.Select(x => (x.Item1, dup.Contains(x.Item2) ? $"{x.Item2} (#{x.Item1})" : x.Item2)).OrderBy(x => x.Item2).ToList();
     }
@@ -305,6 +326,16 @@
                 </datalist>
             </div>
             <div>
+                <label class="form-label small fw-bold mb-1" for="rptGroup">Nhóm</label>
+                <select id="rptGroup" class="form-select form-select-sm" style="width:170px" @onchange="OnGroupChange">
+                    <option value="" selected="@(_groupKey.Length == 0)">-- Tất cả nhóm --</option>
+                    @foreach (var g in GroupOptions())
+                    {
+                        <option value="@g.Key" selected="@(g.Key == _groupKey)">@g.Name</option>
+                    }
+                </select>
+            </div>
+            <div>
                 <div class="form-label small fw-bold mb-1">Xem theo</div>
                 <div class="btn-group">
                     <button type="button" class="@_clsDay" @onclick="SetDay" disabled="@_loading">Ngày</button>
@@ -362,6 +393,10 @@
             @if (_search.Trim().Length > 0)
             {
                 <span class="ms-2 badge bg-info text-dark">Đang lọc: "@_search.Trim()" — @_rows.Count dòng khớp</span>
+            }
+            @if (_groupKey.Length > 0)
+            {
+                <span class="ms-2 badge bg-secondary">Nhóm: @GroupName</span>
             }
         </div>
     };
@@ -819,7 +854,8 @@
     // ── bảng phụ cũ (giữ) ──────────────────────────────────────────────────────────────────────────────────
     RenderFragment ExtraTables() => __builder =>
     {
-        var src = new WtsReportResult { Rows = (_result?.Rows ?? new()).Where(r => _workerId == 0 || r.WorkerId == _workerId).ToList() };
+        var inG = GroupWorkers();   // [G31-LOC-NHOM] bảng phụ cũng theo ô Nhóm (rà độc lập 22/11 Trung 4)
+        var src = new WtsReportResult { Rows = (_result?.Rows ?? new()).Where(r => (_workerId == 0 || r.WorkerId == _workerId) && (inG == null || inG.Contains(r.WorkerId))).ToList() };
         var rep = src.RepairByPo;
         var brk = src.BreakWorkRows;
         if (rep.Count == 0 && brk.Count == 0) return;

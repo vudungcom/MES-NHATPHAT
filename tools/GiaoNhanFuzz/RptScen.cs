@@ -13,6 +13,9 @@
 //   không chạm nghỉ → không rõ ca, giờ chuẩn = phút khai báo; làm thông nghỉ 60 → giờ chuẩn 540 (> ca 480), % không vượt 100.
 //   P1d [G30-RPT-MAUSO] rà độc lập 21/11: ca đêm ngày CUỐI kỳ — dòng sau 0h (ngoài kỳ) vẫn phủ chưa khai báo; ngày đuôi ca đêm = có ca (IsTail), không "không rõ ca".
 //   Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19 "ok làm đi".
+//   [G31-SCEN 2026-11-22] P5 [G31-HSM-24H] máy 24h / ngày, không ca — đáp án tính tay (chạy / dừng / rảnh lúc xưởng có người / xưởng không ai khai
+//   WTS, % 24h, % lúc có người, kỳ = mọi ngày lịch, Năm ≤ 366 ngày); P6 ngẫu nhiên đếm TỪNG PHÚT (4 phần, kỳ = Σ ngày, ngày tràn 0h);
+//   P7 [G31-LOC-NHOM] nhóm công nhân trên dòng WTS Report. Nguồn: HÙNG 22/11 08:58 + 09:03 + 11:58.
 using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
@@ -77,7 +80,7 @@ public static class RptScen
 
     public static async Task<int> Run()
     {
-        await P1(); await P1b(); await P1c(); await P1d(); await P2(); await P3(); await P4();
+        await P1(); await P1b(); await P1c(); await P1d(); await P2(); await P3(); await P4(); await P5(); await P5b(); await P6(); await P7();
         Console.WriteLine($"Tổng phép kiểm: {checks}");
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: {fails} SAI");
         return fails == 0 ? 0 : 1;
@@ -182,6 +185,172 @@ public static class RptScen
         Say(a.UnaccountedMin == 0 && a.BaseMin == 240 && b.IsTail && b.CaId == 6 && b.UnaccountedMin == null && b.BaseMin == 240 && !a.IsTail,
             "P1d xem 2 ngày: ngày 1 giống xem riêng (chưa KB 0); ngày 2 = đuôi ca đêm (có ca 6, không kế hoạch riêng), giờ chuẩn 240",
             $"D1 ckb {a.UnaccountedMin} chuẩn {a.BaseMin} · D2 đuôi {b.IsTail} ca {b.CaId} ckb {b.UnaccountedMin} chuẩn {b.BaseMin}");
+    }
+
+
+    // ── P5 [G31-HSM-24H] máy 24h — đáp án tính tay ───────────────────────────────────────────────────────────
+    static void Down(AppDbContext db, int machineId, DateTime s, DateTime? e, bool maint, ref int cid)
+        => db.ThietBiChangeLogs.List.Add(new ThietBiChangeLog { ChangeId = ++cid, ThietBiId = machineId, FieldName = "TrangThai", NewValue = maint ? "Bảo trì" : "Hỏng",
+            Reason = maint ? "bảo trì" : "Kẹt dao", ThoiGianBatDau = s, ThoiGianKetThuc = e, ChangedAt = s, ChangedBy = 1 });
+    static async Task P5()
+    {
+        Console.WriteLine("[P5] G31-HSM-24H — máy 24h / ngày, không ca (đáp án tính tay)");
+        var db = await WtsScen.SeedAsync();
+        AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true, TenMay = "Máy 1" });
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "TARO", IsActive = true, TenMay = "Máy 2" });
+        P(db, 2, "M1", "serial", D1.AddHours(8), D1.AddHours(12), 10, 0, "NC01", 9);          // M1 chạy 08–12 (240)
+        A(db, 3, "HOP", D1.AddHours(7), D1.AddHours(17));                                     // người khác 07–17 → xưởng có người 07–17 (600)
+        int cid = 0; Down(db, 1, D1.AddHours(13), D1.AddHours(14), false, ref cid);           // M1 hỏng 13–14 (60, lúc xưởng có người)
+        P(db, 2, "M1", "serial", D1.AddHours(22), D2.AddHours(2), 5, 0, "NC01", 9);           // M1 chạy 22:00 → 02:00 hôm sau (tràn 0h): D1 120, D2 120
+        db.Fixup();
+        var svc = new MachineEfficiencyService(db);
+        var d1 = await svc.GetDay24Async(DateOnly.FromDateTime(D1), 1);
+        var m1 = d1.Rows.First(x => x.Machine.SoMay == "M1"); var m2 = d1.Rows.First(x => x.Machine.SoMay == "M2");
+        // M1 D1: chạy 240 + 120 = 360; dừng 60; xưởng có người = 07–17 ∪ 22–24 = 720 → rảnh có người = 720 − 360 − 60 = 300; không ai = 1440 − 720 = 720
+        Say(Math.Abs(m1.TotalMinutes - 1440) < 0.01 && Math.Abs(m1.RunMinutes - 360) < 0.01 && Math.Abs(m1.DownMinutes - 60) < 0.01
+            && Math.Abs(m1.IdleCrewMinutes - 300) < 0.01 && Math.Abs(m1.NoCrewMinutes - 720) < 0.01 && m1.BreakMinutes == 0,
+            "P5 M1 ngày 1: 24h = chạy 360 + dừng 60 + rảnh lúc có người 300 + không ai khai 720 (không nghỉ ca)",
+            $"tổng {m1.TotalMinutes} chạy {m1.RunMinutes} dừng {m1.DownMinutes} rảnh có người {m1.IdleCrewMinutes} không ai {m1.NoCrewMinutes} nghỉ {m1.BreakMinutes}");
+        Say(Math.Abs(m1.RunPct - 25.0) < 0.001 && Math.Abs(m1.RunPctCrew - 50.0) < 0.001 && Math.Abs(m1.NoCrewPct - 50.0) < 0.001,
+            "P5 M1 ngày 1: % chạy 24h 25,0; % lúc xưởng có người 360 / 720 = 50,0", $"{m1.RunPct} / {m1.RunPctCrew} / {m1.NoCrewPct}");
+        // M2 không ai đứng: rảnh có người 720, không ai 720
+        Say(m2.RunMinutes == 0 && Math.Abs(m2.IdleCrewMinutes - 720) < 0.01 && Math.Abs(m2.NoCrewMinutes - 720) < 0.01,
+            "P5 M2 không ai đứng: rảnh lúc xưởng có người 720, không ai khai 720", $"{m2.IdleCrewMinutes}/{m2.NoCrewMinutes}");
+        Say(m1.Segments.Any(s => s.Type == SegmentType.NoCrew && s.Start == D1 && s.End == D1.AddHours(7)) && m1.Segments.Any(s => s.Type == SegmentType.Idle && s.Start == D1.AddHours(7) && s.End == D1.AddHours(8)),
+            "P5 dòng thời gian M1: 00–07 không ai khai, 07–08 rảnh lúc có người", string.Join(" ", m1.Segments.Select(s => $"{s.Type}:{s.Start:HH:mm}-{s.End:HH:mm}")));
+        // kỳ 3 ngày (D1, D2, D3 không WTS) = mọi ngày lịch
+        var per = await svc.GetPeriod24Async(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1).AddDays(2), 1);
+        var p1 = per.Rows.First(x => x.Machine.SoMay == "M1");
+        // D2: chạy 00–02 = 120, xưởng có người 00–02 = 120 → rảnh có người 0, không ai 1320; D3: không ai 1440
+        Say(per.Error == null && per.Days.Count == 3 && Math.Abs(p1.TotalMinutes - 4320) < 0.01 && Math.Abs(p1.RunMinutes - 480) < 0.01
+            && Math.Abs(p1.NoCrewMinutes - (720 + 1320 + 1440)) < 0.01 && Math.Abs(p1.IdleCrewMinutes - 300) < 0.01 && p1.PerDay.Count == 3,
+            "P5 kỳ 3 ngày (có ngày không WTS): tổng 4320, chạy 480, không ai 3480, rảnh có người 300 — ngày không WTS vẫn tính", $"ngày {per.Days.Count} tổng {p1.TotalMinutes} chạy {p1.RunMinutes} không ai {p1.NoCrewMinutes} rảnh {p1.IdleCrewMinutes}");
+        Say(p1.Ok == 15 && Math.Abs(p1.RunPctCrew - Math.Round(480.0 / (4320 - 3480) * 100, 1)) < 0.001, "P5 kỳ: OK mỗi dòng 1 lần (10 + 5), % lúc có người 480 / 840", $"{p1.Ok} {p1.RunPctCrew}");
+        var y = await svc.GetPeriod24Async(new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31), 1);
+        var big = await svc.GetPeriod24Async(new DateOnly(2024, 1, 1), new DateOnly(2025, 1, 1), 1);
+        var no = await svc.GetPeriod24Async(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1), 0);
+        var noD = await svc.GetDay24Async(DateOnly.FromDateTime(D1), 0);
+        Say(y.Error == null && y.Days.Count == 366 && big.Error != null && no.Rows.Count == 0 && noD.Rows.Count == 0,
+            "P5 Năm 2024 = 366 ngày được; 367 ngày → lời báo; không quyền → rỗng", $"{y.Error} {y.Days.Count} | {big.Error} | {no.Rows.Count}/{noD.Rows.Count}");
+    }
+
+    // ── P5b [G31-HSM-24H] rà độc lập 22/11: không tính thời gian chưa tới; OK / NG theo ngày bắt đầu dòng ────────
+    static async Task P5b()
+    {
+        Console.WriteLine("[P5b] G31-HSM-24H — giờ hiện tại cắt ngày; hỏng chưa đóng; OK / NG ở kỳ chứa ngày bắt đầu dòng");
+        var db = await WtsScen.SeedAsync();
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true, TenMay = "Máy 1" });
+        db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "GC", IsActive = true, TenMay = "Máy 2" });
+        P(db, 2, "M1", "serial", D1.AddHours(8), D1.AddHours(12), 10, 0, "NC01", null);       // 08–12
+        A(db, 3, "HOP", D1.AddHours(7), D1.AddHours(17));                                     // xưởng có người 07–17
+        int cid = 0; Down(db, 2, D1.AddHours(10), null, false, ref cid);                      // M2 hỏng từ 10:00, CHƯA đóng
+        P(db, 2, "M1", "serial", D1.AddHours(22), D2.AddHours(2), 5, 0, "NC01", null);        // bắt đầu ngày 1, tràn sang ngày 2
+        db.Fixup();
+        var svc = new MachineEfficiencyService(db) { Clock = () => D1.AddHours(12) };       // "bây giờ" = ngày 1 12:00
+        var d1 = await svc.GetDay24Async(DateOnly.FromDateTime(D1), 1);
+        var m1 = d1.Rows.First(x => x.Machine.SoMay == "M1"); var m2 = d1.Rows.First(x => x.Machine.SoMay == "M2");
+        Say(Math.Abs(m1.TotalMinutes - 720) < 0.01 && Math.Abs(m1.RunMinutes - 240) < 0.01 && Math.Abs(m1.IdleCrewMinutes - 60) < 0.01 && Math.Abs(m1.NoCrewMinutes - 420) < 0.01,
+            "P5b hôm nay lúc 12:00: tổng 720 (không tính 12–24h), chạy 240, rảnh có người 07–08 = 60, không ai 00–07 = 420", $"{m1.TotalMinutes} {m1.RunMinutes} {m1.IdleCrewMinutes} {m1.NoCrewMinutes}");
+        Say(Math.Abs(m2.DownMinutes - 120) < 0.01, "P5b hỏng chưa đóng từ 10:00 → dừng 120 tới bây giờ (trước: tới 24:00 = 840)", $"{m2.DownMinutes}");
+        var per = await svc.GetPeriod24Async(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1).AddDays(6), 1);
+        var p2 = per.Rows.First(x => x.Machine.SoMay == "M2");
+        Say(per.Days.Count == 1 && Math.Abs(p2.DownMinutes - 120) < 0.01 && Math.Abs(p2.TotalMinutes - 720) < 0.01,
+            "P5b kỳ 7 ngày mà hôm nay là ngày 1: chỉ tính 1 ngày tới 12:00; hỏng chưa đóng không cộng ngày tương lai", $"ngày {per.Days.Count} dừng {p2.DownMinutes} tổng {p2.TotalMinutes}");
+        var svc2 = new MachineEfficiencyService(db) { Clock = () => D1.AddDays(5) };
+        var w1 = (await svc2.GetPeriod24Async(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1), 1)).Rows.First(x => x.Machine.SoMay == "M1");
+        var w2 = (await svc2.GetPeriod24Async(DateOnly.FromDateTime(D2), DateOnly.FromDateTime(D2), 1)).Rows.First(x => x.Machine.SoMay == "M1");
+        Say(w1.Ok == 15 && w2.Ok == 0 && Math.Abs(w2.RunMinutes - 120) < 0.01,
+            "P5b dòng 22:00 → 02:00: OK vào kỳ chứa ngày bắt đầu (ngày 1: 10 + 5), ngày 2 OK 0 nhưng vẫn có 120 phút chạy (trước: cộng OK ở cả 2 kỳ)", $"{w1.Ok} / {w2.Ok} / {w2.RunMinutes}");
+    }
+
+    // ── P6 [G31-HSM-24H] ngẫu nhiên — đếm từng phút ─────────────────────────────────────────────────────────
+    static async Task P6()
+    {
+        Console.WriteLine("[P6] G31-HSM-24H — ngẫu nhiên, đếm từng phút 4 phần, kỳ = Σ ngày");
+        int seed = int.TryParse(Environment.GetEnvironmentVariable("RPT_SEED"), out var sd) ? sd + 31 : 29231;
+        var rnd = new Random(seed);
+        int bad0 = fails;
+        for (int round = 0; round < 3; round++)
+        {
+            var db = await WtsScen.SeedAsync();
+            AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
+            for (int m = 1; m <= 3; m++) db.ThietBis.List.Add(new ThietBi { ThietBiId = m, SoMay = "M" + m, BoPhan = m == 3 ? "TARO" : "GC", IsActive = true, TenMay = "Máy " + m });
+            for (int k = 0; k < 35; k++)
+            {
+                var s = D1.AddDays(rnd.Next(0, 4)).AddMinutes(rnd.Next(0, 1440)); var e = s.AddMinutes(10 + rnd.Next(0, 400));
+                int? ca = rnd.Next(2) == 0 ? 9 : null; int worked = rnd.Next(3) == 0 ? rnd.Next(0, 61) : 0;
+                if (rnd.Next(4) == 0) A(db, 2 + rnd.Next(4), "HOP", s, e, ca, worked);
+                else P(db, 2 + rnd.Next(4), rnd.Next(5) == 0 ? null : "M" + rnd.Next(1, 4), "serial", s, e, rnd.Next(1, 20), rnd.Next(0, 2), "NC1", ca, worked);
+            }
+            int cid = 0;
+            for (int k = 0; k < 5; k++) { var s = D1.AddDays(rnd.Next(0, 4)).AddMinutes(rnd.Next(0, 1440)); Down(db, 1 + rnd.Next(3), s, rnd.Next(6) == 0 ? null : s.AddMinutes(20 + rnd.Next(0, 300)), k % 2 == 1, ref cid); }
+            db.Fixup();
+            var svc = new MachineEfficiencyService(db);
+            var f = DateOnly.FromDateTime(D1); var t = f.AddDays(3);
+            var per = await svc.GetPeriod24Async(f, t, 1);
+            // phút làm (WorkPieces) từng dòng — đếm độc lập
+            bool IsWork(DateTime s, DateTime e, IReadOnlyList<LineBreak> brk, DateTime m)
+            {
+                if (m < s || m >= e) return false;
+                foreach (var b in brk)
+                {
+                    if (m < b.BreakStart || m >= b.BreakEnd) continue;
+                    var cs = b.BreakStart > s ? b.BreakStart : s;
+                    return b.WorkedMin > 0 && m >= cs && m < cs.AddMinutes(b.WorkedMin);
+                }
+                return true;
+            }
+            var bw = await WorkMinutesStore.ForWtsAsync(db, db.WtsProductionLogs.List.Select(x => x.WtsLogId));
+            var ba = await WorkMinutesStore.ForActivityAsync(db, db.WorkerActivityLogs.List.Select(x => x.ActivityLogId));
+            foreach (var d in Enumerable.Range(0, 4).Select(i => f.AddDays(i)))
+            {
+                var day = await svc.GetDay24Async(d, 1);
+                var s0 = d.ToDateTime(TimeOnly.MinValue);
+                foreach (var row in day.Rows)
+                {
+                    int run = 0, down = 0, idle = 0, nc = 0;
+                    for (int i = 0; i < 1440; i++)
+                    {
+                        var m = s0.AddMinutes(i);
+                        bool dn = db.ThietBiChangeLogs.List.Any(x => x.ThietBiId == row.Machine.ThietBiId && x.ThoiGianBatDau <= m && (x.ThoiGianKetThuc == null || x.ThoiGianKetThuc > m));
+                        bool rn = db.WtsProductionLogs.List.Any(x => !x.IsVoided && x.MachineUsed == row.Machine.SoMay && IsWork(x.StartTime, x.EndTime, WorkMinutesStore.Get(bw, x.WtsLogId), m));
+                        bool cr = db.WtsProductionLogs.List.Any(x => !x.IsVoided && IsWork(x.StartTime, x.EndTime, WorkMinutesStore.Get(bw, x.WtsLogId), m))
+                               || db.WorkerActivityLogs.List.Any(x => !x.IsVoided && IsWork(x.StartTime, x.EndTime, WorkMinutesStore.Get(ba, x.ActivityLogId), m));
+                        if (dn) down++; else if (rn) run++; else if (cr) idle++; else nc++;
+                    }
+                    Ok(Math.Abs(row.RunMinutes - run) < 0.01 && Math.Abs(row.DownMinutes - down) < 0.01 && Math.Abs(row.IdleCrewMinutes - idle) < 0.01 && Math.Abs(row.NoCrewMinutes - nc) < 0.01 && Math.Abs(row.TotalMinutes - 1440) < 0.01,
+                        $"P6 r{round} {row.Machine.SoMay} {d}: chạy / dừng / rảnh có người / không ai = đếm phút {run}/{down}/{idle}/{nc}",
+                        $"{row.RunMinutes}/{row.DownMinutes}/{row.IdleCrewMinutes}/{row.NoCrewMinutes}");
+                    var pd = per.Rows.First(x => x.Machine.ThietBiId == row.Machine.ThietBiId).PerDay.First(x => x.Day == d);
+                    Ok(Math.Abs(pd.Run - row.RunMinutes) < 0.01 && Math.Abs(pd.NoCrew - row.NoCrewMinutes) < 0.01 && Math.Abs(pd.IdleCrew - row.IdleCrewMinutes) < 0.01,
+                        $"P6 r{round} {row.Machine.SoMay} {d}: ngày trong kỳ = trang ngày");
+                }
+            }
+            foreach (var r in per.Rows)
+                Ok(Math.Abs(r.RunMinutes + r.DownMinutes + r.IdleCrewMinutes + r.NoCrewMinutes - r.TotalMinutes) < 0.01 && Math.Abs(r.TotalMinutes - 4 * 1440) < 0.01
+                   && Math.Abs(r.RunMinutes - r.PerDay.Sum(x => x.Run)) < 0.01 && Math.Abs(r.NoCrewMinutes - r.PerDay.Sum(x => x.NoCrew)) < 0.01,
+                    $"P6 r{round} {r.Machine.SoMay}: 4 phần = 24h × 4 ngày, kỳ = Σ ngày");
+        }
+        Say(fails == bad0, $"P6 3 vòng ngẫu nhiên (seed {seed}): 4 phần mỗi máy-ngày khớp đếm từng phút; kỳ = Σ ngày");
+    }
+
+    // ── P7 [G31-LOC-NHOM] nhóm công nhân trên dòng báo cáo ─────────────────────────────────────────────────
+    static async Task P7()
+    {
+        Console.WriteLine("[P7] G31-LOC-NHOM — nhóm của công nhân trên dòng WTS Report");
+        var db = await WtsScen.SeedAsync();
+        AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
+        var g1 = new UserGroup { GroupId = 901, GroupCode = "G901", GroupName = "Nhóm thử 1", IsActive = true }; db.UserGroups.List.Add(g1);
+        var u2 = db.Users.List.First(u => u.UserId == 2); var u3 = db.Users.List.First(u => u.UserId == 3);
+        u2.GroupId = 901; u3.GroupId = null;
+        P(db, 2, "M1", "serial", D1.AddHours(8), D1.AddHours(10), 1, 0, "NC01", 9);
+        A(db, 3, "HOP", D1.AddHours(8), D1.AddHours(9));
+        db.Fixup();
+        var res = await new WtsReportService(db).GetReportAsync(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D1), null, 1);
+        var r2 = res.Rows.First(r => r.WorkerId == 2); var r3 = res.Rows.First(r => r.WorkerId == 3);
+        Say(r2.WorkerGroupId == 901 && r2.WorkerGroupName == "Nhóm thử 1" && r3.WorkerGroupId == null && r3.WorkerGroupName == "(chưa có nhóm)",
+            "P7 dòng mang nhóm của công nhân (Users.GroupId → UserGroups); không nhóm → \"(chưa có nhóm)\"", $"{r2.WorkerGroupId} {r2.WorkerGroupName} · {r3.WorkerGroupId} {r3.WorkerGroupName}");
     }
 
     // ── P1b rà độc lập 21/11: ca đêm (dòng sau 0h) + ca đổi giờ nghỉ sau khi lưu ─────────────────────────────

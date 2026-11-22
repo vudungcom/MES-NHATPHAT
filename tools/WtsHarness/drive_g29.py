@@ -24,6 +24,14 @@
 #     (trước 96,3 % / 87,5 % trên phút khai báo); A riêng 960; ngày 1 A 480 → 300 / 480 = 62,5 %. Ô số đầu = "Giờ chuẩn (theo ca)".
 #     STEP R6 [G30-RPT-MAUSO] nút Năm → "Năm yyyy", A / B giữ 81,3 % / 43,8 %. Bản Gói 29 (e92bf01): R1 / R2 / R4 / R6 SAI đúng chỗ đổi.
 #     Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19.
+#   [G31-HSM-24H 22/11] Máy 24h / ngày, KHÔNG ca, mọi ngày lịch. Tuần 7 ngày × 1440 = 10.080 ph / máy. Xưởng có người (mọi dòng WTS mọi người):
+#     ngày 1 08:00–12:00 + 13:00–15:00 = 360, ngày 2 08–12 + 13–17 = 480 → 840. M29A chạy 420 → 4,2 % (24h), 50,0 % lúc có người;
+#     M29B chạy 450 + dừng 60 → 4,5 %, 53,6 %, rảnh lúc có người 840 − 450 − 60 = 330. Trang ngày M29A ngày 1: 180 / 1440 = 12.5 %.
+#     Rà độc lập 22/11: ngày / giờ chưa tới KHÔNG tính → mẫu % 24h tuần này = phút từ thứ Hai 00:00 tới bây giờ (pct_set). Chạy thứ Hai trước 17:00
+#     thì dữ liệu ngày 1 sau giờ hiện tại chưa tính → M1 / M4 có thể lệch (dữ liệu seed theo thứ Hai tuần này) — chạy lại ngày khác.
+#     M5: thêm máy M29T bộ phận TARO (HarnessG29) để ô Bộ phận GC phải loại nó.
+#     STEP M5 [G31-LOC-NHOM] ô Bộ phận GC · M6 nút Năm (bảng Máy × tháng) · R7 [G31-LOC-NHOM] ô Nhóm WTS Report (thêm người KCS qua
+#     /harness/g31-seed, K31 việc 11–13 qua nghỉ trưa đã lưu: Gia công giữ 1.440 / 990 / 60 / 390, KCS = 480 / 0 / 60 / 420). Bản Gói 30 (6dc3153): M1 / M3 / M4 / M5 / M6 / R7 SAI. Nguồn: HÙNG 22/11 08:58 + 09:03 + 11:58.
 # Chạy trên harness VỪA khởi động: python3 drive_g29.py <port> <nhãn>
 import sys, asyncio, json, re, urllib.request, datetime
 from playwright.async_api import async_playwright
@@ -37,6 +45,18 @@ def ok(cond, name, info=""):
 def post(path):
     try: return json.loads(urllib.request.urlopen(urllib.request.Request(BASE + path, data=b"", method="POST")).read().decode())
     except urllib.error.HTTPError as e: return {"ok": False, "error": f"HTTP {e.code}"}
+
+def pct_set(num, mon):
+    # [G31-HSM-24H] % chạy 24h tuần này: hôm nay chỉ tính tới giờ hiện tại (ngày chưa tới không tính) → mẫu = phút từ thứ Hai 00:00 tới bây giờ;
+    #   chấp nhận lệch 1–2 phút (trang tải trong lúc đồng hồ chạy) + 2 cách làm tròn
+    from decimal import Decimal, ROUND_HALF_UP, ROUND_HALF_EVEN
+    m0 = datetime.datetime.combine(mon, datetime.time()); now = datetime.datetime.now()
+    end = min(now, m0 + datetime.timedelta(days=7)); base = int((end - m0).total_seconds() // 60)
+    out = set()
+    for den in range(base - 2, base + 3):
+        for rd in (ROUND_HALF_UP, ROUND_HALF_EVEN):
+            out.add(str(Decimal(num * 100 / den).quantize(Decimal("0.1"), rounding=rd)).replace(".", ",") + "%")
+    return out
 
 async def kpis(pg):
     return [x.strip() for x in await pg.locator("div.row-cols-md-5 .fs-4").all_inner_texts()]
@@ -119,24 +139,35 @@ async def main():
             ok(False, "R! lỗi khi bấm", repr(e)); await pg.screenshot(path=f"{OUT}_g29_rerr.png", full_page=True)
 
         try:
-            print("STEP M1 G29-HSM-KY — Hiệu suất máy tuần, ca G29")
+            print("STEP M1 G31-HSM-24H — Hiệu suất máy tuần, 24h không ca")
             await pg.goto(BASE + "/hieu-suat-may"); await pg.wait_for_timeout(3000)
-            await pg.click("button:has-text('Tuần')"); await pg.wait_for_timeout(2500)
-            await pg.select_option("#kyCa", label=None, value=str(st.get("ca"))); await pg.wait_for_timeout(2500)
+            await pg.click("button:has-text('Tuần')"); await pg.wait_for_timeout(3000)
             body = await pg.locator("body").inner_text()
+            ok(await pg.locator("#kyCa").count() == 0 and "máy không chia ca" in body and "Xưởng không ai khai WTS" in body,
+               "M1 [G31] không còn ô Ca; có 'máy không chia ca' + phần 'Xưởng không ai khai WTS'", body[:600])
             rows = await pg.locator("table:has(th:has-text('Chạy / dừng / rảnh')) tbody tr").all_inner_texts()
             ra = [r for r in rows if "M29A" in r]; rb = [r for r in rows if "M29B" in r]
-            ok(len(ra) == 1 and "43,8%" in ra[0], "M1 M29A 43,8% chạy", ra)
-            ok(len(rb) == 1 and "46,9%" in rb[0] and "Kẹt dao" in rb[0] and "60" in rb[0], "M1 M29B 46,9% chạy, dừng 60 Kẹt dao", rb)
+            pa = pct_set(420, mon); pb = pct_set(450, mon)
+            ok(len(ra) == 1 and any(x in ra[0] for x in pa) and "50,0%" in ra[0], "M1 [G31] M29A chạy 420 ÷ (phút từ thứ Hai tới bây giờ; cả tuần đã qua = 10.080 → 4,2%); 420 / 840 = 50,0% lúc xưởng có người", (ra, sorted(pa)))
+            ok(len(rb) == 1 and any(x in rb[0] for x in pb) and "53,6%" in rb[0] and "Kẹt dao" in rb[0] and "60" in rb[0], "M1 [G31] M29B 450 ÷ phút tới bây giờ, 53,6% lúc có người, dừng 60 Kẹt dao", (rb, sorted(pb)))
             ia = next((i for i, r in enumerate(rows) if "M29A" in r), -1); ib = next((i for i, r in enumerate(rows) if "M29B" in r), -1)
             ok(0 <= ia < ib, "M1 xếp % chạy thấp → cao: M29A trước M29B", (ia, ib))
-            await pg.screenshot(path=f"{OUT}_g29_m1.png", full_page=True)
+            await pg.screenshot(path=f"{OUT}_g31_m1.png", full_page=True)
 
             print("STEP M2 G29-TIMNHANH — tìm 'Kẹt dao'")
             await pg.fill("#kySearch", "Kẹt dao"); await pg.wait_for_timeout(1200)
             rows = await pg.locator("table:has(th:has-text('Chạy / dừng / rảnh')) tbody tr").all_inner_texts()
             ok(len(rows) == 1 and "M29B" in rows[0], "M2 chỉ còn M29B", rows)
             await pg.fill("#kySearch", ""); await pg.wait_for_timeout(800)
+
+            print("STEP M5 G31-LOC-NHOM — ô Bộ phận = GC")
+            n_all = await pg.locator("table:has(th:has-text('Chạy / dừng / rảnh')) tbody tr").count()
+            await pg.select_option("#kyBoPhan", value="GC"); await pg.wait_for_timeout(1200)
+            rows = await pg.locator("table:has(th:has-text('Chạy / dừng / rảnh')) tbody tr").all_inner_texts()
+            body = await pg.locator("body").inner_text()
+            ok(len(rows) >= 2 and len(rows) < n_all and all("\tGC\t" in r or "\tGC\n" in r for r in rows) and any("M29A" in r for r in rows) and not any("M29T" in r for r in rows) and "Bộ phận: GC" in body,
+               "M5 [G31] chọn Bộ phận GC: bỏ M29T (TARO), còn máy GC (có M29A / M29B) + nhãn 'Bộ phận: GC'", (n_all, rows[:6]))
+            await pg.select_option("#kyBoPhan", value=""); await pg.wait_for_timeout(800)
 
             print("STEP M3 G29-HSM-KY — bấm M29B")
             await pg.locator("button.btn-link", has_text="M29B").first.click(); await pg.wait_for_timeout(1200)
@@ -145,17 +176,40 @@ async def main():
             ok(any("Kẹt dao" in r and "60" in r for r in dr), "M3 Các lần dừng: Kẹt dao 60", dr)
             wr = await pg.locator("table:has(th:has-text('Phút đứng máy')) tbody tr").all_inner_texts()
             ok(any("A29" in r and "360" in r for r in wr) and any("B29" in r and "210" in r for r in wr), "M3 Ai đứng máy: A 360, B 210", wr)
-            await pg.screenshot(path=f"{OUT}_g29_m3.png", full_page=True)
+            ok("Rảnh lúc xưởng có người" in body and "330 ph" in body, "M3 [G31] M29B rảnh lúc xưởng có người 330 ph (840 − 450 − 60)", body[:800])
+            await pg.screenshot(path=f"{OUT}_g31_m3.png", full_page=True)
 
-            print("STEP M4 G29-HSM-MAUSO — bấm ô M29A ngày 1 → trang Ngày")
+            print("STEP M4 G31-HSM-24H — bấm ô M29A ngày 1 → trang Ngày 00:00–24:00")
             await pg.click("button:has-text('Tất cả máy')"); await pg.wait_for_timeout(800)
             row = pg.locator("table:has(th:has-text('Cả kỳ')) tbody tr", has_text="M29A").first
             await row.locator("button").first.click(); await pg.wait_for_timeout(3000)
             dv = await pg.locator("input[type=date]").first.input_value()
             body = await pg.locator("body").inner_text()
             ok(dv == mon.isoformat(), "M4 trang Ngày mở đúng ngày 1", dv)
-            ok("37.5%" in body, "M4 M29A 37.5% (180 / 480 kế hoạch; trước 33.3%)", body[:600])
-            await pg.screenshot(path=f"{OUT}_g29_m4.png", full_page=True)
+            ok("12.5%" in body and "00:00–24:00" in body and "Ca làm việc" not in body and "Toàn ngày" not in body,
+               "M4 [G31] M29A 180 / 1440 = 12.5% (trước 37.5% trên ca); khung 00:00–24:00, không còn nút ca", body[:700])
+            await pg.screenshot(path=f"{OUT}_g31_m4.png", full_page=True)
+
+            print("STEP M6 G31-HSM-24H — nút Năm")
+            await pg.click("button:has-text('Năm')"); await pg.wait_for_timeout(4000)
+            body = await pg.locator("body").inner_text()
+            ok(f"Năm {mon.year}" in body and "Máy × tháng" in body and "M29A" in body, "M6 [G31] Năm: nhãn 'Năm yyyy', bảng Máy × tháng", body[:600])
+            await pg.screenshot(path=f"{OUT}_g31_m6.png", full_page=True)
+
+            print("STEP R7 G31-LOC-NHOM — WTS Report ô Nhóm (thêm người nhóm KCS)")
+            st2 = post("/harness/g31-seed"); ok(st2.get("ok"), "Seed G31", st2)
+            await pg.goto(BASE + "/hieu-suat-cong-nhan"); await pg.wait_for_timeout(3000)
+            await pg.click("button:has-text('WTS Report')"); await pg.wait_for_timeout(2500)
+            body = await pg.locator("body").inner_text()
+            ok("Công nhân K31" in body, "R7 tất cả nhóm: có Công nhân K31 (KCS)", body[:400])
+            await pg.select_option("#rptGroup", label="Gia công"); await pg.wait_for_timeout(1500)
+            k = await kpis(pg); body = await pg.locator("body").inner_text()
+            ok(k[:4] == ["1.440", "990", "60", "390"] and "Công nhân K31" not in body and "Nhóm: Gia công" in body,
+               "R7 [G31] Nhóm Gia công: chỉ A29 + B29, giờ chuẩn giữ 1.440 / 990 / 60 / 390 (lọc theo người, không mất chưa khai báo)", (k, body[:300]))
+            await pg.select_option("#rptGroup", label="KCS"); await pg.wait_for_timeout(1500)
+            k = await kpis(pg); body = await pg.locator("body").inner_text()
+            ok(k[:4] == ["480", "0", "60", "420"] and "Công nhân K31" in body and "Công nhân A29" not in body,
+               "R7 [G31] Nhóm KCS: chỉ K31 — giờ chuẩn 480 (làm 60 + chưa khai báo 420, ca lấy từ nghỉ đã lưu), vô ích 60", (k, body[:300]))
         except Exception as e:
             ok(False, "M! lỗi khi bấm", repr(e)); await pg.screenshot(path=f"{OUT}_g29_merr.png", full_page=True)
         await br.close()

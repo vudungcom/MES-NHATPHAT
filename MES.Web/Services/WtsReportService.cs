@@ -197,6 +197,19 @@ public class WtsReportService
         var taskNames = allWtsTasks.GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First().TaskName ?? "", StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows) SetTask(r, taskNames);
+        // [G31-LOC-NHOM 2026-11-22] nhóm của công nhân (Users.GroupId → UserGroups) — ô Nhóm WTS Report lọc theo NGƯỜI, giữ giờ chuẩn.
+        //   Nguồn: HÙNG 22/11 08:29 ("hiệu suất công nhân có tìm theo nhóm được ko") + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm.
+        var wIds = rows.Select(r => r.WorkerId).Distinct().ToList();
+        var wGrp = wIds.Count == 0 ? new Dictionary<int, int?>()
+            : (await _db.Users.AsNoTracking().Where(u => wIds.Contains(u.UserId)).Select(u => new { u.UserId, u.GroupId }).ToListAsync()).ToDictionary(x => x.UserId, x => x.GroupId);
+        var gIds = wGrp.Values.Where(g => g != null).Select(g => g!.Value).Distinct().ToList();
+        var gName = gIds.Count == 0 ? new Dictionary<int, string>()
+            : (await _db.UserGroups.AsNoTracking().Where(g => gIds.Contains(g.GroupId)).Select(g => new { g.GroupId, g.GroupName }).ToListAsync()).ToDictionary(x => x.GroupId, x => x.GroupName);
+        foreach (var r in rows)
+        {
+            r.WorkerGroupId = wGrp.TryGetValue(r.WorkerId, out var gid) ? gid : null;
+            r.WorkerGroupName = r.WorkerGroupId != null && gName.TryGetValue(r.WorkerGroupId.Value, out var gn) ? gn : "(chưa có nhóm)";
+        }
         var days = await BuildDaysAsync(rows, await LoadCoverAfterAsync(dateTo, endDt, workerId));
 
         return new WtsReportResult
@@ -473,6 +486,8 @@ public class WtsReportRow
     public DateOnly  WorkDate         { get; set; }
     public int       WorkerId         { get; set; }
     public string    WorkerName       { get; set; } = "";
+    public int?      WorkerGroupId    { get; set; }   // [G31-LOC-NHOM] nhóm của công nhân (Users.GroupId)
+    public string    WorkerGroupName  { get; set; } = "";
     public DateTime  StartTime        { get; set; }
     public DateTime  EndTime          { get; set; }
     public int       Minutes          { get; set; }

@@ -30,6 +30,7 @@ public static class HarnessG29
             db.ThietBis.Add(new ThietBi { SoMay = "M29A", BoPhan = "GC", MaMay = "M29A", TenMay = "Phay G29 A", LoaiMay = "CNC", IsActive = true, CreatedBy = admin.UserId });
             var mb = new ThietBi { SoMay = "M29B", BoPhan = "GC", MaMay = "M29B", TenMay = "Phay G29 B", LoaiMay = "CNC", IsActive = true, CreatedBy = admin.UserId };
             db.ThietBis.Add(mb);
+            db.ThietBis.Add(new ThietBi { SoMay = "M29T", BoPhan = "TARO", MaMay = "M29T", TenMay = "Taro G29", LoaiMay = "TARO", IsActive = true, CreatedBy = admin.UserId });   // [G31-SCEN] máy bộ phận khác — ô Bộ phận (drive_g29 M5)
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "HOP29", TaskName = "Họp đầu ca", IsActive = true, IsProductiveTask = false, CreatedBy = admin.UserId });
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "VS29", TaskName = "Vệ sinh máy", IsActive = true, IsProductiveTask = false, CreatedBy = admin.UserId });
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "SUA29", TaskName = "Sửa hàng lỗi", IsActive = true, IsProductiveTask = true, CreatedBy = admin.UserId });
@@ -66,5 +67,26 @@ public static class HarnessG29
             await db.SaveChangesAsync(); db.Fixup();
         }
         return new { ok = true, monday = Monday.ToString("yyyy-MM-dd"), ca = db.CaLamViecs.List.First(c => c.TenCa == "Ca G29").CaId };
+    }
+
+    /// <summary>[G31-SCEN 22/11] POST /harness/g31-seed — thêm người g31k (nhóm KCS) có 1 việc HOP29 thứ Hai 11:00–13:00 (nghỉ trưa đã lưu, ca G29), để drive_g29 R7 kiểm ô Nhóm
+    ///   ([G31-LOC-NHOM]) loại người nhóm khác ra mà vẫn giữ giờ chuẩn. Gọi SAU các bước R / M (không đổi đáp án của chúng).</summary>
+    public static async Task<object> SeedG31Async(AppDbContext db)
+    {
+        if (!db.Users.List.Any(u => u.Username == "g31k"))
+        {
+            var gK = db.UserGroups.List.First(g => g.GroupCode == "KCS");
+            var u = new User { Username = "g31k", FullName = "Công nhân K31", PasswordHash = PasswordHasher.Hash("123456"), GroupId = gK.GroupId, IsActive = true };
+            db.Users.AddRange(u); await db.SaveChangesAsync();
+            // việc 11:00–13:00 chạm nghỉ trưa ca G29 (khoảng nghỉ ĐÃ LƯU mang CaId) → ngày có ca: làm 60, kế hoạch 480, chưa khai báo 420
+            db.WorkerActivityLogs.List.Add(new WorkerActivityLog { ActivityLogId = 990301, WorkerId = u.UserId, WorkDate = DateOnly.FromDateTime(Monday), StartTime = Monday.AddHours(11),
+                EndTime = Monday.AddHours(13), WtsCode = "HOP29", WtsName = "Họp đầu ca", CreatedAt = Monday.AddHours(11) });
+            var ca = db.CaLamViecs.List.First(c => c.TenCa == "Ca G29");
+            var ng = db.CaLamViec_NghiGiaiLaos.List.First(n => n.CaId == ca.CaId);
+            db.WtsBreakWorkLogs.List.Add(new WtsBreakWorkLog { Id = 990401, ActivityLogId = 990301, CaId = ca.CaId, NghiId = ng.NghiId, BreakName = "Nghỉ trưa",
+                BreakStart = Monday.AddHours(12), BreakEnd = Monday.AddHours(13), OverlapMin = 60, WorkedMin = 0 });
+            await db.SaveChangesAsync(); db.Fixup();
+        }
+        return new { ok = true };
     }
 }

@@ -40,14 +40,20 @@ public class MachineEfficiencyService
         public Dictionary<long, List<LineBreak>> Brk = new();
         public List<ThietBiChangeLog> Down = new();
         public Dictionary<int, string> Reporter = new();
+        /// <summary>[G31-HSM-24H] Hợp phút "xưởng có người làm" (mọi dòng WTS sản xuất + việc không ra SP của mọi người, đã trừ nghỉ thật của dòng);
+        ///   null = không chia phần Rảnh (khung ca cũ).</summary>
+        public List<(DateTime S, DateTime E)>? Crew;
+        /// <summary>[G31-HSM-24H] dòng WTS theo từng ngày lịch dòng chạm (chỉ khi 24h) — không quét cả năm mỗi ngày.</summary>
+        public Dictionary<DateOnly, List<WtsProductionLog>>? WtsByDay;
     }
 
-    async Task<LoadedData?> LoadAsync(DateOnly fromDate, DateOnly toDate, TimeOnly fromTime, TimeOnly toTime)
+    async Task<LoadedData?> LoadAsync(DateOnly fromDate, DateOnly toDate, TimeOnly fromTime, TimeOnly toTime, bool full24 = false)
     {
         var dayStart = fromDate.ToDateTime(fromTime);
         // [RPT-3 2026-10-30] Ca vắt đêm (vd 20:00–05:00): giờ kết thúc sang ngày hôm sau — trước: chỉ queryEnd được nới,
         //   dayEnd vẫn cùng ngày → tổng phút âm, mọi đoạn WTS bị cắt hết, hiệu suất 0 %.
         var dayEnd   = toTime < fromTime ? toDate.AddDays(1).ToDateTime(toTime) : toDate.ToDateTime(toTime);
+        if (full24) { dayStart = fromDate.ToDateTime(TimeOnly.MinValue); dayEnd = toDate.AddDays(1).ToDateTime(TimeOnly.MinValue); }   // [G31-HSM-24H]
 
         // ── 1. Danh sách máy active ─────────────────────────────────────
         var machines = await _db.ThietBis
@@ -94,16 +100,78 @@ public class MachineEfficiencyService
         var byIds = downLogs.Select(x => x.ChangedBy).Distinct().ToList();
         var names = byIds.Count == 0 ? new Dictionary<int, string>()
             : (await _db.Users.AsNoTracking().Where(u => byIds.Contains(u.UserId)).Select(u => new { u.UserId, u.FullName }).ToListAsync()).ToDictionary(x => x.UserId, x => x.FullName);
-        return new LoadedData { Machines = machines, Wts = filteredWts, Brk = brkW, Down = downLogs, Reporter = names };
+        var res = new LoadedData { Machines = machines, Wts = filteredWts, Brk = brkW, Down = downLogs, Reporter = names };
+        if (full24)
+        {
+            res.Crew = await LoadCrewAsync(dayStart, dayEnd);
+            res.WtsByDay = new();
+            foreach (var w in filteredWts)
+                for (var d = DateOnly.FromDateTime(w.StartTime); d.ToDateTime(TimeOnly.MinValue) < w.EndTime; d = d.AddDays(1))
+                {
+                    if (!res.WtsByDay.TryGetValue(d, out var l)) res.WtsByDay[d] = l = new();
+                    l.Add(w);
+                }
+        }
+        return res;
+    }
+
+    /// <summary>[G31-HSM-24H] Phút xưởng có người làm trong [s, e): hợp đoạn làm (WorkMinutes.WorkPieces — giờ nghỉ đã lưu của dòng bị bỏ ra,
+    ///   khúc làm thông nghỉ giữ) của MỌI dòng WTS sản xuất (cả dòng không ghi máy) + việc không ra SP, mọi người, chưa huỷ.</summary>
+    async Task<List<(DateTime S, DateTime E)>> LoadCrewAsync(DateTime s, DateTime e)
+    {
+        var p = await _db.WtsProductionLogs.Where(x => !x.IsVoided && x.StartTime < e && x.EndTime > s)
+            .AsNoTracking().Select(x => new { x.WtsLogId, x.StartTime, x.EndTime }).ToListAsync();
+        var a = await _db.WorkerActivityLogs.Where(x => !x.IsVoided && x.StartTime < e && x.EndTime > s)
+            .AsNoTracking().Select(x => new { x.ActivityLogId, x.StartTime, x.EndTime }).ToListAsync();
+        var bw = await WorkMinutesStore.ForWtsAsync(_db, p.Select(x => x.WtsLogId));
+        var ba = await WorkMinutesStore.ForActivityAsync(_db, a.Select(x => x.ActivityLogId));
+        var iv = p.SelectMany(x => WorkMinutes.WorkPieces(x.StartTime, x.EndTime, WorkMinutesStore.Get(bw, x.WtsLogId)))
+            .Concat(a.SelectMany(x => WorkMinutes.WorkPieces(x.StartTime, x.EndTime, WorkMinutesStore.Get(ba, x.ActivityLogId))))
+            .Select(x => (x.S < s ? s : x.S, x.E > e ? e : x.E)).Where(x => x.Item2 > x.Item1);
+        return UnionIv(iv);
+    }
+
+    static List<(DateTime S, DateTime E)> UnionIv(IEnumerable<(DateTime S, DateTime E)> iv)
+    {
+        var res = new List<(DateTime S, DateTime E)>();
+        foreach (var x in iv.Where(x => x.E > x.S).OrderBy(x => x.S))
+        {
+            if (res.Count > 0 && x.S <= res[^1].E) { if (x.E > res[^1].E) res[^1] = (res[^1].S, x.E); }
+            else res.Add(x);
+        }
+        return res;
+    }
+
+    /// <summary>[G31-HSM-24H] Cắt 1 đoạn Rảnh theo phút xưởng có người: phần có người giữ Idle, phần không ai khai WTS → NoCrew.</summary>
+    static IEnumerable<TimelineSegment> SplitIdle(TimelineSegment seg, List<(DateTime S, DateTime E)> crew)
+    {
+        var pos = seg.Start;
+        int lo = 0, hi = crew.Count;   // tìm đoạn đầu tiên có E > seg.Start (crew đã hợp + sắp xếp)
+        while (lo < hi) { var mid = (lo + hi) / 2; if (crew[mid].E <= seg.Start) lo = mid + 1; else hi = mid; }
+        for (int i = lo; i < crew.Count && crew[i].S < seg.End; i++)
+        {
+            var cs = crew[i].S < seg.Start ? seg.Start : crew[i].S;
+            var ce = crew[i].E > seg.End ? seg.End : crew[i].E;
+            if (cs > pos) yield return seg with { Start = pos, End = cs, Type = SegmentType.NoCrew };
+            if (ce > cs) yield return seg with { Start = cs, End = ce, Type = SegmentType.Idle };
+            pos = ce > pos ? ce : pos;
+        }
+        if (pos < seg.End) yield return seg with { Start = pos, End = seg.End, Type = SegmentType.NoCrew };
     }
 
     /// <summary>[G29-HSM-KY] Tính 1 ngày từ dữ liệu đã đọc (giữ nguyên cách tính cũ của GetAsync; lọc lại đúng khung ngày đó).</summary>
-    MachineEfficiencyResult ComputeDay(LoadedData data, DateOnly date, TimeOnly fromTime, TimeOnly toTime, CaLamViec? selectedCa)
+    MachineEfficiencyResult ComputeDay(LoadedData data, DateOnly date, TimeOnly fromTime, TimeOnly toTime, CaLamViec? selectedCa, bool full24 = false)
     {
         var dayStart = date.ToDateTime(fromTime);
         var dayEnd   = toTime < fromTime ? date.AddDays(1).ToDateTime(toTime) : date.ToDateTime(toTime);
+        if (full24)
+        {   // [G31-HSM-24H] 00:00–24:00, không ca; rà độc lập 22/11 (Cao 1): KHÔNG tính thời gian chưa tới — hôm nay cắt ở giờ hiện tại
+            //   (trước: phần còn lại của hôm nay / ngày sau thành "không ai khai WTS", lần hỏng chưa đóng cộng dừng cả ngày tương lai)
+            dayStart = date.ToDateTime(TimeOnly.MinValue); dayEnd = date.AddDays(1).ToDateTime(TimeOnly.MinValue); selectedCa = null;
+            var now = Clock(); if (dayEnd > now) dayEnd = now < dayStart ? dayStart : now;
+        }
         var machines = data.Machines;
-        var filteredWts = data.Wts.Where(x => x.StartTime < dayEnd && x.EndTime > dayStart).ToList();
+        var filteredWts = (data.WtsByDay != null ? data.WtsByDay.GetValueOrDefault(date) ?? new() : data.Wts).Where(x => x.StartTime < dayEnd && x.EndTime > dayStart).ToList();   // [G31-HSM-24H] chỉ mục theo ngày
         var brkW = data.Brk;
         var downLogs = data.Down.Where(x => x.ThoiGianBatDau < dayEnd && (x.ThoiGianKetThuc == null || x.ThoiGianKetThuc > dayStart)).ToList();
 
@@ -168,12 +236,15 @@ public class MachineEfficiencyService
             }).Where(s => s.End > s.Start).ToList();
 
             var segments = BuildTimeline(dayStart, dayEnd, wtsSegs, downSegs, machineBreaks);   // [ML17-XN]
+            if (data.Crew != null)   // [G31-HSM-24H] Rảnh → lúc xưởng có người làm (Idle) / xưởng không ai khai WTS (NoCrew)
+                segments = segments.SelectMany(s => s.Type == SegmentType.Idle ? SplitIdle(s, data.Crew) : new[] { s }).ToList();
 
             var runMin   = segments.Where(s => s.Type == SegmentType.Running).Sum(s => s.Minutes);
             var downMin  = segments.Where(s => s.Type is SegmentType.Breakdown or SegmentType.Maintenance).Sum(s => s.Minutes);
             var breakMin = segments.Where(s => s.Type == SegmentType.Break).Sum(s => s.Minutes);
             var totalMin = (dayEnd - dayStart).TotalMinutes;
             var idleMin  = Math.Max(0, totalMin - runMin - downMin - breakMin);
+            var noCrewMin = Math.Min(idleMin, segments.Where(s => s.Type == SegmentType.NoCrew).Sum(s => s.Minutes));   // [G31-HSM-24H]
 
             rows.Add(new MachineRow
             {
@@ -187,6 +258,7 @@ public class MachineEfficiencyService
                 DownMinutes  = downMin,
                 BreakMinutes = breakMin,
                 IdleMinutes  = idleMin,
+                NoCrewMinutes = noCrewMin,
             });
         }
 
@@ -201,7 +273,45 @@ public class MachineEfficiencyService
             DownMinutes  = rows.Sum(r => r.DownMinutes),
             BreakMinutes = rows.Sum(r => r.BreakMinutes),
             IdleMinutes  = rows.Sum(r => r.IdleMinutes),
+            NoCrewMinutes = rows.Sum(r => r.NoCrewMinutes),
+            Full24       = full24,
         };
+    }
+
+    // ═══ [G31-HSM-24H 2026-11-22] Máy tính theo 24h / ngày, KHÔNG chia ca (Hùng 22/11 09:03 + 11:58 "code luôn").
+    //   Nguồn: HÙNG 22/11 08:58 (máy tính theo 24h) + 09:03 (không chia ca, chia rõ thời gian khác) + 11:58; CLAUDE đề xuất 4 phần.
+    //   1 ngày = 00:00–24:00 = Chạy (có WTS trên máy) + Dừng (hỏng / bảo trì đã báo) + Rảnh lúc xưởng có người làm (có người khác đang có
+    //   dòng WTS mà máy không chạy, không dừng) + Xưởng không ai khai WTS (đêm, ngày nghỉ, giờ nghỉ, quên nhập). % chạy chính = Chạy / 24h;
+    //   phụ: % chạy lúc xưởng có người = Chạy / (24h − không ai khai WTS). Kỳ: cộng MỌI ngày lịch (≤ 366 ngày). Chỉ đọc.
+    public async Task<MachineEfficiencyResult> GetDay24Async(DateOnly date, int viewerUserId)
+    {
+        var t0 = TimeOnly.MinValue;
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay)) return EmptyResult(date, t0, t0);   // [HSM-QUYEN]
+        var data = await LoadAsync(date, date, t0, t0, full24: true);
+        if (data == null) return EmptyResult(date, t0, t0);
+        return ComputeDay(data, date, t0, t0, null, full24: true);
+    }
+
+    public const int PeriodMaxDays24 = 366;
+    /// <summary>[G31-HSM-24H] giờ hiện tại (bộ kiểm thay được); ngày / giờ chưa tới không tính.</summary>
+    public Func<DateTime> Clock { get; set; } = () => DateTime.Now;
+
+    public async Task<MachinePeriodResult> GetPeriod24Async(DateOnly from, DateOnly to, int viewerUserId)
+    {
+        var t0 = TimeOnly.MinValue;
+        var res = new MachinePeriodResult { From = from, To = to, FromTime = t0, ToTime = t0, Full24 = true };
+        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay)) return res;   // [HSM-QUYEN]
+        if (to < from) { res.Error = "Ngày \"Từ\" phải trước hoặc bằng ngày \"Đến\"."; return res; }
+        if (to.DayNumber - from.DayNumber + 1 > PeriodMaxDays24) { res.Error = $"Khoảng xem tối đa {PeriodMaxDays24} ngày."; return res; }
+        var today = DateOnly.FromDateTime(Clock());
+        var days = Enumerable.Range(0, to.DayNumber - from.DayNumber + 1).Select(i => from.AddDays(i)).Where(d => d <= today).ToList();   // mọi ngày lịch tới hôm nay
+        res.Days = days;
+        if (days.Count == 0) return res;
+        var data = await LoadAsync(from, days[^1], t0, t0, full24: true);
+        if (data == null) return res;
+        // OK / NG: dòng tính vào kỳ chứa NGÀY BẮT ĐẦU của dòng (rà độc lập 22/11 Trung 2: dòng 22:00 CN → 06:00 T2 không cộng ở cả 2 tuần)
+        Accumulate(res, data, days, d => ComputeDay(data, d, t0, t0, null, full24: true), l => DateOnly.FromDateTime(l.StartTime) >= from && DateOnly.FromDateTime(l.StartTime) <= to);
+        return res;
     }
 
     // ═══ [G29-HSM-KY 2026-11-21] Báo cáo tuần / tháng / tự chọn (mockup https://claude.ai/artifact/CeAoFry7m7H8wT5z6PZ1wp) ═══
@@ -236,24 +346,35 @@ public class MachineEfficiencyService
 
         var data = await LoadAsync(days[0], days[^1], fromTime, toTime);
         if (data == null) return res;
+        Accumulate(res, data, days, d => ComputeDay(data, d, fromTime, toTime, selectedCa));
+        return res;
+    }
 
+    /// <summary>[G31-HSM-24H] Cộng từng ngày (dùng chung kỳ theo ca cũ + kỳ 24h).</summary>
+    void Accumulate(MachinePeriodResult res, LoadedData data, List<DateOnly> days, Func<DateOnly, MachineEfficiencyResult> computeDay, Func<WtsProductionLog, bool>? qtyIn = null)
+    {
         var acc = data.Machines.ToDictionary(m => m.ThietBiId, m => new MachinePeriodRow { Machine = m });
+        // [G31-HSM-24H] tra nhanh (xem Năm: 366 ngày × mọi máy) — rà độc lập 22/11 Trung 3
+        var evIx = new Dictionary<(int, int), MachineDownEvent>();
+        var poIx = new Dictionary<(int, string, string, string), MachinePoStat>();
+        var wkIx = new Dictionary<(int, int), MachineWorkerStat>();
         var qtyDone = new HashSet<long>();
         var workerIds = data.Machines.ToDictionary(m => m.ThietBiId, _ => new HashSet<int>());
         var downInfo = data.Down.ToDictionary(x => x.ChangeId);
         foreach (var d in days)
         {
-            var day = ComputeDay(data, d, fromTime, toTime, selectedCa);
+            var day = computeDay(d);
             foreach (var r in day.Rows)
             {
                 var a = acc[r.Machine.ThietBiId];
-                var pd = new MachinePeriodDay { Day = d, Total = r.TotalMinutes, Run = r.RunMinutes, Down = r.DownMinutes, Break = r.BreakMinutes, Idle = r.IdleMinutes };
+                var pd = new MachinePeriodDay { Day = d, Total = r.TotalMinutes, Run = r.RunMinutes, Down = r.DownMinutes, Break = r.BreakMinutes, Idle = r.IdleMinutes, NoCrew = r.NoCrewMinutes };
                 a.PerDay.Add(pd);
                 a.TotalMinutes += r.TotalMinutes; a.RunMinutes += r.RunMinutes; a.DownMinutes += r.DownMinutes; a.BreakMinutes += r.BreakMinutes; a.IdleMinutes += r.IdleMinutes;
+                a.NoCrewMinutes += r.NoCrewMinutes;   // [G31-HSM-24H]
                 // dừng: theo lần dừng (ChangeId)
                 foreach (var g in r.Segments.Where(x => x.Type is SegmentType.Breakdown or SegmentType.Maintenance).GroupBy(x => x.DownLogId))
                 {
-                    var ev = a.Downs.FirstOrDefault(x => x.ChangeId == g.Key);
+                    evIx.TryGetValue((r.Machine.ThietBiId, g.Key), out var ev);
                     if (ev == null)
                     {
                         downInfo.TryGetValue(g.Key, out var lg);
@@ -263,32 +384,34 @@ public class MachineEfficiencyService
                             Reason = string.IsNullOrWhiteSpace(g.First().Reason) ? "(không ghi lý do)" : g.First().Reason.Trim(),
                             IsMaintenance = g.First().Type == SegmentType.Maintenance, ReportedBy = lg != null && data.Reporter.TryGetValue(lg.ChangedBy, out var rn) ? rn : "",
                         };
-                        a.Downs.Add(ev);
+                        a.Downs.Add(ev); evIx[(r.Machine.ThietBiId, g.Key)] = ev;
                     }
                     ev.Minutes += g.Sum(x => x.Minutes);
                 }
                 // chạy theo PO / Part / NC (đoạn Chạy đã cắt dừng + nghỉ, 2 người cùng máy tính 1 lần)
                 foreach (var g in r.Segments.Where(x => x.Type == SegmentType.Running).GroupBy(x => (x.PurchaseOrder, x.PartNo, x.NC)))
                 {
-                    var po = a.ByPo.FirstOrDefault(x => x.Po == g.Key.PurchaseOrder && x.Part == g.Key.PartNo && x.NC == g.Key.NC);
-                    if (po == null) { po = new MachinePoStat { Po = g.Key.PurchaseOrder, Part = g.Key.PartNo, NC = g.Key.NC }; a.ByPo.Add(po); }
+                    poIx.TryGetValue((r.Machine.ThietBiId, g.Key.PurchaseOrder, g.Key.PartNo, g.Key.NC), out var po);
+                    if (po == null) { po = new MachinePoStat { Po = g.Key.PurchaseOrder, Part = g.Key.PartNo, NC = g.Key.NC }; a.ByPo.Add(po); poIx[(r.Machine.ThietBiId, po.Po, po.Part, po.NC)] = po; }
                     po.RunMinutes += g.Sum(x => x.Minutes);
                 }
                 // người đứng máy: mỗi người đủ phút của mình (hợp đoạn làm các dòng của người đó)
                 foreach (var g in r.RawRunSegments.GroupBy(x => (x.WorkerId, x.WorkerName)))
                 {
-                    var w = a.ByWorker.FirstOrDefault(x => x.WorkerId == g.Key.WorkerId);
-                    if (w == null) { w = new MachineWorkerStat { WorkerId = g.Key.WorkerId, WorkerName = g.Key.WorkerName }; a.ByWorker.Add(w); }
+                    wkIx.TryGetValue((r.Machine.ThietBiId, g.Key.WorkerId), out var w);
+                    if (w == null) { w = new MachineWorkerStat { WorkerId = g.Key.WorkerId, WorkerName = g.Key.WorkerName }; a.ByWorker.Add(w); wkIx[(r.Machine.ThietBiId, w.WorkerId)] = w; }
                     w.Minutes += UnionMinutes(g.Select(x => (x.Start, x.End)));
                 }
                 // OK / NG: dòng WTS tính 1 lần (ngày đầu tiên chạm khung)
                 foreach (var l in r.WtsDetails)
                 {
+                    if (qtyIn != null && !qtyIn(l)) continue;   // [G31-HSM-24H] OK / NG theo ngày bắt đầu dòng
                     if (!qtyDone.Add(l.WtsLogId)) continue;
                     var ok = l.QtyOk ?? 0; var ng = l.QtyNg ?? 0;
                     a.Ok += ok; a.Ng += ng; workerIds[r.Machine.ThietBiId].Add(l.WorkerId);
-                    var po = a.ByPo.FirstOrDefault(x => x.Po == (l.KhPlanDetail?.PurchaseOrder ?? "") && x.Part == (l.KhPlanDetail?.PartNo ?? "") && x.NC == (l.NC ?? ""));
-                    if (po == null) { po = new MachinePoStat { Po = l.KhPlanDetail?.PurchaseOrder ?? "", Part = l.KhPlanDetail?.PartNo ?? "", NC = l.NC ?? "" }; a.ByPo.Add(po); }
+                    var pk = (r.Machine.ThietBiId, l.KhPlanDetail?.PurchaseOrder ?? "", l.KhPlanDetail?.PartNo ?? "", l.NC ?? "");
+                    poIx.TryGetValue(pk, out var po);
+                    if (po == null) { po = new MachinePoStat { Po = pk.Item2, Part = pk.Item3, NC = pk.Item4 }; a.ByPo.Add(po); poIx[pk] = po; }
                     po.Ok += ok; po.Ng += ng;
                 }
             }
@@ -304,7 +427,6 @@ public class MachineEfficiencyService
                 .Where(x => !string.IsNullOrWhiteSpace(x))).ToLowerInvariant();
         }
         res.Rows = acc.Values.ToList();
-        return res;
     }
 
     static double UnionMinutes(IEnumerable<(DateTime S, DateTime E)> iv)
@@ -396,7 +518,7 @@ public class MachineEfficiencyService
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
-public enum SegmentType { Running, Breakdown, Maintenance, Break, Idle }
+public enum SegmentType { Running, Breakdown, Maintenance, Break, Idle, NoCrew }   // [G31-HSM-24H] NoCrew = xưởng không ai khai WTS (Idle = rảnh lúc xưởng có người)
 
 public record TimelineSegment
 {
@@ -438,6 +560,13 @@ public class MachineRow
     public double DownPct  => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes  / PlanMinutes * 100, 1);
     public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
     public double IdlePct  => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes  / PlanMinutes * 100, 1);
+    // [G31-HSM-24H] Rảnh chia 2: lúc xưởng có người làm (IdleCrew) / xưởng không ai khai WTS (NoCrew; chỉ khi xem 24h, khung ca cũ = 0)
+    public double NoCrewMinutes { get; set; }
+    public double IdleCrewMinutes => Math.Max(0, IdleMinutes - NoCrewMinutes);
+    public double CrewMinutes => Math.Max(0, PlanMinutes - NoCrewMinutes);   // giờ xưởng có người (+ máy chạy / dừng)
+    public double IdleCrewPct => PlanMinutes <= 0 ? 0 : Math.Round(IdleCrewMinutes / PlanMinutes * 100, 1);
+    public double NoCrewPct   => PlanMinutes <= 0 ? 0 : Math.Round(NoCrewMinutes   / PlanMinutes * 100, 1);
+    public double RunPctCrew  => CrewMinutes <= 0 ? 0 : Math.Round(RunMinutes / CrewMinutes * 100, 1);
 }
 
 public class MachineEfficiencyResult
@@ -458,6 +587,15 @@ public class MachineEfficiencyResult
     public double DownPct  => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes  / PlanMinutes * 100, 1);
     public double BreakPct => TotalMinutes == 0 ? 0 : Math.Round(BreakMinutes / TotalMinutes * 100, 1);
     public double IdlePct  => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes  / PlanMinutes * 100, 1);
+    // [G31-HSM-24H] Rảnh chia 2: lúc xưởng có người làm (IdleCrew) / xưởng không ai khai WTS (NoCrew; chỉ khi xem 24h, khung ca cũ = 0)
+    public double NoCrewMinutes { get; set; }
+    public double IdleCrewMinutes => Math.Max(0, IdleMinutes - NoCrewMinutes);
+    public double CrewMinutes => Math.Max(0, PlanMinutes - NoCrewMinutes);   // giờ xưởng có người (+ máy chạy / dừng)
+    public double IdleCrewPct => PlanMinutes <= 0 ? 0 : Math.Round(IdleCrewMinutes / PlanMinutes * 100, 1);
+    public double NoCrewPct   => PlanMinutes <= 0 ? 0 : Math.Round(NoCrewMinutes   / PlanMinutes * 100, 1);
+    public double RunPctCrew  => CrewMinutes <= 0 ? 0 : Math.Round(RunMinutes / CrewMinutes * 100, 1);
+    /// <summary>[G31-HSM-24H] true = khung 00:00–24:00, không ca.</summary>
+    public bool Full24 { get; set; }
 }
 
 // ── [G29-HSM-KY 2026-11-21] DTO báo cáo theo kỳ ─────────────────────────────────────────────────────────────
@@ -468,7 +606,8 @@ public class MachinePeriodResult
     public TimeOnly FromTime { get; set; }
     public TimeOnly ToTime   { get; set; }
     public string?  Error { get; set; }
-    /// <summary>Ngày được tính (xưởng có WTS).</summary>
+    public bool     Full24 { get; set; }   // [G31-HSM-24H]
+    /// <summary>Ngày được tính (khung ca cũ: xưởng có WTS; 24h: mọi ngày lịch).</summary>
     public List<DateOnly> Days { get; set; } = new();
     public List<MachinePeriodRow> Rows { get; set; } = new();
 }
@@ -485,6 +624,13 @@ public class MachinePeriodRow
     public double RunPct  => PlanMinutes <= 0 ? 0 : Math.Round(RunMinutes  / PlanMinutes * 100, 1);
     public double DownPct => PlanMinutes <= 0 ? 0 : Math.Round(DownMinutes / PlanMinutes * 100, 1);
     public double IdlePct => PlanMinutes <= 0 ? 0 : Math.Round(IdleMinutes / PlanMinutes * 100, 1);
+    // [G31-HSM-24H] Rảnh chia 2: lúc xưởng có người làm (IdleCrew) / xưởng không ai khai WTS (NoCrew; chỉ khi xem 24h, khung ca cũ = 0)
+    public double NoCrewMinutes { get; set; }
+    public double IdleCrewMinutes => Math.Max(0, IdleMinutes - NoCrewMinutes);
+    public double CrewMinutes => Math.Max(0, PlanMinutes - NoCrewMinutes);   // giờ xưởng có người (+ máy chạy / dừng)
+    public double IdleCrewPct => PlanMinutes <= 0 ? 0 : Math.Round(IdleCrewMinutes / PlanMinutes * 100, 1);
+    public double NoCrewPct   => PlanMinutes <= 0 ? 0 : Math.Round(NoCrewMinutes   / PlanMinutes * 100, 1);
+    public double RunPctCrew  => CrewMinutes <= 0 ? 0 : Math.Round(RunMinutes / CrewMinutes * 100, 1);
     public decimal Ok { get; set; }
     public decimal Ng { get; set; }
     public int WorkerCount { get; set; }
@@ -508,6 +654,9 @@ public class MachinePeriodDay
     public double Idle  { get; set; }
     public double Plan => Math.Max(0, Total - Break);
     public double RunPct => Plan <= 0 ? 0 : Math.Round(Run / Plan * 100, 1);
+    public double NoCrew { get; set; }                               // [G31-HSM-24H]
+    public double IdleCrew => Math.Max(0, Idle - NoCrew);
+    public double RunPctCrew => Plan - NoCrew <= 0 ? 0 : Math.Round(Run / (Plan - NoCrew) * 100, 1);
 }
 
 public class MachineDownEvent
