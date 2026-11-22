@@ -28,6 +28,8 @@
             </AuthorizeView>
         </div>
         <div class="mes-content">
+            @* [G32-SAOLUU 2026-11-22] Gói 32a: băng cảnh báo sao lưu — chỉ Admin thấy (thành phần tự kiểm quyền DB) *@
+            <MES.Web.Components.Shared.SaoLuuBanner @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
             @* [C-10-GRACE 2026-11-20] Gói 26: 8–30 ngày máy chủ chưa xác minh bản quyền (mất mạng) → chỉ băng vàng, vẫn dùng đủ; quá 30 ngày mới khoá (khối dưới). *@
             <div class="alert alert-warning py-2 small mb-2" style="@OfflineWarnStyle"><i class="bi bi-wifi-off me-1"></i>@_offlineWarn</div>
             @* ======= KHỐI LỆNH CHẶN GIAO DIỆN KHI HẾT HẠN ======= *@

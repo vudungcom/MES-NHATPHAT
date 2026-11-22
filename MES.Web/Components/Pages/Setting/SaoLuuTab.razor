@@ -1,0 +1,488 @@
+@* =====================================================================
+   [G32-SAOLUU 2026-11-22] Gói 32a — tab "Sao lưu" trong trang Cài đặt & Phân quyền (trang chỉ cho ADMIN; mọi nút ở đây máy chủ kiểm Admin lần nữa).
+   Trạng thái · nút lưu ngay · cài đặt (mọi mốc sửa được — HÙNG 22/11 14:50 "không fix cứng") · các bản đang giữ + "Giữ vì".
+   Đổi cài đặt làm XOÁ THÊM bản đang giữ → hiện trước danh sách sẽ xoá + bắt nhập PIN. Không có nút khôi phục (khôi phục = script, Gói 32b).
+   Nguồn: HÙNG 22/11 14:34–14:52.
+   ===================================================================== *@
+@using MES.Web.Services
+@using MES.Web.Components.Shared
+@inject SaoLuuService Svc
+@inject ILogger<SaoLuuTab> Logger
+
+@if (_loading)
+{
+    <div class="text-center py-4"><span class="spinner-border spinner-border-sm"></span> Đang đọc trạng thái sao lưu...</div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(_err))
+    {
+        <div class="alert alert-danger py-2 small mb-3" id="slErr"><i class="bi bi-exclamation-triangle me-1"></i>@_err</div>
+    }
+    @if (!string.IsNullOrEmpty(_msg))
+    {
+        <div class="alert alert-success py-2 small mb-3" id="slMsg"><i class="bi bi-check-circle me-1"></i>@_msg</div>
+    }
+    @foreach (var cb in _canhBao)
+    {
+        <div class="@CanhBaoClass(cb)"><i class="bi bi-exclamation-octagon me-1"></i>@cb.NoiDung</div>
+    }
+    @if (_tamDung != null)
+    {
+        @* [G32-RA 2026-11-22] tạm dừng dọn (bản mới cách bản trước > 3 ngày) → Admin xác nhận đồng hồ đúng rồi cho dọn lại *@
+        <div class="mb-3">
+            <button class="btn btn-sm btn-warning" id="slBtnChoDon" @onclick="MoPinChoDon" disabled="@_busy"><i class="bi bi-unlock me-1"></i>@ChoDonText</button>
+        </div>
+    }
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 fw-bold text-primary"><i class="bi bi-hdd-stack me-1"></i>Trạng thái</h5>
+                    <span class="@TuDongBadgeClass" id="slTuDong">@TuDongText</span>
+                </div>
+                <div class="card-body small">
+                    <table class="table table-sm mb-3">
+                        <tbody>
+                            <tr><td class="text-muted">DB</td><td class="fw-bold" id="slDb">@_db</td></tr>
+                            <tr><td class="text-muted">Bản đạt gần nhất</td><td id="slDatGanNhat">@DatGanNhatText</td></tr>
+                            <tr><td class="text-muted">Bộ ngày (trọn bộ) gần nhất</td><td id="slBoGanNhat">@BoGanNhatText</td></tr>
+                            <tr><td class="text-muted">Lần chạy gần nhất (từ lúc mở app)</td><td id="slLanChay">@LanChayText</td></tr>
+                            <tr><td class="text-muted">Thư mục của DB này</td><td class="font-monospace" id="slThuMuc">@ThuMucText</td></tr>
+                            <tr><td class="text-muted">Đang chiếm</td><td id="slTong">@TongText</td></tr>
+                            <tr><td class="text-muted">Ổ còn trống</td><td>@_oTrong</td></tr>
+                            <tr><td class="text-muted">Đẩy lên Google</td><td id="slGoogle">@_google</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-sm btn-outline-primary" id="slBtnNhanh" @onclick="ChayNhanhAsync" disabled="@_busy">
+                            <i class="bi bi-lightning-charge me-1"></i>Lưu nhanh ngay (chỉ dữ liệu)
+                        </button>
+                        <button class="btn btn-sm btn-primary" id="slBtnBo" @onclick="ChayBoAsync" disabled="@_busy">
+                            <i class="bi bi-box-seam me-1"></i>Tạo trọn bộ ngay
+                        </button>
+                        <span class="text-muted align-self-center" style="@BusyStyle"><span class="spinner-border spinner-border-sm me-1"></span>@_busyText</span>
+                    </div>
+                    <div class="text-muted mt-2" style="font-size: 0.8rem;">
+                        Khôi phục KHÔNG làm trên web (phải dừng phần mềm) — dùng script <code>khoi-phuc\khoi-phuc.ps1</code> trong folder bộ sao lưu (Gói 32b).
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white py-3">
+                    <h5 class="mb-0 fw-bold text-primary"><i class="bi bi-sliders me-1"></i>Cài đặt</h5>
+                </div>
+                <div class="card-body small">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="slBat" @bind="_c.BatTuDong" />
+                        <label class="form-check-label fw-bold" for="slBat">Bật sao lưu tự động</label>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <label class="form-label mb-0">Thư mục sao lưu — theo máy SQL Server <span class="text-danger">*</span></label>
+                            <input class="form-control form-control-sm font-monospace" id="slThuMucSql" placeholder="D:\MES-Backup" @bind="_c.ThuMucTheoMaySql" />
+                            <div class="text-muted" style="font-size: 0.75rem;">Lệnh BACKUP của SQL Server ghi file vào đây.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label mb-0">Cùng thư mục đó — theo máy chạy app</label>
+                            <input class="form-control form-control-sm font-monospace" id="slThuMucApp" placeholder="(trống = giống ô bên trái)" @bind="_c.ThuMucTheoMayApp" />
+                            <div class="text-muted" style="font-size: 0.75rem;">Chỉ nhập khi SQL Server ở máy khác, vd \\192.168.1.211\MES-Backup.</div>
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-4">
+                            <label class="form-label mb-0">Lưu nhanh (chỉ dữ liệu) mỗi … phút</label>
+                            <input type="number" class="form-control form-control-sm" id="slPhut" min="15" max="1440" @bind="_c.PhutLuuNhanh" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label mb-0">Giờ chốt bộ ngày (trọn bộ)</label>
+                            <input class="form-control form-control-sm" id="slGioChot" placeholder="23:55" @bind="_c.GioChotBoNgay" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label mb-0">Giữ bản nhanh … giờ</label>
+                            <input type="number" class="form-control form-control-sm" id="slGiuNhanh" min="1" max="720" @bind="_c.GiuBanNhanhGio" />
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-3">
+                            <label class="form-label mb-0">Giữ bộ ngày … ngày</label>
+                            <input type="number" class="form-control form-control-sm" id="slGiuNgay" min="1" max="365" @bind="_c.GiuBoNgay" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label mb-0">Giữ bộ tuần … tuần</label>
+                            <input type="number" class="form-control form-control-sm" id="slGiuTuan" min="0" max="260" @bind="_c.GiuBoTuan" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label mb-0">Tuần chốt vào</label>
+                            <select class="form-select form-select-sm" id="slThuChot" @onchange="OnThuChotChange">
+                                @foreach (var d in ThuList)
+                                {
+                                    <option value="@((int)d)" selected="@(_c.ThuChotTuan == d)">@TenThu(d)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label mb-0">Giữ bộ tháng … tháng</label>
+                            <input type="number" class="form-control form-control-sm" id="slGiuThang" min="0" max="1200" @bind="_c.GiuBoThang" />
+                            <div class="text-muted" style="font-size: 0.75rem;">0 = giữ mãi trên máy</div>
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-3">
+                            <label class="form-label mb-0">Giữ trên Google … năm</label>
+                            <input type="number" class="form-control form-control-sm" id="slGiuGoogle" min="1" max="100" @bind="_c.GiuGoogleNam" />
+                        </div>
+                        <div class="col-md-9">
+                            <label class="form-label mb-0">File / thư mục cấu hình chép kèm bộ ngày (mỗi dòng 1 đường dẫn, vd Caddyfile)</label>
+                            <textarea class="form-control form-control-sm font-monospace" rows="2" id="slFileThem" @bind="_fileThem"></textarea>
+                        </div>
+                    </div>
+                    <div class="text-muted mb-2" style="font-size: 0.8rem;">
+                        Luật giữ: bản nhanh trong số giờ trên; bộ ngày — mỗi ngày trong số ngày trên giữ bộ mới nhất của ngày, mỗi tuần trong số tuần trên
+                        giữ bộ mới nhất của tuần, mỗi tháng giữ bộ mới nhất của tháng. Bản mới nhất bị lỗi → tạm không xoá gì.
+                    </div>
+                    <div class="d-flex gap-2 align-items-center">
+                        <button class="btn btn-sm btn-success" id="slBtnLuu" @onclick="LuuCaiDatAsync" disabled="@_busy"><i class="bi bi-save me-1"></i>Lưu cài đặt</button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="HuyCaiDat" disabled="@_busy">Huỷ thay đổi</button>
+                    </div>
+                    @if (_nhatKy.Count > 0)
+                    {
+                        <details class="mt-2">
+                            <summary class="text-muted">Nhật ký đổi cài đặt (@_nhatKy.Count dòng gần nhất)</summary>
+                            <pre class="small bg-light p-2 mb-0" style="white-space: pre-wrap;">@string.Join("\n", _nhatKy)</pre>
+                        </details>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0 mb-3">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 fw-bold text-primary">Bộ ngày đang giữ (@_bo.Count)</h5>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="TaiLaiAsync" disabled="@_busy"><i class="bi bi-arrow-clockwise"></i> Tải lại</button>
+        </div>
+        <div class="card-body p-0">
+            @BangBan(_bo, "slBangBo")
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0 mb-3">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 fw-bold text-secondary">Bản nhanh (chỉ dữ liệu) đang giữ (@_nh.Count)</h5>
+            <button class="btn btn-sm btn-outline-secondary" id="slBtnXemNhanh" @onclick="ToggleNhanh">@XemNhanhText</button>
+        </div>
+        <div class="card-body p-0" style="@NhanhStyle">
+            @BangBan(_nh, "slBangNhanh")
+        </div>
+    </div>
+}
+
+<PinConfirmModal IsOpen="_pinOpen" Title="@PinTitle" Description="@_pinDesc" OnConfirmed="OnPinConfirmed" OnCancelled="OnPinCancelled" />
+
+@code {
+    [Parameter] public int CurrentUserId { get; set; }
+    [Parameter] public string CurrentUserName { get; set; } = "";
+
+    private bool _loading = true, _busy, _showNhanh, _pinOpen;
+    private string? _err, _msg, _busyText;
+    private string _db = "", _fileThem = "", _pinDesc = "", _oTrong = "—", _google = "—";
+    private string? _tamDung;   // [G32-RA]
+    private int _soBoSeXoa;      // [G32-RA2] số bộ ngày lần dọn tới sẽ xoá (nút Cho dọn lại)
+    private bool _pinChoDon;     // [G32-RA2] PIN đang mở cho nút "Cho dọn lại" (false = cho Lưu cài đặt)
+    private int _xoaBoXacNhan;   // [G32-RA2] số bộ ngày đã báo trước khi hỏi PIN lưu cài đặt
+    private string PinTitle => _pinChoDon ? "Xác nhận cho dọn lại bộ ngày" : "Xác nhận đổi cài đặt sao lưu";
+    private string ChoDonText => $"Cho dọn lại — xác nhận xoá {_soBoSeXoa} bộ ngày (nhập PIN)";
+    private SaoLuuCaiDat _c = new(), _dangDung = new();
+    private List<SaoLuuService.BanInfo> _bo = new(), _nh = new();
+    private Dictionary<string, string> _lyDo = new();
+    private List<string> _nhatKy = new();
+    private List<SaoLuuService.CanhBao> _canhBao = new();
+    private SaoLuuCaiDat? _choLuu;
+
+    private static readonly DayOfWeek[] ThuList = { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
+    private static string TenThu(DayOfWeek d) => d == DayOfWeek.Sunday ? "Chủ nhật" : "Thứ " + ((int)d + 1);
+
+    private string TuDongText => !_dangDung.DaCaiThuMuc ? "Chưa cài thư mục" : _dangDung.BatTuDong ? "Tự động: BẬT" : "Tự động: TẮT";
+    private string TuDongBadgeClass => !_dangDung.DaCaiThuMuc ? "badge bg-danger" : _dangDung.BatTuDong ? "badge bg-success" : "badge bg-warning text-dark";
+    private string BusyStyle => _busy ? "visibility:visible" : "visibility:hidden";
+    private string NhanhStyle => _showNhanh ? "display:block" : "display:none";
+    private string XemNhanhText => _showNhanh ? "Ẩn" : "Xem";
+    private static string CanhBaoClass(SaoLuuService.CanhBao cb) => cb.Do ? "alert alert-danger py-2 small mb-2" : "alert alert-warning py-2 small mb-2";
+
+    private string DatGanNhatText
+    {
+        get
+        {
+            var han = Svc.Clock() + SaoLuuService.LechGioChoPhep;   // [G32-RA2] không lấy bản giờ tương lai
+            var b = _bo.Concat(_nh).Where(x => x.Dat && x.ThoiDiem <= han).OrderByDescending(x => x.ThoiDiem).FirstOrDefault();
+            return b == null ? "Chưa có" : $"{b.ThoiDiem:dd/MM/yyyy HH:mm} ({(b.Loai == SaoLuuService.Loai.Bo ? "trọn bộ" : "nhanh")}, {SaoLuuService.DocBytes(b.Bytes)})";
+        }
+    }
+    private string BoGanNhatText
+    {
+        get
+        {
+            var han = Svc.Clock() + SaoLuuService.LechGioChoPhep;
+            var b = _bo.Where(x => x.Dat && x.ThoiDiem <= han).OrderByDescending(x => x.ThoiDiem).FirstOrDefault();
+            return b == null ? "Chưa có" : $"{b.ThoiDiem:dd/MM/yyyy HH:mm} ({SaoLuuService.DocBytes(b.Bytes)})";
+        }
+    }
+    private string LanChayText
+    {
+        get
+        {
+            var k = Svc.KetQuaGanNhat;
+            return k == null ? "—" : $"{k.BatDau:dd/MM HH:mm:ss} · {(k.Dat ? "ĐẠT" : k.BoQua ? "BỎ QUA" : "LỖI")} · {k.ThongBao}";
+        }
+    }
+    private string ThuMucText => _dangDung.DaCaiThuMuc ? SaoLuuService.ThuMucDb(_dangDung, _db) : "(chưa cài)";
+    private string TongText => SaoLuuService.DocBytes(_bo.Sum(x => x.Bytes) + _nh.Sum(x => x.Bytes)) + $" ({_bo.Count} bộ ngày + {_nh.Count} bản nhanh)";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await TaiLaiAsync();
+        _loading = false;
+    }
+
+    private async Task TaiLaiAsync()
+    {
+        _err = null;
+        try { _db = await Svc.DbAsync(); }
+        catch (Exception ex) { _err = UiSafe.Text(ex, Logger, "đọc tên DB"); return; }
+        try { _dangDung = Svc.Store.Doc(_db); }
+        catch (Exception ex)
+        {
+            // [G32-RA 2026-11-22] file cài đặt hỏng: vẫn cho nhập lại + Lưu (file cũ được đổi tên giữ lại) — trước: kẹt, phải vào máy xoá tay
+            _dangDung = new SaoLuuCaiDat();
+            _err = "Không đọc được file cài đặt sao lưu: " + ex.Message + " — nhập lại các ô rồi bấm Lưu (file cũ được đổi tên giữ lại).";
+        }
+        _c = _dangDung.Clone();
+        _fileThem = string.Join("\n", _c.FileCauHinhThem);
+        await DocDanhSachAsync();
+    }
+
+    // [G32-RA] quét thư mục 1 lần / lượt, chạy ngoài luồng mạch (thư mục mạng chậm không làm đơ trang)
+    private async Task DocDanhSachAsync()
+    {
+        var c = _dangDung; var db = _db; var now = Svc.Clock();
+        try
+        {
+            var r = await Task.Run(() =>
+            {
+                var bo = Svc.Quet(c, db, SaoLuuService.Loai.Bo);
+                var nh = Svc.Quet(c, db, SaoLuuService.Loai.Nhanh);
+                var dk = Svc.TinhDon(c, db, now, false, bo, nh);
+                var ly = dk.Bo.Select(x => ("B/" + x.Ban.Ten, x.LyDo)).Concat(dk.Nhanh.Select(x => ("N/" + x.Ban.Ten, x.LyDo))).ToDictionary(x => x.Item1, x => x.LyDo);
+                var td = Svc.DocTamDung(c, db);
+                return (bo, nh, ly, cb: Svc.TinhCanhBao(c, db, now, bo, nh), td, sx: td != null ? dk.Bo.Count(x => !x.Giu) : 0, gg: DocGoogle(c, db));
+            });
+            _bo = r.bo; _nh = r.nh; _lyDo = r.ly; _canhBao = r.cb; _tamDung = r.td; _soBoSeXoa = r.sx; _google = r.gg;
+        }
+        catch (Exception ex)
+        {
+            _bo = new(); _nh = new(); _lyDo = new(); _tamDung = null;
+            _canhBao = new() { new SaoLuuService.CanhBao(true, ex is SaoLuuException ? ex.Message : "Không đọc được thư mục sao lưu: " + ex.Message) };
+        }
+        try { _nhatKy = Svc.Store.DocNhatKy(_db, 10); } catch { _nhatKy = new(); }
+        _oTrong = OTrong();
+    }
+
+    private string OTrong()
+    {
+        if (!_dangDung.DaCaiThuMuc) return "—";
+        try
+        {
+            var root = Path.GetPathRoot(_dangDung.ThuMucApp);
+            if (string.IsNullOrEmpty(root) || root.StartsWith(@"\\")) return "— (thư mục mạng: xem trên máy SQL)";
+            var d = new DriveInfo(root);
+            return $"{SaoLuuService.DocBytes(d.AvailableFreeSpace)} / {SaoLuuService.DocBytes(d.TotalSize)}";
+        }
+        catch { return "—"; }
+    }
+
+    private static string DocGoogle(SaoLuuCaiDat c, string db)
+    {
+        if (!c.DaCaiThuMuc) return "—";
+        try
+        {
+            var f = Path.Combine(SaoLuuService.ThuMucDb(c, db), "trang-thai-google.txt");
+            return File.Exists(f) ? File.ReadAllText(f).Trim() : "Chưa cài script đẩy Google (Gói 32b).";
+        }
+        catch { return "—"; }
+    }
+
+    private RenderFragment BangBan(List<SaoLuuService.BanInfo> list, string id) => __builder =>
+    {
+        <table class="table table-sm table-hover align-middle mb-0 small" id="@id">
+            <thead class="table-light">
+                <tr>
+                    <th>Thời điểm</th>
+                    <th>Kết quả</th>
+                    <th class="text-end">Dung lượng</th>
+                    <th>Giữ vì</th>
+                    <th>Nguồn</th>
+                    <th>Phiên bản phần mềm</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var b in list)
+                {
+                    <tr @key="b.Ten">
+                        <td class="font-monospace">@b.ThoiDiem.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                        <td>@KetQuaCell(b)</td>
+                        <td class="text-end">@SaoLuuService.DocBytes(b.Bytes)</td>
+                        <td>@LyDoOf(b)</td>
+                        <td class="text-muted">@b.Nguon</td>
+                        <td class="text-muted font-monospace" style="font-size: 0.75rem;">@b.PhienBan</td>
+                    </tr>
+                }
+                @if (list.Count == 0)
+                {
+                    <tr><td colspan="6" class="text-center text-muted py-3">Chưa có bản nào.</td></tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    private RenderFragment KetQuaCell(SaoLuuService.BanInfo b) => __builder =>
+    {
+        if (b.Dat)
+        {
+            <span class="badge bg-success">ĐẠT</span>
+        }
+        else if (b.KhongRo)
+        {
+            <span class="badge bg-warning text-dark" title="@b.Loi">KHÔNG RÕ</span>
+            <span class="text-muted ms-1">@b.Loi</span>
+        }
+        else
+        {
+            <span class="badge bg-danger" title="@b.Loi">LỖI</span>
+            <span class="text-danger ms-1">@b.Loi</span>
+        }
+    };
+
+    private string LyDoOf(SaoLuuService.BanInfo b) => _lyDo.TryGetValue((b.Loai == SaoLuuService.Loai.Bo ? "B/" : "N/") + b.Ten, out var s) ? s : "";
+
+    private async Task ChoDonLaiAsync()
+    {
+        if (_busy) return;
+        _busy = true; _err = null; _msg = null;
+        try
+        {
+            var e = await Task.Run(() => Svc.ChoDonLaiAsync(CurrentUserId, CurrentUserName));
+            if (e != null) _err = e; else { _msg = "Đã cho dọn lại — lần lưu tới sẽ dọn bản cũ theo luật giữ."; await TaiLaiAsync(); }
+        }
+        catch (Exception ex) { _err = UiSafe.Text(ex, Logger, "cho dọn lại"); }
+        finally { _busy = false; }
+    }
+
+    private void ToggleNhanh() => _showNhanh = !_showNhanh;
+
+    private void OnThuChotChange(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var v) && Enum.IsDefined(typeof(DayOfWeek), v)) _c.ThuChotTuan = (DayOfWeek)v;
+    }
+
+    private void HuyCaiDat()
+    {
+        _c = _dangDung.Clone();
+        _fileThem = string.Join("\n", _c.FileCauHinhThem);
+        _err = null; _msg = null;
+    }
+
+    private async Task ChayNhanhAsync() => await ChayAsync(SaoLuuService.Loai.Nhanh);
+    private async Task ChayBoAsync() => await ChayAsync(SaoLuuService.Loai.Bo);
+
+    private async Task ChayAsync(SaoLuuService.Loai l)
+    {
+        if (_busy) return;
+        _busy = true; _err = null; _msg = null;
+        _busyText = l == SaoLuuService.Loai.Nhanh ? "Đang lưu nhanh…" : "Đang tạo trọn bộ (nén phần mềm + dữ liệu)…";
+        StateHasChanged();
+        try
+        {
+            var kq = await Task.Run(() => Svc.ChayTayAsync(l, CurrentUserId, CurrentUserName));
+            if (kq.Dat) _msg = kq.ThongBao; else _err = kq.ThongBao;
+            await DocDanhSachAsync();
+        }
+        catch (Exception ex) { _err = UiSafe.Text(ex, Logger, "sao lưu"); }
+        finally { _busy = false; _busyText = null; }
+    }
+
+    private SaoLuuCaiDat LayTuForm()
+    {
+        var m = _c.Clone();
+        m.FileCauHinhThem = (_fileThem ?? "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+        return SaoLuuService.ChuanHoa(m);
+    }
+
+    private async Task LuuCaiDatAsync()
+    {
+        if (_busy) return;
+        _err = null; _msg = null;
+        var moi = LayTuForm();
+        var loi = moi.KiemLoi();
+        if (loi.Count > 0) { _err = string.Join(" ", loi); return; }
+        _busy = true;
+        try
+        {
+            var xoa = await Task.Run(() => Svc.XemTruocXoaAsync(moi));   // [G32-RA2] mục 8: quét thư mục ngoài luồng mạch
+            if (xoa.Count > 0)
+            {
+                _choLuu = moi;
+                _pinChoDon = false;
+                _xoaBoXacNhan = xoa.Count(x => x.StartsWith("Bộ ngày"));
+                var dau = string.Join("; ", xoa.Take(12));
+                _pinDesc = $"Cài đặt mới sẽ XOÁ {xoa.Count} bản đang giữ ở lần dọn tới: {dau}{(xoa.Count > 12 ? "; …" : "")}. Nhập PIN để xác nhận.";
+                _pinOpen = true;
+                return;
+            }
+            await GhiAsync(moi, 0);
+        }
+        catch (Exception ex) { _err = UiSafe.Text(ex, Logger, "lưu cài đặt sao lưu"); }
+        finally { _busy = false; }
+    }
+
+    private async Task GhiAsync(SaoLuuCaiDat moi, int xoaBo)
+    {
+        var e = await Task.Run(() => Svc.LuuCaiDatAsync(moi, CurrentUserId, CurrentUserName, xoaBo));
+        if (e != null) { _err = e; return; }
+        _msg = "Đã lưu cài đặt sao lưu.";
+        await TaiLaiAsync();
+    }
+
+    private async Task OnPinConfirmed()
+    {
+        _pinOpen = false;
+        if (_pinChoDon) { _pinChoDon = false; await ChoDonLaiAsync(); return; }
+        var moi = _choLuu;
+        _choLuu = null;
+        if (moi == null) return;
+        _busy = true;
+        try { await GhiAsync(moi, _xoaBoXacNhan); }
+        catch (Exception ex) { _err = UiSafe.Text(ex, Logger, "lưu cài đặt sao lưu"); }
+        finally { _busy = false; }
+    }
+
+    private void OnPinCancelled()
+    {
+        _pinOpen = false;
+        _msg = _pinChoDon ? "Đã huỷ — vẫn tạm dừng dọn." : "Đã huỷ — cài đặt chưa đổi.";
+        _pinChoDon = false;
+        _choLuu = null;
+    }
+
+    private void MoPinChoDon()
+    {
+        _err = null; _msg = null;
+        _pinChoDon = true;
+        _pinDesc = $"Cho phép lần dọn tới XOÁ {_soBoSeXoa} bộ ngày theo luật giữ hiện tại ({_tamDung}). Kiểm đồng hồ máy chủ đúng trước. Nhập PIN để xác nhận.";
+        _pinOpen = true;
+    }
+}

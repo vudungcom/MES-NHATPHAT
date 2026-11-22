@@ -64,6 +64,12 @@
                     <i class="bi bi-grid-3x3-gap-fill me-1"></i> Ma trận Phân quyền
                 </button>
             </li>
+            @* [G32-SAOLUU 2026-11-22] Gói 32a: tab Sao lưu (trang này chỉ ADMIN — HÙNG 22/11 14:40 "vào trang này", 14:42 "chỉ admin thấy") *@
+            <li class="nav-item">
+                <button class="@SaoLuuTabClass" id="tabSaoLuu" @onclick="MoTabSaoLuu">
+                    <i class="bi bi-hdd-stack me-1"></i> Sao lưu
+                </button>
+            </li>
         </ul>
 
         <!-- TAB 1: USERS -->
@@ -175,6 +181,12 @@
                     </table>
                 </div>
             </div>
+        }
+
+        <!-- [G32-SAOLUU 2026-11-22] TAB 4: SAO LƯU -->
+        @if (activeTab == 4)
+        {
+            <SaoLuuTab CurrentUserId="_currentAdminUserId" CurrentUserName="@_currentAdminName" />
         }
 
         <!-- TAB 3: MA TRẬN PHÂN QUYỀN (MATRIX RBAC) -->
@@ -424,6 +436,10 @@
     private bool isProcessing = false;
     private int activeTab = 3; // Mặc định mở tab Ma trận
     private int _currentAdminUserId;
+    private string _currentAdminName = "";   // [G32-SAOLUU] ghi vào nhật ký đổi cài đặt sao lưu
+    private string SaoLuuTabClass => activeTab == 4 ? "nav-link active text-primary" : "nav-link text-muted";   // [G32-SAOLUU]
+    private void MoTabSaoLuu() => activeTab = 4;   // [G32-SAOLUU]
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabQuery { get; set; }   // [G32-SAOLUU] băng cảnh báo mở thẳng tab Sao lưu (?tab=saoluu)
 
     private string thongBaoLoi = "";
     private string popupLoi = "";   // [SET-POPUP-ERR 2026-11-05] lỗi khi lưu trong popup Người dùng / Nhóm
@@ -465,12 +481,14 @@
 
         if (int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid))
             _currentAdminUserId = uid;
+        _currentAdminName = user.FindFirst(ClaimTypes.Name)?.Value ?? user.Identity?.Name ?? ("user#" + _currentAdminUserId);   // [G32-SAOLUU] chỉ để ghi nhật ký (quyền vẫn kiểm DB)
         // [USER-PERM-SVC 2026-11-03] quyền đọc DB (claim có thể cũ — CLAUDE-RULES mục 7); máy chủ cũng tự kiểm ở UserService
         var isUserAdmin = await UserSvc.IsAdminAsync(_currentAdminUserId);
 
         if (isUserAdmin)
         {
             isAdmin = true;
+            if (string.Equals(TabQuery, "saoluu", StringComparison.OrdinalIgnoreCase)) activeTab = 4;   // [G32-SAOLUU]
             await LoadDataAsync();
         }
         isLoading = false;

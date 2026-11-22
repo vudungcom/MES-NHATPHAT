@@ -39,6 +39,10 @@
     <Compile Include="../../MES.Web/Services/WtsReportService.cs" />   <!-- [ML17-XN] báo cáo = trang -->
     <Compile Include="../../MES.Web/Services/MachineEfficiencyService.cs" />
     <Compile Include="../../MES.Web/Services/CaLamViecService.cs" />
+    <Compile Include="../../MES.Web/Services/SaoLuuCaiDat.cs" />   <!-- [G32-SCEN 2026-11-22] Gói 32a sao lưu (kịch bản saoluu) -->
+    <Compile Include="../../MES.Web/Services/SaoLuuLuatDon.cs" />
+    <Compile Include="../../MES.Web/Services/SaoLuuService.cs" />
+    <Compile Include="../../MES.Web/Services/SaoLuuWorker.cs" />
     <Compile Include="../../MES.Web/Services/DepartmentService.cs" />   <!-- [PHAT-HIEN-0311] kịch bản auth U9: quyền Sơ đồ tổ chức + ảnh đại diện -->
     <Compile Include="../BackfillNghi/BackfillCore.cs" />
     <Compile Include="../../MES.Web/Services/LedgerQtyText.cs" />

@@ -6,7 +6,9 @@ H="$(cd "$(dirname "$0")" && pwd)"
 TOOLS="$H/../GiaoNhanFuzz"
 rm -rf "$DST"; mkdir -p "$DST"
 cp -r "$SRC/." "$DST/"; rm -rf "$DST/bin" "$DST/obj" "$DST/Data/AppDbContext - Copy.bak"
-rm -f "$DST/Services/PmSaveLockSql.cs"   # [S8D-KHOA 07/11] khoá lượt lưu PM trên kết nối SQL riêng (Microsoft.Data.SqlClient) — harness EF giả dùng cách cũ
+rm -f "$DST/Services/PmSaveLockSql.cs"
+# [G32-SAOLUU 22/11] sao lưu: SaoLuuSql thật dùng Microsoft.Data.SqlClient → harness thay bằng bản giả (chỉ khi nguồn có Gói 32a)
+if [ -f "$SRC/Services/SaoLuuSql.cs" ]; then rm -f "$DST/Services/SaoLuuSql.cs"; mkdir -p "$DST/Stubs"; cp "$H/Stubs/HarnessSaoLuu.cs" "$DST/Stubs/"; fi   # [S8D-KHOA 07/11] khoá lượt lưu PM trên kết nối SQL riêng (Microsoft.Data.SqlClient) — harness EF giả dùng cách cũ
 mkdir -p "$DST/Stubs"
 cp "$TOOLS/EfStub.cs" "$TOOLS/EfCompile2.cs" "$DST/Stubs/"
 # [KHO-5 02/11] ClosedXML tối thiểu ghi .xlsx thật (thay XlStub chỉ-để-biên-dịch) — drive_kho.py đọc file Excel trang Kho xuất ra
@@ -70,6 +72,11 @@ open(p,'w').write(s)
 PY
 python3 - "$DST" "$PORT" <<'PY'
 import sys; d=sys.argv[1]; p=d+'/appsettings.json'; s=open(p).read()
+if "SaoLuuSql" in open(d+'/Program.cs').read():   # [G32-SAOLUU 22/11] cài đặt sao lưu ghi trong thư mục harness (không phải ProgramData) + endpoint giả lỗi BACKUP
+    s=s.replace('{', '{\n  "SaoLuu": { "ThuMucCaiDat": "'+d+'/saoluu-cfg", "TatLichTuDong": true },', 1)
+    q=d+'/Program.cs'; t=open(q).read()
+    t=t.replace('app.MapGet("/harness/dump",','app.MapPost("/harness/saoluu", (int fail, int? reset, MES.Web.Services.SaoLuuService sv) => { MES.Web.Services.SaoLuuSql.FailNext = fail; if (reset == 1 && Directory.Exists(sv.Store.ThuMuc)) Directory.Delete(sv.Store.ThuMuc, true); return Results.Json(new { fail, n = MES.Web.Services.SaoLuuSql.SoLanBackup, cfg = sv.Store.ThuMuc }); });   // [harness][G32-SAOLUU] reset=1 xoá cài đặt sao lưu (chạy lại driver trên cùng harness)\napp.MapGet("/harness/dump",',1)
+    assert "/harness/saoluu" in t; open(q,'w').write(t)
 s=s.replace('"Url": "http://0.0.0.0:5000"', '"Url": "http://127.0.0.1:'+sys.argv[2]+'"'); open(p,'w').write(s)
 PY
 cp "$TOOLS/nuget.config" "$DST/"

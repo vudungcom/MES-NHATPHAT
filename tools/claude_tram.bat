@@ -9,8 +9,11 @@ rem    tong    = kiemtra.bat tong  (KIEM TOAN HE THONG: danh muc chan + 2 luot 1
 rem    danhmuc = chi doi chieu tools\DanhMucKiem.txt voi code (vai giay) -> ketqua_danhmuc.txt        [KIEM-TONG 2026-11-02]
 rem    quet    = QuetSo CHI DOC DB trong MES.Web\appsettings.json -> QuetSo\ketqua_quet_*.txt
 rem    build   = dotnet build MES.Web cau hinh Release (bin\Release, KHONG dung bin\Debug cua dotnet watch)
+rem    saoluu  = [G32-SAOLUU 2026-11-22] tools\SaoLuuThu: sao luu THAT 1 ban nhanh + 1 tron bo vao <thu muc>\_thu (duong-dan.txt) + kiem ma bam
+rem              + RESTORE VERIFYONLY (chi doc file sao luu) -> SaoLuuThu\ketqua_saoluu_*.txt
+rem    saoluukp= nhu saoluu + KHOI PHUC THU vao DB tam MES_SAOLUU_THU, so so dong + QuetSo, roi XOA DB tam (Hung duyet SQL truoc)
 rem  Luu y: KHONG nhap chuot vao cua so tram (cmd QuickEdit dung chuong trinh, tieu de hien "Select"); lo nhap thi bam Esc.
-rem  KHONG chay / tat app, KHONG dung SQL ghi, KHONG sua file code. Dong cua so = tat tram.
+rem  KHONG chay / tat app, KHONG dung SQL ghi (tru saoluu / saoluukp: BACKUP COPY_ONLY + DB tam MES_SAOLUU_THU — Hung duyet), KHONG sua file code. Dong cua so = tat tram.
 rem ===========================================================================================
 setlocal EnableDelayedExpansion
 chcp 65001 >nul
@@ -30,6 +33,8 @@ if /i "!L!"=="kiem"    ( call :bat dau & call kiemtra.bat & goto xong )
 if /i "!L!"=="tong"    ( call :bat dau & call kiemtra.bat tong & goto xong )
 if /i "!L!"=="danhmuc" ( call :bat dau & pushd GiaoNhanFuzz & dotnet build GiaoNhanFuzz.csproj -c Release -o bin2 -v q -nologo > ..\ketqua_danhmuc.txt 2>&1 & dotnet bin2\GiaoNhanFuzz.dll danhmuc >> ..\ketqua_danhmuc.txt 2>&1 & popd & goto xong )
 if /i "!L!"=="quet"    ( call :bat dau & pushd QuetSo & dotnet run -c Release > ketqua_quet_console.txt 2>&1 & popd & goto xong )
+if /i "!L!"=="saoluu"   ( call :bat dau & pushd SaoLuuThu & dotnet run -c Release > ketqua_saoluu_console.txt 2>&1 & popd & goto xong )
+if /i "!L!"=="saoluukp" ( call :bat dau & pushd SaoLuuThu & dotnet run -c Release -- --restore > ketqua_saoluu_console.txt 2>&1 & popd & goto xong )
 if /i "!L!"=="build"   ( call :bat dau & dotnet build ..\MES.Web\MES.Web.csproj -c Release -v q -nologo > ketqua_build_mesweb.txt 2>&1 & goto xong )
 echo KHONG HOP LE %date% %time%> claude_trangthai.txt
 echo   -^> khong hop le, bo qua

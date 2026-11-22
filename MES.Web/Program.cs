@@ -104,6 +104,15 @@ builder.Services.AddScoped<PartMasterListService>();
 builder.Services.AddScoped<DaoService>();
 builder.Services.AddScoped<MachineEfficiencyService>();
 builder.Services.AddScoped<CaLamViecService>();
+// [G32-SAOLUU 2026-11-22] Gói 32a: sao lưu trong phần mềm — lưu nhanh mỗi N phút + bộ ngày trọn bộ (phần mềm + cấu hình + dữ liệu), tự dọn theo luật giữ;
+//   cài đặt ở tab Cài đặt › Sao lưu (chỉ Admin), file cài đặt ngoài DB. Nguồn: HÙNG 22/11 14:34–14:52.
+builder.Services.AddSingleton<SaoLuuService>(sp => new SaoLuuService(
+    sp.GetRequiredService<IServiceScopeFactory>(),
+    new SaoLuuSql(builder.Configuration.GetConnectionString("DefaultConnection") ?? ""),
+    new SaoLuuCaiDatStore(SaoLuuCaiDatStore.ThuMucMacDinh(builder.Configuration)),
+    builder.Environment.ContentRootPath,
+    sp.GetRequiredService<ILogger<SaoLuuService>>()));
+builder.Services.AddHostedService<SaoLuuWorker>();
 
 var app = builder.Build();
 

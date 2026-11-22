@@ -1,0 +1,77 @@
+@* =====================================================================
+   [G32-SAOLUU 2026-11-22] Gói 32a — băng cảnh báo sao lưu ở đầu MỌI trang, CHỈ Admin thấy (quyền đọc DB — PermCheck qua UserService).
+   Đỏ: chưa cài thư mục / lần lưu gần nhất lỗi / quá 2 chu kỳ lưu nhanh chưa có bản mới / quá 26 giờ chưa có bộ ngày. Vàng: tự động đang TẮT.
+   Đọc trạng thái từ SaoLuuService (cache 60 giây), tự làm mới mỗi 60 giây. Lỗi gì cũng chỉ ẩn băng — không làm hỏng trang.
+   Nguồn: HÙNG 22/11 14:34 (đề xuất mục 6 "băng đỏ"), 14:42 "chỉ admin thấy".
+   ===================================================================== *@
+@using Microsoft.AspNetCore.Components.Authorization
+@using MES.Web.Services
+@implements IDisposable
+@inject AuthenticationStateProvider Auth
+@inject UserService UserSvc
+@inject SaoLuuService Svc
+
+@if (_isAdmin && _list.Count > 0)
+{
+    <div id="saoLuuBanner">
+        @foreach (var cb in _list)
+        {
+            <div class="@BannerClass(cb)">
+                <i class="bi bi-hdd-stack me-1"></i><b>Sao lưu:</b> @cb.NoiDung
+                <a href="/settings?tab=saoluu" class="ms-2">Mở Cài đặt › Sao lưu</a>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private bool _isAdmin;
+    private bool _daBiet;   // [G32-RA] đã biết chắc có / không phải Admin (lỗi đọc DB thoáng qua → thử lại ở nhịp sau, không ẩn băng vĩnh viễn)
+    private int _uid;
+    private List<SaoLuuService.CanhBao> _list = new();
+    private System.Threading.Timer? _timer;
+    private volatile bool _disposed;   // [G32-RA2] mục 9: mạch đóng giữa lúc đang quét → không tạo timer mồ côi
+    private int _dangChay;             // [G32-RA2] nhịp không chạy chồng
+
+    private static string BannerClass(SaoLuuService.CanhBao cb) => cb.Do ? "alert alert-danger py-2 small mb-2" : "alert alert-warning py-2 small mb-2";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var st = await Auth.GetAuthenticationStateAsync();
+            if (st.User.Identity?.IsAuthenticated != true) return;
+            if (!int.TryParse(st.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out _uid)) return;
+        }
+        catch { return; }
+        await KiemAsync();
+        if (_disposed) return;
+        if (!_daBiet || _isAdmin)
+            _timer = new System.Threading.Timer(OnTick, null, TimeSpan.FromSeconds(_daBiet ? 60 : 3), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task KiemAsync()
+    {
+        try
+        {
+            if (!_daBiet) { _isAdmin = await UserSvc.IsAdminAsync(_uid); _daBiet = true; }
+            if (_isAdmin) _list = await Task.Run(() => Svc.CanhBaoAsync());   // [G32-RA] quét thư mục ngoài luồng mạch
+        }
+        catch { /* thử lại ở nhịp sau */ }
+    }
+
+    private async void OnTick(object? _)
+    {
+        if (_disposed || Interlocked.Exchange(ref _dangChay, 1) == 1) return;
+        try
+        {
+            await KiemAsync();
+            if (_daBiet && !_isAdmin) { _timer?.Dispose(); return; }
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* mạch đã đóng / lỗi đọc: giữ nguyên */ }
+        finally { Interlocked.Exchange(ref _dangChay, 0); }
+    }
+
+    public void Dispose() { _disposed = true; _timer?.Dispose(); }
+}
