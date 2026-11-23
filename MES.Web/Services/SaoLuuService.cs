@@ -27,6 +27,10 @@ namespace MES.Web.Services;
 public class SaoLuuService
 {
     public const string ThuMucNhanh = "nhanh", ThuMucBo = "bo", DuoiDangTao = ".dang-tao", TenManifest = "manifest.json";
+    // [G32B-TRUOC-NANG-CAP 2026-11-23] bộ trọn bộ tạo lúc nâng cấp phần mềm (nang-cap.ps1 gọi MES.Web.exe --sao-luu-truoc-nang-cap) — thư mục riêng,
+    //   giữ N bộ mới nhất (cài đặt GiuTruocNangCap), không theo luật ngày / tuần / tháng (để chung thì luật bộ ngày xoá ngay hôm sau).
+    //   Nguồn: HÙNG 23/11 13:20 OK câu B2 bản "em hiểu".
+    public const string ThuMucTruocNangCap = "truoc-nang-cap";
     private const string MauTen = "yyyy-MM-dd_HHmmss";
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -62,7 +66,14 @@ public class SaoLuuService
         ContentRoot = contentRoot;
     }
 
-    public enum Loai { Nhanh, Bo }
+    public enum Loai { Nhanh, Bo, TruocNangCap }   // [G32B-TRUOC-NANG-CAP] + TruocNangCap
+
+    /// <summary>[G32B-TRUOC-NANG-CAP] Tên thư mục con theo loại.</summary>
+    public static string TenThuMuc(Loai l) => l switch { Loai.Nhanh => ThuMucNhanh, Loai.Bo => ThuMucBo, _ => ThuMucTruocNangCap };
+    /// <summary>[G32B-TRUOC-NANG-CAP] Chữ "Loai" ghi trong manifest (script khôi phục đọc).</summary>
+    public static string TenLoai(Loai l) => l switch { Loai.Nhanh => "nhanh", Loai.Bo => "bo-ngay", _ => "truoc-nang-cap" };
+    /// <summary>[G32B-TRUOC-NANG-CAP] Chữ hiện trên tab / nhật ký.</summary>
+    public static string NhanLoai(Loai l) => l switch { Loai.Nhanh => "Bản nhanh", Loai.Bo => "Bộ ngày", _ => "Bộ trước nâng cấp" };
 
     /// <summary>BoQua = lượt không chạy vì đang có lượt khác (trong app / app khác cùng DB) — không phải lỗi, băng không báo đỏ ([G32-RA] mục 21).</summary>
     public record KetQuaChay(bool Dat, Loai Loai, string Ten, DateTime BatDau, DateTime KetThuc, string ThongBao, long Bytes, bool BoQua = false);
@@ -166,6 +177,66 @@ public class SaoLuuService
         return null;
     }
 
+    /// <summary>[G32B-XOA-BAN 2026-11-23] Admin xoá tay 1 bản (tab: nút Xoá + PIN). Gỡ "ổ đầy không tự thoát": ổ đầy → bản mới LỖI → hàng rào
+    /// "bản mới nhất lỗi thì không dọn" giữ mọi bản cũ → mãi đầy. Không xoá bản ĐẠT mới nhất của loại đó (luôn còn 1 bản dùng được); không xoá khi đang có
+    /// lượt sao lưu chạy; ghi nhật ký cài đặt (ai, lúc nào, bản nào, cỡ). Nguồn: CLAUDE rà độc lập Gói 32a (ghi nhớ G32B); HÙNG 23/11 13:20 OK câu B3.</summary>
+    public async Task<string?> XoaBanAsync(Loai l, string ten, int actorUserId, string actorName)
+    {
+        if (!await LaAdminAsync(actorUserId)) return KhongPhaiAdmin;
+        if (!TryTen(ten ?? "", out _)) return "Tên bản không hợp lệ.";
+        if (!await _chay.WaitAsync(0)) return "Đang có 1 lượt sao lưu chạy — chờ xong rồi xoá.";
+        try
+        {
+            var db = await DbAsync();
+            var c = Store.Doc(db);
+            if (!c.DaCaiThuMuc) return "Chưa cài thư mục sao lưu.";
+            var ds = Quet(c, db, l);
+            var b = ds.FirstOrDefault(x => x.Ten == ten);
+            if (b == null) return $"Không thấy {NhanLoai(l).ToLowerInvariant()} {ten} (có thể vừa bị xoá — bấm Tải lại).";
+            if (MoiNhatDat(ds, Clock())?.Ten == ten)
+                return $"Không xoá {NhanLoai(l).ToLowerInvariant()} ĐẠT mới nhất ({b.ThoiDiem:dd/MM/yyyy HH:mm}) — luôn giữ 1 bản dùng được để khôi phục.";
+            if (!XoaThuMuc(b.DuongDan)) return $"Không xoá được folder \"{b.DuongDan}\" (đang mở / mất quyền?) — đóng cửa sổ đang mở folder rồi thử lại.";
+            Store.GhiNhatKy(db, actorName, $"Xoá tay {NhanLoai(l).ToLowerInvariant()} {ten} ({(b.Dat ? "ĐẠT" : b.KhongRo ? "KHÔNG RÕ" : "LỖI")}, {DocBytes(b.Bytes)}) — PIN xác nhận", Clock());
+            _canhBaoCache = null;
+            return null;
+        }
+        finally { _chay.Release(); }
+    }
+
+    /// <summary>[G32B-XOA-BAN] Bản ĐẠT mới nhất (không tính bản giờ tương lai / không rõ) — tab ẩn nút Xoá của bản này, máy chủ chặn.</summary>
+    public static BanInfo? MoiNhatDat(IEnumerable<BanInfo> ds, DateTime now) =>
+        ds.Where(x => x.Dat && !x.KhongRo && x.ThoiDiem <= now + LechGioChoPhep).OrderByDescending(x => x.ThoiDiem).ThenByDescending(x => x.Ten, StringComparer.Ordinal).FirstOrDefault();
+
+    /// <summary>[G32B-O-DAY 2026-11-23] Dung lượng ổ chứa thư mục sao lưu (null = không đo được, vd thư mục mạng). Kịch bản / harness thay được.</summary>
+    public Func<string, (long Trong, long Tong)?> DoODia { get; set; } = DoODiaMacDinh;
+    public static (long Trong, long Tong)? DoODiaMacDinh(string thuMuc)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(thuMuc);
+            if (string.IsNullOrEmpty(root) || root.StartsWith(@"\\")) return null;
+            var d = new DriveInfo(root);
+            return (d.AvailableFreeSpace, d.TotalSize);
+        }
+        catch { return null; }
+    }
+    public (long Trong, long Tong)? DungLuong(SaoLuuCaiDat c) => c.DaCaiThuMuc ? DoODia(c.ThuMucApp) : null;
+
+    /// <summary>[G32B-O-DAY] Lỗi do ổ đầy (Windows ERROR_DISK_FULL 112 / ERROR_HANDLE_DISK_FULL 39, hoặc câu lỗi SQL "not enough space").</summary>
+    public static bool LaODay(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            if (e is IOException && ((e.HResult & 0xFFFF) == 112 || (e.HResult & 0xFFFF) == 39)) return true;
+            var m = e.Message ?? "";
+            // rà độc lập 23/11 (Thấp 10): chỉ "insufficient … space" (SQL 3257 "insufficient free space on disk volume") — trước khớp cả
+            //   "Insufficient system resources / memory" (không phải ổ đầy)
+            if (m.Contains("not enough space", StringComparison.OrdinalIgnoreCase) || System.Text.RegularExpressions.Regex.IsMatch(m, @"insufficient (free |disk )?space", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                || m.Contains("disk full", StringComparison.OrdinalIgnoreCase) || m.Contains("No space left", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     public string? DocTamDung(SaoLuuCaiDat c, string db)
     {
         if (!c.DaCaiThuMuc) return null;
@@ -185,7 +256,7 @@ public class SaoLuuService
 
     // ----------------------------------------------------------------- quét thư mục
     public static string ThuMucDb(SaoLuuCaiDat c, string db) => Path.Combine(c.ThuMucApp, SaoLuuCaiDatStore.TenAnToan(db));
-    private static string ThuMucLoai(SaoLuuCaiDat c, string db, Loai l) => Path.Combine(ThuMucDb(c, db), l == Loai.Nhanh ? ThuMucNhanh : ThuMucBo);
+    private static string ThuMucLoai(SaoLuuCaiDat c, string db, Loai l) => Path.Combine(ThuMucDb(c, db), TenThuMuc(l));   // [G32B-TRUOC-NANG-CAP]
 
     public static bool TryTen(string ten, out DateTime t) =>
         DateTime.TryParseExact(ten, MauTen, CultureInfo.InvariantCulture, DateTimeStyles.None, out t);
@@ -198,20 +269,36 @@ public class SaoLuuService
         if (!Directory.Exists(c.ThuMucApp))   // [G32-RA] mục 12: mất quyền / máy kia tắt — trước: báo nhầm "chưa có bản nào"
             throw new SaoLuuException($"Không mở được thư mục sao lưu \"{c.ThuMucApp}\" (mất kết nối / mất quyền / ổ chưa cắm?).");
         var dir = ThuMucLoai(c, db, l);
-        if (!Directory.Exists(dir)) return res;
-        foreach (var d in Directory.GetDirectories(dir))
-        {
-            var ten = Path.GetFileName(d);
-            if (!TryTen(ten, out var t)) continue;
-            var mf = Path.Combine(d, TenManifest);
-            if (!File.Exists(mf)) continue;
-            res.Add(DocBan(mf, ten, l, t, d));
-        }
+        var thay = new HashSet<string>(StringComparer.Ordinal);
+        if (Directory.Exists(dir))
+            foreach (var d in Directory.GetDirectories(dir))
+            {
+                var ten = Path.GetFileName(d);
+                if (!TryTen(ten, out var t)) continue;
+                var mf = Path.Combine(d, TenManifest);
+                if (!File.Exists(mf)) continue;
+                thay.Add(mf);
+                res.Add(DocBan(mf, ten, l, t, d));
+            }
+        BoCacheCu(dir, thay);   // [G32B-CACHE-MF]
         return res.OrderByDescending(b => b.ThoiDiem).ToList();
     }
 
     // [G32-RA] mục 2 + 8: đọc manifest CHỊU LỖI (chỉ lấy vài trường; đọc / phân tích lỗi = KHÔNG RÕ, không phải LỖI) + nhớ theo (giờ sửa, cỡ file)
     private readonly Dictionary<string, (DateTime M, long N, BanInfo B)> _mfCache = new();
+
+    /// <summary>[G32B-CACHE-MF 2026-11-23] Bỏ khỏi bộ nhớ đệm manifest các mục thuộc <paramref name="dir"/> không còn thấy ở lần quét này (folder đã
+    /// xoá / đổi tên) — trước: mục cũ nằm mãi trong bộ nhớ (app chạy lâu = rò bộ nhớ theo số bản đã dọn). Nguồn: CLAUDE rà độc lập Gói 32a (ghi nhớ G32B);
+    /// HÙNG 23/11 13:20 OK.</summary>
+    private void BoCacheCu(string dir, HashSet<string> thay)
+    {
+        var tien = dir.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        lock (_mfCache)
+            foreach (var k in _mfCache.Keys.Where(k => k.StartsWith(tien, StringComparison.Ordinal) && !thay.Contains(k)).ToList())
+                _mfCache.Remove(k);
+    }
+    /// <summary>[G32B-CACHE-MF] số mục đang nhớ (kịch bản kiểm).</summary>
+    internal int SoMucCache { get { lock (_mfCache) return _mfCache.Count; } }
     private BanInfo DocBan(string mf, string ten, Loai l, DateTime t, string d)
     {
         DateTime mt; long n;
@@ -236,16 +323,18 @@ public class SaoLuuService
     }
 
     // ----------------------------------------------------------------- dọn
-    public record DuKienDon(List<SaoLuuLuatDon.KetQua> Bo, List<SaoLuuLuatDon.KetQua> Nhanh)
+    public record DuKienDon(List<SaoLuuLuatDon.KetQua> Bo, List<SaoLuuLuatDon.KetQua> Nhanh, List<SaoLuuLuatDon.KetQua>? Tnc = null)   // [G32B-TRUOC-NANG-CAP] + Tnc
     {
-        public int SoXoa => Bo.Count(x => !x.Giu) + Nhanh.Count(x => !x.Giu);
+        public List<SaoLuuLuatDon.KetQua> TncDs => Tnc ?? new();
+        public int SoXoa => Bo.Count(x => !x.Giu) + Nhanh.Count(x => !x.Giu) + TncDs.Count(x => !x.Giu);
     }
 
-    public DuKienDon TinhDon(SaoLuuCaiDat c, string db, DateTime now, bool boQuaHangRao = false, List<BanInfo>? boDs = null, List<BanInfo>? nhDs = null)
+    public DuKienDon TinhDon(SaoLuuCaiDat c, string db, DateTime now, bool boQuaHangRao = false, List<BanInfo>? boDs = null, List<BanInfo>? nhDs = null, List<BanInfo>? tncDs = null)
     {
         var bo = (boDs ?? Quet(c, db, Loai.Bo)).Select(b => new SaoLuuLuatDon.Ban(b.Ten, b.ThoiDiem, b.Dat, b.KhongRo)).ToList();
         var nh = (nhDs ?? Quet(c, db, Loai.Nhanh)).Select(b => new SaoLuuLuatDon.Ban(b.Ten, b.ThoiDiem, b.Dat, b.KhongRo)).ToList();
-        return new DuKienDon(SaoLuuLuatDon.TinhBoNgay(bo, c, now, boQuaHangRao), SaoLuuLuatDon.TinhNhanh(nh, c, now, boQuaHangRao));
+        var tn = (tncDs ?? Quet(c, db, Loai.TruocNangCap)).Select(b => new SaoLuuLuatDon.Ban(b.Ten, b.ThoiDiem, b.Dat, b.KhongRo)).ToList();   // [G32B-TRUOC-NANG-CAP]
+        return new DuKienDon(SaoLuuLuatDon.TinhBoNgay(bo, c, now, boQuaHangRao), SaoLuuLuatDon.TinhNhanh(nh, c, now, boQuaHangRao), SaoLuuLuatDon.TinhTruocNangCap(tn, c, now));
     }
 
     /// <summary>Cài đặt mới sẽ làm xoá thêm những bản nào — tab hiện trước, bắt nhập PIN.
@@ -262,11 +351,12 @@ public class SaoLuuService
         cuTrenMoi.ThuMucTheoMaySql = moi.ThuMucTheoMaySql;
         cuTrenMoi.ThuMucTheoMayApp = moi.ThuMucTheoMayApp;
         var now = Clock();
-        var bo = Quet(moi, db, Loai.Bo); var nh = Quet(moi, db, Loai.Nhanh);
-        var a = TinhDon(cuTrenMoi, db, now, true, bo, nh);
-        var b = TinhDon(moi, db, now, true, bo, nh);
-        var giuCu = a.Bo.Where(x => x.Giu).Select(x => "B/" + x.Ban.Ten).Concat(a.Nhanh.Where(x => x.Giu).Select(x => "N/" + x.Ban.Ten)).ToHashSet();
-        return b.Bo.Select(x => ("Bộ ngày", "B/", x)).Concat(b.Nhanh.Select(x => ("Bản nhanh", "N/", x)))
+        var bo = Quet(moi, db, Loai.Bo); var nh = Quet(moi, db, Loai.Nhanh); var tn = Quet(moi, db, Loai.TruocNangCap);
+        var a = TinhDon(cuTrenMoi, db, now, true, bo, nh, tn);
+        var b = TinhDon(moi, db, now, true, bo, nh, tn);
+        var giuCu = a.Bo.Where(x => x.Giu).Select(x => "B/" + x.Ban.Ten).Concat(a.Nhanh.Where(x => x.Giu).Select(x => "N/" + x.Ban.Ten))
+            .Concat(a.TncDs.Where(x => x.Giu).Select(x => "T/" + x.Ban.Ten)).ToHashSet();   // [G32B-TRUOC-NANG-CAP] giảm "Giữ bộ trước nâng cấp" cũng hỏi PIN
+        return b.Bo.Select(x => ("Bộ ngày", "B/", x)).Concat(b.Nhanh.Select(x => ("Bản nhanh", "N/", x))).Concat(b.TncDs.Select(x => ("Bộ trước nâng cấp", "T/", x)))
             .Where(p => !p.x.Giu && giuCu.Contains(p.Item2 + p.x.Ban.Ten))
             .Select(p => $"{p.Item1} {p.x.Ban.ThoiDiem:dd/MM/yyyy HH:mm}{(p.x.Ban.Dat ? "" : " (bản lỗi)")}")   // [G32-RA2] mục 7
             .ToList();
@@ -286,8 +376,8 @@ public class SaoLuuService
     {
         int n = 0;
         string? tamDungMoi = null;
-        var bo = Quet(c, db, Loai.Bo); var nh = Quet(c, db, Loai.Nhanh);
-        var dk = TinhDon(c, db, now, false, bo, nh);
+        var bo = Quet(c, db, Loai.Bo); var nh = Quet(c, db, Loai.Nhanh); var tn = Quet(c, db, Loai.TruocNangCap);
+        var dk = TinhDon(c, db, now, false, bo, nh, tn);
         var fTam = Path.Combine(ThuMucDb(c, db), TenTamDung);
         var fCho = Path.Combine(ThuMucDb(c, db), TenChoPhep);
         var boXoa = dk.Bo.Where(x => !x.Giu).ToList();
@@ -309,10 +399,10 @@ public class SaoLuuService
             }
         }
         else if (File.Exists(fTam)) { try { File.Delete(fTam); } catch { } }   // trở lại bình thường (≤ ngưỡng) → bỏ tạm dừng
-        foreach (var (l, list) in new[] { (Loai.Bo, dk.Bo), (Loai.Nhanh, dk.Nhanh) })
+        foreach (var (l, list) in new[] { (Loai.Bo, dk.Bo), (Loai.Nhanh, dk.Nhanh), (Loai.TruocNangCap, dk.TncDs) })   // [G32B-TRUOC-NANG-CAP]
         {
             var dir = ThuMucLoai(c, db, l);
-            if (l == Loai.Nhanh || choXoaBo)
+            if (l != Loai.Bo || choXoaBo)   // tạm dừng dọn chỉ áp bộ ngày (bộ trước nâng cấp: giữ N bộ mới nhất, giảm N phải qua PIN)
                 foreach (var k in list.Where(x => !x.Giu))
                 {
                     var d = Path.Combine(dir, k.Ban.Ten);
@@ -372,8 +462,8 @@ public class SaoLuuService
         string ten = "";
         try
         {
-            if (l == Loai.Nhanh) LanThuNhanh = batDau; else LanThuBo = batDau;
-            DangChay = l == Loai.Nhanh ? "Đang lưu nhanh (chỉ dữ liệu)…" : "Đang tạo bộ trọn bộ…";
+            if (l == Loai.Nhanh) LanThuNhanh = batDau; else if (l == Loai.Bo) LanThuBo = batDau;   // [G32B-TRUOC-NANG-CAP] bộ trước nâng cấp không tính vào lịch bộ ngày
+            DangChay = l == Loai.Nhanh ? "Đang lưu nhanh (chỉ dữ liệu)…" : l == Loai.Bo ? "Đang tạo bộ trọn bộ…" : "Đang tạo bộ trọn bộ trước nâng cấp…";
             var db = await DbAsync(ct);
             var c = Store.Doc(db);
             if (!c.DaCaiThuMuc) return Ghi(new KetQuaChay(false, l, "", batDau, Clock(), "Chưa cài thư mục sao lưu (tab Cài đặt › Sao lưu).", 0));
@@ -391,12 +481,12 @@ public class SaoLuuService
 
             var m = new SaoLuuManifest
             {
-                Loai = l == Loai.Nhanh ? "nhanh" : "bo-ngay",
+                Loai = TenLoai(l),   // [G32B-TRUOC-NANG-CAP]
                 Nguon = nguon,
                 ThoiDiem = t.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 Db = db,
                 May = Environment.MachineName,
-                PhienBanPhanMem = PhienBan(),
+                PhienBanPhanMem = PhienBanDangLuu(),   // [G32B-TRUOC-NANG-CAP] bản phần mềm ĐƯỢC LƯU (nâng cấp: exe mới chạy với --contentRoot thư mục cũ)
                 ThuMucTheoMaySql = c.ThuMucTheoMaySql,
             };
             m.Commit = m.PhienBanPhanMem.Contains('+') ? m.PhienBanPhanMem[(m.PhienBanPhanMem.IndexOf('+') + 1)..] : null;
@@ -407,7 +497,7 @@ public class SaoLuuService
             m.GhiChuSoDong = "Số dòng XẤP XỈ (sys.partitions), đếm ngay TRƯỚC lệnh BACKUP — có người đang nhập thì lệch vài dòng là bình thường; chỉ để tham khảo.";
             var bakTen = $"{SaoLuuCaiDatStore.TenAnToan(db)}_{ten}.bak";
             var dbDir = SaoLuuCaiDatStore.TenAnToan(db);
-            var bakSql = NoiSql(c.ThuMucTheoMaySql, dbDir, l == Loai.Nhanh ? ThuMucNhanh : ThuMucBo, ten + DuoiDangTao, "du-lieu", bakTen);
+            var bakSql = NoiSql(c.ThuMucTheoMaySql, dbDir, TenThuMuc(l), ten + DuoiDangTao, "du-lieu", bakTen);   // [G32B-TRUOC-NANG-CAP]
             try { await Sql.BackupAsync(db, bakSql, $"MES {m.Loai} {ten}", ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -428,7 +518,7 @@ public class SaoLuuService
             File.Delete(bakApp);
 
             // 2) Trọn bộ
-            if (l == Loai.Bo) TaoPhanBo(tmp, c, db, m);
+            if (l != Loai.Nhanh) TaoPhanBo(tmp, c, db, m);   // [G32B-TRUOC-NANG-CAP] bộ trước nâng cấp cũng trọn bộ
 
             // 3) Băm từng file + manifest + đổi tên
             foreach (var f in Directory.GetFiles(tmp, "*", SearchOption.AllDirectories).OrderBy(x => x, StringComparer.Ordinal))
@@ -445,7 +535,7 @@ public class SaoLuuService
             DoiTenThuLai(tmp, dich);   // [G32-RA] mục 14: antivirus / indexer giữ file → thử lại vài lần
             tmp = null;
 
-            var kq = new KetQuaChay(true, l, ten, batDau, Clock(), (l == Loai.Nhanh ? "Đã lưu nhanh " : "Đã tạo bộ trọn bộ ") + $"{ten} ({DocBytes(m.TongBytes)}).", m.TongBytes);
+            var kq = new KetQuaChay(true, l, ten, batDau, Clock(), (l == Loai.Nhanh ? "Đã lưu nhanh " : l == Loai.Bo ? "Đã tạo bộ trọn bộ " : "Đã tạo bộ trước nâng cấp ") + $"{ten} ({DocBytes(m.TongBytes)}).", m.TongBytes);
             try
             {
                 var don = DonChiTiet(c, db, Clock());
@@ -459,6 +549,7 @@ public class SaoLuuService
         catch (Exception ex)
         {
             var msg = ex is SaoLuuException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+            if (LaODay(ex)) msg += " — Ổ ĐẦY: xoá bớt bản cũ (Cài đặt › Sao lưu, nút Xoá) hoặc giảm số giữ, rồi lưu lại.";   // [G32B-O-DAY]
             _log.LogError(ex, "[G32-SAOLUU] Sao lưu {Loai} lỗi", l);
             if (tmp != null) GhiBanLoi(tmp, ten, l, nguon, batDau, msg);
             return Ghi(new KetQuaChay(false, l, ten, batDau, Clock(), "Sao lưu lỗi: " + msg, 0));
@@ -483,10 +574,10 @@ public class SaoLuuService
             foreach (var f in Directory.GetFiles(tmp)) File.Delete(f);
             var m = new SaoLuuManifest
             {
-                Loai = l == Loai.Nhanh ? "nhanh" : "bo-ngay", Nguon = nguon,
+                Loai = TenLoai(l), Nguon = nguon,   // [G32B-TRUOC-NANG-CAP]
                 ThoiDiem = batDau.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 KetThuc = Clock().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                KetQua = SaoLuuManifest.KqLoi, Loi = loi, Db = _db ?? "", May = Environment.MachineName, PhienBanPhanMem = PhienBan(),
+                KetQua = SaoLuuManifest.KqLoi, Loi = loi, Db = _db ?? "", May = Environment.MachineName, PhienBanPhanMem = PhienBanDangLuu(),
             };
             GhiFileXuongDia(Path.Combine(tmp, TenManifest), JsonSerializer.Serialize(m, Json));
             var dir = Path.GetDirectoryName(tmp)!;
@@ -539,7 +630,10 @@ public class SaoLuuService
         }
 
         // khoi-phuc (script + hướng dẫn — mẫu đặt ở <ContentRoot>\SaoLuuMau, Gói 32b)
+        // [G32B-KHOIPHUC 2026-11-23] script khôi phục + hướng dẫn (MES.Web\SaoLuuMau — đi kèm bản publish); nâng cấp: exe mới chạy với --contentRoot
+        //   thư mục cũ có thể chưa có SaoLuuMau → lấy ở thư mục exe (bản mới). Nguồn: HÙNG 23/11 13:20 OK Gói 32b.
         var mau = Path.Combine(ContentRoot, "SaoLuuMau");
+        if (!Directory.Exists(mau)) mau = Path.Combine(BaseDir, "SaoLuuMau");
         if (Directory.Exists(mau)) ChepThuMuc(mau, Path.Combine(tmp, "khoi-phuc"), boQua);
         else m.CanhBao.Add("Chưa có script khôi phục mẫu (SaoLuuMau) — Gói 32b.");
         foreach (var b in boQua) m.CanhBao.Add("Không chép được (đang khoá?): " + b);
@@ -563,7 +657,7 @@ du-lieu\   : file sao lưu DB (.bak nén zip). Giải nén ra .bak rồi khôi p
 cau-hinh\  : appsettings*.json (chuỗi kết nối, cổng), sao-luu\ (cài đặt sao lưu), ban-quyen\, them\ (file thêm, vd Caddyfile).
 uploads\   : uploads.zip — ảnh (ảnh đại diện Sơ đồ tổ chức…), giải nén vào wwwroot\uploads.
 phan-mem\  : MES.Web.zip — đúng bản phần mềm đang chạy lúc lưu (dữ liệu + phần mềm phải đi cùng nhau).
-khoi-phuc\ : script + hướng dẫn khôi phục (nếu có).
+khoi-phuc\ : script + hướng dẫn khôi phục — đọc khoi-phuc\HUONG-DAN-KHOI-PHUC.txt; chạy khoi-phuc.bat (chuột phải → Run as administrator).
 manifest.json : thời điểm, phiên bản, số dòng từng bảng lúc lưu, mã băm SHA-256 từng file (kiểm file còn nguyên).
 
 Lưu ý: bản quyền gắn với máy — dựng lại trên máy MỚI phải kích hoạt lại bản quyền.
@@ -686,6 +780,20 @@ Lưu ý: bản quyền gắn với máy — dựng lại trên máy MỚI phải
     public static string DocBytes(long b) =>
         b >= 1L << 30 ? $"{b / (double)(1L << 30):0.0} GB" : b >= 1L << 20 ? $"{b / (double)(1L << 20):0.0} MB" : b >= 1024 ? $"{b / 1024.0:0} KB" : $"{b} B";
 
+    /// <summary>[G32B-TRUOC-NANG-CAP] Phiên bản của phần mềm SẼ ĐƯỢC NÉN vào bộ: chạy publish ở thư mục khác thư mục exe (nâng cấp: exe mới +
+    /// --contentRoot thư mục cũ) → đọc ProductVersion của MES.Web.dll ở ContentRoot; còn lại = bản đang chạy.</summary>
+    public string PhienBanDangLuu()
+    {
+        try
+        {
+            var dll = Path.Combine(ContentRoot ?? "", "MES.Web.dll");
+            if (File.Exists(dll) && !string.Equals(Path.GetFullPath(ContentRoot!).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(BaseDir).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                return System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).ProductVersion ?? PhienBan();
+        }
+        catch { }
+        return PhienBan();
+    }
+
     public static string PhienBan() =>
         typeof(SaoLuuService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(SaoLuuService).Assembly.GetName().Version?.ToString() ?? "?";
@@ -769,6 +877,11 @@ Lưu ý: bản quyền gắn với máy — dựng lại trên máy MỚI phải
         if (moi != null && !moi.Dat) v.Add(new CanhBao(true, $"Lần sao lưu lúc {moi.ThoiDiem:dd/MM HH:mm} bị LỖI: {moi.Loi}"));
         else if (KetQuaGanNhat is { Dat: false, BoQua: false } k && k.Ten == "" && k.KetThuc > (moi?.ThoiDiem ?? DateTime.MinValue))
             v.Add(new CanhBao(true, $"Lần sao lưu lúc {k.BatDau:dd/MM HH:mm} không chạy được: {k.ThongBao}"));
+        // [G32B-O-DAY 2026-11-23] ổ sắp đầy: còn < 2 lần cỡ bộ ngày gần nhất → vàng; < 1 lần (lần lưu trọn bộ tới chắc chắn lỗi) → đỏ.
+        //   Nguồn: CLAUDE rà độc lập Gói 32a (ghi nhớ G32B "ổ đầy không tự thoát"); HÙNG 23/11 13:20 OK câu B3.
+        var boMoi = MoiNhatDat(bo, now);
+        if (boMoi != null && boMoi.Bytes > 0 && DungLuong(c) is { } dl && dl.Trong < 2 * boMoi.Bytes)
+            v.Add(new CanhBao(dl.Trong < boMoi.Bytes, $"Ổ chứa thư mục sao lưu còn trống {DocBytes(dl.Trong)} — ít hơn {(dl.Trong < boMoi.Bytes ? "" : "2 lần ")}cỡ bộ ngày gần nhất ({DocBytes(boMoi.Bytes)}): lần lưu tới có thể lỗi vì ổ đầy. Xoá bớt bản cũ (nút Xoá ở Cài đặt › Sao lưu) hoặc giảm số giữ."));
         if (!c.BatTuDong) return v;
         var datGanNhat = tatCa.Where(b => b.Dat).Select(b => (DateTime?)b.ThoiDiem).FirstOrDefault();
         var nguong = TimeSpan.FromMinutes(c.PhutLuuNhanh * 2 + 5);

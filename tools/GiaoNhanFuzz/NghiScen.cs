@@ -303,13 +303,15 @@ public static class NghiScen
         var day = WorkMinutes.Day(u2.Select(x => new DayLine(x.StartTime, x.EndTime, WorkMinutesStore.Get(mapW, x.WtsLogId))));
         Say(day.Work == 160 && day.Raw == 180 && day.Worked == 40 && day.Deducted == 20, "Tổng hôm nay (trang) u2 = 160 = báo cáo", day.ToString());
 
-        // hiệu suất máy: M1 chạy 11:00–12:40 + 13:00–13:30 = 130; nghỉ 12:40–13:00 = 20; M2 chạy 13:00–14:00 = 60, nghỉ 12:30–13:00
-        var eff = new MachineEfficiencyService(db);
-        var me = await eff.GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(7, 0), new TimeOnly(16, 0), ca, 1);   // [HSM-QUYEN] user 1 ADMIN
+        // hiệu suất máy: M1 chạy 11:00–12:40 + 13:00–13:30 = 130 (12:40–13:00 nghỉ thật của dòng không tính chạy); M2 chạy 13:00–14:00 = 60
+        // [G31-DON-BO-KIEM 2026-11-23] đổi sang hàm 24h (GetAsync theo ca đã bỏ): khúc làm thông vẫn là Chạy, nghỉ thật của dòng không là Chạy;
+        //   24h không có "nghỉ ca" → Chạy + Dừng + Rảnh = 1440. Đồng hồ giả sau ngày D0 (không cắt "giờ chưa tới").
+        var eff = new MachineEfficiencyService(db) { Clock = () => D0.AddDays(2) };
+        var me = await eff.GetDay24Async(DateOnly.FromDateTime(D0), 1);   // [HSM-QUYEN] user 1 ADMIN
         var rM1 = me.Rows.First(x => x.Machine.SoMay == "M1"); var rM2 = me.Rows.First(x => x.Machine.SoMay == "M2");
-        Say(Math.Abs(rM1.RunMinutes - 130) < 0.01 && Math.Abs(rM1.BreakMinutes - 20) < 0.01 && Math.Abs(rM2.RunMinutes - 60) < 0.01 && Math.Abs(rM2.BreakMinutes - 60) < 0.01
+        Say(Math.Abs(rM1.RunMinutes - 130) < 0.01 && Math.Abs(rM2.RunMinutes - 60) < 0.01 && rM1.BreakMinutes == 0 && Math.Abs(rM1.TotalMinutes - 1440) < 0.01
             && Math.Abs(rM1.TotalMinutes - rM1.RunMinutes - rM1.BreakMinutes - rM1.IdleMinutes - rM1.DownMinutes) < 0.01,
-            "Hiệu suất máy: khúc làm thông là Chạy (M1 130 chạy / 20 nghỉ; M2 60 / 60), tổng cân", $"M1 {rM1.RunMinutes}/{rM1.BreakMinutes} M2 {rM2.RunMinutes}/{rM2.BreakMinutes}");
+            "Hiệu suất máy (24h): khúc làm thông là Chạy, nghỉ thật của dòng không (M1 130, M2 60), tổng 1440 cân", $"M1 {rM1.RunMinutes}/{rM1.TotalMinutes} M2 {rM2.RunMinutes}");
 
         // CA-NGHI-HIST: admin đổi giờ nghỉ trưa 12:00–13:00 → 11:30–12:15 SAU khi lưu → báo cáo / trang ngày đó không đổi
         AddCa(db, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (11, 30, 12, 15, "Trưa mới"));
@@ -505,6 +507,7 @@ public static class NghiScen
 
     // [RPT-3 2026-11-02] Hiệu suất máy ca vắt đêm 20:00–05:00: giờ kết thúc sang ngày hôm sau → tổng 540 phút, đoạn WTS 21:00–03:00 qua nửa đêm là Chạy 360.
     //   Trước: dayEnd cùng ngày → tổng âm, mọi đoạn bị cắt, hiệu suất 0 %.
+    //   [G31-DON-BO-KIEM 2026-11-23] đáp án đổi: máy tính 24h / ngày (Gói 31), hàm theo ca đã bỏ → dòng qua nửa đêm chia đúng 2 ngày lịch, kỳ 2 ngày = tổng, không âm.
     static async Task N8()
     {
         Console.WriteLine("[N8] RPT-3 — hiệu suất máy ca vắt đêm (20:00–05:00, WTS qua nửa đêm)");
@@ -517,15 +520,19 @@ public static class NghiScen
         db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 902, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC2", MachineUsed = "M2", WorkerId = 3, QtyDone = 2, QtyOk = 2, StartTime = D0.AddHours(28), EndTime = D0.AddHours(30), CreatedAt = D0, CaId = 2 });
         db.WtsProductionLogs.List.Add(new WtsProductionLog { WtsLogId = 903, KhPlanDetailId = 1, ProcessGroup = "GC", NC = "NC1", MachineUsed = "M1", WorkerId = 2, QtyDone = 1, QtyOk = 1, StartTime = D0.AddHours(45), EndTime = D0.AddHours(46), CreatedAt = D0, CaId = 2 });
         db.Fixup();
-        var me = await new MachineEfficiencyService(db).GetAsync(DateOnly.FromDateTime(D0), new TimeOnly(20, 0), new TimeOnly(5, 0), ca, 1);   // [HSM-QUYEN] user 1 ADMIN
-        var m1 = me.Rows.First(x => x.Machine.SoMay == "M1"); var m2 = me.Rows.First(x => x.Machine.SoMay == "M2");
+        var eff = new MachineEfficiencyService(db) { Clock = () => D0.AddDays(3) };
+        var d0 = DateOnly.FromDateTime(D0);
+        var a = await eff.GetDay24Async(d0, 1); var b = await eff.GetDay24Async(d0.AddDays(1), 1);   // [HSM-QUYEN] user 1 ADMIN
+        var per = await eff.GetPeriod24Async(d0, d0.AddDays(1), 1);
+        var m1 = a.Rows.First(x => x.Machine.SoMay == "M1"); var m1b = b.Rows.First(x => x.Machine.SoMay == "M1"); var m2b = b.Rows.First(x => x.Machine.SoMay == "M2");
         string Inf(dynamic r) => $"tổng {r.TotalMinutes} chạy {r.RunMinutes} nghỉ {r.BreakMinutes} chờ {r.IdleMinutes} dừng {r.DownMinutes}";
-        Say(Math.Abs(m1.TotalMinutes - 540) < 0.01 && Math.Abs(m2.TotalMinutes - 540) < 0.01, "Tổng phút ca vắt đêm = 540 (20:00 → 05:00 hôm sau), không âm", Inf(m1));
-        Say(Math.Abs(m1.RunMinutes - 360) < 0.01 && Math.Abs(m1.IdleMinutes - 180) < 0.01,
-            "M1 WTS 21:00 → 03:00 (qua nửa đêm): chạy 360, chờ 180", Inf(m1));
-        Say(Math.Abs(m2.RunMinutes - 60) < 0.01 && Math.Abs(m2.IdleMinutes - 480) < 0.01,
-            "M2 WTS 04:00 → 06:00 hôm sau: chỉ tính 04:00–05:00 = 60 chạy, chờ 480; dòng 21:00 hôm sau không tính", Inf(m2));
-        Say(Math.Abs(m1.TotalMinutes - m1.RunMinutes - m1.BreakMinutes - m1.IdleMinutes - m1.DownMinutes) < 0.01 && m1.RunPct > 0, "Tổng cân, % chạy > 0 (trước: 0 %)", m1.RunPct.ToString());
+        Say(Math.Abs(m1.TotalMinutes - 1440) < 0.01 && Math.Abs(m1b.TotalMinutes - 1440) < 0.01, "Tổng phút mỗi ngày = 1440 (24h), không âm", Inf(m1));
+        Say(Math.Abs(m1.RunMinutes - 180) < 0.01 && Math.Abs(m1b.RunMinutes - (180 + 60)) < 0.01,
+            "M1 WTS 21:00 → 03:00 (qua nửa đêm): ngày D0 chạy 180, ngày sau 180 + dòng 21:00–22:00 = 240", $"{Inf(m1)} | {Inf(m1b)}");
+        Say(Math.Abs(m2b.RunMinutes - 120) < 0.01, "M2 WTS 04:00 → 06:00 hôm sau: 120 chạy ở ngày sau (24h không cắt theo ca)", Inf(m2b));
+        var pM1 = per.Rows.First(x => x.Machine.SoMay == "M1");
+        Say(Math.Abs(pM1.RunMinutes - 420) < 0.01 && Math.Abs(m1.TotalMinutes - m1.RunMinutes - m1.BreakMinutes - m1.IdleMinutes - m1.DownMinutes) < 0.01 && m1.RunPct > 0,
+            "Kỳ 2 ngày M1 = 180 + 240 = 420; tổng cân, % chạy > 0", $"{pM1.RunMinutes} · {m1.RunPct}");
     }
 
     public static async Task<int> Run()

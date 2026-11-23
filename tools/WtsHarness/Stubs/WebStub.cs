@@ -203,3 +203,17 @@ namespace HarnessFake
         protected override void SetParameter(string n, DbParameter v) { var i = IndexOf(n); if (i >= 0) Items[i] = v; else Items.Add(v); }
     }
 }
+
+// [G32B-DICH-VU 2026-11-23] harness: gói Microsoft.Extensions.Hosting.WindowsServices (NuGet — sandbox không tải được) → stub không làm gì
+//   (Program.cs gọi WindowsServiceHelpers.IsWindowsService() + builder.Host.UseWindowsService()). Bản cũ không gọi → stub thừa vô hại.
+namespace Microsoft.Extensions.Hosting.WindowsServices
+{
+    public static class WindowsServiceHelpers { public static bool IsWindowsService() => false; }
+}
+namespace Microsoft.Extensions.Hosting
+{
+    public static class HarnessWindowsServiceStub
+    {
+        public static IHostBuilder UseWindowsService(this IHostBuilder b) => b;
+    }
+}

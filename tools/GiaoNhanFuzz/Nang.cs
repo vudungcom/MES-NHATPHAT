@@ -5,6 +5,7 @@
 //   dotnet bin2\GiaoNhanFuzz.dll nang [số PO mỗi lượt = 60] [thao tác mỗi PO = 120] [seed đầu = 1]
 //   set SONG_SONG=2   → số tiến trình chạy cùng lúc (mặc định: số nhân máy − 1)
 //   set KHUC=10       → số PO mỗi khúc (mặc định tự tính ≈ 4 khúc / nhân) [KIEM-NHAN]
+//   set UU_TIEN=thuong → chạy mức ưu tiên thường (mặc định Below Normal trên Windows) [KIEM-UUTIEN]
 using System.Diagnostics;
 using System.Text;
 
@@ -38,6 +39,12 @@ public static class Nang
         int seed0 = args.Length > 3 ? int.Parse(args[3]) : 1;
         int par   = int.TryParse(Environment.GetEnvironmentVariable("SONG_SONG"), out var p) && p > 0 ? p : Math.Max(1, Environment.ProcessorCount - 1);
         var dll   = typeof(Nang).Assembly.Location;
+        // [KIEM-UUTIEN 2026-11-23] chạy ở mức ưu tiên Below Normal (Windows nhường CPU cho việc người dùng đang làm → máy không giật), vẫn 75% nhân [KIEM-75].
+        //   Tiến trình con (từng lượt / kịch bản, powershell của kịch bản saoluu) đặt Below Normal theo. Đặt UU_TIEN=thuong để chạy mức thường.
+        //   Nguồn: HÙNG 23/11 15:55 (máy giật lúc trạm kiem, chọn cách 2: giữ 75%, hạ ưu tiên).
+        bool uuTienThap = OperatingSystem.IsWindows() && !string.Equals(Environment.GetEnvironmentVariable("UU_TIEN"), "thuong", StringComparison.OrdinalIgnoreCase);
+        if (uuTienThap) { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; Console.WriteLine("Ưu tiên tiến trình: Below Normal [KIEM-UUTIEN] (UU_TIEN=thuong để chạy mức thường)"); } catch { uuTienThap = false; } }
+        UuTienThap = uuTienThap;
         var dir   = Path.Combine(Environment.CurrentDirectory, "nang_ketqua");
         Directory.CreateDirectory(dir);
 
@@ -139,6 +146,7 @@ public static class Nang
         return totalSai == 0 ? 0 : 1;
     }
 
+    static bool UuTienThap;   // [KIEM-UUTIEN]
     static readonly object TreoLock = new();   // [KIEM-TREO]
     static async Task<(int Code, string File, double Sec, double Cpu)> RunChild(string dll, string args, (string K, string V)[] env, string outFile)
     {
@@ -151,6 +159,7 @@ public static class Nang
         foreach (var (k, v) in env) psi.Environment[k] = v;
         var sw = Stopwatch.StartNew();
         using var proc = Process.Start(psi)!;
+        if (UuTienThap) { try { proc.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { } }   // [KIEM-UUTIEN]
         var outTask = proc.StandardOutput.ReadToEndAsync();
         var errTask = proc.StandardError.ReadToEndAsync();
         // [KIEM-TREO 2026-11-01] mỗi lượt / kịch bản quá TREO_PHUT phút (mặc định 20) → tự tắt cả cây tiến trình, ghi TREO + seed

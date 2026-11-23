@@ -278,6 +278,55 @@ public class PartMasterService
         };
     }
 
+    // [QF-P-03 2026-11-23] Ghi DB của trang Part Master (Detail_Partmaster) dời vào service — máy chủ kiểm quyền đọc từ DB mỗi lần ghi.
+    //   Nguồn: CLAUDE quét Fable 14/11 (P-03); HÙNG 23/11 13:20 OK. Ghi y như trang cũ.
+
+    /// <summary>[QF-P-03] Ghi chú mạ (vùng A, quyền sửa PART_TAO_MOI). Trả (thấy Part, giá trị đã lưu).</summary>
+    public async Task<(bool Found, string? GhiChuMa)> UpdateGhiChuMaAsync(int partId, string? ghiChuMa, int userId)
+    {
+        await EnsurePermissionAAsync(userId);
+        var pm = await _db.PartMasters.FirstOrDefaultAsync(p => p.PartId == partId);
+        if (pm == null) return (false, null);
+        pm.GhiChuMa = string.IsNullOrWhiteSpace(ghiChuMa) ? null : ghiChuMa.Trim();
+        await _db.SaveChangesAsync();
+        return (true, pm.GhiChuMa);
+    }
+
+    /// <summary>[QF-P-03] Cờ "Xác nhận OK" từng vùng sau lượt lưu / chuyển về NG khi lưu lỗi. null = không đụng vùng đó.
+    /// Quyền (giữ đúng luật trang cũ): vùng B–E và đặt vùng A = false cần quyền SỬA vùng; đặt vùng A = true cần quyền XEM (hoặc sửa) PART_TAO_MOI
+    /// (trang cũ: người xem được mục A mà bấm "Lưu &amp; Xác nhận OK" thì mục A thành OK — HÙNG 23/11 13:20 câu B5 giữ nguyên luật).
+    /// Vùng KHÔNG đủ quyền (bị rút quyền giữa phiên) → BỎ QUA vùng đó, ghi tên vào BiChan, các vùng còn lại vẫn ghi — rà độc lập 23/11 (Thấp 12):
+    /// trước ném lỗi cả lệnh → vùng hợp lệ cũng không về NG khi lưu lỗi ([RS-E2] mất tác dụng). Không thấy Part → Part = null.
+    /// Trả PartMaster (đang theo dõi) sau khi lưu.</summary>
+    public async Task<(PartMaster? Part, List<string> BiChan)> UpdateConfirmFlagsAsync(int partId, int userId, bool? plan, bool? machining, bool? htsp, bool? kcs, bool? pkg)
+    {
+        var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
+        if (user == null || !user.IsActive) throw new UnauthorizedAccessException("User không tồn tại hoặc đã bị khóa");
+        var biChan = new List<string>();
+        bool? Can(bool? v, PartMasterArea a, bool xemDuoc)
+        {
+            if (v == null) return null;
+            bool ok = xemDuoc ? PartMasterPermissionHelper.CanViewArea(user.Group, a) || PartMasterPermissionHelper.CanEditArea(user.Group, a)
+                              : PartMasterPermissionHelper.CanEditArea(user.Group, a);
+            if (!ok) { biChan.Add(PartMasterPermissionHelper.GetAreaName(a)); return null; }
+            return v;
+        }
+        plan = Can(plan, PartMasterArea.A_KeHoach, plan == true);
+        machining = Can(machining, PartMasterArea.B_Machining, false);
+        htsp = Can(htsp, PartMasterArea.C_HoanThienSP, false);
+        kcs = Can(kcs, PartMasterArea.D_KiemTra, false);
+        pkg = Can(pkg, PartMasterArea.E_DongGoi, false);
+        var pm = await _db.PartMasters.FirstOrDefaultAsync(p => p.PartId == partId);
+        if (pm == null) return (null, biChan);
+        if (plan is bool a1) pm.IsPlanConfirmed = a1;
+        if (machining is bool b1) pm.IsMachiningConfirmed = b1;
+        if (htsp is bool c1) pm.IsHtspConfirmed = c1;
+        if (kcs is bool d1) pm.IsKcsConfirmed = d1;
+        if (pkg is bool e1) pm.IsPkgConfirmed = e1;
+        await _db.SaveChangesAsync();
+        return (pm, biChan);
+    }
+
     private async Task EnsurePermissionAAsync(int userId)
     {
         var user = await _db.Users

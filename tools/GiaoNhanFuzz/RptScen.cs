@@ -4,9 +4,10 @@
 //   P2 [G29-RPT]       ngẫu nhiên 300 người-ngày (dòng chồng, làm thông nghỉ, có / không ca, việc có ích / vô ích): so với đếm TỪNG PHÚT độc lập —
 //                      Σ AllocMin = phút làm người-ngày = số cũ TotalMinutes; Σ dòng có ích = phút có ích; AllocMin ≤ phút làm của dòng;
 //                      kế hoạch = phút khung ca ngoài nghỉ; chưa khai báo = phút kế hoạch không dòng nào phủ.
-//   P3 [G29-HSM-KY][G29-HSM-MAUSO] hiệu suất máy theo kỳ = cộng từng ngày GetAsync (cùng ca); ngày tính = ngày xưởng có WTS; OK / NG mỗi dòng 1 lần;
-//                      người đứng máy = đếm từng phút; Chạy + Dừng + Rảnh = kế hoạch (khung − nghỉ), % trên kế hoạch.
-//   P4 [HSM-QUYEN][RPT-4] không quyền → rỗng; khoảng > 93 ngày / Từ > Đến → lời báo.
+//   P3 [G29-HSM-KY][G29-HSM-MAUSO] hiệu suất máy theo kỳ = cộng từng ngày; OK / NG mỗi dòng 1 lần; người đứng máy = đếm từng phút;
+//                      Chạy + Dừng + Rảnh = kế hoạch, % trên kế hoạch. [G31-DON-BO-KIEM 2026-11-23] đáp án đổi sang 24h (GetPeriod24Async / GetDay24Async —
+//                      hàm theo ca GetAsync / GetPeriodAsync đã bỏ): ngày tính = mọi ngày lịch, kế hoạch = 24h, OK / NG theo ngày bắt đầu dòng.
+//   P4 [HSM-QUYEN][RPT-4] không quyền → rỗng; khoảng > 366 ngày / Từ > Đến → lời báo (đáp án đổi: 24h, trước 93 ngày theo ca).
 //   Nguồn: HÙNG 21/11 09:46 OK mockup WTS Report + Hiệu suất máy (câu B theo đề xuất CLAUDE).
 //   [G30-SCEN 2026-11-21] P1 / P2 thêm giờ chuẩn BaseMin (= phút làm + chưa khai báo) + phút làm thông nghỉ của người-ngày; P2 ca dòng việc không ra SP
 //   lấy từ khoảng nghỉ đã lưu; P1c [G30-RPT-MAUSO] đáp án tính tay: ngày chỉ có việc không ra SP chạm nghỉ ca → có ca, giờ chuẩn 480;
@@ -385,9 +386,11 @@ public static class RptScen
         P(db2, 2, "M1", "serial", D1.AddHours(22), D1.AddHours(24), 5, 0, "NC1", null);   // đêm 22:00 → 24:00
         P(db2, 2, "M1", "serial", D1.AddHours(24.5), D1.AddHours(26), 5, 0, "NC1", null);   // phần sau 0h: giờ bắt đầu thuộc hôm sau, ngoài khung 08–17
         db2.Fixup();
-        var pr = await new MachineEfficiencyService(db2).GetPeriodAsync(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D2), ca.GioBatDau, ca.GioKetThuc, ca, 1);
-        Say(pr.Days.Count == 1 && pr.Days[0] == DateOnly.FromDateTime(D1), "P1b máy: dòng tràn sang 0h hôm sau (ngoài khung 08–17) không làm hôm sau thành ngày kế hoạch",
-            string.Join(",", pr.Days));
+        // [G31-DON-BO-KIEM 2026-11-23] đáp án đổi: máy tính 24h (hàm theo ca đã bỏ) — mọi ngày lịch là ngày tính, phút chia đúng ngày lịch
+        var pr = await new MachineEfficiencyService(db2) { Clock = () => D1.AddDays(30) }.GetPeriod24Async(DateOnly.FromDateTime(D1), DateOnly.FromDateTime(D2), 1);
+        var pm1 = pr.Rows.First();
+        Say(pr.Days.Count == 2 && Math.Abs(pm1.PerDay.First(x => x.Day == DateOnly.FromDateTime(D1)).Run - 180) < 0.01 && Math.Abs(pm1.PerDay.First(x => x.Day == DateOnly.FromDateTime(D2)).Run - 90) < 0.01 && pm1.Ok == 15,
+            "P1b máy (24h): ngày D1 chạy 60 + 120 = 180, ngày sau 90 (00:30–02:00); OK 3 dòng = 15", $"{string.Join(",", pr.Days)} · {string.Join(",", pm1.PerDay.Select(x => x.Run))} · {pm1.Ok}");
     }
 
     // ── P2 ngẫu nhiên, đếm từng phút ───────────────────────────────────────────────────────────────────────
@@ -533,20 +536,16 @@ public static class RptScen
             }
             db.Fixup();
             var f = DateOnly.FromDateTime(D1); var t = f.AddDays(6);
-            var svc = new MachineEfficiencyService(db);
-            var per = await svc.GetPeriodAsync(f, t, ca.GioBatDau, ca.GioKetThuc, ca, 1);
-            // ngày tính = ngày có dòng / việc CHẠM khung ca của ngày đó (rà độc lập 21/11 Trung 2)
-            var allIv = db.WtsProductionLogs.List.Where(x => !x.IsVoided).Select(x => (x.StartTime, x.EndTime))
-                .Concat(db.WorkerActivityLogs.List.Where(x => !x.IsVoided).Select(x => (x.StartTime, x.EndTime))).ToList();
-            var days = Enumerable.Range(0, 7).Select(i => f.AddDays(i))
-                .Where(d => allIv.Any(x => x.StartTime < d.ToDateTime(ca.GioKetThuc) && x.EndTime > d.ToDateTime(ca.GioBatDau))).ToList();
-            Ok(per.Error == null && per.Days.SequenceEqual(days), $"P3 r{round} ngày tính = ngày có WTS chạm khung ca (gồm ngày chỉ có việc không ra SP)", $"{string.Join(",", per.Days)} vs {string.Join(",", days)}");
+            var svc = new MachineEfficiencyService(db) { Clock = () => D1.AddDays(30) };   // [G31-DON-BO-KIEM] 24h; đồng hồ sau kỳ (không cắt giờ chưa tới)
+            var per = await svc.GetPeriod24Async(f, t, 1);
+            var days = Enumerable.Range(0, 7).Select(i => f.AddDays(i)).ToList();   // 24h: mọi ngày lịch
+            Ok(per.Error == null && per.Days.SequenceEqual(days), $"P3 r{round} ngày tính = mọi ngày lịch trong kỳ (24h)", $"{string.Join(",", per.Days)} vs {string.Join(",", days)}");
             foreach (var row in per.Rows)
             {
                 double run = 0, down = 0, brk = 0, idle = 0, tot = 0;
                 foreach (var d in per.Days)
                 {
-                    var one = await svc.GetAsync(d, ca.GioBatDau, ca.GioKetThuc, ca, 1);
+                    var one = await svc.GetDay24Async(d, 1);
                     var r1 = one.Rows.First(x => x.Machine.ThietBiId == row.Machine.ThietBiId);
                     run += r1.RunMinutes; down += r1.DownMinutes; brk += r1.BreakMinutes; idle += r1.IdleMinutes; tot += r1.TotalMinutes;
                     var pd = row.PerDay.First(x => x.Day == d);
@@ -555,23 +554,23 @@ public static class RptScen
                 }
                 Ok(Math.Abs(row.RunMinutes - run) < 0.01 && Math.Abs(row.DownMinutes - down) < 0.01 && Math.Abs(row.IdleMinutes - idle) < 0.01 && Math.Abs(row.BreakMinutes - brk) < 0.01,
                     $"P3 r{round} {row.Machine.SoMay}: kỳ = Σ ngày", $"{row.RunMinutes}/{run}");
-                Ok(Math.Abs(row.PlanMinutes - (row.RunMinutes + row.DownMinutes + row.IdleMinutes)) < 0.01 && Math.Abs(row.PlanMinutes - (tot - brk)) < 0.01,
-                    $"P3 r{round} {row.Machine.SoMay}: chạy + dừng + rảnh = kế hoạch = khung − nghỉ", $"{row.PlanMinutes} vs {row.RunMinutes + row.DownMinutes + row.IdleMinutes}");
+                Ok(Math.Abs(row.PlanMinutes - (row.RunMinutes + row.DownMinutes + row.IdleMinutes)) < 0.01 && Math.Abs(row.PlanMinutes - (tot - brk)) < 0.01 && brk == 0 && Math.Abs(tot - 1440 * days.Count) < 0.01,
+                    $"P3 r{round} {row.Machine.SoMay}: chạy + dừng + rảnh = kế hoạch = 24h × số ngày (không nghỉ ca)", $"{row.PlanMinutes} vs {row.RunMinutes + row.DownMinutes + row.IdleMinutes}");
                 Ok(row.PlanMinutes <= 0 || Math.Abs(row.RunPct - Math.Round(row.RunMinutes / row.PlanMinutes * 100, 1)) < 0.001, $"P3 r{round} % chạy trên kế hoạch");
                 Ok(Math.Abs(row.Downs.Sum(x => x.Minutes) - row.DownMinutes) < 0.01, $"P3 r{round} {row.Machine.SoMay}: Σ các lần dừng = phút dừng");
                 Ok(Math.Abs(row.ByPo.Sum(x => x.RunMinutes) - row.RunMinutes) < 0.01, $"P3 r{round} {row.Machine.SoMay}: Σ theo PO = phút chạy");
-                // OK / NG: mỗi dòng 1 lần (dòng chạm khung ca của ngày được tính)
+                // OK / NG: mỗi dòng 1 lần, vào kỳ chứa NGÀY BẮT ĐẦU dòng (24h)
                 var rows = db.WtsProductionLogs.List.Where(x => !x.IsVoided && x.MachineUsed == row.Machine.SoMay
-                    && per.Days.Any(d => x.StartTime < d.ToDateTime(ca.GioKetThuc) && x.EndTime > d.ToDateTime(ca.GioBatDau))).ToList();
+                    && DateOnly.FromDateTime(x.StartTime) >= f && DateOnly.FromDateTime(x.StartTime) <= t).ToList();
                 Ok(row.Ok == rows.Sum(x => x.QtyOk ?? 0) && row.Ng == rows.Sum(x => x.QtyNg ?? 0) && row.WorkerCount == rows.Select(x => x.WorkerId).Distinct().Count(),
                     $"P3 r{round} {row.Machine.SoMay}: OK / NG / số người — mỗi dòng 1 lần", $"{row.Ok}/{rows.Sum(x => x.QtyOk ?? 0)}");
-                // người đứng máy: đếm từng phút (trong khung, ngoài nghỉ thật của dòng)
+                // người đứng máy: đếm từng phút (cả ngày 00:00–24:00, ngoài nghỉ thật của dòng)
                 foreach (var w in row.ByWorker)
                 {
                     int cnt = 0;
                     foreach (var d in per.Days)
                     {
-                        var ws = d.ToDateTime(ca.GioBatDau); var we = d.ToDateTime(ca.GioKetThuc);
+                        var ws = d.ToDateTime(TimeOnly.MinValue); var we = d.AddDays(1).ToDateTime(TimeOnly.MinValue);
                         var mine = rows.Where(x => x.WorkerId == w.WorkerId).ToList();
                         var brk2 = await WorkMinutesStore.ForWtsAsync(db, mine.Select(x => x.WtsLogId));
                         for (var m = ws; m < we; m = m.AddMinutes(1))
@@ -581,7 +580,7 @@ public static class RptScen
                 }
             }
         }
-        Say(fails == bad0, $"P3 4 vòng ngẫu nhiên (seed {seed}): kỳ = Σ ngày, chạy + dừng + rảnh = kế hoạch, OK / NG mỗi dòng 1 lần, người đứng máy đếm phút");
+        Say(fails == bad0, $"P3 4 vòng ngẫu nhiên (seed {seed}): kỳ 24h = Σ ngày, chạy + dừng + rảnh = kế hoạch, OK / NG mỗi dòng 1 lần, người đứng máy đếm phút");
     }
 
     // ── P4 quyền + lời báo ─────────────────────────────────────────────────────────────────────────────────
@@ -595,27 +594,27 @@ public static class RptScen
         var gN = new UserGroup { GroupId = 77, GroupCode = "NOVIEW", IsActive = true, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsGc) };
         db.UserGroups.List.Add(gN); db.Users.List.Add(new User { UserId = 77, Username = "nv", FullName = "Không xem", IsActive = true, Group = gN, GroupId = 77 });
         db.Fixup();
-        var svc = new MachineEfficiencyService(db);
+        var svc = new MachineEfficiencyService(db) { Clock = () => D1.AddDays(30) };   // [G31-DON-BO-KIEM] 24h
         var f = DateOnly.FromDateTime(D1);
-        var no = await svc.GetPeriodAsync(f, f.AddDays(6), ca.GioBatDau, ca.GioKetThuc, ca, 77);
-        var ad = await svc.GetPeriodAsync(f, f.AddDays(6), ca.GioBatDau, ca.GioKetThuc, ca, 1);
-        Say(no.Rows.Count == 0 && no.Days.Count == 0 && ad.Rows.Count == 1 && ad.Days.Count == 1, "P4 máy: không quyền Xem → rỗng; admin → 1 máy 1 ngày", $"{no.Rows.Count}/{ad.Rows.Count}");
-        var big = await svc.GetPeriodAsync(f, f.AddDays(100), ca.GioBatDau, ca.GioKetThuc, ca, 1);
-        var rev = await svc.GetPeriodAsync(f.AddDays(3), f, ca.GioBatDau, ca.GioKetThuc, ca, 1);
-        Say(big.Error != null && big.Rows.Count == 0 && rev.Error != null, "P4 máy: > 93 ngày / Từ > Đến → lời báo, không tính", $"{big.Error} | {rev.Error}");
+        var no = await svc.GetPeriod24Async(f, f.AddDays(6), 77);
+        var ad = await svc.GetPeriod24Async(f, f.AddDays(6), 1);
+        Say(no.Rows.Count == 0 && no.Days.Count == 0 && ad.Rows.Count == 1 && ad.Days.Count == 7 && ad.Rows[0].Ok == 5, "P4 máy: không quyền Xem → rỗng; admin → 1 máy, 7 ngày lịch, OK 5", $"{no.Rows.Count}/{ad.Rows.Count}/{ad.Days.Count}");
+        var big = await svc.GetPeriod24Async(f, f.AddDays(400), 1);
+        var rev = await svc.GetPeriod24Async(f.AddDays(3), f, 1);
+        Say(big.Error != null && big.Rows.Count == 0 && rev.Error != null, "P4 máy: > 366 ngày / Từ > Đến → lời báo, không tính", $"{big.Error} | {rev.Error}");
         var rN = await new WtsReportService(db).GetReportAsync(f, f, null, 77);
         Say(rN.Rows.Count == 0 && rN.Days.Count == 0, "P4 WTS Report: không quyền → không dòng, không người-ngày");
 
-        // P4b dòng vắt qua nửa đêm, xem "toàn ngày" 00:00–23:59: dòng chạm khung 2 ngày → OK / NG chỉ tính 1 lần; phút chạy chia đúng 2 ngày
+        // P4b dòng vắt qua nửa đêm (24h): dòng chạm 2 ngày → OK / NG chỉ tính 1 lần (ngày bắt đầu); phút chạy chia đúng 2 ngày
         var db2 = await WtsScen.SeedAsync();
         db2.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
         P(db2, 2, "M1", "serial", D1.AddHours(23), D2.AddHours(1), 7, 1, "NC1", null);
         P(db2, 3, "M1", "serial", D2.AddHours(8), D2.AddHours(9), 3, 0, "NC1", null);
         db2.Fixup();
-        var pr = await new MachineEfficiencyService(db2).GetPeriodAsync(f, f.AddDays(1), new TimeOnly(0, 0), new TimeOnly(23, 59), null, 1);
+        var pr = await new MachineEfficiencyService(db2) { Clock = () => D1.AddDays(30) }.GetPeriod24Async(f, f.AddDays(1), 1);
         var m1 = pr.Rows.First();
-        Say(pr.Days.Count == 2 && m1.Ok == 10 && m1.Ng == 1 && Math.Abs(m1.RunMinutes - 179) < 0.01 && m1.WorkerCount == 2,
-            "P4b dòng 23:00 → 01:00 hôm sau: OK 7 + 3 = 10, NG 1 (mỗi dòng 1 lần), chạy 59 + 60 + 60 = 179 (khung 00:00–23:59), 2 người",
+        Say(pr.Days.Count == 2 && m1.Ok == 10 && m1.Ng == 1 && Math.Abs(m1.RunMinutes - 180) < 0.01 && m1.WorkerCount == 2,
+            "P4b dòng 23:00 → 01:00 hôm sau: OK 7 + 3 = 10, NG 1 (mỗi dòng 1 lần), chạy 60 + 60 + 60 = 180 (24h), 2 người",
             $"ngày {pr.Days.Count} OK {m1.Ok} NG {m1.Ng} chạy {m1.RunMinutes} người {m1.WorkerCount}");
     }
 }

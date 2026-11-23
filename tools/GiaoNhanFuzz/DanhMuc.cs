@@ -72,6 +72,10 @@ static class DanhMuc
             {
                 var p = Path.Combine(fuzz, ScenFile[sc]);
                 scenText[sc] = t = File.Exists(p) ? File.ReadAllText(p) : "";
+                // [G32B-SCEN 2026-11-23] kịch bản tách nhiều file (partial class, vd SaoLuuScen.cs + SaoLuuScen32b.cs) → đọc cả các file cùng tiền tố tên
+                if (t.Length > 0)
+                    foreach (var q in Directory.GetFiles(fuzz, Path.GetFileNameWithoutExtension(ScenFile[sc]) + "?*.cs").OrderBy(x => x, StringComparer.Ordinal))
+                        scenText[sc] = t = t + "\n" + File.ReadAllText(q);
             }
             return t;
         }

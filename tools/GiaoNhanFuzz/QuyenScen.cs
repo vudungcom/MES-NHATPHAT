@@ -487,6 +487,130 @@ public static class QuyenScen
             PinThrottle.ResetAll();
         }
 
+        Console.WriteLine("[Q17] QF-P-03 — 12 chỗ ghi DB của trang Part Master dời vào service: máy chủ kiểm quyền từ DB (người bị rút quyền giữa phiên bị chặn), ghi y như trang cũ");
+        {
+            // [QF-P-03 2026-11-23] Nguồn: CLAUDE quét Fable 14/11 (P-03); HÙNG 23/11 13:20 OK. Đáp án viết tay theo code trang cũ (Detail_Partmaster bản 040bc56).
+            var db = Seed();
+            var gB = new UserGroup { GroupId = 21, GroupCode = "PMB", IsActive = true, Permissions = Perm((SystemPermissions.PartGc, true, true)) };
+            var gC = new UserGroup { GroupId = 22, GroupCode = "PMC", IsActive = true, Permissions = Perm((SystemPermissions.PartHtsp, true, true)) };
+            var gAv = new UserGroup { GroupId = 23, GroupCode = "PMAV", IsActive = true, Permissions = Perm((SystemPermissions.PartTaoMoi, true, false), (SystemPermissions.PartGc, true, false)) };
+            var gA = new UserGroup { GroupId = 24, GroupCode = "PMA", IsActive = true, Permissions = Perm((SystemPermissions.PartTaoMoi, true, true)) };
+            db.UserGroups.List.AddRange(new[] { gB, gC, gAv, gA });
+            const int UB = 21, UC = 22, UAv = 23, UA = 24;
+            foreach (var (uid, g) in new[] { (UB, gB), (UC, gC), (UAv, gAv), (UA, gA) })
+                db.Users.List.Add(new User { UserId = uid, Username = "u" + uid, FullName = "U" + uid, IsActive = true, Group = g, GroupId = g.GroupId, PIN = "1111" });
+            db.PartMasters.List.Add(new PartMaster { PartId = 1, PartNo = "P" });
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 1, PartId = 1, NC = "NC1", MachineRegistered = "M1", IsActive = true });
+            db.PartMachiningSteps.List.Add(new PartMachiningStep { StepId = 2, PartId = 1, NC = "NC2", MachineRegistered = "M2", IsActive = true });
+            db.PartMachiningTimings.List.Add(new PartMachiningTiming { TimingId = 7, StepId = 1, SoMay = "M5", SetupTime = 1, MachiningTime = 2, IsActive = true });
+            db.Fixup();
+            var ms = new PartMachiningService(db); var pms = new PartMasterService(db); var cs = new PartStepStdTimeConfirmService(db);
+            var at = new DateTime(2026, 11, 23, 9, 30, 15);
+            int Logs() => db.PartProcessStepChangeLogs.List.Count;
+            async Task<string?> Err(Func<Task> f) { try { await f(); return null; } catch (Exception ex) { db.ChangeTracker.Clear(); return ex.GetType().Name + ": " + ex.Message; } }
+            var t = new PartMachiningService.TimingGhi(" M6 ", 2, "Ga1", "Dao1", 1.5m, 3m, null, 0.5m, null);
+            // (a) thêm máy đồng dạng
+            int l0 = Logs(), n0 = db.PartMachiningTimings.List.Count;
+            var e1 = await Err(() => ms.AddTimingAsync(1, 1, t, GcOnly, "ly do", at));
+            var e2 = await Err(() => ms.AddTimingAsync(1, 1, t, UAv, "ly do", at));
+            Ok(e1 != null && e1.StartsWith("UnauthorizedAccess") && e2 != null && e2.StartsWith("UnauthorizedAccess") && Logs() == l0 && db.PartMachiningTimings.List.Count == n0,
+               "Q17a thêm máy đồng dạng: không quyền / chỉ XEM vùng B → chặn ở máy chủ, không ghi gì", $"{e1} | {e2}");
+            long id = 0; var e3 = await Err(async () => id = await ms.AddTimingAsync(1, 1, t, UB, "ly do", at));
+            var ent = db.PartMachiningTimings.List.FirstOrDefault(x => x.TimingId == id);
+            var lg = db.PartProcessStepChangeLogs.List.LastOrDefault();
+            Ok(e3 == null && ent != null && ent.SoMay == "M6" && ent.DisplayOrder == 2 && ent.FixtureType == "Ga1" && ent.ToolType == "Dao1" && ent.SetupTime == 1.5m && ent.MachiningTime == 3m
+               && ent.PreparationTime == 0.5m && ent.IsActive && ent.CreatedBy == UB && ent.CreatedAt == at && Logs() == l0 + 1
+               && lg!.StepTable == "Machining" && lg.StepId == 1 && lg.TimingId == id && lg.PartId == 1 && lg.FieldName == "Created" && lg.OldValue == null
+               && lg.NewValue == "Thêm máy M6 | GL=1.5 GC=3 KT= CB=0.5 CT=" && lg.ChangedBy == UB && lg.ChangedAt == at && lg.Reason == "ly do",
+               "Q17b có quyền sửa vùng B → dòng máy + 1 dòng lịch sử 'Created' đúng y chữ trang cũ (Trim máy, giờ trang truyền)", $"{e3} · {lg?.NewValue}");
+            // (b) thêm: lỗi lần lưu lịch sử → không để lại dòng máy (1 giao dịch)
+            int nS = 0; Microsoft.EntityFrameworkCore.DbContext.OnSave = () => ++nS == 2 ? new InvalidOperationException("gia loi luu lich su") : null;
+            int n1 = db.PartMachiningTimings.List.Count, l1 = Logs();
+            var e4 = await Err(() => ms.AddTimingAsync(1, 1, t with { SoMay = "M9" }, UB, "ly do", at));
+            Microsoft.EntityFrameworkCore.DbContext.OnSave = null;
+            Ok(e4 != null && db.PartMachiningTimings.List.Count == n1 && !db.PartMachiningTimings.List.Any(x => x.SoMay == "M9") && Logs() == l1,
+               "Q17c thêm máy: lưu lịch sử lỗi → quay lại cả dòng máy (trước: 2 lần lưu rời, còn dòng máy không lịch sử)", e4);
+            // (c) sửa
+            var m5 = db.PartMachiningTimings.List.Single(x => x.TimingId == 7);
+            gB.Permissions = Perm((SystemPermissions.PartGc, true, false));   // Admin rút quyền Sửa giữa phiên (trang vẫn mở với cờ cũ)
+            var e5 = await Err(() => ms.UpdateTimingAsync(7, 1, 1, new("M5", 1, null, null, 9m, 2m, null, null, null), UB, "r", at));
+            Ok(e5 != null && e5.Contains("không có quyền sửa vùng") && m5.SetupTime == 1, "Q17d bị rút quyền Sửa vùng B giữa phiên → sửa máy đồng dạng bị chặn ở máy chủ (P-03)", e5);
+            gB.Permissions = Perm((SystemPermissions.PartGc, true, true));
+            int l2 = Logs();
+            bool okU = await ms.UpdateTimingAsync(7, 1, 1, new("M5 ", 3, "G", null, 9m, 2m, 4m, null, null), UB, "r", at);
+            var newLogs = db.PartProcessStepChangeLogs.List.Skip(l2).ToList();
+            Ok(okU && m5.SetupTime == 9m && m5.InspectionTime == 4m && m5.FixtureType == "G" && m5.DisplayOrder == 3 && m5.UpdatedBy == UB && m5.UpdatedAt == at
+               && newLogs.Select(x => x.FieldName).SequenceEqual(new[] { "SetupTime", "InspectionTime", "FixtureType" }) && newLogs.All(x => x.TimingId == 7 && x.StepId == 1 && x.Reason == "r")
+               && newLogs[0].OldValue == "1" && newLogs[0].NewValue == "9" && newLogs[1].OldValue == null && newLogs[2].NewValue == "G",
+               "Q17e sửa: lịch sử đúng từng ô đổi (thứ tự như trang cũ, 'M5 ' Trim = không đổi máy), giữ giờ trang truyền", string.Join(", ", newLogs.Select(x => $"{x.FieldName}:{x.OldValue}→{x.NewValue}")));
+            var e6 = await Err(() => ms.UpdateTimingAsync(7, 2, 1, new("M5", 1, null, null, 1m, null, null, null, null), UB, "r", at));
+            var e7 = await Err(() => ms.UpdateTimingAsync(7, 1, 1, new("M5", 1, null, null, -1m, null, null, null, null), UB, "r", at));
+            bool khong = await ms.UpdateTimingAsync(999, 1, 1, t, UB, "r", at);
+            Ok(e6 != null && e6.Contains("không thuộc NC") && e7 != null && e7.Contains("Gia công:") && !khong && m5.SetupTime == 9m,
+               "Q17f sửa: dòng không thuộc NC / thời gian âm → chặn; không thấy dòng → false (trang bỏ qua như cũ)", $"{e6} | {e7}");
+            // (d) xoá mềm
+            int l3 = Logs();
+            var e8 = await Err(() => ms.SoftDeleteTimingAsync(7, 1, 1, HtspView, "r", at));
+            bool okD = await ms.SoftDeleteTimingAsync(7, 1, 1, UB, "xoa", at);
+            var dl = db.PartProcessStepChangeLogs.List.Last();
+            Ok(e8 != null && okD && !m5.IsActive && m5.UpdatedBy == UB && Logs() == l3 + 1 && dl.FieldName == "Deleted" && dl.OldValue == "Xóa máy M5 | GL=9 GC=2 KT=4 CB= CT=" && dl.NewValue == null && dl.Reason == "xoa",
+               "Q17g xoá mềm máy đồng dạng: không quyền → chặn; có quyền → IsActive = 0 + lịch sử 'Deleted' y chữ cũ", $"{e8} · {dl.OldValue}");
+            // (e) lịch sử xác nhận TG chuẩn (máy) + T.Chuẩn Taro
+            int l4 = Logs();
+            var e9 = await Err(() => ms.LogTimingConfirmAsync(1, null, 1, "SetupTime", false, true, UAv, "r", at));
+            await ms.LogTimingConfirmAsync(1, id, 1, "SetupTime", false, true, UB, "r", at);
+            var cl = db.PartProcessStepChangeLogs.List.Last();
+            var e10 = await Err(() => cs.LogConfirmAsync("Taro", 5, 1, true, false, UB, "r", at));
+            await cs.LogConfirmAsync("Taro", 5, 1, false, true, UC, "Lưu quy trình", at);
+            var tl = db.PartProcessStepChangeLogs.List.Last();
+            Ok(e9 != null && e10 != null && e10.Contains("Hoàn thiện SP") && Logs() == l4 + 2
+               && cl.FieldName == "TimingConfirmed" && cl.TimingId == id && cl.OldValue == "Unconfirmed [SetupTime]" && cl.NewValue == $"Confirmed [SetupTime] by userId={UB} at 2026-11-23 09:30:15"
+               && tl.StepTable == "Taro" && tl.StepId == 5 && tl.OldValue == "Unconfirmed [StandardTime]" && tl.NewValue == $"Confirmed [StandardTime] by userId={UC} at 2026-11-23 09:30:15" && tl.Reason == "Lưu quy trình",
+               "Q17h lịch sử xác nhận: ô máy (vùng B) / T.Chuẩn Taro (vùng C) kiểm đúng vùng ở máy chủ, chữ y trang cũ", $"{e9} | {e10} · {cl.NewValue} · {tl.NewValue}");
+            // (f) máy loại trừ toàn hệ thống
+            db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 1, SoMay = "H04" }); db.MachineExcludeSettings.List.Add(new MachineExcludeSetting { Id = 2, SoMay = "H05" }); db.Fixup();
+            var e11 = await Err(() => ms.SaveExcludeMachinesAsync(new HashSet<string> { "H04" }, UC));
+            int nx = db.MachineExcludeSettings.List.Count;
+            await ms.SaveExcludeMachinesAsync(new HashSet<string> { "H04", "h05x", "H09" }, UB);
+            var ex = db.MachineExcludeSettings.List.Select(x => x.SoMay).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            Ok(e11 != null && nx == 2 && ex.SequenceEqual(new[] { "H04", "H09", "h05x" }) && db.MachineExcludeSettings.List.Where(x => x.SoMay != "H04").All(x => x.AddedByUserId == UB || x.SoMay == "H05"),
+               "Q17i máy loại trừ: không quyền vùng B → chặn, giữ nguyên; có quyền → bỏ máy không tích, thêm máy mới (người thêm ghi lại)", $"{e11} · {string.Join(",", ex)}");
+            // (g) ghi chú mạ (vùng A)
+            var pm = db.PartMasters.List.Single();
+            var e12 = await Err(() => pms.UpdateGhiChuMaAsync(1, "Ma kem", UB));
+            var g1 = await pms.UpdateGhiChuMaAsync(1, "  Ma kem  ", UA);
+            var g2 = await pms.UpdateGhiChuMaAsync(1, "   ", UA);
+            var g3 = await pms.UpdateGhiChuMaAsync(99, "x", UA);
+            Ok(e12 != null && g1 == (true, "Ma kem") && g2 == (true, (string?)null) && pm.GhiChuMa == null && g3.Found == false,
+               "Q17j ghi chú mạ: vùng B không sửa được; vùng A → Trim, trống = null; không thấy Part → Found = false", e12);
+            // (h) cờ Xác nhận OK
+            pm.IsPlanConfirmed = false; pm.IsMachiningConfirmed = true;
+            // rà độc lập 23/11 (Thấp 12): vùng không đủ quyền → BỎ QUA vùng đó (BiChan), vùng còn lại vẫn ghi — trước ném lỗi cả lệnh
+            PartMaster? f1 = null; string? ef1 = null; List<string> c1 = new();   // gói try: đột biến chặn nhầm A = OK phải ra SAI, không làm vỡ cả kịch bản
+            try { (f1, c1) = await pms.UpdateConfirmFlagsAsync(1, UAv, true, null, null, null, null); } catch (Exception x) { ef1 = x.Message; }
+            bool okA1 = f1 != null && c1.Count == 0 && pm.IsPlanConfirmed;
+            var (_, c13) = await pms.UpdateConfirmFlagsAsync(1, UAv, false, null, null, null, null);
+            bool okA2 = pm.IsPlanConfirmed && c13.SequenceEqual(new[] { "Kế hoạch nhập (Thông tin chung)" });
+            pm.IsPlanConfirmed = false;
+            var (f14, c14) = await pms.UpdateConfirmFlagsAsync(1, UAv, true, false, null, null, null);
+            Ok(okA1 && okA2 && f14 != null && pm.IsPlanConfirmed && pm.IsMachiningConfirmed && c14.SequenceEqual(new[] { "Quy trình gia công CNC" }),
+               "Q17k cờ OK: chỉ XEM mục A → đặt A = OK được (luật trang cũ, câu B5 giữ), A = NG bị bỏ qua (báo vùng); vùng B chỉ xem → bỏ qua B, A vẫn ghi", $"{ef1} | {string.Join(",", c13)} | {string.Join(",", c14)}");
+            var (f2, c2) = await pms.UpdateConfirmFlagsAsync(1, UB, null, false, null, null, null);
+            var e15 = await Err(() => pms.UpdateConfirmFlagsAsync(1, Locked, true, true, true, true, true));
+            var (f3, c3) = await pms.UpdateConfirmFlagsAsync(1, Admin, false, true, true, true, true);
+            var (f4, c4) = await pms.UpdateConfirmFlagsAsync(99, Admin, false, null, null, null, null);
+            Ok(f2 != null && c2.Count == 0 && e15 != null && f3 != null && c3.Count == 0 && !pm.IsPlanConfirmed && pm.IsMachiningConfirmed && pm.IsHtspConfirmed && pm.IsKcsConfirmed && pm.IsPkgConfirmed && f4 == null,
+               "Q17l cờ OK: sửa vùng B đặt NG vùng B được; tài khoản khoá → chặn; Admin đặt cả 5 vùng; không thấy Part → null", e15);
+            // (h2) nhánh lỗi [RS-E2]: người sửa B + C bị rút quyền C giữa phiên → B vẫn về NG, C bỏ qua (trước: ném cả lệnh, B giữ OK)
+            pm.IsMachiningConfirmed = true; pm.IsHtspConfirmed = true;
+            var (f5, c5) = await pms.UpdateConfirmFlagsAsync(1, UB, null, false, false, null, null);
+            Ok(f5 != null && !pm.IsMachiningConfirmed && pm.IsHtspConfirmed && c5.SequenceEqual(new[] { "Hoàn thiện SP (Taro/Bavia/Rửa)" }),
+               "Q17n về NG khi lưu lỗi: vùng còn quyền (B) về NG, vùng mất quyền (C) bỏ qua + báo tên vùng", string.Join(",", c5));
+            var e16 = await Err(() => ms.SaveExcludeMachinesAsync(new HashSet<string>(), NoGroup));
+            var e17 = await Err(() => pms.UpdateGhiChuMaAsync(1, "x", Locked));
+            Ok(e16 != null && e17 != null && db.MachineExcludeSettings.List.Count == 3, "Q17m không nhóm / tài khoản khoá → chặn mọi ghi", $"{e16} | {e17}");
+        }
+
         Console.WriteLine("[Q8] WTS-ORDER-SAVE — WTS tiêu chuẩn: chỉ đổi Thứ tự hiển thị → lưu + lịch sử");
         {
             var db = Seed(); var auth = new AuthService(db); var wts = new StandardWtsTaskService(db, auth);
@@ -583,15 +707,17 @@ public static class QuyenScen
             db.Users.List.Add(new User { UserId = 13, Username = "u13", FullName = "U13", IsActive = true, Group = hsmG, GroupId = 13 });
             db.Fixup();
             var eff = new MachineEfficiencyService(db);
-            var d = new DateOnly(2026, 11, 16); var t1 = new TimeOnly(7, 0); var t2 = new TimeOnly(16, 0);
-            var rNo = await eff.GetAsync(d, t1, t2, null, GcOnly);
+            // [G31-DON-BO-KIEM 2026-11-23] đổi sang hàm 24h (GetAsync theo ca đã bỏ) — cùng luật quyền
+            var d = new DateOnly(2026, 11, 16);
+            var rNo = await eff.GetDay24Async(d, GcOnly);
             Ok(rNo.Rows.Count == 0, "u2 (không có HIEU_SUAT_MAY): kết quả rỗng (không lộ WTS máy)", $"{rNo.Rows.Count} máy");
-            var r0 = await eff.GetAsync(d, t1, t2, null);
+            var r0 = await eff.GetDay24Async(d, 0);
             Ok(r0.Rows.Count == 0, "không truyền người xem (viewerUserId = 0): rỗng");
-            var rAd = await eff.GetAsync(d, t1, t2, null, Admin);
+            var rAd = await eff.GetDay24Async(d, Admin);
             Ok(rAd.Rows.Count == 1, "Admin: thấy 1 máy", $"{rAd.Rows.Count}");
-            var rV = await eff.GetAsync(d, t1, t2, null, 13);
-            Ok(rV.Rows.Count == 1, "u13 nhóm có ô Xem HIEU_SUAT_MAY: thấy 1 máy", $"{rV.Rows.Count}");
+            var rV = await eff.GetDay24Async(d, 13);
+            var pNo = await eff.GetPeriod24Async(d, d.AddDays(6), GcOnly); var pV = await eff.GetPeriod24Async(d, d.AddDays(6), 13);
+            Ok(rV.Rows.Count == 1 && pNo.Rows.Count == 0 && pV.Rows.Count == 1, "u13 nhóm có ô Xem HIEU_SUAT_MAY: thấy 1 máy (ngày + kỳ); u2 kỳ: rỗng", $"{rV.Rows.Count} {pNo.Rows.Count} {pV.Rows.Count}");
             Ok(SystemPermissions.Sections.Any(s => s.Code == SystemPermissions.HieuSuatMay), "Mục HIEU_SUAT_MAY có trong danh sách ma trận (Cài đặt tự hiện ô)");
         }
 

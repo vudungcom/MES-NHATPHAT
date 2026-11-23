@@ -1067,6 +1067,24 @@ public static class TaroScen
             var gs = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONLOI", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Notes = "sua tai GC" });
             Ok(gs.Ok && db.HandoverRepairResults.List.Last().ToNC == "NC04", "T25c Gia công sửa tại nhóm → được, làm tiếp NC04", gs.Error);
         }
+        {   // [FUZZ-32514 2026-11-23] vụ làm hộ (NG lúc nhận) HTSP gửi Gia công nhờ sửa (ô Hàng sửa) → Gia công "Sửa xong, trả nơi gửi" HTSP / Kho → chặn bằng
+            //   luật vụ làm hộ (câu cụ thể, kiểm trước luật chung SUA-QUA-KCS); "Trả lại (chưa sửa được)" HTSP ô Hàng lỗi → được. Nguồn: CLAUDE (sổ FUZZ-32514); HÙNG 23/11 13:03.
+            var (db, det, cs) = await TraVe("P-LNN5", new[] { ("3", "2T") });
+            var svc = new HandoverService(db); var led = new HandoverLedgerService(db);
+            var g0 = await svc.IssueByCellAsync(det, "HTSP", "GC", 1, U, "LOI", false, "SUA", null, null, null, null, null, cs);
+            var gr = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 1, 0, null, U);
+            var row = (await led.GetLedgerForDetailAsync(det))!;
+            int nt = db.HandoverTransactions.List.Count;
+            var sx1 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONSUA", CaseId = cs, Action = HandoverForm.ASuaXong, ToGroup = "HTSP", Qty = 1 });
+            var sx2 = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONSUA", CaseId = cs, Action = HandoverForm.ASuaXong, ToGroup = "KHO", Qty = 1 });
+            Ok(g0.Ok && gr.Ok && row.Cases[cs].IsLamHo && row.CaseHeld(cs, "GC", HandoverCell.Sua) == 1
+               && !sx1.Ok && sx1.Error.Contains("làm hộ bị lỗi") && sx1.Error.Contains("sửa xong trả về Gia công") && !sx2.Ok && sx2.Error.Contains("làm hộ bị lỗi")
+               && db.HandoverTransactions.List.Count == nt,
+               "T25h Gia công giữ vụ làm hộ ở ô Hàng sửa (HTSP gửi nhờ) → \"Sửa xong, trả nơi gửi\" HTSP / Kho bị chặn bằng luật vụ làm hộ (câu cụ thể), không ghi gì",
+               $"{g0.Error} {gr.Error} sua {row.CaseHeld(cs, "GC", HandoverCell.Sua)} | {sx1.Error} | {sx2.Error}");
+            var tl = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "GC", UserId = U, Kind = HandoverForm.Loi, Pos = "TONSUA", CaseId = cs, Action = HandoverForm.ATraLai, ToGroup = "HTSP", Qty = 1 });
+            Ok(tl.Ok && db.HandoverTransactions.List.Last().ToCell == HandoverCell.Loi, "T25h đối chứng: \"Trả lại\" HTSP ô Hàng lỗi (cùng vụ) → được", tl.Error);
+        }
         {   // làm hộ N3 không phải Taro (HTSP làm NC03 máy loại trừ, PO không có mã Taro ở đó): cùng luật
             var (db, det, cs) = await TraVe("P-LNN2", new (string, string)[0]);
             var svc = new HandoverService(db); var led = new HandoverLedgerService(db);

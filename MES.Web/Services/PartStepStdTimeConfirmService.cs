@@ -79,6 +79,26 @@ public class PartStepStdTimeConfirmService
         return want;
     }
 
+    /// <summary>[QF-P-03 2026-11-23] Lịch sử "TimingConfirmed" ô T.Chuẩn (Taro / Bavia / Rửa / KCS / Đóng gói) sau SetConfirmAsync — trước: trang
+    /// Detail_Partmaster ghi thẳng Db; nay máy chủ kiểm quyền vùng như SetConfirmAsync. Ghi y như trang cũ. Nguồn: CLAUDE quét Fable 14/11 (P-03); HÙNG 23/11 13:20 OK.</summary>
+    public async Task LogConfirmAsync(string table, long stepId, int partId, bool before, bool after, int userId, string reason, DateTime at)
+    {
+        var area = AreaOf(table);
+        var user = await _db.Users.Include(u => u.Group).AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId);
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAccessException("User không hợp lệ hoặc đã bị khóa");
+        if (!PartMasterPermissionHelper.CanEditArea(user.Group, area))
+            throw new UnauthorizedAccessException($"Bạn không có quyền sửa vùng {PartMasterPermissionHelper.GetAreaName(area)}.");
+        _db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+        {
+            StepTable = table, StepId = stepId, PartId = partId, FieldName = "TimingConfirmed",
+            OldValue = before ? "Confirmed [StandardTime]" : "Unconfirmed [StandardTime]",
+            NewValue = after ? $"Confirmed [StandardTime] by userId={userId} at {at:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed [StandardTime]",
+            ChangedBy = userId, ChangedAt = at, Reason = reason
+        });
+        await _db.SaveChangesAsync();
+    }
+
     /// <summary>
     /// Dùng cho trang Hiệu suất (WTS): tập các dòng T.Chuẩn ĐÃ được xác nhận của 1 Part,
     /// khoá theo "Bảng|Mã" với Mã = NC và (nếu có) WtsTaskCode của step đang active.

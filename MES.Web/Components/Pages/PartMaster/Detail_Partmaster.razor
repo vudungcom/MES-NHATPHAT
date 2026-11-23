@@ -2871,20 +2871,8 @@ else
 
                 if (before != after)
                 {
-                    Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
-                    {
-                        StepTable = key.Table,
-                        StepId = key.StepId,
-                        PartId = _part!.PartId,
-                        FieldName = "TimingConfirmed",
-                        // [CONFIRM-LOG-FIELD 2026-10-30] Mục 10: ghi rõ ô T.Chuẩn
-                        OldValue = before ? "Confirmed [StandardTime]" : "Unconfirmed [StandardTime]",
-                        NewValue = after ? $"Confirmed [StandardTime] by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : "Unconfirmed [StandardTime]",
-                        ChangedBy = _currentUserId,
-                        ChangedAt = now,
-                        Reason = string.IsNullOrWhiteSpace(_reason) ? "Lưu quy trình" : _reason
-                    });
-                    await Db.SaveChangesAsync();
+                    // [QF-P-03 2026-11-23] lịch sử xác nhận T.Chuẩn ghi qua service (máy chủ kiểm quyền vùng) — trước: trang ghi thẳng Db; chữ log giữ y [CONFIRM-LOG-FIELD]
+                    await StdConfirmSvc.LogConfirmAsync(key.Table, key.StepId, _part!.PartId, before, after, _currentUserId, string.IsNullOrWhiteSpace(_reason) ? "Lưu quy trình" : _reason, now);
                     log.Add($"✓ {(after ? "Xác nhận" : "Bỏ xác nhận")} T.Chuẩn ({key.Table}, step {key.StepId})");
                 }
                 _pendingStd.Remove(key);
@@ -3438,24 +3426,8 @@ else
         _excludeError = null;
         try
         {
-            var current = await Db.MachineExcludeSettings.ToListAsync();
-            var currentSet = current.Select(x => x.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var toRemove = current.Where(x => !_selectedExcludeMachines.Contains(x.SoMay)).ToList();
-            if (toRemove.Any())
-                Db.MachineExcludeSettings.RemoveRange(toRemove);
-
-            foreach (var soMay in _selectedExcludeMachines.Where(s => !currentSet.Contains(s)))
-            {
-                await Db.MachineExcludeSettings.AddAsync(new MachineExcludeSetting
-                {
-                    SoMay = soMay,
-                    AddedAt = DateTime.Now,
-                    AddedByUserId = _currentUserId > 0 ? _currentUserId : null
-                });
-            }
-
-            await Db.SaveChangesAsync();
+            // [QF-P-03 2026-11-23] máy loại trừ toàn hệ thống ghi qua PartMachiningService (máy chủ kiểm quyền sửa vùng B) — trước: trang ghi thẳng Db
+            await MachiningSvc.SaveExcludeMachinesAsync(_selectedExcludeMachines, _currentUserId);
 
             _excludeSettings = await Db.MachineExcludeSettings
                 .OrderBy(x => x.SoMay)
@@ -3844,36 +3816,12 @@ else
     private async Task SafeSetDefaultAsync(string attrType, string? newValue)
     {
         if (string.IsNullOrWhiteSpace(newValue)) return;
-
-        var attrs = await Db.PartMasterAttributes
-            .Where(a => a.PartId == _part!.PartId && a.AttributeType == attrType)
-            .ToListAsync();
-
-        var target = attrs.FirstOrDefault(x => x.Value == newValue) 
-                  ?? Db.PartMasterAttributes.Local.FirstOrDefault(x => x.PartId == _part!.PartId && x.AttributeType == attrType && x.Value == newValue);
-
-        if (target != null)
-        {
-            bool hasChanges = false;
-            foreach (var a in attrs.Where(x => x.IsDefault && x.Value != newValue))
-            {
-                a.IsDefault = false;
-                Db.PartMasterAttributes.Update(a);
-                hasChanges = true;
-            }
-
-            if (!target.IsDefault)
-            {
-                target.IsDefault = true;
-                Db.PartMasterAttributes.Update(target);
-                hasChanges = true;
-            }
-
-            if (hasChanges)
-            {
-                await Db.SaveChangesAsync();
-            }
-        }
+        // [QF-P-03 2026-11-23] đặt giá trị mặc định qua PartMasterService.SetAsDefaultAsync (máy chủ kiểm quyền sửa vùng A, 1 giao dịch) — trước: trang ghi thẳng Db.
+        //   Giá trị Trim như lúc thêm (AddValueAsync lưu bản Trim) — trước: gõ thừa dấu cách thì không tìm thấy, âm thầm không đặt mặc định.
+        //   Rà độc lập 23/11 (Thấp 13) — khác trang cũ, CỐ Ý: tìm giá trị bằng SQL như AddValueAsync ngay trước đó (không phân biệt hoa thường → gõ "al6061" khi đã có
+        //   "AL6061" thì đặt mặc định dòng AL6061 — trước: không khớp chữ hoa, âm thầm không đặt); dòng đang tắt thì bật lại (AddValueAsync cũng bật lại);
+        //   không thấy thì tạo (chỉ khi bước thêm giá trị trước đó lỗi — đã báo lỗi ở bước đó).
+        await PmSvc.SetAsDefaultAsync(_part!.PartId, attrType, newValue.Trim(), _currentUserId);
     }
 
     private async Task DoSaveAsync(bool confirmOk)
@@ -3881,6 +3829,7 @@ else
         var log = new List<string>();
         var errors = new List<string>();
         var reason = string.IsNullOrWhiteSpace(_reason) ? "Khởi tạo quy trình ban đầu" : _reason.Trim();
+        bool quyenDoi = false;   // [QF-P-03 2026-11-23] máy chủ báo vùng mất quyền giữa phiên (UpdateConfirmFlagsAsync.BiChan)
         // [RS-E2 2026-10-29] Mục nào lưu lỗi giữa chừng (1 dòng NC / mã CV không lưu được) thì KHÔNG đánh "Xác nhận OK" cho mục đó.
         //   Trước: lỗi từng dòng chỉ ghi vào danh sách lỗi, cờ Is*Confirmed vẫn = confirmOk → quy trình thiếu dòng mà vẫn OK,
         //   PO tạo sau đó chụp (snapshot) quy trình thiếu. Nay mỗi mục đếm lỗi riêng: có lỗi → mục đó về NG, báo rõ để lưu lại.
@@ -3931,12 +3880,10 @@ else
                 {
                     try
                     {
-                        var pm = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part!.PartId);
-                        if (pm != null)
+                        var gcm = await PmSvc.UpdateGhiChuMaAsync(_part!.PartId, _ghiChuMa, _currentUserId);   // [QF-P-03 2026-11-23] qua service (máy chủ kiểm quyền vùng A)
+                        if (gcm.Found)
                         {
-                            pm.GhiChuMa = string.IsNullOrWhiteSpace(_ghiChuMa) ? null : _ghiChuMa.Trim();
-                            await Db.SaveChangesAsync();
-                            _originalGhiChuMa = pm.GhiChuMa;
+                            _originalGhiChuMa = gcm.GhiChuMa;
                             log.Add("✓ Cập nhật Ghi chú mạ");
                         }
                     }
@@ -3949,8 +3896,7 @@ else
                 await TryAddAttrValue("Material", _material, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialConfig", _materialConfig, _currentUserId, log, errors);
                 await TryAddAttrValue("MaterialNote", _materialNote, _currentUserId, log, errors);
-
-                await Db.SaveChangesAsync();
+                // [QF-P-03 2026-11-23] bỏ "await Db.SaveChangesAsync()" thừa ở đây: AddValueAsync đã tự lưu — lệnh lưu chung của trang chỉ đẩy thứ còn kẹt trong DbContext, không kiểm quyền.
 
                 if (_setDefaultMaterial)
                 {
@@ -3971,7 +3917,7 @@ else
                 }
 
                 okA = errors.Count == errMark;   // [RS-E2]
-                _part!.IsPlanConfirmed = confirmOk && okA; 
+                // [QF-P-03 2026-11-23] bỏ gán _part!.IsPlanConfirmed (_part đang được DbContext theo dõi → lần SaveChanges của service kế tiếp đẩy cờ lên DB KHÔNG qua kiểm quyền; rà độc lập 23/11 Thấp 11) — cờ ghi ở UpdateConfirmFlagsAsync dưới
             }
 
             if (_canEditB)
@@ -3991,7 +3937,7 @@ else
                 await SavePendingTimingConfirmsAsync(log, errors);
 
                 okB = errors.Count == errMark;   // [RS-E2]
-                _part!.IsMachiningConfirmed = confirmOk && okB;
+                // [QF-P-03 2026-11-23] bỏ gán _part!.IsMachiningConfirmed (_part đang được DbContext theo dõi → lần SaveChanges của service kế tiếp đẩy cờ lên DB KHÔNG qua kiểm quyền; rà độc lập 23/11 Thấp 11) — cờ ghi ở UpdateConfirmFlagsAsync dưới
             }
 
             if (_canEditC)
@@ -4022,7 +3968,7 @@ else
                 await SavePendingStdConfirmsAsync(new[] { "Taro", "Bavia", "Washing" }, log, errors);
 
                 okC = errors.Count == errMark;   // [RS-E2]
-                _part!.IsHtspConfirmed = confirmOk && okC;
+                // [QF-P-03 2026-11-23] bỏ gán _part!.IsHtspConfirmed (_part đang được DbContext theo dõi → lần SaveChanges của service kế tiếp đẩy cờ lên DB KHÔNG qua kiểm quyền; rà độc lập 23/11 Thấp 11) — cờ ghi ở UpdateConfirmFlagsAsync dưới
             }
 
             if (_canEditD)
@@ -4039,7 +3985,7 @@ else
                 await SavePendingStdConfirmsAsync(new[] { "Inspection" }, log, errors);
 
                 okD = errors.Count == errMark;   // [RS-E2]
-                _part!.IsKcsConfirmed = confirmOk && okD;
+                // [QF-P-03 2026-11-23] bỏ gán _part!.IsKcsConfirmed (_part đang được DbContext theo dõi → lần SaveChanges của service kế tiếp đẩy cờ lên DB KHÔNG qua kiểm quyền; rà độc lập 23/11 Thấp 11) — cờ ghi ở UpdateConfirmFlagsAsync dưới
             }
 
             if (_canEditE)
@@ -4056,29 +4002,20 @@ else
                 await SavePendingStdConfirmsAsync(new[] { "Packaging" }, log, errors);
 
                 okE = errors.Count == errMark;   // [RS-E2]
-                _part!.IsPkgConfirmed = confirmOk && okE;
+                // [QF-P-03 2026-11-23] bỏ gán _part!.IsPkgConfirmed (_part đang được DbContext theo dõi → lần SaveChanges của service kế tiếp đẩy cờ lên DB KHÔNG qua kiểm quyền; rà độc lập 23/11 Thấp 11) — cờ ghi ở UpdateConfirmFlagsAsync dưới
             }
 
             if (_part != null)
             {
-                var trackedPart = await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part.PartId);
-                if (trackedPart != null)
-                {
-                    if (_canViewA)
-                    {
-                        if (confirmOk && okA) trackedPart.IsPlanConfirmed = true;   // [RS-E2] mục A lưu lỗi → không OK
-                        else if (_canEditA) trackedPart.IsPlanConfirmed = false;
-                    }
-
-                    // [RS-E2] mục nào lưu lỗi giữa chừng → về NG (trước: = confirmOk dù có lỗi)
-                    if (_canEditB) trackedPart.IsMachiningConfirmed = confirmOk && okB;
-                    if (_canEditC) trackedPart.IsHtspConfirmed = confirmOk && okC;
-                    if (_canEditD) trackedPart.IsKcsConfirmed = confirmOk && okD;
-                    if (_canEditE) trackedPart.IsPkgConfirmed = confirmOk && okE;
-
-                    await Db.SaveChangesAsync();
-                    _part = trackedPart;
-                }
+                // [QF-P-03 2026-11-23] cờ Xác nhận OK ghi qua PartMasterService.UpdateConfirmFlagsAsync (máy chủ kiểm quyền từng vùng) — trước: trang ghi thẳng Db.
+                //   Luật giữ y: mục A = OK khi xem được mục A + lưu đạt; = NG chỉ khi sửa được mục A; B–E chỉ khi sửa được vùng đó.
+                bool? planF = _canViewA ? (confirmOk && okA ? true : _canEditA ? false : (bool?)null) : null;   // [RS-E2] mục A lưu lỗi → không OK
+                // [RS-E2] mục nào lưu lỗi giữa chừng → về NG (trước: = confirmOk dù có lỗi)
+                var (trackedPart, biChanCo) = await PmSvc.UpdateConfirmFlagsAsync(_part.PartId, _currentUserId, planF,
+                    _canEditB ? confirmOk && okB : null, _canEditC ? confirmOk && okC : null,
+                    _canEditD ? confirmOk && okD : null, _canEditE ? confirmOk && okE : null);
+                if (trackedPart != null) _part = trackedPart;
+                if (biChanCo.Count > 0) { quyenDoi = true; errors.Add($"✗ Không đổi trạng thái xác nhận vùng {string.Join(", ", biChanCo)} — bạn không còn quyền (Admin vừa đổi quyền?). Tải lại trang."); }
             }
 
             if (saveLock != null) await saveLock.DisposeAsync();   // [PM-SNAP-MID] nhả khoá lượt lưu trước bước tự cập nhật PO (bước đó lấy khoá đọc)
@@ -4112,7 +4049,10 @@ else
             if (_canEditA || _canEditB || _canEditC || _canEditD || _canEditE)
             {
                 // [RS-E2] có lỗi thì không báo "Xác nhận OK" — nói rõ mục nào vẫn NG
-                if (confirmOk && errors.Count > 0)
+                // [QF-P-03 2026-11-23] bị rút quyền giữa phiên (quyenDoi) → không thêm dòng "Đã lưu phần không lỗi": giữ như trước (lỗi quyền văng ra
+                //   ngoài, log trống → trang KHÔNG nạp lại, chỗ đang sửa còn nguyên để lưu lại khi được trả quyền — drive_p03 P2)
+                if (quyenDoi) { }   // lỗi quyền đã ở errors; không thêm dòng log nào
+                else if (confirmOk && errors.Count > 0)
                 {
                     var ngSec = new List<string>();
                     if (_canEditA && !okA) ngSec.Add("A");
@@ -4138,16 +4078,13 @@ else
             //   (trước: cờ Xác nhận OK cũ giữ nguyên dù quy trình lưu dở). Ghi riêng, lỗi tiếp thì chỉ báo thêm.
             try
             {
-                var pmErr = _part == null ? null : await Db.PartMasters.FirstOrDefaultAsync(p => p.PartId == _part.PartId);
-                if (pmErr != null)
+                // [QF-P-03 2026-11-23] về NG qua service (máy chủ kiểm quyền sửa từng vùng) — trước: trang ghi thẳng Db
+                (PartMaster? Part, List<string> BiChan)? pmErr = _part == null ? null : await PmSvc.UpdateConfirmFlagsAsync(_part.PartId, _currentUserId,
+                    _canEditA ? false : null, _canEditB ? false : null, _canEditC ? false : null, _canEditD ? false : null, _canEditE ? false : null);
+                if (pmErr?.Part != null)
                 {
-                    if (_canEditA) pmErr.IsPlanConfirmed = false;
-                    if (_canEditB) pmErr.IsMachiningConfirmed = false;
-                    if (_canEditC) pmErr.IsHtspConfirmed = false;
-                    if (_canEditD) pmErr.IsKcsConfirmed = false;
-                    if (_canEditE) pmErr.IsPkgConfirmed = false;
-                    await Db.SaveChangesAsync();
                     errors.Add("⚠ Các mục bạn được sửa đã chuyển về NG (chưa Xác nhận OK) — kiểm tra lại rồi lưu lại.");
+                    if (pmErr.Value.BiChan.Count > 0) errors.Add($"✗ Không chuyển về NG vùng {string.Join(", ", pmErr.Value.BiChan)} — bạn không còn quyền.");
                 }
             }
             catch (Exception ex2)
@@ -4465,59 +4402,27 @@ else
                             continue;
                         }
                     }
+                    // [QF-P-03 2026-11-23] thêm / sửa / xoá mềm máy đồng dạng + lịch sử ghi qua PartMachiningService (máy chủ kiểm quyền sửa vùng B; thêm = 1 giao dịch)
+                    //   — trước: trang ghi thẳng Db (Add / FindAsync + gán + SaveChanges, AddTimingLog). Cột, chữ lịch sử, giờ (now) giữ y.
                     if (tr.State == EditState.New)
                     {
                         if (string.IsNullOrWhiteSpace(tr.SoMay)) continue;
-                        var ent = new PartMachiningTiming { StepId = edit.StepId, SoMay = tr.SoMay.Trim(), DisplayOrder = tr.DisplayOrder, FixtureType = tr.FixtureType, ToolType = tr.ToolType, SetupTime = tr.SetupTime, MachiningTime = tr.MachiningTime, InspectionTime = tr.InspectionTime, PreparationTime = tr.PreparationTime, TrialRunTime = tr.TrialRunTime, IsActive = true, CreatedBy = _currentUserId, CreatedAt = now };
-                        Db.PartMachiningTimings.Add(ent);
-                        await Db.SaveChangesAsync();
-                        tr.TimingId = ent.TimingId; tr.State = EditState.Unchanged; tr.FollowMain = false;   // [RA-CASCADE-PM] đã lưu → giữ số riêng
-                        // Log tạo mới máy đồng dạng
-                        Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
-                        {
-                            StepTable = "Machining", StepId = edit.StepId, TimingId = ent.TimingId,
-                            PartId = _part!.PartId, FieldName = "Created",
-                            NewValue = $"Thêm máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}",
-                            ChangedBy = _currentUserId, ChangedAt = now, Reason = _reason ?? "Lưu quy trình"
-                        });
-                        await Db.SaveChangesAsync();
+                        tr.TimingId = await MachiningSvc.AddTimingAsync(edit.StepId, _part!.PartId, TimingGhiOf(tr), _currentUserId, _reason ?? "Lưu quy trình", now);
+                        tr.State = EditState.Unchanged; tr.FollowMain = false;   // [RA-CASCADE-PM] đã lưu → giữ số riêng
                         log.Add($"✓ [Timing] NC={edit.NC} thêm {tr.SoMay}");
                     }
                     else if (tr.State == EditState.Modified && tr.TimingId > 0)
                     {
-                        var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
-                        if (ent != null)
+                        if (await MachiningSvc.UpdateTimingAsync(tr.TimingId, edit.StepId, _part!.PartId, TimingGhiOf(tr), _currentUserId, _reason ?? "Lưu quy trình", now))
                         {
-                            // Log từng field thay đổi
-                            if (ent.SoMay != tr.SoMay.Trim())           AddTimingLog(edit, tr.TimingId, "SoMay",        ent.SoMay,                                    tr.SoMay.Trim(), now);
-                            if (ent.SetupTime != tr.SetupTime)           AddTimingLog(edit, tr.TimingId, "SetupTime",     ent.SetupTime?.ToString(),                    tr.SetupTime?.ToString(), now);
-                            if (ent.MachiningTime != tr.MachiningTime)   AddTimingLog(edit, tr.TimingId, "MachiningTime", ent.MachiningTime?.ToString(),                tr.MachiningTime?.ToString(), now);
-                            if (ent.InspectionTime != tr.InspectionTime) AddTimingLog(edit, tr.TimingId, "InspectionTime",ent.InspectionTime?.ToString(),               tr.InspectionTime?.ToString(), now);
-                            if (ent.PreparationTime != tr.PreparationTime) AddTimingLog(edit, tr.TimingId, "PreparationTime", ent.PreparationTime?.ToString(),          tr.PreparationTime?.ToString(), now);
-                            if (ent.TrialRunTime != tr.TrialRunTime)     AddTimingLog(edit, tr.TimingId, "TrialRunTime",  ent.TrialRunTime?.ToString(),                 tr.TrialRunTime?.ToString(), now);
-                            if (ent.FixtureType != tr.FixtureType)       AddTimingLog(edit, tr.TimingId, "FixtureType",   ent.FixtureType,                              tr.FixtureType, now);
-                            if (ent.ToolType != tr.ToolType)             AddTimingLog(edit, tr.TimingId, "ToolType",      ent.ToolType,                                 tr.ToolType, now);
-                            ent.SoMay = tr.SoMay.Trim(); ent.DisplayOrder = tr.DisplayOrder; ent.FixtureType = tr.FixtureType; ent.ToolType = tr.ToolType;
-                            ent.SetupTime = tr.SetupTime; ent.MachiningTime = tr.MachiningTime; ent.InspectionTime = tr.InspectionTime;
-                            ent.PreparationTime = tr.PreparationTime; ent.TrialRunTime = tr.TrialRunTime;
-                            ent.UpdatedBy = _currentUserId; ent.UpdatedAt = now;
-                            await Db.SaveChangesAsync();
                             tr.State = EditState.Unchanged;
                             log.Add($"✓ [Timing] NC={edit.NC} sửa {tr.SoMay}");
                         }
                     }
                     else if (tr.State == EditState.Deleted && tr.TimingId > 0)
                     {
-                        var ent = await Db.PartMachiningTimings.FindAsync(tr.TimingId);
-                        if (ent != null)
-                        {
-                            AddTimingLog(edit, tr.TimingId, "Deleted",
-                                $"Xóa máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}",
-                                null, now);
-                            ent.IsActive = false; ent.UpdatedBy = _currentUserId; ent.UpdatedAt = now;
-                            await Db.SaveChangesAsync();
+                        if (await MachiningSvc.SoftDeleteTimingAsync(tr.TimingId, edit.StepId, _part!.PartId, _currentUserId, _reason ?? "Lưu quy trình", now))
                             log.Add($"✓ [Timing] NC={edit.NC} xóa {tr.SoMay}");
-                        }
                     }
                 }
                 catch (Exception ex)
@@ -4574,22 +4479,9 @@ else
                     else
                         _timingConfirms[key].Remove(field);
 
-                    // Ghi lịch sử vào PartProcessStepChangeLogs để clock icon hiển thị
-                    Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
-                    {
-                        StepTable = "Machining",
-                        StepId = stepId,
-                        TimingId = timingId,
-                        PartId = _part!.PartId,
-                        FieldName = "TimingConfirmed",
-                        // [CONFIRM-LOG-FIELD 2026-10-30] Mục 10: ghi rõ Ô nào được xác nhận / bỏ xác nhận (trước: chỉ "Xác nhận TG chuẩn", không biết ô nào)
-                        OldValue = currentInDb ? $"Confirmed [{field}]" : $"Unconfirmed [{field}]",
-                        NewValue = actualState ? $"Confirmed [{field}] by userId={_currentUserId} at {now:yyyy-MM-dd HH:mm:ss}" : $"Unconfirmed [{field}]",
-                        ChangedBy = _currentUserId,
-                        ChangedAt = now,
-                        Reason = _reason ?? "Lưu quy trình"
-                    });
-                    await Db.SaveChangesAsync();
+                    // Ghi lịch sử vào PartProcessStepChangeLogs để clock icon hiển thị — [CONFIRM-LOG-FIELD 2026-10-30] ghi rõ Ô nào
+                    // [QF-P-03 2026-11-23] ghi qua PartMachiningService.LogTimingConfirmAsync (máy chủ kiểm quyền sửa vùng B) — trước: trang ghi thẳng Db; chữ giữ y
+                    await MachiningSvc.LogTimingConfirmAsync(stepId, timingId, _part!.PartId, field, currentInDb, actualState, _currentUserId, _reason ?? "Lưu quy trình", now);
 
                     var fieldLabel = field switch
                     {
@@ -4613,17 +4505,9 @@ else
         _pendingConfirms.Clear();
     }
 
-    // Helper: ghi log cho máy đồng dạng vào PartProcessStepChangeLogs
-    private void AddTimingLog(MachiningEdit edit, long timingId, string field, string? oldVal, string? newVal, DateTime at)
-    {
-        Db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
-        {
-            StepTable = "Machining", StepId = edit.StepId, TimingId = timingId,
-            PartId = _part!.PartId, FieldName = field,
-            OldValue = oldVal, NewValue = newVal,
-            ChangedBy = _currentUserId, ChangedAt = at, Reason = _reason ?? "Lưu quy trình"
-        });
-    }
+    // [QF-P-03 2026-11-23] (thay AddTimingLog — lịch sử máy đồng dạng nay ghi ở PartMachiningService) số liệu 1 dòng máy đồng dạng gửi service
+    private static PartMachiningService.TimingGhi TimingGhiOf(TimingRowEdit tr) =>
+        new(tr.SoMay, tr.DisplayOrder, tr.FixtureType, tr.ToolType, tr.SetupTime, tr.MachiningTime, tr.InspectionTime, tr.PreparationTime, tr.TrialRunTime);
 
     public enum EditState { Unchanged, Modified, New, Deleted, Restored }
 

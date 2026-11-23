@@ -407,6 +407,119 @@ public class PartMachiningService
         return newState;
     }
 
+    // =====================================================================
+    // [QF-P-03 2026-11-23] Ghi DB của trang Part Master (Detail_Partmaster) dời vào đây — máy chủ kiểm quyền vùng B (PART_GC) đọc từ DB mỗi lần ghi
+    //   (trước: trang ghi thẳng Db.SaveChangesAsync, chỉ gác cờ _canEditB đọc lúc mở trang / claim ADMIN — người bị rút quyền giữa phiên vẫn ghi được).
+    //   Ghi y như trang cũ (cùng cột, cùng dòng lịch sử PartProcessStepChangeLogs, cùng giờ trang truyền vào); thêm máy đồng dạng = 1 giao dịch
+    //   (trước: 2 lần lưu rời — lỗi lần 2 để lại dòng máy không có lịch sử). Kiểm trùng máy giữ ở trang (DbMachineDupAsync) như cũ.
+    //   Nguồn: CLAUDE quét Fable 14/11 (P-03 — sổ QF-P-01/02/03, đóng tạm bằng PERM-HASH Gói 23); HÙNG 23/11 13:20 OK làm.
+    // =====================================================================
+    /// <summary>[QF-P-03] Số liệu 1 dòng máy đồng dạng (trang → service).</summary>
+    public record TimingGhi(string SoMay, int DisplayOrder, string? FixtureType, string? ToolType,
+        decimal? SetupTime, decimal? MachiningTime, decimal? InspectionTime, decimal? PreparationTime, decimal? TrialRunTime);
+
+    private static void CheckTiming(TimingGhi t)
+    {
+        if (string.IsNullOrWhiteSpace(t.SoMay)) throw new ArgumentException("Máy đồng dạng: chưa chọn máy.");
+        PartStepGuard.CheckStdTimes(Label, PartStepGuard.MachiningTimeItems(t.SetupTime, t.MachiningTime, t.InspectionTime, t.PreparationTime, t.TrialRunTime, $" (máy {t.SoMay.Trim()})"));   // như CheckStdTimesPage
+    }
+
+    private PartProcessStepChangeLog TimingLog(long stepId, long timingId, int partId, string field, string? oldVal, string? newVal, int userId, string reason, DateTime at) => new()
+    {
+        StepTable = TableTag, StepId = stepId, TimingId = timingId, PartId = partId, FieldName = field,
+        OldValue = oldVal, NewValue = newVal, ChangedBy = userId, ChangedAt = at, Reason = reason
+    };
+
+    /// <summary>[QF-P-03] Thêm 1 dòng máy đồng dạng + lịch sử "Created" (1 giao dịch). Trả TimingId.</summary>
+    public async Task<long> AddTimingAsync(long stepId, int partId, TimingGhi t, int userId, string reason, DateTime at)
+    {
+        await EnsurePermissionAsync(userId);
+        CheckTiming(t);
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var ent = new PartMachiningTiming
+        {
+            StepId = stepId, SoMay = t.SoMay.Trim(), DisplayOrder = t.DisplayOrder, FixtureType = t.FixtureType, ToolType = t.ToolType,
+            SetupTime = t.SetupTime, MachiningTime = t.MachiningTime, InspectionTime = t.InspectionTime, PreparationTime = t.PreparationTime, TrialRunTime = t.TrialRunTime,
+            IsActive = true, CreatedBy = userId, CreatedAt = at
+        };
+        _db.PartMachiningTimings.Add(ent);
+        await _db.SaveChangesAsync();
+        _db.PartProcessStepChangeLogs.Add(TimingLog(stepId, ent.TimingId, partId, "Created", null,
+            $"Thêm máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}", userId, reason, at));
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+        return ent.TimingId;
+    }
+
+    /// <summary>[QF-P-03] Sửa 1 dòng máy đồng dạng + lịch sử từng ô đổi. false = không thấy dòng (trang bỏ qua như cũ).</summary>
+    public async Task<bool> UpdateTimingAsync(long timingId, long stepId, int partId, TimingGhi t, int userId, string reason, DateTime at)
+    {
+        await EnsurePermissionAsync(userId);
+        CheckTiming(t);
+        var ent = await _db.PartMachiningTimings.FindAsync(timingId);
+        if (ent == null) return false;
+        if (ent.StepId != stepId) throw new InvalidOperationException($"Máy đồng dạng {timingId} không thuộc NC này — tải lại trang.");
+        var soMay = t.SoMay.Trim();
+        void L(string f, string? o, string? n) => _db.PartProcessStepChangeLogs.Add(TimingLog(stepId, timingId, partId, f, o, n, userId, reason, at));
+        if (ent.SoMay != soMay)                         L("SoMay", ent.SoMay, soMay);
+        if (ent.SetupTime != t.SetupTime)               L("SetupTime", ent.SetupTime?.ToString(), t.SetupTime?.ToString());
+        if (ent.MachiningTime != t.MachiningTime)       L("MachiningTime", ent.MachiningTime?.ToString(), t.MachiningTime?.ToString());
+        if (ent.InspectionTime != t.InspectionTime)     L("InspectionTime", ent.InspectionTime?.ToString(), t.InspectionTime?.ToString());
+        if (ent.PreparationTime != t.PreparationTime)   L("PreparationTime", ent.PreparationTime?.ToString(), t.PreparationTime?.ToString());
+        if (ent.TrialRunTime != t.TrialRunTime)         L("TrialRunTime", ent.TrialRunTime?.ToString(), t.TrialRunTime?.ToString());
+        if (ent.FixtureType != t.FixtureType)           L("FixtureType", ent.FixtureType, t.FixtureType);
+        if (ent.ToolType != t.ToolType)                 L("ToolType", ent.ToolType, t.ToolType);
+        ent.SoMay = soMay; ent.DisplayOrder = t.DisplayOrder; ent.FixtureType = t.FixtureType; ent.ToolType = t.ToolType;
+        ent.SetupTime = t.SetupTime; ent.MachiningTime = t.MachiningTime; ent.InspectionTime = t.InspectionTime;
+        ent.PreparationTime = t.PreparationTime; ent.TrialRunTime = t.TrialRunTime;
+        ent.UpdatedBy = userId; ent.UpdatedAt = at;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    /// <summary>[QF-P-03] Xoá mềm 1 dòng máy đồng dạng (IsActive = false) + lịch sử "Deleted". false = không thấy dòng.</summary>
+    public async Task<bool> SoftDeleteTimingAsync(long timingId, long stepId, int partId, int userId, string reason, DateTime at)
+    {
+        await EnsurePermissionAsync(userId);
+        var ent = await _db.PartMachiningTimings.FindAsync(timingId);
+        if (ent == null) return false;
+        if (ent.StepId != stepId) throw new InvalidOperationException($"Máy đồng dạng {timingId} không thuộc NC này — tải lại trang.");
+        _db.PartProcessStepChangeLogs.Add(TimingLog(stepId, timingId, partId, "Deleted",
+            $"Xóa máy {ent.SoMay} | GL={ent.SetupTime} GC={ent.MachiningTime} KT={ent.InspectionTime} CB={ent.PreparationTime} CT={ent.TrialRunTime}", null, userId, reason, at));
+        ent.IsActive = false; ent.UpdatedBy = userId; ent.UpdatedAt = at;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    /// <summary>[QF-P-03] Lịch sử "TimingConfirmed" sau khi ToggleTimingConfirmAsync (nút đồng hồ xem được) — trước: trang ghi thẳng.</summary>
+    public async Task LogTimingConfirmAsync(long stepId, long? timingId, int partId, string field, bool before, bool after, int userId, string reason, DateTime at)
+    {
+        if (!TimingField.All.Contains(field)) throw new ArgumentException($"FieldName không hợp lệ: {field}");
+        await EnsurePermissionAsync(userId);
+        _db.PartProcessStepChangeLogs.Add(new PartProcessStepChangeLog
+        {
+            StepTable = TableTag, StepId = stepId, TimingId = timingId, PartId = partId, FieldName = "TimingConfirmed",
+            OldValue = before ? $"Confirmed [{field}]" : $"Unconfirmed [{field}]",
+            NewValue = after ? $"Confirmed [{field}] by userId={userId} at {at:yyyy-MM-dd HH:mm:ss}" : $"Unconfirmed [{field}]",
+            ChangedBy = userId, ChangedAt = at, Reason = reason
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>[QF-P-03] Lưu danh sách máy loại trừ TOÀN HỆ THỐNG (modal "Cài đặt máy loại trừ" ở Part Master, quyền sửa vùng B).
+    /// <paramref name="chon"/> = tập trang đang tích (so như trang cũ: bỏ dòng DB không có trong tập; thêm máy chưa có — không phân biệt hoa thường).</summary>
+    public async Task SaveExcludeMachinesAsync(ISet<string> chon, int userId)
+    {
+        await EnsurePermissionAsync(userId);
+        var current = await _db.MachineExcludeSettings.ToListAsync();
+        var currentSet = current.Select(x => x.SoMay).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var toRemove = current.Where(x => !chon.Contains(x.SoMay)).ToList();
+        if (toRemove.Any()) _db.MachineExcludeSettings.RemoveRange(toRemove);
+        foreach (var soMay in chon.Where(s => !currentSet.Contains(s)))
+            _db.MachineExcludeSettings.Add(new MachineExcludeSetting { SoMay = soMay, AddedAt = DateTime.Now, AddedByUserId = userId > 0 ? userId : null });
+        await _db.SaveChangesAsync();
+    }
+
     private static void ValidateReason(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3)

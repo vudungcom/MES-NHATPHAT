@@ -86,6 +86,25 @@ public static class SaoLuuLuatDon
         return ds.Select(b => new KetQua(b, lyDo[b.Ten].Count > 0, lyDo[b.Ten].Count > 0 ? string.Join(" · ", lyDo[b.Ten]) : "Ngoài luật giữ")).ToList();
     }
 
+    /// <summary>[G32B-TRUOC-NANG-CAP 2026-11-23] Luật dọn BỘ TRƯỚC NÂNG CẤP: giữ GiuTruocNangCap bộ ĐẠT mới nhất; bộ lỗi chỉ giữ khi nằm trong
+    /// GiuTruocNangCap bộ mới nhất (để xem); bản không rõ / giờ tương lai luôn giữ. Không theo ngày / tuần / tháng (nâng cấp không đều).
+    /// Nguồn: HÙNG 23/11 13:20 OK câu B2.</summary>
+    public static List<KetQua> TinhTruocNangCap(IReadOnlyList<Ban> ds, SaoLuuCaiDat c, DateTime now)
+    {
+        int n = Math.Max(1, c.GiuTruocNangCap);
+        var theoGio = ds.Where(b => !b.KhongRo && b.ThoiDiem <= now).OrderByDescending(b => b.ThoiDiem).ThenByDescending(b => b.Ten, StringComparer.Ordinal).ToList();
+        var datGiu = theoGio.Where(b => b.Dat).Take(n).Select(b => b.Ten).ToHashSet(StringComparer.Ordinal);
+        var ganNhat = theoGio.Take(n).Select(b => b.Ten).ToHashSet(StringComparer.Ordinal);
+        return ds.Select(b =>
+        {
+            if (b.KhongRo) return new KetQua(b, true, "Không đọc được manifest — giữ, không dọn");
+            if (b.ThoiDiem > now) return new KetQua(b, true, "Thời điểm sau giờ máy hiện tại — giữ");
+            if (datGiu.Contains(b.Ten)) return new KetQua(b, true, $"Trong {n} bộ đạt mới nhất");
+            if (!b.Dat && ganNhat.Contains(b.Ten)) return new KetQua(b, true, "Bộ lỗi — giữ để xem");
+            return new KetQua(b, false, "Ngoài số bộ giữ");
+        }).ToList();
+    }
+
     /// <summary>Luật dọn BẢN NHANH.</summary>
     public static List<KetQua> TinhNhanh(IReadOnlyList<Ban> ds, SaoLuuCaiDat c, DateTime now, bool boQuaHangRao = false)
     {

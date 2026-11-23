@@ -2,13 +2,14 @@
 rem [CLAUDE-GIT 2026-11-01] Commit + push goi tich hop. Chi add dung thu muc code, KHONG add file ketqua / bin2 / nang_ketqua.
 rem [GIT-SQLDONGTHOI 2026-11-05] them tools/SqlDongThoi (truoc thieu: sua Core.cs / TuKiem khong len git), bo bin / obj.
 rem [GIT-GOC-REPO 2026-11-16] them file-tree.txt + CODEBASE-MAP.md goc repo (truoc phai git add tay - Hung khong dung lenh git). Nguon: HUNG 16/11 09:57.
+rem [G32B-GIT 2026-11-23] them tools/SaoLuuThu (cong cu thu sao luu that Goi 32a - truoc nam ngoai git), bo bin / obj / duong-dan.txt (duong dan rieng may). Nguon: CLAUDE 23/11 (doi chieu may voi HEAD 040bc56).
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
 set OUT=%~dp0ketqua_git.txt
 echo GIT %date% %time%> "%OUT%"
-git add MES.Web tools/GiaoNhanFuzz tools/QuetSo tools/WtsHarness tools/BackfillNghi tools/SqlDongThoi tools/sql tools/kiemtra.bat tools/DanhMucKiem.txt tools/claude_tram.bat tools/claude_day_git.bat tools/chay_app_5000.bat file-tree.txt CODEBASE-MAP.md >> "%OUT%" 2>&1
-git reset -q -- tools/GiaoNhanFuzz/bin2 tools/GiaoNhanFuzz/nang_ketqua tools/BackfillNghi/bin tools/BackfillNghi/obj tools/SqlDongThoi/bin tools/SqlDongThoi/obj tools/SqlDongThoi/TuKiem/bin tools/SqlDongThoi/TuKiem/obj >> "%OUT%" 2>&1
+git add MES.Web tools/GiaoNhanFuzz tools/QuetSo tools/WtsHarness tools/BackfillNghi tools/SqlDongThoi tools/SaoLuuThu tools/sql tools/kiemtra.bat tools/DanhMucKiem.txt tools/claude_tram.bat tools/claude_day_git.bat tools/chay_app_5000.bat file-tree.txt CODEBASE-MAP.md >> "%OUT%" 2>&1
+git reset -q -- tools/GiaoNhanFuzz/bin2 tools/GiaoNhanFuzz/nang_ketqua tools/BackfillNghi/bin tools/BackfillNghi/obj tools/SqlDongThoi/bin tools/SqlDongThoi/obj tools/SqlDongThoi/TuKiem/bin tools/SqlDongThoi/TuKiem/obj tools/SaoLuuThu/bin tools/SaoLuuThu/obj tools/SaoLuuThu/duong-dan.txt >> "%OUT%" 2>&1
 echo --- se commit:>> "%OUT%"
 git diff --cached --stat >> "%OUT%" 2>&1
 git commit -q -F tools/claude_commit_msg.txt >> "%OUT%" 2>&1

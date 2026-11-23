@@ -29,6 +29,8 @@ public class SaoLuuCaiDat
     public int GiuBoThang { get; set; } = 0;
     /// <summary>Script đẩy Google (Gói 32b) đọc: bản tháng trên Drive giữ bao nhiêu năm.</summary>
     public int GiuGoogleNam { get; set; } = 10;
+    /// <summary>[G32B-TRUOC-NANG-CAP 2026-11-23] Giữ bao nhiêu bộ trọn bộ tạo lúc nâng cấp phần mềm (thư mục truoc-nang-cap). Nguồn: HÙNG 23/11 13:20 OK câu B2.</summary>
+    public int GiuTruocNangCap { get; set; } = 10;
     /// <summary>File / thư mục cấu hình khác chép kèm bộ ngày (vd C:\caddy\Caddyfile) — mỗi dòng 1 đường dẫn.</summary>
     public List<string> FileCauHinhThem { get; set; } = new();
 
@@ -59,6 +61,7 @@ public class SaoLuuCaiDat
         if (GiuBoTuan < 0 || GiuBoTuan > 260) e.Add("Giữ bộ tuần … tuần: từ 0 đến 260.");
         if (GiuBoThang < 0 || GiuBoThang > 1200) e.Add("Giữ bộ tháng … tháng: 0 (giữ mãi) đến 1200.");
         if (GiuGoogleNam < 1 || GiuGoogleNam > 100) e.Add("Giữ trên Google … năm: từ 1 đến 100.");
+        if (GiuTruocNangCap < 1 || GiuTruocNangCap > 100) e.Add("Giữ bộ trước nâng cấp … bộ: từ 1 đến 100.");   // [G32B-TRUOC-NANG-CAP]
         if (!Enum.IsDefined(typeof(DayOfWeek), ThuChotTuan)) e.Add("Thứ chốt tuần không hợp lệ.");
         if (BatTuDong && !DaCaiThuMuc) e.Add("Bật tự động thì phải nhập thư mục sao lưu (theo máy SQL).");
         foreach (var p in new[] { ThuMucTheoMaySql, ThuMucTheoMayApp })
@@ -112,6 +115,7 @@ public class SaoLuuCaiDat
         Cmp("Thứ chốt tuần", cu.ThuChotTuan, moi.ThuChotTuan);
         Cmp("Giữ bộ tháng (0=mãi)", cu.GiuBoThang, moi.GiuBoThang);
         Cmp("Giữ Google (năm)", cu.GiuGoogleNam, moi.GiuGoogleNam);
+        Cmp("Giữ bộ trước nâng cấp", cu.GiuTruocNangCap, moi.GiuTruocNangCap);   // [G32B-TRUOC-NANG-CAP]
         Cmp("File cấu hình thêm", string.Join(" | ", cu.FileCauHinhThem), string.Join(" | ", moi.FileCauHinhThem));
         return d.Count == 0 ? "(không đổi)" : string.Join("; ", d);
     }

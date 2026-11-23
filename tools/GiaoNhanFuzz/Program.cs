@@ -1224,7 +1224,14 @@ for (int po = startPo; po < startPo + poCount; po++)
                                 }
                             }
                             else if (req.Action is HandoverForm.ATraLai or HandoverForm.ASuaXong)
+                            {
                                 req.ToGroup = HandoverForm.CaseSender(cs, g) ?? others[rnd.Next(others.Length)];
+                                // [FUZZ-32514 2026-11-23] đáp án độc lập: Workflow ON, vụ làm hộ bị lỗi (đọc bảng — LamHoVuDoc) "Sửa xong, trả nơi gửi" sang nhóm khác
+                                //   Gia công (ô Hàng lỗi đã xử lý) → máy chủ chặn bằng luật vụ làm hộ [TARO-LAMHO-NC] (kiểm TRƯỚC luật chung [SUA-QUA-KCS]) — câu báo
+                                //   "… là hàng làm hộ bị lỗi …: sửa xong trả về Gia công". Trước: đáp án chỉ biết luật chung → "Form chặn sai lời" (app chặn đúng).
+                                //   Nguồn: CLAUDE (trạm kiem 22/11 18:40 seed 32514 PO35 op106, sổ dòng FUZZ-32514); HÙNG 23/11 13:03 OK sửa đáp án.
+                                if (req.Action == HandoverForm.ASuaXong && row.ApplyWorkflow && req.ToGroup != "GC" && LamHoVuDoc(db, cs)) { expErr ??= "làm hộ bị lỗi"; Inc("lamho.form.suaxong.chan"); }
+                            }
                         }
                     }
                     else

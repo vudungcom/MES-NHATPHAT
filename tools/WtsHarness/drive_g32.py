@@ -12,7 +12,11 @@
 #   STEP T7 nhập sai (5 phút) → báo lỗi, không lưu
 #   STEP T8 link trên băng → mở thẳng tab Sao lưu
 #   STEP T9 [G32-RA2] thêm 12 bộ cũ ngoài luật → lượt lưu TẠM DỪNG dọn bộ ngày; nút 'Cho dọn lại' + PIN → lượt sau dọn
-#   Bản cũ (a4c1a75): không có tab / băng → SAI là đúng. Nguồn: HÙNG 22/11 14:34–14:52.
+#   STEP T10 [G32B-XOA-BAN] nút Xoá: bộ ĐẠT mới nhất không có nút; Huỷ PIN → không xoá; PIN → folder mất + nhật ký "Xoá tay"
+#   STEP T11 [G32B-TRUOC-NANG-CAP] bộ trước nâng cấp (harness chạy service thật) + bộ cũ giả: bảng riêng; giảm "Giữ bộ trước nâng cấp" → PIN → dọn còn 1
+#   STEP T12 [G32B-O-DAY] ô "Ổ còn trống" có số; giả ổ còn ít hơn cỡ bộ ngày → băng đỏ trang chủ "còn trống … nút Xoá"
+#   STEP T13 ô Giữ bộ trước nâng cấp = 0 → báo lỗi, không lưu
+#   Bản cũ (a4c1a75): không có tab / băng → SAI là đúng. Bản 040bc56 (Gói 32a): T10–T13 SAI là đúng. Nguồn: HÙNG 22/11 14:34–14:52; Gói 32b HÙNG 23/11 13:20.
 # Chạy trên harness VỪA khởi động: python3 drive_g32.py <port> <nhãn>
 import sys, asyncio, json, os, shutil, glob, datetime, urllib.request
 from playwright.async_api import async_playwright
@@ -211,6 +215,74 @@ async def main():
                 ok("Cho phép lần dọn tới XOÁ" in mt and "Đã cho dọn lại" in msg, "T9c PIN → 'Đã cho dọn lại'", (mt[:200], msg))
                 msg, _ = await click_wait(pg, "#slBtnNhanh", "Đã lưu nhanh")
                 ok("Dọn" in msg and "TẠM DỪNG" not in msg and len(sets("bo")) < n9, "T9d lượt sau dọn đúng luật", (msg, len(sets("bo"))))
+
+            print("STEP T10 xoá tay 1 bản (PIN)")
+            await open_tab(pg)
+            rows = pg.locator("#slBangBo tbody tr")
+            nrow = await rows.count()
+            first_has = await rows.nth(0).locator(".sl-xoa").count() if nrow else -1
+            last_has = await rows.nth(nrow - 1).locator(".sl-xoa").count() if nrow else 0
+            ok(nrow >= 2 and first_has == 0 and last_has == 1, "T10a bộ ĐẠT mới nhất (dòng đầu) không có nút Xoá, bộ cũ có", (nrow, first_has, last_has))
+            if nrow >= 2 and last_has:
+                cu_ten = (await rows.nth(nrow - 1).locator("td").first.inner_text()).strip()
+                truoc = set(sets("bo"))
+                await rows.nth(nrow - 1).locator(".sl-xoa").click(); await pg.wait_for_timeout(800)
+                mt = await pg.locator(".mes-modal").inner_text() if await pg.locator(".mes-modal").count() else ""
+                await pg.click(".mes-modal button:has-text('Hủy')"); await pg.wait_for_timeout(800)
+                msg = await wait_text(pg, "#slMsg", 5000)
+                ok("Xác nhận xoá bản sao lưu" in mt and "XOÁ hẳn" in mt and "không xoá bản nào" in msg and set(sets("bo")) == truoc, "T10b Huỷ PIN → không xoá", (mt[:200], msg))
+                rows = pg.locator("#slBangBo tbody tr"); nrow = await rows.count()
+                await rows.nth(nrow - 1).locator(".sl-xoa").click(); await pg.wait_for_timeout(800)
+                await pg.fill(".mes-modal input[type=password]", "1111"); await pg.click(".mes-modal button:has-text('Xác nhận')")
+                msg = await wait_text(pg, "#slMsg", 8000)
+                sau = set(sets("bo"))
+                await open_tab(pg); await pg.click("summary:has-text('Nhật ký đổi cài đặt')")
+                nk = await pg.locator("details pre").inner_text()
+                ok("Đã xoá" in msg and len(truoc - sau) == 1 and len(sau - truoc) == 0 and "Xoá tay bộ ngày" in nk and "stdadm" in nk,
+                   "T10c PIN đúng → xoá đúng 1 bộ (folder mất), nhật ký 'Xoá tay bộ ngày' + người bấm", (msg, cu_ten, sorted(truoc - sau), nk[:300]))
+
+            print("STEP T11 bộ trước nâng cấp")
+            r = post("/harness/saoluu-tnc")
+            for i in (40, 41):
+                dd = today - datetime.timedelta(days=i)
+                d = os.path.join(BK, "MES_HARNESS", "truoc-nang-cap", dd.strftime("%Y-%m-%d") + "_090000"); os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, "manifest.json"), "w", encoding="utf-8") as f: json.dump({"KetQua": "DAT", "TongBytes": 10}, f)
+            tn = sets("truoc-nang-cap")
+            m = manifest("truoc-nang-cap", r.get("ten", "")) if r.get("ten") in tn else {}
+            ok(r.get("dat") and len(tn) == 3 and m.get("Loai") == "truoc-nang-cap"
+               and os.path.isfile(os.path.join(BK, "MES_HARNESS", "truoc-nang-cap", r.get("ten", "?"), "phan-mem", "MES.Web.zip")),
+               "T11a service tạo bộ trước nâng cấp TRỌN BỘ vào truoc-nang-cap\\ (manifest Loai truoc-nang-cap)", (r, tn))
+            await open_tab(pg)
+            rows = await pg.locator("#slBangTnc tbody tr").all_inner_texts()
+            ok(len(rows) == 3 and "Trong 10 bộ đạt mới nhất" in rows[0], "T11b bảng 'Bộ trước nâng cấp' 3 dòng, Giữ vì 'Trong 10 bộ đạt mới nhất'", rows)
+            await set_val(pg, "#slGiuTnc", 1)
+            await pg.click("#slBtnLuu"); await pg.wait_for_timeout(1500)
+            modal = await pg.locator(".mes-modal").inner_text() if await pg.locator(".mes-modal").count() else ""
+            ok(modal.count("Bộ trước nâng cấp") == 2 and "sẽ XOÁ 2" in modal, "T11c giảm Giữ bộ trước nâng cấp 10 → 1 → PIN báo xoá 2 bộ", modal[:400])
+            if modal:
+                await pg.fill(".mes-modal input[type=password]", "1111"); await pg.click(".mes-modal button:has-text('Xác nhận')")
+                await wait_text(pg, "#slMsg", 8000)
+            msg, _ = await click_wait(pg, "#slBtnNhanh", "Đã lưu nhanh")
+            ok(sets("truoc-nang-cap") == [r.get("ten")], "T11d lượt lưu sau dọn còn đúng bộ trước nâng cấp mới nhất", (sets("truoc-nang-cap"), msg))
+
+            print("STEP T12 ổ sắp đầy")
+            await open_tab(pg)
+            ot = (await pg.locator("#slOTrong").inner_text()).strip() if await pg.locator("#slOTrong").count() else ""
+            ok("/" in ot and ("GB" in ot or "MB" in ot), "T12a ô 'Ổ còn trống' có số (đo ở máy chủ)", ot)
+            post("/harness/saoluu-o?trong=100")
+            msg, _ = await click_wait(pg, "#slBtnNhanh", "Đã lưu nhanh")   # lượt lưu xoá bộ nhớ đệm băng
+            await pg.goto(BASE + "/"); await pg.wait_for_timeout(2500)
+            t = await banner(pg, "còn trống")
+            ok("còn trống 100 B" in t and "nút Xoá" in t, "T12b giả ổ còn 100 B < cỡ bộ ngày → băng đỏ trang chủ 'còn trống … nút Xoá'", t)
+            post("/harness/saoluu-o?trong=-1")
+
+            print("STEP T13 ô giữ bộ trước nâng cấp sai")
+            await open_tab(pg)
+            await set_val(pg, "#slGiuTnc", 0)
+            _, err = await click_wait(pg, "#slBtnLuu", "trước nâng cấp", 10000)
+            await open_tab(pg)
+            v = await pg.locator("#slGiuTnc").input_value()
+            ok("từ 1 đến 100" in err and v == "1", "T13 Giữ bộ trước nâng cấp = 0 → báo 'từ 1 đến 100', không lưu", (err, v))
 
             print("STEP T7 nhập sai")
             await open_tab(pg)

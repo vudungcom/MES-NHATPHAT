@@ -9,12 +9,19 @@
 
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.104.0" />
+    <!-- [G32B-DICH-VU 2026-11-23] chạy dạng Windows Service (Program.cs UseWindowsService) — HÙNG 23/11 13:20 OK câu B1 -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+  </ItemGroup>
+
+  <!-- [G32B-KHOIPHUC 2026-11-23] script khôi phục / cài dịch vụ / nâng cấp + hướng dẫn: đi kèm bản publish (SaoLuuService chép vào khoi-phuc\ của mỗi bộ trọn bộ) -->
+  <ItemGroup>
+    <None Update="SaoLuuMau\**\*" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

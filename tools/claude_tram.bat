@@ -19,6 +19,8 @@ setlocal EnableDelayedExpansion
 chcp 65001 >nul
 title CLAUDE TRAM - de mo, Claude dung de chay kiem tra
 cd /d "%~dp0"
+rem [KIEM-UUTIEN 2026-11-23] Hung 23/11 15:55: tram chay muc uu tien BELOW NORMAL (build / kiem / danhmuc ke thua) -> may khong giat khi Hung dang lam viec
+powershell -NoProfile -Command "try { $p = Get-Process -Id (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId; $p.PriorityClass = 'BelowNormal'; 'Uu tien cua so lenh: ' + $p.PriorityClass + ' [KIEM-UUTIEN]' } catch { 'Uu tien: khong doi duoc (' + $_.Exception.Message + ')' }"
 echo SAN SANG %date% %time%> claude_trangthai.txt
 echo Tram dang cho lenh tu Claude (tools\claude_lenh.txt). Dong cua so de tat.
 :vong

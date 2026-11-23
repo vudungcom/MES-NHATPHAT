@@ -7,7 +7,20 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
-var builder = WebApplication.CreateBuilder(args);
+// [G32B-DICH-VU 2026-11-23] Gói 32b: chạy được dạng Windows Service (máy khách — app chạy liên tục để có lịch sao lưu, tự bật khi khởi động máy):
+//   chạy là dịch vụ thì thư mục gốc = thư mục exe (dịch vụ mặc định đứng ở C:\Windows\System32); chạy tay / dotnet run / chay_app_5000.bat: y như cũ
+//   (UseWindowsService không làm gì khi không phải dịch vụ). Cài bằng MES.Web\SaoLuuMau\cai-dich-vu.ps1. Nguồn: HÙNG 22/11 14:42 (chạy dạng Windows Service)
+//   + 23/11 13:20 OK câu B1 (gói Microsoft.Extensions.Hosting.WindowsServices).
+// [G32B-TRUOC-NANG-CAP 2026-11-23] cờ --sao-luu-truoc-nang-cap lấy ra khỏi args TRƯỚC khi dựng cấu hình — rà độc lập 23/11 (Thấp 8): để trong args
+//   thì bộ đọc dòng lệnh coi nó là khoá và nuốt "--contentRoot" đứng sau làm giá trị → ContentRoot rơi về thư mục hiện hành (nén nhầm phần mềm).
+var saoLuuTruocNangCap = args.Any(a => string.Equals(a, "--sao-luu-truoc-nang-cap", StringComparison.OrdinalIgnoreCase));
+args = args.Where(a => !string.Equals(a, "--sao-luu-truoc-nang-cap", StringComparison.OrdinalIgnoreCase)).ToArray();
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : null,
+});
+builder.Host.UseWindowsService();
 // [LOG-FILE 2026-11-20] Gói 26: log ra file logs\mes-yyyyMMdd.log (mục "Logging:File" — appsettings.Production.json), từ Warning, giữ 30 ngày; console giữ như cũ.
 //   Nguồn: CLAUDE quét Fable 15/11 (QF-F); HÙNG 20/11 18:32 OK.
 builder.Logging.AddProvider(FileLoggerProvider.FromConfig(builder.Configuration, builder.Environment.ContentRootPath));
@@ -126,6 +139,18 @@ UiSafe.Fallback = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger
 // [SEED-DEMO 2026-11-20] cảnh báo lúc seed DB trống (mật khẩu admin mặc định) đi vào log (cả file) — Gói 26
 //   Nguồn: CLAUDE quét Fable 14/11 (C-07); HÙNG 20/11 18:32 OK (B4).
 { var _seedLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MES.Seed"); SeedData.Warn = m => _seedLog.LogWarning("{Msg}", m); }
+
+// [G32B-TRUOC-NANG-CAP 2026-11-23] "MES.Web.exe --sao-luu-truoc-nang-cap [--contentRoot <thư mục app cũ>]" (cờ đứng đâu cũng được): tạo 1 bộ TRỌN BỘ vào thư mục
+//   <sao lưu>\<DB>\truoc-nang-cap rồi thoát (mã 0 = đạt, 2 = lỗi) — không mở web, không chạy lịch, không đụng DB ngoài lệnh BACKUP COPY_ONLY.
+//   nang-cap.ps1 gọi exe BẢN MỚI với --contentRoot = thư mục bản đang chạy → nén đúng phần mềm + cấu hình bản cũ. Nguồn: HÙNG 23/11 13:20 OK Gói 32b.
+if (saoLuuTruocNangCap)
+{
+    var kqNangCap = await app.Services.GetRequiredService<SaoLuuService>().ChayAsync(SaoLuuService.Loai.TruocNangCap, "truoc-nang-cap:" + Environment.UserName, CancellationToken.None);
+    Console.WriteLine((kqNangCap.Dat ? "SAO-LUU-TRUOC-NANG-CAP: DAT — " : "SAO-LUU-TRUOC-NANG-CAP: LOI — ") + kqNangCap.ThongBao);
+    Environment.ExitCode = kqNangCap.Dat ? 0 : 2;
+    await app.DisposeAsync();
+    return;
+}
 
 // ==== Auto-create DB + seed (prototype only) ====
 using (var scope = app.Services.CreateScope())

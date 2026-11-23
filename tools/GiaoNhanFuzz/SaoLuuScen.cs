@@ -11,6 +11,7 @@
 //   S10 Băng cảnh báo: chưa cài / tắt / lỗi / quá hạn / bình thường
 //   S11 [G32-RA] các lỗi rà độc lập 22/11: giờ tương lai, manifest không rõ, .dang-tao trên đường chạy thật, đồng hồ nhảy tới (tạm dừng dọn),
 //       xem trước không lách được, cài đặt hỏng lưu đè được, file thêm trùm thư mục sao lưu, tên DB trùng sau đổi ký tự, thư mục không mở được
+//   S12–S16 [G32B-SCEN 2026-11-23] Gói 32b (file SaoLuuScen32b.cs): bộ trước nâng cấp, xoá tay, bộ nhớ đệm manifest, ổ đầy, script PowerShell
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,7 +19,7 @@ using System.Text.Json;
 using MES.Web.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
-public static class SaoLuuScen
+public static partial class SaoLuuScen   // [G32B-SCEN] partial: S12–S16 ở SaoLuuScen32b.cs
 {
     static int fails = 0, checks = 0;
     static void Ok(bool cond, string name, string? info = null)
@@ -38,6 +39,7 @@ public static class SaoLuuScen
         public bool KhoaBan;
         public int SoLan;
         public int ChamMs;
+        public int FailODay;   // [G32B-SCEN] lần BACKUP sau ném IOException ổ đầy (HRESULT 0x80070070)
         private readonly SemaphoreSlim _k = new(1, 1);
         public Task<string> TenDbAsync(CancellationToken ct) => Task.FromResult("MES");
         public Task<string> PhienBanSqlAsync(CancellationToken ct) => Task.FromResult("16.0 · Thử");
@@ -47,6 +49,7 @@ public static class SaoLuuScen
         {
             if (ChamMs > 0) await Task.Delay(ChamMs, ct);
             if (FailNext > 0) { FailNext--; throw new InvalidOperationException("Giả lỗi BACKUP"); }
+            if (FailODay > 0) { FailODay--; throw new IOException("There is not enough space on the disk. (giả)", unchecked((int)0x80070070)); }
             SoLan++;
             var p = DoiGocSql != null ? path.Replace(GocSql, DoiGocSql) : path;
             // như SQL thật: thư mục không có → lỗi (không tự tạo) — [G32-RA] mục 9
@@ -165,6 +168,7 @@ public static class SaoLuuScen
         {
             S1(); S2(nRand); S3(nRand);
             await S4(); await S5(); await S6(); await S7(); await S8(); await S9(); await S10(); await S11();
+            await S12(); await S13(); await S14(); S15(); await S16();   // [G32B-SCEN]
         }
         finally { try { Directory.Delete(TmpRoot, true); } catch { } }
         Console.WriteLine($"\n[saoluu] {checks} phép kiểm, {fails} SAI");

@@ -263,9 +263,11 @@ async def main():
         B = await login(b, "khob01"); await open_kho(B); await open_kho(A)
         await open_edit(A, "PO-K4"); await open_edit(B, "PO-K4")
         first = "Nhập lần đầu" in await A.locator(".modal-content").inner_text()
-        await set_val(B, "input[type=number]", "8"); await set_val(B, "input[placeholder^='VD: 0003488452']", "OVL-B")
+        # [G31-DON-BO-KIEM 23/11] Gói 24 [KHO-NGAY-NHAN]: đã nhập Số lượng thực nhận thì phải nhập Ngày nhận phôi → driver điền ngày (trước: thiếu → K15 SAI
+        #   cả bản cũ từ Gói 24, ghi nhầm là "môi trường sandbox"). Nguồn: CLAUDE dọn bộ kiểm 23/11 (G31-GHI-NHO / Hùng 23/11 13:03 việc 4).
+        await set_val(B, "input[type=number]", "8"); await set_val(B, "input[placeholder^='VD: 0003488452']", "OVL-B"); await set_val(B, "input[type=date]", "2026-11-20")
         eb, openb = await save_modal(B)
-        await set_val(A, "input[type=number]", "5"); await set_val(A, "input[placeholder^='VD: 0003488452']", "OVL-A")
+        await set_val(A, "input[type=number]", "5"); await set_val(A, "input[placeholder^='VD: 0003488452']", "OVL-A"); await set_val(A, "input[type=date]", "2026-11-21")
         ea, opena = await save_modal(A)
         act, logs = khorow("PO-K4")
         ok(first and eb is None and not openb, "K15a cửa sổ hiện 'Nhập lần đầu'; B lưu được, cửa sổ đóng", eb)

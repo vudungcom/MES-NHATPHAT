@@ -13,6 +13,10 @@ rem          kiemtra.bat 100 150 7  = tu chon so PO, thao tac / PO, seed dau
 rem ===========================================================================================
 setlocal
 chcp 65001 >nul
+rem [KIEM-UUTIEN 2026-11-23] Hung 23/11 15:55 (may giat luc tram kiem, chon cach 2): giu 75%% nhan [KIEM-75] nhung chay muc uu tien BELOW NORMAL
+rem   -> Windows nhuong CPU cho viec Hung dang lam. Dat cua so lenh nay xuong Below Normal (moi tien trinh con dotnet / powershell ke thua);
+rem   bo kiem nang (Nang.cs) cung tu dat Below Normal cho tung luot. Chay muc thuong: set UU_TIEN=thuong truoc khi chay.
+if /i not "%UU_TIEN%"=="thuong" set "DAT_UU_TIEN=1"
 cd /d "%~dp0GiaoNhanFuzz"
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyMMdd_HHmm"') do set TS=%%i
 set OUT=%~dp0ketqua_kiemtra_%TS%.txt
@@ -40,6 +44,7 @@ set "DANHMUC_CHAN=1"
 
 echo KIEM TRA %date% %time%  ^|  nang %PO% PO x %OPS% thao tac, seed %SEED%  ^|  %NUMBER_OF_PROCESSORS% nhan > "%OUT%"
 git -C "%~dp0.." log --oneline -1 >> "%OUT%" 2>nul
+if "%DAT_UU_TIEN%"=="1" powershell -NoProfile -Command "try { $p = Get-Process -Id (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId; $p.PriorityClass = 'BelowNormal'; 'Uu tien cua so lenh: ' + $p.PriorityClass + ' [KIEM-UUTIEN]' } catch { 'Uu tien: khong doi duoc (' + $_.Exception.Message + ')' }" >> "%OUT%" 2>&1
 
 rem [KIEM-NHAN 2026-11-01] chup tai may truoc khi chay: CPU dang dung + 6 tien trinh an CPU nhat (de biet cham vi may ban viec khac)
 powershell -NoProfile -Command "$c=(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average; 'May truoc khi chay: CPU dang dung ' + $c + '%%'; Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $_.Name -notin '_Total','Idle' } | Sort-Object PercentProcessorTime -Descending | Select-Object -First 6 | ForEach-Object { '  ' + $_.Name + ' ' + [math]::Round($_.PercentProcessorTime / $env:NUMBER_OF_PROCESSORS) + '%%' }" >> "%OUT%" 2>&1

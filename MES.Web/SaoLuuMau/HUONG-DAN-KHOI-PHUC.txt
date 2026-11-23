@@ -1,0 +1,114 @@
+﻿HƯỚNG DẪN KHÔI PHỤC / CÀI DỊCH VỤ / NÂNG CẤP — PHẦN MỀM MES NHẬT PHÁT
+[G32B-KHOIPHUC 2026-11-23] Gói 32b. File này đi kèm MỌI bộ sao lưu trọn bộ (thư mục khoi-phuc\) và thư mục phần mềm (SaoLuuMau\).
+Nguồn: HÙNG 22/11 14:30 (sau này có sự cố tự xử lý được) + 23/11 13:20 OK Gói 32b.
+
+======================================================================
+0. HIỂU NHANH BỘ SAO LƯU
+======================================================================
+Thư mục sao lưu (nhập ở phần mềm: Cài đặt › Sao lưu), ví dụ D:\MES-Backup\MES\ có 3 loại folder, mỗi folder = 1 bản, tên = thời điểm lưu:
+  nhanh\2026-11-23_140000\          CHỈ DỮ LIỆU (mỗi 60 phút). Khôi phục được dữ liệu, không có phần mềm.
+  bo\2026-11-23_235500\             TRỌN BỘ mỗi ngày: dữ liệu + phần mềm + cấu hình + ảnh + script khôi phục (khoi-phuc\).
+  truoc-nang-cap\2026-11-25_090000\ TRỌN BỘ tạo tự động ngay trước mỗi lần nâng cấp phần mềm.
+Trong mỗi folder có manifest.json (thời điểm, phiên bản, mã băm từng file) và DOC-TRUOC.txt.
+Bộ ĐẠT mới nhất xem ở tab Cài đặt › Sao lưu (cột Kết quả = ĐẠT). Không dùng bộ ghi LỖI.
+
+Nguyên tắc chọn bộ:
+  - Lỗi phần mềm sau khi nâng cấp → bộ truoc-nang-cap mới nhất (hoặc chạy lại bản cũ — mục 4).
+  - DB hỏng / lỡ xoá nhầm dữ liệu → bản nhanh ĐẠT gần nhất TRƯỚC lúc sự cố (mất tối đa ~1 giờ nhập liệu).
+  - Máy hỏng hẳn / cài máy mới → bộ ngày (bo\) mới nhất; sau đó nếu có bản nhanh mới hơn thì khôi phục thêm bản nhanh đó (chỉ dữ liệu).
+  - Ổ sao lưu cũng hỏng → lấy bộ trên Google Drive (script đẩy Google của anh Hùng) về ổ máy, rồi làm như trên.
+Script KHÔNG chạy được từ ổ mạng / Google Drive ảo khi "Run as administrator" — CHÉP folder bộ sao lưu về ổ đĩa máy (vd D:\khoi-phuc\) trước.
+
+======================================================================
+1. KHÔI PHỤC TRÊN CÙNG MÁY (DB hỏng, xoá nhầm, phần mềm lỗi)
+======================================================================
+Làm trên MÁY CHỦ (máy cài SQL Server + phần mềm), đăng nhập Windows bằng tài khoản Administrator.
+  1) Báo mọi người ngừng nhập liệu (khôi phục sẽ ĐÈ dữ liệu hiện tại bằng dữ liệu lúc lưu).
+  2) Mở folder bộ muốn dùng → thư mục khoi-phuc\ (bản nhanh không có khoi-phuc\ — dùng khoi-phuc\ của 1 bộ ngày bất kỳ, xem bước 5).
+  3) XEM TRƯỚC (không đụng gì): mở cửa sổ lệnh tại đó, chạy
+        khoi-phuc.bat -XemTruoc
+     Đọc kỹ: DB nào bị đè, đè từ bộ lúc mấy giờ, thư mục app nào.
+  4) Làm thật: chuột phải khoi-phuc.bat → Run as administrator → gõ CO (chữ hoa) → Enter.
+     Script tự: kiểm bộ còn nguyên (mã băm) → dừng dịch vụ MES → SAO LƯU DB đang có (file ..._truoc-khoi-phuc_<giờ>.bak trong thư mục
+     sao lưu mặc định của SQL Server — để quay lại nếu chọn nhầm bộ) → khôi phục DB → (bộ trọn bộ) dựng lại phần mềm + cấu hình + ảnh
+     (thư mục app cũ đổi tên ...truoc-khoi-phuc-<giờ>, KHÔNG xoá) → bật lại dịch vụ → mở thử trang đăng nhập.
+     DB đang HỎNG (SQL báo SUSPECT / RECOVERY_PENDING / RESTORING…): script không sao lưu được DB đó → báo vàng, bỏ bước sao lưu, đè luôn.
+     Khôi phục lỗi giữa chừng: DB cũ còn nguyên → script tự bật lại dịch vụ (dùng tiếp DB cũ); DB đã bị đè dở → script tự TRẢ LẠI DB cũ
+     từ file ..._truoc-khoi-phuc_<giờ>.bak rồi bật lại. Đọc dòng [LOI] / [!] cuối cùng: luôn ghi DB đang ở đâu, dịch vụ đang BẬT hay DỪNG.
+  5) Chỉ khôi phục DỮ LIỆU từ bản nhanh (giữ nguyên phần mềm đang chạy):
+        khoi-phuc.bat -Bo "D:\MES-Backup\MES\nhanh\2026-11-23_140000" -ChiDuLieu
+     (chạy khoi-phuc.bat nằm trong bất kỳ bộ ngày nào, hoặc trong thư mục phần mềm: C:\MES\app\SaoLuuMau\khoi-phuc.bat).
+  6) Sau khi xong: đăng nhập kiểm vài PO gần nhất (Kế hoạch, Giao nhận, Nhập WTS); vào Cài đặt › Sao lưu bấm "Tạo trọn bộ ngay".
+     Có IT / anh Hùng: chạy thêm tools\QuetSo (quét sổ cân in/out) trên DB vừa khôi phục.
+Toàn bộ những gì script làm được ghi ở C:\ProgramData\MES_Server\khoi-phuc-log\khoi-phuc_<giờ>.txt (gửi file này khi cần hỏi).
+
+Mã thoát (dòng "Ma thoat" cuối cửa sổ): 0 đạt · 1 bộ hỏng (chọn bộ khác) · 2 tham số sai / không gõ CO / phần mềm đang chạy tay ·
+3 chưa chạy quyền Administrator · 4 lỗi SQL (đọc 2 dòng cuối: DB cũ còn / đã trả lại / không dùng được, dịch vụ BẬT hay DỪNG) ·
+5 phần mềm không lên (xem C:\MES\app\logs) · 6 DB ĐÃ khôi phục nhưng dựng lại phần mềm lỗi (script đã trả thư mục phần mềm cũ + bật lại;
+sửa lỗi rồi chạy lại được) · 9 lỗi khác.
+
+======================================================================
+2. DỰNG LẠI TRÊN MÁY MỚI (máy hỏng hẳn)
+======================================================================
+  1) Cài Windows (10/11 Pro hoặc Server), đặt tên máy, IP tĩnh như cũ nếu được (máy trạm khỏi đổi địa chỉ).
+  2) Cài SQL Server (bản Express miễn phí được) — bản PHẢI ≥ bản ghi trong manifest.json mục "SqlServer"
+     (vd 16.0 = SQL 2022, 17.0 = SQL 2025; SQL Server không khôi phục được bản mới về bản cũ).
+     Lúc cài: chế độ đăng nhập "Mixed Mode", thêm tài khoản Windows Administrator đang dùng vào sysadmin.
+     Ghi lại tên instance: mặc định (MSSQLSERVER) thì Server=. ; Express thường là .\SQLEXPRESS.
+  3) Cài "ASP.NET Core Runtime 8.0 (Hosting Bundle)" bản x64 từ trang Microsoft (dotnet.microsoft.com → .NET 8 → ASP.NET Core Runtime).
+  4) Tạo tài khoản đăng nhập SQL cho phần mềm (SSMS › Security › Logins › New Login) đúng TÊN + MẬT KHẨU như trong
+     <bộ>\cau-hinh\appsettings.json (ConnectionStrings:DefaultConnection, mục User Id / Password). Chưa tạo cũng được — script báo
+     "người dùng SQL … chưa có tài khoản đăng nhập" kèm câu lệnh nối lại để chạy sau.
+  5) Chép bộ ngày (bo\…) mới nhất về ổ máy mới, vd D:\khoi-phuc\2026-11-23_235500\.
+  6) Mở <bộ>\cau-hinh\appsettings.json kiểm Server= : nếu instance máy mới khác (vd .\SQLEXPRESS) thì chạy khoi-phuc với -SqlServer
+     và SAU khi khôi phục sửa Server= trong C:\MES\app\appsettings.json (script nhắc nếu thấy lệch).
+  7) Chạy: chuột phải <bộ>\khoi-phuc\khoi-phuc.bat → Run as administrator (thêm -SqlServer ".\SQLEXPRESS" nếu cần) → gõ CO.
+     Máy mới chưa có dịch vụ → script dựng phần mềm vào C:\MES\app rồi nhắc bước 8.
+  8) Cài dịch vụ: chuột phải C:\MES\app\SaoLuuMau\cai-dich-vu.bat → Run as administrator (mục 3).
+  9) BẢN QUYỀN: gắn với máy → máy mới phải KÍCH HOẠT LẠI. Mở phần mềm (http://localhost:5000) → trang báo khoá → "Tới trang Kích hoạt
+     Bản quyền" (/about) → làm theo hướng dẫn (liên hệ anh Hùng / nhà cung cấp lấy mã cho máy mới). Dữ liệu giữ nguyên trong lúc chờ.
+ 10) Vào Cài đặt › Sao lưu nhập lại thư mục sao lưu trên máy mới (cài đặt sao lưu cũ được chép nếu máy chưa có — kiểm lại ổ đĩa đúng),
+     bấm "Tạo trọn bộ ngay". Chạy C:\MES\app\SaoLuuMau\cai-dich-vu.bat -ChiCapQuyen để dịch vụ SQL ghi được thư mục sao lưu.
+ 11) File cấu hình thêm (vd Caddyfile cho tên miền HTTPS): nằm ở <bộ>\cau-hinh\them\ — chép tay về đúng chỗ cũ (script in danh sách).
+ 12) Máy trạm: nếu IP / tên máy chủ đổi thì sửa địa chỉ trên trình duyệt máy trạm.
+
+======================================================================
+3. CÀI PHẦN MỀM THÀNH WINDOWS SERVICE (máy khách, lần đầu)
+======================================================================
+  - Bản publish (anh Hùng làm trên máy dev):  dotnet publish MES.Web -c Release -o C:\MES\app   → chép cả thư mục C:\MES\app sang máy chủ.
+  - Sửa C:\MES\app\appsettings.json: chuỗi kết nối SQL của máy chủ (Server=. hoặc .\SQLEXPRESS, tài khoản SQL riêng của phần mềm).
+  - Chuột phải C:\MES\app\SaoLuuMau\cai-dich-vu.bat → Run as administrator. Script: tạo dịch vụ "MES Nhat Phat" (tự chạy khi bật máy,
+    chờ SQL Server lên trước, lỗi tự chạy lại sau 1 phút, chế độ Production, tài khoản LocalSystem), cấp quyền ghi thư mục sao lưu cho
+    dịch vụ SQL Server, mở tường lửa cổng phần mềm (mạng Domain / Private), bật và mở thử trang đăng nhập.
+  - Sau khi nhập / đổi thư mục sao lưu ở tab Cài đặt › Sao lưu: chạy  cai-dich-vu.bat -ChiCapQuyen
+  - Gỡ dịch vụ: cai-dich-vu.bat -Go (không xoá thư mục, dữ liệu).
+  - Dừng / bật tay: services.msc → "MES Nhat Phat". KHÔNG chạy thêm chay_app_5000.bat trên máy này (trùng cổng).
+  - Chuẩn bị DB máy khách (anh Hùng duyệt + chạy 1 lần): tools\sql\19_SAO_LUU.sql (chế độ SIMPLE + quyền sao lưu cho tài khoản phần mềm).
+
+======================================================================
+4. NÂNG CẤP PHẦN MỀM (bản mới) — TỰ SAO LƯU TRƯỚC
+======================================================================
+  1) Chép thư mục publish bản mới vào chỗ riêng, vd D:\ban-moi\ (KHÔNG chép đè vào C:\MES\app).
+  2) Bản mới có kèm file SQL (tools\sql\NN_*.sql) thì chạy nang-cap với -ChoChaySql: script dừng chờ để chạy SQL bằng SSMS.
+  3) Chuột phải D:\ban-moi\SaoLuuMau\nang-cap.bat → Run as administrator → gõ CO.
+     Script: dừng dịch vụ → tạo 1 bộ TRỌN BỘ của bản đang chạy vào <sao lưu>\<DB>\truoc-nang-cap (lỗi → dừng, bật lại bản cũ, không thay gì)
+     → đổi tên C:\MES\app thành C:\MES\app.cu-<giờ> → chép bản mới vào C:\MES\app → giữ appsettings*.json, ảnh (wwwroot\uploads), logs
+     của máy này → bật dịch vụ → mở thử trang đăng nhập. Bản mới không lên trong 120 giây → TỰ TRẢ bản cũ, bật lại.
+     Đã chạy SQL nâng cấp (-ChoChaySql) mà bản mới không lên → KHÔNG tự trả bản cũ (bản cũ không hợp DB mới): sửa theo log, hoặc quay hẳn
+     về trước nâng cấp bằng khoi-phuc.bat trong bộ truoc-nang-cap mới nhất (trả cả DB lẫn phần mềm).
+     Không đổi tên được C:\MES\app (Explorer / Notepad++ / cửa sổ lệnh đang mở trong đó) → script bật lại bản cũ, chưa thay gì: đóng các
+     cửa sổ đó rồi chạy lại.
+     Mã thoát: 0 đạt · 4 sao lưu trước nâng cấp lỗi · 5 đã trả bản cũ · 6 trả bản cũ lỗi (làm theo dòng [LOI] cuối) · 7 không đổi tên được
+     thư mục app · 8 đã chạy SQL + bản mới không lên · 9 lỗi khác (dòng cuối ghi dịch vụ đang BẬT hay DỪNG).
+  4) Chạy ổn vài ngày thì xoá tay C:\MES\app.cu-<giờ>. Tab Sao lưu giữ 10 bộ trước nâng cấp gần nhất (đổi được ở ô "Giữ bộ trước nâng cấp").
+  5) Quay lại bản cũ khi phát hiện lỗi sau đó: khôi phục bộ truoc-nang-cap tương ứng (mục 1) — chú ý: dữ liệu nhập SAU lúc nâng cấp sẽ mất,
+     muốn giữ dữ liệu thì chỉ đổi phần mềm: dừng dịch vụ, đổi tên C:\MES\app ↔ C:\MES\app.cu-<giờ>, bật dịch vụ (chỉ được khi bản mới
+     KHÔNG chạy SQL đổi cấu trúc DB).
+
+======================================================================
+5. Ổ SAO LƯU ĐẦY
+======================================================================
+  - Băng cảnh báo vàng / đỏ "Ổ chứa thư mục sao lưu còn trống …" (chỉ Admin thấy) = sắp đầy. Khi đầy, lần lưu báo LỖI kèm chữ "Ổ ĐẦY",
+    và phần mềm KHÔNG tự dọn (an toàn: bản mới nhất lỗi thì không xoá bản cũ).
+  - Xử lý: Cài đặt › Sao lưu → nút thùng rác ở các bản cũ (nhập PIN; bản ĐẠT mới nhất mỗi loại không xoá được) hoặc giảm số giữ;
+    hoặc chép bớt bộ tháng cũ ra ổ khác rồi xoá. Sau đó bấm "Lưu nhanh ngay" kiểm lại.

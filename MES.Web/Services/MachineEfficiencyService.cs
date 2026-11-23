@@ -16,21 +16,9 @@ public class MachineEfficiencyService
     private readonly AppDbContext _db;
     public MachineEfficiencyService(AppDbContext db) { _db = db; }
 
-    public async Task<MachineEfficiencyResult> GetAsync(
-        DateOnly date, TimeOnly fromTime, TimeOnly toTime,
-        CaLamViec? selectedCa = null, int viewerUserId = 0)
-    {
-        // [HSM-QUYEN 2026-11-16] Máy chủ kiểm quyền Xem HIEU_SUAT_MAY (ma trận DB, không tin claim) — trước: ai đăng nhập cũng lấy được
-        //   WTS mọi máy. Không quyền → kết quả rỗng (trang đã chặn + ẩn menu; đây là hàng rào thứ hai, như WtsReportService [RPT-4]).
-        //   viewerUserId = 0 chỉ còn ở bộ kiểm cũ → coi như không quyền. Nguồn: CLAUDE quét Fable 15/11 (BM1-09); Hùng 15/11 15:10 OK câu 9.
-        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay))
-            return EmptyResult(date, fromTime, toTime);
-        // [G29-HSM-KY 2026-11-21] Tách phần ĐỌC DB (LoadAsync, theo khoảng ngày) khỏi phần TÍNH 1 ngày (ComputeDay) để báo cáo tuần / tháng
-        //   (GetPeriodAsync) dùng đúng cùng cách tính với trang ngày. Ngày lẻ: đọc đúng khung 1 ngày như trước → số không đổi.
-        var data = await LoadAsync(date, date, fromTime, toTime);
-        if (data == null) return EmptyResult(date, fromTime, toTime);
-        return ComputeDay(data, date, fromTime, toTime, selectedCa);
-    }
+    // [G31-DON-BO-KIEM 2026-11-23] BỎ GetAsync (1 ngày theo khung giờ / ca) — trang ngày đã dùng GetDay24Async từ Gói 31, chỉ còn bộ kiểm cũ gọi
+    //   (G31-GHI-NHO (4)). Quyền [HSM-QUYEN] kiểm ở GetDay24Async / GetPeriod24Async. LoadAsync / ComputeDay giữ tham số khung giờ (24h gọi với 00:00).
+    //   Nguồn: CLAUDE rà độc lập Gói 31 (G31-GHI-NHO 4); HÙNG 23/11 13:03 OK dọn bộ kiểm.
 
     /// <summary>[G29-HSM-KY] Dữ liệu đọc 1 lần cho cả khoảng ngày.</summary>
     sealed class LoadedData
@@ -314,41 +302,10 @@ public class MachineEfficiencyService
         return res;
     }
 
-    // ═══ [G29-HSM-KY 2026-11-21] Báo cáo tuần / tháng / tự chọn (mockup https://claude.ai/artifact/CeAoFry7m7H8wT5z6PZ1wp) ═══
+    // ═══ [G29-HSM-KY 2026-11-21] Báo cáo tuần / tháng / năm — cộng từng ngày (Accumulate) dùng chung cách tính trang ngày (ComputeDay).
     //   Nguồn: HÙNG 21/11 08:17 (báo cáo máy lấy theo WTS) + 09:46 OK mockup + câu B theo đề xuất CLAUDE.
-    //   Mỗi ngày tính y trang ngày (ComputeDay, cùng khung giờ + ca đang chọn) rồi cộng. Ngày được tính = ngày trong kỳ xưởng có ít nhất
-    //   1 dòng WTS (sản xuất hoặc việc không ra SP) — phần mềm chưa có lịch nghỉ / lễ (câu B2 Hùng OK 21/11). % trên phút kế hoạch
-    //   (khung − nghỉ, câu B1). OK / NG: mỗi dòng WTS tính 1 lần, vào ngày đầu tiên dòng đó chạm khung. Chỉ đọc.
-    public const int PeriodMaxDays = 93;
-
-    public async Task<MachinePeriodResult> GetPeriodAsync(DateOnly from, DateOnly to, TimeOnly fromTime, TimeOnly toTime,
-        CaLamViec? selectedCa, int viewerUserId)
-    {
-        var res = new MachinePeriodResult { From = from, To = to, FromTime = fromTime, ToTime = toTime };
-        if (!await PermCheck.CanViewAsync(_db, viewerUserId, MES.Web.Constants.SystemPermissions.HieuSuatMay)) return res;   // [HSM-QUYEN]
-        if (to < from) { res.Error = "Ngày \"Từ\" phải trước hoặc bằng ngày \"Đến\"."; return res; }
-        if (to.DayNumber - from.DayNumber + 1 > PeriodMaxDays) { res.Error = $"Khoảng xem tối đa {PeriodMaxDays} ngày."; return res; }
-        if (fromTime == toTime) { res.Error = "Khung giờ trống."; return res; }
-
-        // ngày d được tính khi có dòng WTS / việc không ra SP CHẠM khung giờ của d (rà độc lập 21/11 Trung 2: trước theo ngày giờ bắt đầu →
-        //   đuôi ca đêm sau 0h làm Chủ nhật thành ngày kế hoạch rảnh giả)
-        DateTime WinS(DateOnly d) => d.ToDateTime(fromTime);
-        DateTime WinE(DateOnly d) => toTime < fromTime ? d.AddDays(1).ToDateTime(toTime) : d.ToDateTime(toTime);
-        var qS = WinS(from); var qE = WinE(to);
-        var iv = (await _db.WtsProductionLogs.Where(x => !x.IsVoided && x.StartTime < qE && x.EndTime > qS).Select(x => new { x.StartTime, x.EndTime }).ToListAsync())
-            .Select(x => (x.StartTime, x.EndTime)).ToList();
-        iv.AddRange((await _db.WorkerActivityLogs.Where(x => !x.IsVoided && x.StartTime < qE && x.EndTime > qS).Select(x => new { x.StartTime, x.EndTime }).ToListAsync())
-            .Select(x => (x.StartTime, x.EndTime)));
-        var days = Enumerable.Range(0, to.DayNumber - from.DayNumber + 1).Select(i => from.AddDays(i))
-            .Where(d => iv.Any(x => x.StartTime < WinE(d) && x.EndTime > WinS(d))).ToList();
-        res.Days = days;
-        if (days.Count == 0) return res;
-
-        var data = await LoadAsync(days[0], days[^1], fromTime, toTime);
-        if (data == null) return res;
-        Accumulate(res, data, days, d => ComputeDay(data, d, fromTime, toTime, selectedCa));
-        return res;
-    }
+    //   [G31-DON-BO-KIEM 2026-11-23] BỎ GetPeriodAsync (kỳ theo khung giờ / ca, ≤ 93 ngày) — trang kỳ đã dùng GetPeriod24Async từ Gói 31, chỉ còn
+    //   bộ kiểm cũ gọi (G31-GHI-NHO (4)). Nguồn: CLAUDE rà độc lập Gói 31; HÙNG 23/11 13:03 OK dọn bộ kiểm.
 
     /// <summary>[G31-HSM-24H] Cộng từng ngày (dùng chung kỳ theo ca cũ + kỳ 24h).</summary>
     void Accumulate(MachinePeriodResult res, LoadedData data, List<DateOnly> days, Func<DateOnly, MachineEfficiencyResult> computeDay, Func<WtsProductionLog, bool>? qtyIn = null)
