@@ -145,7 +145,7 @@ namespace MES.Web.Services
                 if (pos.LamHo)   // hàng Gia công giao theo NC đang giữ → trả về Gia công (K3: bắt buộc NC nhận)
                     return await IssueWithPurposeOnceAsync(id, g, "GC", r.Qty, uid, HandoverPurpose.HelpReturn, null, ToNcFor("GC"), notes, null, ftx: ftx);
                 if (to == null) return (false, "Chọn nhóm nhận.");
-                if (pos.HelpFrom != null)   // (a) Gia công giao theo NC cho nhóm khác làm hộ (N3, N4: ghi chú bắt buộc)
+                if (pos.HelpFrom != null)   // (a) Gia công giao theo NC cho nhóm khác làm hộ (N3, N4; [N20-GHICHU] ghi chú không bắt buộc)
                     return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.HelpSend, pos.HelpFrom, null, notes, null, ftx: ftx);
                 // [KHO-TARO-THANG 2026-11-12] Kho, phôi còn → HTSP khi NC đầu Gia công là Taro (máy loại trừ): phiếu Kho giao thẳng Taro (giao theo NC từ "Nhận vào").
                 //   Nguồn: KHÁCH 12/11 (3.3 b = A — chọn sẵn Taro NC đầu); HÙNG 12/11 14:00.

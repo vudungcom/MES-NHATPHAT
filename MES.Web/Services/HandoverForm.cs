@@ -38,6 +38,8 @@ namespace MES.Web.Services
         public string? HeldCell { get; set; }
         /// <summary>Hàng tốt: giao theo NC (làm hộ) từ NC này.</summary>
         public string? HelpFrom { get; set; }
+        /// <summary>[N20-O-NC] Chữ NC giao (NC kế tiếp + máy) của dòng giao theo NC — ô "Giao làm NC" ở form.</summary>
+        public string  HelpTo { get; set; } = "";
         /// <summary>Hàng tốt: hàng Gia công giao theo NC đang giữ → trả về Gia công.</summary>
         public bool    LamHo  { get; set; }
         /// <summary>[KTT-PHOILOI 2026-11-12] HTSP hàng lỗi: phôi lỗi Taro phát hiện khi đang làm hàng đoạn đầu chuỗi (Kho giao thẳng) → chỉ trả Kho.</summary>
@@ -111,14 +113,24 @@ namespace MES.Web.Services
         }
 
         /// <summary>Dòng hàng tốt giao theo NC từ NC <paramref name="code"/>: chữ theo chiếc đang nằm sau NC đó.</summary>
+        // [N20-O-NC 2026-11-23] Dòng giao theo NC ghi rõ NC giao + máy ("Đã làm xong NC2 · giao làm NC3 trên máy H01 (máy loại trừ)");
+        //   ô "Giao làm NC" ở Chi tiết (GiaoXuLyModal) đọc chữ HelpToText — cùng 1 nguồn, không thêm luật. Trước: "· chờ giao làm NC3 (máy loại trừ H01)" /
+        //   "· chưa làm NC3" — khách TH8 báo "chưa có phần chọn NC giao". Nguồn: KHÁCH 23/11 (mockup TH8 "muốn thêm ô chọn NC giao riêng"); HÙNG 23/11 16:24 (N20).
         static string HelpText(List<GcNode> chain, string code)
+        {
+            var head = HandoverLedgerService.IsVao(code) ? HandoverLedgerService.VaoLabel : "Đã làm xong " + Nc(code);
+            var to = HelpToText(chain, code);
+            return to == "" ? head : head + " · giao làm " + to;
+        }
+
+        /// <summary>[N20-O-NC] NC giao của dòng giao theo NC từ <paramref name="code"/> (NC kế tiếp): "NC3 trên máy H01 (máy loại trừ)" · "NC3 (nhóm khác làm)" · "" (không có NC sau).</summary>
+        public static string HelpToText(List<GcNode> chain, string code)
         {
             var i = chain.FindIndex(n => n.Code == code);
             var next = i >= 0 && i + 1 < chain.Count ? chain[i + 1] : null;
-            var head = HandoverLedgerService.IsVao(code) ? HandoverLedgerService.VaoLabel : "Đã làm xong " + Nc(code);
-            if (next == null) return head;
-            return next.Excluded ? head + " · chờ giao làm " + ExclText(next).Replace(", làm hộ)", ")")
-                                 : head + " · chưa làm " + Nc(next.Code);
+            if (next == null) return "";
+            return next.Excluded ? Nc(next.Code) + (string.IsNullOrEmpty(next.Machine) ? "" : " trên máy " + next.Machine) + " (máy loại trừ)"
+                                 : Nc(next.Code) + " (nhóm khác làm)";
         }
 
         /// <summary>[K3] Chữ 2 dòng chính của nhóm không phải Gia công: (chưa xong, đã xong).</summary>
@@ -161,8 +173,8 @@ namespace MES.Web.Services
                     foreach (var s in normals.Where(s => s.Code != lastNormal.Code))
                     {
                         var cap = HandoverLedgerService.IssueCap(row, "GC", HandoverPurpose.HelpSend, s.Code).Max;
-                        list.Add(new FormPos { Id = "HELP:" + s.Code, Label = HelpText(chain, s.Code), Sub = "giao theo NC cho nhóm khác làm hộ (ghi chú bắt buộc)",
-                                               Have = Pos0(cap), HelpFrom = s.Code });
+                        list.Add(new FormPos { Id = "HELP:" + s.Code, Label = HelpText(chain, s.Code), Sub = "giao theo NC cho nhóm khác làm hộ",   // [N20-GHICHU] bỏ "(ghi chú bắt buộc)"
+                                               Have = Pos0(cap), HelpFrom = s.Code, HelpTo = HelpToText(chain, s.Code) });
                     }
                     list.Add(new FormPos { Id = "DA", Label = GcDoneText(chain), Have = Pos0(G.ConGiao), IsLast = true });
                 }

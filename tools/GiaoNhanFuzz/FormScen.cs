@@ -152,7 +152,8 @@ public static class FormScen
             foreach (var st in r.G("GC").Steps.Where(s => !s.IsExcluded))
                 Ok(H("NC:" + st.Code) == Math.Min(st.Waiting ?? 0, r.G("GC").ChuaLam), $"Số dòng NC {st.Code} = chờ NC trong sổ ({st.Waiting})");
             var go = P(r, "GC", true);
-            Ok(go.Select(p => p.Id).SequenceEqual(new[] { "HELP:NC1", "HELP:NC2", "DA" }) && go[0].Label == "Đã làm xong NC1 · chưa làm NC2" && go[2].Have == 6,
+            // [N20-O-NC] đáp án đổi 23/11 theo khách (mockup TH8): dòng giao theo NC ghi "· giao làm NC2 (nhóm khác làm)" (trước "· chưa làm NC2")
+            Ok(go.Select(p => p.Id).SequenceEqual(new[] { "HELP:NC1", "HELP:NC2", "DA" }) && go[0].Label == "Đã làm xong NC1 · giao làm NC2 (nhóm khác làm)" && go[0].HelpTo == "NC2 (nhóm khác làm)" && go[2].Have == 6,
                "GC hàng tốt: giao theo NC từ NC1 / NC2 (làm hộ) + \"Đã làm xong NC3 (NC cuối) · chưa giao\"", string.Join(" | ", go.Select(p => p.Id + "=" + p.Label + ":" + p.Have)));
             await Save(db, Req("GC", Gc, HandoverForm.Tot, "DA", HandoverForm.AGiao, 4, "HTSP"), "GC giao 4 cho HTSP (Hàng mới), giữ 2");
             await svc.ReceiveAsync(LastTx(db), 4, 0, null, Htsp);
@@ -354,10 +355,17 @@ public static class FormScen
             await VuHelp.Wts(d2, "GC", "NC1", null, 6, 0, Gc, 0);
             var r = await Row(d2);
             var go = P(r, "GC", true);
-            Ok(go.Any(p => p.Id == "HELP:NC1" && p.Have == 6 && p.Label.Contains("chờ giao làm NC2 (máy loại trừ H04)")), "GC hàng tốt: \"Đã làm xong NC1 · chờ giao làm NC2 (máy loại trừ H04)\" có 6",
-               string.Join(" | ", go.Select(p => p.Id + "=" + p.Label + ":" + p.Have)));
-            await Save(d2, Req("GC", Gc, HandoverForm.Tot, "HELP:NC1", HandoverForm.AGiao, 4, "HTSP"), "Giao theo NC thiếu ghi chú", false, "ghi chú");
-            await Save(d2, Req("GC", Gc, HandoverForm.Tot, "HELP:NC1", HandoverForm.AGiao, 4, "HTSP", notes: "lam ho H04"), "GC giao theo NC từ NC1 cho HTSP làm hộ 4");
+            // [N20-O-NC] đáp án đổi 23/11 theo khách (mockup TH8): chữ "· giao làm NC2 trên máy H04 (máy loại trừ)" + ô Giao làm NC (HelpTo); trước "· chờ giao làm NC2 (máy loại trừ H04)"
+            Ok(go.Any(p => p.Id == "HELP:NC1" && p.Have == 6 && p.Label == "Đã làm xong NC1 · giao làm NC2 trên máy H04 (máy loại trừ)" && p.HelpTo == "NC2 trên máy H04 (máy loại trừ)"),
+               "GC hàng tốt: \"Đã làm xong NC1 · giao làm NC2 trên máy H04 (máy loại trừ)\" có 6, ô Giao làm NC = \"NC2 trên máy H04 (máy loại trừ)\"",
+               string.Join(" | ", go.Select(p => p.Id + "=" + p.Label + "/" + p.HelpTo + ":" + p.Have)));
+            Ok(go.Where(p => p.HelpFrom != null).All(p => !p.Sub.Contains("bắt buộc")), "Dòng giao theo NC không còn chữ \"ghi chú bắt buộc\" ([N20-GHICHU])",
+               string.Join(" | ", go.Select(p => p.Id + "=" + p.Sub)));
+            // [N20-GHICHU] đáp án đổi 23/11 theo khách: thiếu ghi chú vẫn lưu được (trước: chặn "ghi chú")
+            await Save(d2, Req("GC", Gc, HandoverForm.Tot, "HELP:NC1", HandoverForm.AGiao, 4, "HTSP"), "GC giao theo NC từ NC1 cho HTSP làm hộ 4, KHÔNG ghi chú ([N20-GHICHU])");
+            var hs = d2.HandoverTransactions.List.OrderByDescending(t => t.HandoverTxId).First();
+            Ok(hs.Purpose == HandoverPurpose.HelpSend && hs.FromNC == "NC1" && hs.QtyIssued == 4 && string.IsNullOrEmpty(hs.Notes),
+               "Phiếu giao theo NC không ghi chú: HelpSend từ NC1, 4 chiếc, Notes trống", $"{hs.Purpose} {hs.FromNC} {hs.QtyIssued} '{hs.Notes}'");
             await s2.ReceiveAsync(d2.HandoverTransactions.List.Max(t => t.HandoverTxId), 4, 0, null, Htsp);
             var r2 = await Row(d2);
             Ok(Pos(r2, "HTSP", true, "LAMHO")?.Have == 4, "HTSP hàng tốt: \"Đang giữ hàng Gia công giao theo NC (làm hộ)\" có 4");

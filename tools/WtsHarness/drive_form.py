@@ -69,7 +69,8 @@ async def main():
            "D13 [K2][K3] bước 2 Gia công: Vừa nhận chưa làm NC01 có 8 · Đã làm xong NC01 · chưa làm NC02 có 0 · Đã làm xong NC02 (NC cuối) · chưa giao có 0 · Tồn hàng lỗi 0 · Tồn hàng sửa 2", bt)
         await click(m, pg, "Hàng tốt")
         bt2 = await btn_texts(m)
-        ok(any(x.startswith("Đã làm xong NC01 · chưa làm NC02") and "làm hộ" in x for x in bt2) and any(x.startswith("Đã làm xong NC02 (NC cuối) · chưa giao") for x in bt2),
+        # [N20-O-NC] đáp án đổi 23/11 theo khách (mockup TH8): "· giao làm NC02 (nhóm khác làm)" (trước "· chưa làm NC02")
+        ok(any(x.startswith("Đã làm xong NC01 · giao làm NC02 (nhóm khác làm)") and "làm hộ" in x for x in bt2) and any(x.startswith("Đã làm xong NC02 (NC cuối) · chưa giao") for x in bt2),
            "D14 [K2](a) hàng tốt Gia công: giao theo NC (làm hộ) từ NC01 + Đã làm xong NC cuối", bt2)
         await close_modal(pg)
 

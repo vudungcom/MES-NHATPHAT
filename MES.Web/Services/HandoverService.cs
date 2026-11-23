@@ -663,8 +663,9 @@ namespace MES.Web.Services
                 return (false, $"Ô {HandoverCell.Label(fromCell)} không giao được theo kiểu {HandoverPurpose.Label(purpose)}.");
             if (purpose == HandoverPurpose.HelpSend && string.IsNullOrEmpty(fromNC))
                 return (false, "Giao theo NC: bắt buộc chọn NC nguồn.");
-            if (purpose == HandoverPurpose.HelpSend && !khoTaro && string.IsNullOrWhiteSpace(notes))   // [KHO-TARO-THANG] Kho giao thẳng Taro: ghi chú không bắt buộc (NC nhận đã cố định)
-                return (false, "Giao theo NC: bắt buộc ghi chú (N4).");
+            // [N20-GHICHU 2026-11-23] Bỏ "Giao theo NC: bắt buộc ghi chú (N4)" — ghi chú không bắt buộc (cả Workflow ON / OFF); NC giao lấy từ NC nguồn
+            //   (dòng "giao làm NC…" + ô "Giao làm NC" ở form). Trước: thiếu ghi chú thì chặn, form chỉ làm xám nút Xác nhận không báo lý do (khách TH8).
+            //   Nguồn: KHÁCH 23/11 (mockup TH8 "bỏ bắt buộc Ghi chú"); HÙNG 23/11 16:24 (N20 thay phần ghi chú của N4).
 
             // [ISO-FIX 2026-10-31] Bỏ IsolationLevel.Serializable, giữ khoá PO (LockPoAsync ngay dưới, trước mọi câu đọc sổ).
             //   Trước: giao dịch Serializable để lại mức Serializable trên kết nối pool → câu đọc / giao dịch sau trên kết nối đó

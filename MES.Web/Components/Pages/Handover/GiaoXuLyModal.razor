@@ -224,7 +224,9 @@
 
     bool NeedCat => (IsFresh || IsTaroPhoi) && !string.IsNullOrEmpty(Act)   // [KTT-PHOILOI] phôi lỗi: vụ mới, chọn loại lỗi
                     && !(IsSua && _pass + _fail <= 0);
-    bool NotesRequired => HelpFrom;
+    // [N20-GHICHU 2026-11-23] Ghi chú không bắt buộc cả khi giao theo NC (trước: bắt buộc, nút Xác nhận xám không báo lý do — khách TH8).
+    //   Nguồn: KHÁCH 23/11 (mockup TH8); HÙNG 23/11 16:24 (N20).
+    bool NotesRequired => false;
 
     bool CanSave
     {
@@ -514,6 +516,34 @@
         </div>
     };
 
+    // [N20-O-NC 2026-11-23] Ô "Giao làm NC" ở Chi tiết khi giao theo NC: liệt kê các dòng giao theo NC (bước 2), chọn ô nào = chọn dòng đó (giữ nhóm nhận,
+    //   số điền lại theo trần dòng mới). Không thêm luật: NC giao = NC kế tiếp sau NC nguồn như cũ. Nguồn: KHÁCH 23/11 (mockup TH8 "muốn thêm ô chọn NC giao riêng"); HÙNG 23/11 16:24.
+    RenderFragment HelpNcSelect() => __builder =>
+    {
+        <div class="mb-2">
+            <label class="form-label form-label-sm mb-1">Giao làm NC</label>
+            <select class="form-select form-select-sm" @onchange="OnHelpNcChanged">
+                @foreach (var p in Positions.Where(x => x.HelpFrom != null))
+                {
+                    <option value="@p.Id" selected="@(_pos == p.Id)" disabled="@(p.Have <= 0)">@HelpNcLabel(p)</option>
+                }
+            </select>
+        </div>
+    };
+
+    static string HelpNcLabel(FormPos p) => (string.IsNullOrEmpty(p.HelpTo) ? p.Label : p.HelpTo) + " — có " + p.Have.ToString("0.##");
+
+    string HelpNcWill => Pos?.HelpTo is { Length: > 0 } t ? ", làm " + t : "";   // [N20-O-NC] câu "Sẽ ghi" nói rõ NC giao
+
+    void OnHelpNcChanged(ChangeEventArgs e)
+    {
+        var id = e.Value?.ToString() ?? "";
+        if (id == _pos || !Positions.Any(x => x.Id == id && x.HelpFrom != null)) return;
+        var keepTo = _to; var keepNotes = _notes;
+        PickPos(id);
+        _to = keepTo; _notes = keepNotes;
+    }
+
     RenderFragment GiaoBlock() => __builder =>
     {
         if (!IsGiao) return;
@@ -540,6 +570,10 @@
                 </select>
             }
         </div>
+        if (IsTot && HelpFrom)   // [N20-O-NC] ô riêng "Giao làm NC" (chọn dòng giao theo NC ở bước 2 — cùng 1 nguồn)
+        {
+            @HelpNcSelect()
+        }
         if (ShowPurpose)
         {
             <div class="row g-1 mb-2">
@@ -733,7 +767,7 @@
         if (IsTaroPhoi) return $"Sẽ ghi: phiếu Hàng lỗi công đoạn trước {G} → Kho, ô Hàng lỗi (phôi lỗi, nơi gây lỗi Khách hàng — 1 chứng từ, sinh vụ mới).";   // [KTT-PHOILOI]
         if (IsTot)
             return LamHo ? $"Sẽ ghi: phiếu trả hàng làm hộ về Gia công (chờ Gia công nhận)."
-                 : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D} (chờ {D} nhận)."
+                 : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D}{HelpNcWill} (chờ {D} nhận)."
                  : $"Sẽ ghi: phiếu Hàng mới {G} → {D} (chờ {D} nhận).";
         if (LamHoLoi) return "Sẽ ghi: phiếu trả hàng làm hộ bị lỗi về Gia công (ô Hàng lỗi, cùng vụ — chờ Gia công nhận).";   // [TARO-LAMHO-NC]
         if (IsXl)   // [SUA-XL-GIU][XL-TRA-LAI]

@@ -1136,7 +1136,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         {
                             var nx = kttF ? "HTSP" : HandoverForm.NextGroup(g);   // [KHO-TARO-THANG] NC đầu Taro: Kho mặc định giao Taro (khách 12/11 b = A)
                             req.ToGroup = rnd.NextDouble() < 0.7 && nx != "" ? nx : others[rnd.Next(others.Length)];
-                            if (pos.HelpFrom != null) { if (rnd.NextDouble() < 0.9) req.Notes = "lam ho"; else expErr ??= "ghi chú"; }
+                            if (pos.HelpFrom != null && rnd.NextDouble() < 0.9) req.Notes = "lam ho";   // [N20-GHICHU] đáp án đổi 23/11 theo khách: thiếu ghi chú vẫn lưu được (trước: expErr "ghi chú")
                             if (pos.HelpFrom != null && row.ApplyWorkflow && req.ToGroup != "HTSP" && row.LamHoRuns.Any(x => x.HasTaro && x.FromNc == pos.HelpFrom)) expErr ??= "HTSP";   // [TARO-LAMHO-NC] đoạn sau có Taro: chỉ HTSP
                             else if (kttF && req.ToGroup == "HTSP")
                             {   // [KHO-TARO-THANG] Kho phôi còn → HTSP = Kho giao thẳng Taro (không ô nhận, không NC nhận; ô nhận chọn → chặn)
