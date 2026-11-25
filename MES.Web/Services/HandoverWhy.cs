@@ -48,8 +48,12 @@ namespace MES.Web.Services
         static void RemoveReceive(LedgerInput s, long rid)
         {
             var t = s.Txs.FirstOrDefault(x => x.Receives.Any(r => r.Id == rid));
-            if (t != null) { t.Receives.RemoveAll(r => r.Id == rid); t.Status = StatusOf(t); }
-            s.Txs.RemoveAll(x => x.SourceReceiveId == rid);   // phiếu trả tự lập huỷ theo (như VoidReceiveAsync)
+            // [N22-SUA] lần nhận đã sửa (nhóm dòng cùng dấu [N22#gốc]): huỷ 1 dòng = huỷ cả nhóm + phiếu trả tự lập của từng dòng (như VoidReceiveOnceAsync)
+            var grp = t?.Receives.FirstOrDefault(r => r.Id == rid)?.N22Grp;
+            var ids = t == null ? new List<long> { rid }
+                    : t.Receives.Where(r => r.Id == rid || (grp != null && r.N22Grp == grp)).Select(r => r.Id).ToList();
+            if (t != null) { t.Receives.RemoveAll(r => ids.Contains(r.Id)); t.Status = StatusOf(t); }
+            s.Txs.RemoveAll(x => x.SourceReceiveId is long sr && ids.Contains(sr));   // phiếu trả tự lập huỷ theo (như VoidReceiveAsync)
         }
 
         /// <summary>Huỷ 1 lần nhận (+ phiếu trả tự lập của nó).</summary>

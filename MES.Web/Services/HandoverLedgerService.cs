@@ -702,7 +702,8 @@ namespace MES.Web.Services
     public record InRecv(long Id, DateTime At, decimal Ok, decimal Ng, string? NgReason,
                          string? Cell = null, string? CellReason = null,   // [GN-CELL2] ô bên nhận thực nhận + lý do đổi
                          long? NgCaseId = null,    // [VULOI] vụ lỗi sinh ra ở lần nhận (phiếu chưa mang vụ)
-                         string? ToNC = null);     // [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (đổi ô, phiếu không có NC). null = theo phiếu
+                         string? ToNC = null,      // [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (đổi ô, phiếu không có NC). null = theo phiếu
+                         long? N22Grp = null);     // [N22-SUA] lần nhận đã sửa: mã lần nhận gốc của nhóm (dấu "[N22#…]" ở Ghi chú) — huỷ 1 dòng = huỷ cả nhóm (GN-WHY tính thử như máy chủ). Sổ không dùng
     public class InTx
     {
         public long    Id        { get; set; }
@@ -1042,7 +1043,7 @@ namespace MES.Web.Services
                                     closeRows.Where(c => c.HandoverTxId == t.HandoverTxId).Select(c => (c.CloseId, c.ClosedAt, c.Qty, c.IsMigrated))),
                         NgCaseId = t.NgCaseId, // [VULOI]
                         Receives = t.Receives.Where(r => !r.IsVoided)
-                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl), r.ToCell, r.ToCellReason, r.NgCaseId, r.ToNC)).ToList()   // [DS-LOI-LIVE] · [NHAN-DOI-O-NC] + NC lần nhận
+                                    .Select(r => new InRecv(r.ReceiveId, r.ReceivedAt, r.QtyOk, r.QtyNg, NgCaseService.LiveReason(r.NgCaseId, r.NgReason, caseLbl), r.ToCell, r.ToCellReason, r.NgCaseId, r.ToNC, HandoverService.N22Root(r.Notes))).ToList()   // [DS-LOI-LIVE] · [NHAN-DOI-O-NC] + NC lần nhận · [N22-SUA] + nhóm lần nhận đã sửa
                     }).ToList(),
                     Wts = wts.Where(w => w.KhPlanDetailId == id).Select(w => new InWts(
                         w.WtsLogId, w.EndTime, w.ProcessGroup, w.NC, w.WtsCode,

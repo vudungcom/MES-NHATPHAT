@@ -214,8 +214,10 @@ public static class WhyScen
         var w1 = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 1, 0, U);
         await Task.Delay(20);
         var w1b = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC01", null, 3, 0, U, editLogId: w1.LogId);
+        // [N22-FUZZ 2026-11-25] chạy sau ~23:10 thì +50 phút sang ngày mai → dòng WTS thành "ngày khác", bước WTSV đòi lý do → Y11a SAI theo giờ chạy (cả bản a29ba8b;
+        //   trạm 20:28 ĐẠT, 23:16 SAI) — giữ trong hôm nay. Máy chủ đúng, chỉ sửa bộ kiểm.
         {   // giờ LÀM (EndTime) của dòng NC01 ghi muộn nhất (người nhập ghi giờ kết thúc sau) — giờ LƯU vẫn trước lúc hàng sửa về → gợi ý xét dòng này đầu tiên
-            var rw = db.WtsProductionLogs.List.Single(x => x.WtsLogId == w1b.LogId); rw.EndTime = DateTime.Now.AddMinutes(50); rw.StartTime = rw.EndTime.AddMinutes(-1); db.Fixup();
+            var rw = db.WtsProductionLogs.List.Single(x => x.WtsLogId == w1b.LogId); rw.EndTime = DateTime.Now.AddMinutes(50); if (rw.EndTime.Date != DateTime.Today) rw.EndTime = DateTime.Today.AddDays(1).AddMilliseconds(-1); rw.StartTime = rw.EndTime.AddMinutes(-1); db.Fixup();
         }
         await Task.Delay(20);
         var w2 = await WtsSvcHelp.SaveAsync(db, det, "GC", "NC02", null, 1, 1, U, 1);

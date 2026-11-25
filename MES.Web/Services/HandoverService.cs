@@ -175,6 +175,7 @@ namespace MES.Web.Services
         public string? ToCellReason   { get; set; }
         public long?   NgCaseId       { get; set; }   // [VULOI] vụ lỗi sinh ra ở lần nhận (hoặc vụ của phiếu)
         public string? ToNC           { get; set; }   // [NHAN-DOI-O-NC 2026-11-06] NC nhận vào Gia công của lần nhận (đổi ô, phiếu không có NC)
+        public string? Notes          { get; set; }   // [N22-SUA] dấu nhóm "[N22#gốc]" (Lịch sử gộp lần nhận đã sửa thành 1 dòng) + lý do sửa
         public bool    IsVoided       { get; set; }
 
         public string? VoidReason     { get; set; }
@@ -349,6 +350,7 @@ namespace MES.Web.Services
                     ToCellReason   = r.ToCellReason,   // [GN-CELL2]
                     NgCaseId       = r.NgCaseId,       // [VULOI]
                     ToNC           = r.ToNC,           // [NHAN-DOI-O-NC]
+                    Notes          = r.Notes,          // [N22-SUA]
                     IsVoided       = r.IsVoided,
 
                     VoidReason     = r.VoidReason,
@@ -605,7 +607,8 @@ namespace MES.Web.Services
             string? toCell = null,     // [GN-CELL2] ô bên giao chỉ định cho bên nhận (null = theo loại phiếu)
             int? ngCategoryId = null,  // [VULOI] Hàng lỗi công đoạn trước: loại lỗi → sinh vụ mới
             long? ngCaseId = null,     // [VULOI] Hàng lỗi / Hàng sửa đang giữ, Huỷ, Trả khách: vụ lấy hàng
-            FormTx? ftx = null)        // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync). null = như cũ
+            FormTx? ftx = null,        // [GN-FORM1] chạy trong giao dịch của form "Giao / xử lý hàng" (đã khoá PO; K5 + Commit ở SaveFormAsync). null = như cũ
+            long? reuseCaseId = null)  // [N22-SUA] Sửa phiếu "Hàng lỗi công đoạn trước": giữ mã vụ của phiếu cũ (không sinh vụ mới). Chỉ EditIssueOnceAsync truyền (luôn kèm ftx)
         {
             fromNC = HandoverLedgerService.TrimCode(fromNC); toNC = HandoverLedgerService.TrimCode(toNC);   // [WTS-MA-TRIM] NC so với quy trình trong sổ (đã bỏ khoảng trắng)
             fromCell ??= HandoverCell.IssueCellOf(purpose, null);
@@ -663,7 +666,9 @@ namespace MES.Web.Services
             NgCategory? ngCat = null;
             if (purpose == HandoverPurpose.NgReturn)
             {
-                ngCat = await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
+                ngCat = reuseCaseId != null && ftx != null
+                    ? await NgCaseService.GetCategoryForCaseAsync(_db, ngCategoryId, reuseCaseId)   // [N22-SUA] Sửa phiếu giữ vụ: loại lỗi đang ghi của vụ dùng được cả khi đã ngưng dùng
+                    : await NgCaseService.GetActiveCategoryAsync(_db, ngCategoryId);
                 if (ngCat == null) return (false, NgCaseService.MsgPickCategory);
                 reason = ngCat.Label;
                 ngCaseId = null;
@@ -820,7 +825,10 @@ namespace MES.Web.Services
             if (qtyIssued > max)
                 return (false, $"{(fromCell != null ? "Ô " + HandoverCell.Label(fromCell) : HandoverPurpose.Label(purpose))}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể giao {qtyIssued:0.##}.");
             // [VULOI] Hàng lỗi công đoạn trước: vụ sinh ra cùng phiếu (nơi phát hiện = bên giao, nơi gây lỗi = bên nhận)
-            if (ngCat != null)
+            // [N22-SUA 2026-11-25] Sửa phiếu Hàng lỗi công đoạn trước: cùng mã vụ (mockup D7 "cùng mã vụ") — vụ đã có, loại lỗi / nơi gây lỗi do EditIssueOnceAsync cập nhật.
+            //   Nguồn: KHÁCH 23/11 (D7 bước 1); HÙNG 25/11 21:39 OK.
+            if (ngCat != null && reuseCaseId != null && ftx != null) ngCaseId = reuseCaseId;
+            else if (ngCat != null)
             {
                 var vu = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, ngCat, NgOrigin.TraLoi, fromGroupCode,
                     fromGroupCode == "GC" ? fromNC : null, taroPhoiLoi ? "KHACH" : toGroupCode, issuedByUserId);   // [KTT-PHOILOI] phôi lỗi: nơi gây lỗi Khách hàng (khách 12/11 a = A)
@@ -934,6 +942,7 @@ namespace MES.Web.Services
             string? toNcReason = null)      // [NHAN-DOI-O-NC] lý do khi lùi về NC trước NC của vụ
         {
             toNc = HandoverLedgerService.TrimCode(toNc);   // [WTS-MA-TRIM]
+            notes = StripN22(notes);   // [N22-SUA] dấu nhóm lần nhận đã sửa "[N22#…]" chỉ máy chủ ghi — bỏ khỏi ghi chú người gõ
 
             if (qtyOk < 0 || qtyNg < 0)
 
@@ -1258,46 +1267,57 @@ namespace MES.Web.Services
             //   lần nhận phiếu trả + phiếu trả + lần nhận gốc (trước: chặn "Huỷ lần nhận đó trước" → có lúc kẹt vòng: huỷ lần nhận phiếu trả
             //   bị K5 chặn mà chứng từ gây vướng lại chỉ huỷ được sau nó). Sổ kiểm K5 trên trạng thái CUỐI (như chưa từng nhận) — cùng cách
             //   HandoverWhy.OpVoidReceive tính thử. Quyền: người huỷ phải huỷ được cả lần nhận phiếu trả (người bấm Nhận / nhóm nhận phiếu trả).
-            var autoBack = await _db.HandoverTransactions.Include(t => t.Receives)
-                .FirstOrDefaultAsync(t => t.SourceReceiveId == receiveId && !t.IsVoided);
+            // [N22-SUA] Lần nhận đã "Sửa lần nhận" có thể gồm 2 dòng cùng nhóm (cùng dấu [N22#gốc] — 1 dòng / 1 phiếu trả tự lập):
+            //   huỷ 1 dòng = huỷ cả nhóm (như 1 lần nhận), mỗi dòng huỷ kèm phiếu trả tự lập của nó. Lần nhận thường: nhóm = chính nó (như cũ).
+            var grpRoot = N22Root(receive.Notes);
+            var grp = new List<HandoverReceive> { receive };
+            if (grpRoot != null)
+                grp.AddRange(receive.Transaction.Receives.Where(x => !x.IsVoided && x.ReceiveId != receiveId && N22Root(x.Notes) == grpRoot).OrderBy(x => x.ReceiveId));
+            var grpIds = grp.Select(x => (long?)x.ReceiveId).ToList();
+            var autoBacks = await _db.HandoverTransactions.Include(t => t.Receives)
+                .Where(t => grpIds.Contains(t.SourceReceiveId) && !t.IsVoided).ToListAsync();
             var cascadeIds = new List<long>();   // [H10] lần nhận phiếu trả huỷ kèm
-            if (autoBack != null)
+            foreach (var autoBack in autoBacks)
             {
+                var srcId = autoBack.SourceReceiveId!.Value;
                 var backRecs = autoBack.Receives.Where(r => !r.IsVoided).OrderByDescending(r => r.ReceivedAt).ThenByDescending(r => r.ReceiveId).ToList();
                 // [H10] kiểm quyền MỌI lần nhận phiếu trả trước khi đổi gì (bị từ chối thì chưa sửa dòng nào trong bộ nhớ)
                 var noRight = backRecs.FirstOrDefault(br => !CanVoidReceive(br.ReceivedBy, autoBack.ToGroupCode, voidedByUserId, editGroups));
                 if (noRight != null)
+                {
+                    _db.ChangeTracker.Clear();   // [N22-SUA] nhóm 2 dòng: phiếu trả trước có thể đã đánh dấu huỷ trong bộ nhớ
                     return (false, $"{HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} đã nhận lại hàng lỗi ở phiếu trả #{autoBack.HandoverTxId} (lần nhận #{noRight.ReceiveId}). "
                                  + $"Bạn không có quyền huỷ lần nhận đó — nhờ người đã bấm Nhận hoặc nhóm {HandoverLedgerService.GroupLabel(autoBack.ToGroupCode)} huỷ trước, hoặc người có quyền cả 2 nhóm huỷ một lần.");
+                }
                 foreach (var br in backRecs)
                 {
                     br.IsVoided   = true;
-                    br.VoidReason = $"Huỷ theo lần nhận #{receiveId}: {voidReason.Trim()}";
+                    br.VoidReason = $"Huỷ theo lần nhận #{srcId}: {voidReason.Trim()}";
                     if (br.VoidReason.Length > 200) br.VoidReason = br.VoidReason[..200];
                     br.VoidedBy   = voidedByUserId;
                     br.VoidedAt   = DateTime.Now;
                     cascadeIds.Add(br.ReceiveId);
                 }
                 autoBack.IsVoided   = true;
-                autoBack.VoidReason = $"Huỷ theo lần nhận #{receiveId}: {voidReason.Trim()}";
+                autoBack.VoidReason = $"Huỷ theo lần nhận #{srcId}: {voidReason.Trim()}";
                 if (autoBack.VoidReason.Length > 200) autoBack.VoidReason = autoBack.VoidReason[..200];
                 autoBack.VoidedBy   = voidedByUserId;
                 autoBack.VoidedAt   = DateTime.Now;
             }
 
-            receive.IsVoided   = true;
-
-            receive.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();   // [D10-REASON 29/10] cột 200 ký tự: dài hơn thì cắt (trước: lỗi SQL, trang sập)
-
-            receive.VoidedBy   = voidedByUserId;
-
-            receive.VoidedAt   = DateTime.Now;
+            foreach (var gr in grp)   // [N22-SUA] cả nhóm (lần nhận thường: 1 dòng)
+            {
+                gr.IsVoided   = true;
+                gr.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();   // [D10-REASON 29/10] cột 200 ký tự: dài hơn thì cắt (trước: lỗi SQL, trang sập)
+                gr.VoidedBy   = voidedByUserId;
+                gr.VoidedAt   = DateTime.Now;
+            }
 
             var tx          = receive.Transaction;
 
             var remainTotal = tx.Receives
 
-                .Where(r => !r.IsVoided && r.ReceiveId != receiveId)
+                .Where(r => !r.IsVoided)   // [N22-SUA] các dòng của nhóm đã đánh dấu huỷ ở trên (trước: r.ReceiveId != receiveId)
 
                 .Sum(r => r.QtyOk + r.QtyNg);
 
@@ -1319,7 +1339,8 @@ namespace MES.Web.Services
                     await trx.RollbackAsync();
                     await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch đã rollback NGAY (trước khi tìm gốc rễ tới 5 s): Dispose lúc thoát hàm gỡ giao dịch hiện tại của kết nối — lúc đó có thể là giao dịch của thao tác khác vừa mở trên cùng DbContext
                     var opDocsR = new HashSet<string> { "R:" + receiveId };   // [H10] + phiếu trả tự lập và các lần nhận huỷ kèm
-                    if (autoBack != null) opDocsR.Add("T:" + autoBack.HandoverTxId);
+                    foreach (var gr in grp) opDocsR.Add("R:" + gr.ReceiveId);              // [N22-SUA] + dòng cùng nhóm
+                    foreach (var ab in autoBacks) opDocsR.Add("T:" + ab.HandoverTxId);
                     foreach (var cid in cascadeIds) opDocsR.Add("R:" + cid);
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidReceive(receiveId), opDocsR, loopOp: true);
                     return (false, k5 + whyTxt);

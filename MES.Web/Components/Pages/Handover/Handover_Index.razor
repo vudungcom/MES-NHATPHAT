@@ -757,6 +757,12 @@ else
                         }
                     </select>
                 </div>
+                @* [N22-SUA 2026-11-25] Đổi loại lỗi (mockup D7 bước 3): lọc 1 mã vụ → chip + loại lỗi đang ghi + nút (xám + lý do khi không đổi được) + lịch sử đổi.
+                     Nguồn: KHÁCH 23/11 (D7); HÙNG 25/11 21:39 OK (nút đặt ở Lịch sử khi lọc mã vụ — Claude tự chốt). *@
+                @if (_logCase is long ccid && _editInfo.Cases.ContainsKey(ccid))
+                {
+                    @CaseCatStrip(ccid)
+                }
                 <div style="display:flex;flex-direction:column">
                 @* [KHACH-GUI-LAI 2026-11-11] Phiếu khách gửi bù (Kho nhận phôi bù cho lần lỗi đã trả khách / huỷ) *@
                 @foreach (var bu in _buLogs.Where(x => LogCaseOk(x.NgCaseId)))
@@ -855,9 +861,17 @@ else
                             }
                             @* [GN-VOID-RULE] Nút huỷ theo 1 luật: người lập phiếu hoặc nhóm giao. Trước: chỉ theo quyền nhóm, ẩn khi phiếu từng có lần nhận đã huỷ,
                                ẩn hẳn với phiếu trả tự lập. Phiếu tự lập: huỷ = huỷ lần nhận gốc. *@
+                            @if (ShowEditIssueBtn(tx))
+                            {
+                                @* [N22-SUA] Sửa phiếu chưa nhận (mockup D7 bước 1) *@
+                                <button class="btn btn-xs btn-primary ms-auto" style="font-size:10px;padding:1px 6px"
+                                        @onclick="() => OpenEditIssue(tx.HandoverTxId)">
+                                    <i class="bi bi-pencil me-1"></i>Sửa phiếu
+                                </button>
+                            }
                             @if (ShowVoidIssueBtn(tx))
                             {
-                                <button class="btn btn-xs btn-outline-danger ms-auto" style="font-size:10px;padding:1px 6px"
+                                <button class="@VoidIssueBtnClass(tx)" style="font-size:10px;padding:1px 6px"
                                         @onclick="() => VoidIssueFromLog(tx.HandoverTxId)">
                                     <i class="bi bi-trash me-1"></i>@VoidIssueBtnText(tx)
                                 </button>
@@ -899,8 +913,10 @@ else
                                     <tr><th>Thời gian</th><th>Người nhận</th><th>Vào ô</th><th class="text-end text-success">Đạt</th><th class="text-end text-danger">NG</th><th>Lỗi</th><th>TT</th><th></th></tr> @* [GN-CELL2] + cột Vào ô; [GN-VOID-RULE] + cột huỷ lần nhận *@
                                 </thead>
                                 <tbody>
-                                    @foreach (var r in tx.Receives)
+                                    @foreach (var rr in RecvRows(tx))
                                     {
+                                        @* [N22-SUA] nhóm lần nhận đã sửa = 1 dòng (số cộng cả nhóm) *@
+                                        var r = rr.First;
                                         <tr class="@(r.IsVoided ? "text-muted" : "")">
                                             <td>@r.ReceivedAt.ToString("dd/MM HH:mm")</td>
                                             <td>@r.ReceivedByName</td>
@@ -912,14 +928,28 @@ else
                                                     <div class="small text-warning-emphasis" title="@r.ToCellReason">đổi từ @HandoverCell.Label(tx.ToCell): @r.ToCellReason</div>
                                                 }
                                             </td>
-                                            <td class="text-end text-success fw-semibold">@r.QtyOk.ToString("0.##")</td>
-                                            <td class="text-end text-danger fw-semibold">@(r.QtyNg > 0 ? r.QtyNg.ToString("0.##") : "—")</td>
-                                            <td class="text-danger small">@(r.NgReason ?? "—") @CaseChip(r.NgCaseId)</td>   @* [VULOI] *@
+                                            <td class="text-end text-success fw-semibold">@rr.Ok.ToString("0.##")</td>
+                                            <td class="text-end text-danger fw-semibold">@(rr.Ng > 0 ? rr.Ng.ToString("0.##") : "—")</td>
+                                            <td class="text-danger small">
+                                                @(r.NgReason ?? "—") @CaseChip(r.NgCaseId)   @* [VULOI] *@
+                                                @if (EditedNote(rr) != "")
+                                                {
+                                                    <div class="text-warning-emphasis" title="@r.Notes">@EditedNote(rr)</div>   @* [N22-SUA] *@
+                                                }
+                                            </td>
                                             <td>
                                                 @if (r.IsVoided) { <span class="badge bg-secondary" title="@r.VoidReason">Đã huỷ</span> }
                                                 else { <span class="badge bg-success">OK</span> }
                                             </td>
                                             <td>
+                                                @if (ShowEditRecvBtn(tx, r))
+                                                {
+                                                    @* [N22-SUA] Sửa lần nhận (mockup D7 bước 2a); xám khi bên nhận đã dùng hàng sau lần nhận (bước 2b, Workflow ON) *@
+                                                    <button class="btn btn-xs btn-outline-primary me-1" style="font-size:10px;padding:0 5px" title="@EditRecvTitle(r)"
+                                                            disabled="@EditRecvLocked(r)" @onclick="() => OpenEditRecv(tx.HandoverTxId, r.ReceiveId)">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                }
                                                 @if (ShowVoidRecvBtn(tx, r))
                                                 {
                                                     <button class="btn btn-xs btn-outline-danger" style="font-size:10px;padding:0 5px" title="Huỷ lần nhận này"
@@ -932,6 +962,10 @@ else
                                     }
                                 </tbody>
                             </table>
+                            @foreach (var hint in RecvLockHints(tx))
+                            {
+                                <div class="small text-muted mt-1"><i class="bi bi-lock me-1"></i>@hint</div>   @* [N22-SUA] mockup D7 bước 2b *@
+                            }
                         }
                         else if (HandoverPurpose.IsOut(tx.Purpose))
                         {
@@ -1000,6 +1034,12 @@ else
             <button class="btn btn-sm btn-primary" @onclick="CloseColFilter">OK</button>
         </div>
     </div>
+}
+
+@* ── [N22-SUA] MODAL Sửa phiếu / Sửa lần nhận / Đổi loại lỗi (mockup D7) ── *@
+@if (_editMode != "")
+{
+    @EditModal()
 }
 
 @* ── MODAL XÁC NHẬN HUỶ PHIẾU GIAO (giữ như cũ) ── *@
@@ -2346,6 +2386,7 @@ else
         var err = await UiSafe.RunAsync(async () =>
         {
             _logItems     = await HandoverSvc.GetLogsAsync(khPlanDetailId);
+            _editInfo     = await HandoverSvc.GetEditInfoAsync(khPlanDetailId);   // [N22-SUA]
             _ngLogs       = await HandoverSvc.GetNgReportsAsync(khPlanDetailId);   // [GN-NG-AFTER]
             _repairLogs   = await HandoverSvc.GetRepairsAsync(khPlanDetailId);     // [GC-SUA-TAI-CHO]
             _buLogs       = await HandoverSvc.GetReplacementsAsync(khPlanDetailId); // [KHACH-GUI-LAI]
@@ -2430,6 +2471,7 @@ else
         await ReloadAfterSaveAsync(async () =>   // [PAGE-ERR2] đã huỷ xong: lỗi tải lại báo ở đầu trang + trong cửa sổ Lịch sử (PageErrorBanner)
         {
             _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
+            _editInfo = await HandoverSvc.GetEditInfoAsync(_logDetailId);   // [N22-SUA]
             _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);   // [GN-NG-AFTER]
             _repairLogs = await HandoverSvc.GetRepairsAsync(_logDetailId);   // [GC-SUA-TAI-CHO]
             _buLogs = await HandoverSvc.GetReplacementsAsync(_logDetailId);   // [KHACH-GUI-LAI]
@@ -2509,10 +2551,11 @@ else
         if (tx == null) return "";
         if (_voidMode == "RECV")
         {
-            var r = tx.Receives.FirstOrDefault(x => x.ReceiveId == _voidingReceiveId);
-            var what = r == null ? "" : $"lần nhận {r.ReceivedAt:dd/MM HH:mm} (đạt {r.QtyOk:0.##} / NG {r.QtyNg:0.##})";
+            var rr = RecvRows(tx).FirstOrDefault(x => x.Items.Any(i => i.ReceiveId == _voidingReceiveId));   // [rà độc lập G-B T3] lần nhận đã sửa: huỷ cả nhóm
+            var r = rr?.First;
+            var what = rr == null ? "" : $"lần nhận {r!.ReceivedAt:dd/MM HH:mm} (đạt {rr.Ok:0.##} / NG {rr.Ng:0.##})";
             return $"Huỷ {what} của phiếu #{tx.HandoverTxId}: phiếu về lại chờ {HandoverLedgerService.GroupLabel(tx.ToGroupCode)} nhận."
-                 + (r != null && r.QtyNg > 0 ? " Phiếu trả hàng lỗi tự lập từ lần nhận này huỷ theo" + AutoBackRecvNote(r.ReceiveId) + "." : "")   // [H10]
+                 + (rr != null && rr.Ng > 0 ? " Phiếu trả hàng lỗi tự lập từ lần nhận này huỷ theo" + string.Concat(rr.Items.Select(i => AutoBackRecvNote(i.ReceiveId))) + "." : "")   // [H10]
                  + " Nếu số đã nhận đã được nhập WTS / giao tiếp thì phần mềm chặn — xoá / sửa từ cuối ngược lên.";
         }
         if (_voidMode == "CLOSE")
@@ -2520,9 +2563,11 @@ else
         if (tx.SourceReceiveId != null)
         {
             var src = _logItems.FirstOrDefault(x => x.Receives.Any(r => r.ReceiveId == tx.SourceReceiveId));
-            var sr = src?.Receives.FirstOrDefault(r => r.ReceiveId == tx.SourceReceiveId);
+            var srr = src == null ? null : RecvRows(src).FirstOrDefault(x => x.Items.Any(i => i.ReceiveId == tx.SourceReceiveId));   // [rà độc lập G-B T3] cả nhóm lần nhận đã sửa
+            var others = srr == null ? "" : string.Join(", ", _logItems.Where(x => !x.IsVoided && x.HandoverTxId != tx.HandoverTxId && x.SourceReceiveId is long sx && srr.Items.Any(i => i.ReceiveId == sx)).Select(x => "#" + x.HandoverTxId));
             return $"Phiếu #{tx.HandoverTxId} do phần mềm tự lập khi nhận có NG. Huỷ phiếu này = huỷ lần nhận gốc"
-                 + (src != null && sr != null ? $" của phiếu #{src.HandoverTxId} (đạt {sr.QtyOk:0.##} / NG {sr.QtyNg:0.##}) — phiếu #{src.HandoverTxId} về lại chờ nhận." : ".");
+                 + (src != null && srr != null ? $" của phiếu #{src.HandoverTxId} (đạt {srr.Ok:0.##} / NG {srr.Ng:0.##}) — phiếu #{src.HandoverTxId} về lại chờ nhận." : ".")
+                 + (others == "" ? "" : $" Phiếu trả tự lập khác của lần nhận đó ({others}) huỷ theo.");
         }
         return $"Huỷ phiếu #{tx.HandoverTxId} ({tx.QtyIssued:0.##} chiếc): số lượng trả về ô của {HandoverLedgerService.GroupLabel(tx.FromGroupCode)}.";
     }
@@ -2642,4 +2687,309 @@ else
         public static HandoverColFilterDef Build(List<LedgerRow> rows, Func<LedgerRow, string> selector)
             => new HandoverColFilterDef { AllValues = rows.Select(selector).Distinct().OrderBy(v => v).ToList() };
     }
+
+    // ── [N22-SUA 2026-11-25] Sửa phiếu / Sửa lần nhận / Đổi loại lỗi ở Lịch sử phiếu (mockup D7 bước 1, 2a, 2b, 3) ──
+    //   Máy chủ kiểm lại hết (HandoverService.EditIssueAsync / EditReceiveAsync / ChangeCaseCategoryAsync — quyền, trần, K5, khoá PO);
+    //   trang chỉ ẩn / làm xám nút + chữ "Sẽ ghi". Nguồn: KHÁCH 23/11 (D7); HÙNG 25/11 21:39 OK.
+    HandoverEditInfo _editInfo = new();
+    string  _editMode = "";        // "" | ISSUE (Sửa phiếu) | RECV (Sửa lần nhận) | CAT (Đổi loại lỗi)
+    long    _editTxId, _editRecvId, _editCaseId;
+    string  _editTo = "";
+    decimal _editQty, _editOk, _editNg, _editOk0, _editNg0;
+    int?    _editCatId;
+    string  _editNc = "", _editNotes = "", _editReason = "", _editCell = "";
+    bool    _editNeedCat;
+    string  _editError = "";
+    static readonly string[] EditGroupCodes = { "KHO", "GC", "HTSP", "KCS", "PKG" };
+
+    sealed class RecvRow
+    {
+        public HandoverReceiveItem First = null!;
+        public List<HandoverReceiveItem> Items = new();
+        public decimal Ok;
+        public decimal Ng;
+    }
+    /// <summary>[N22-SUA] Dòng bảng lần nhận: các dòng cùng dấu [N22#gốc] (lần nhận đã sửa tách 2 dòng vì 2 phiếu trả) gộp thành 1 dòng — như mockup "24 OK + 6 NG".</summary>
+    static List<RecvRow> RecvRows(HandoverLogItem tx)
+    {
+        var res = new List<RecvRow>();
+        var map = new Dictionary<long, RecvRow>();
+        foreach (var r in tx.Receives.OrderBy(x => x.ReceivedAt).ThenBy(x => x.ReceiveId))
+        {
+            var root = r.IsVoided ? null : HandoverService.N22Root(r.Notes);
+            if (root is long k && map.TryGetValue(k, out var g)) { g.Items.Add(r); g.Ok += r.QtyOk; g.Ng += r.QtyNg; continue; }
+            var row = new RecvRow { First = r, Ok = r.QtyOk, Ng = r.QtyNg };
+            row.Items.Add(r);
+            if (root is long k2) map[k2] = row;
+            res.Add(row);
+        }
+        return res;
+    }
+    string EditedNote(RecvRow rr)
+    {
+        if (rr.First.IsVoided || HandoverService.N22Root(rr.First.Notes) == null) return "";
+        var ids = rr.Items.Select(x => (long?)x.ReceiveId).ToHashSet();
+        var backs = _logItems.Where(x => !x.IsVoided && ids.Contains(x.SourceReceiveId)).OrderBy(x => x.HandoverTxId).ToList();
+        return "Đã sửa lần nhận" + (backs.Count > 1 ? $" · {backs.Count} phiếu trả: " + string.Join(" + ", backs.Select(b => $"#{b.HandoverTxId} ({b.QtyIssued:0.##})")) : "");
+    }
+    bool ShowEditIssueBtn(HandoverLogItem tx)
+        => !tx.IsVoided && CanIssueSide(tx)
+           && HandoverService.EditIssueBlock(tx.Purpose, tx.SourceReceiveId, tx.TraVe ? HandoverCell.LoiVe : tx.ToCell, tx.Status, ActiveRecv(tx) > 0, tx.QtyClosed) == null;
+    string VoidIssueBtnClass(HandoverLogItem tx) => ShowEditIssueBtn(tx) ? "btn btn-xs btn-outline-danger" : "btn btn-xs btn-outline-danger ms-auto";
+    bool ShowEditRecvBtn(HandoverLogItem tx, HandoverReceiveItem r)
+        => !tx.IsVoided && !r.IsVoided && !HandoverPurpose.IsOut(tx.Purpose) && HandoverService.CanVoidReceive(r.ReceivedBy, tx.ToGroupCode, _currentUserId, _myEditGroups);
+    bool EditRecvLocked(HandoverReceiveItem r) => _editInfo.WorkflowOn && _editInfo.RecvUsed.ContainsKey(r.ReceiveId);
+    string EditRecvTitle(HandoverReceiveItem r)
+        => !_editInfo.RecvUsed.TryGetValue(r.ReceiveId, out var u) ? "Sửa lần nhận"
+         : _editInfo.WorkflowOn ? "Sửa lần nhận xám: " + u : "Sửa lần nhận (Workflow OFF — cảnh báo: " + u + ")";
+    List<string> RecvLockHints(HandoverLogItem tx)
+        => RecvRows(tx).Where(rr => !rr.First.IsVoided && ShowEditRecvBtn(tx, rr.First) && EditRecvLocked(rr.First))
+            .Select(rr => $"Lần nhận {rr.First.ReceivedAt:dd/MM HH:mm} — Sửa lần nhận xám: {_editInfo.RecvUsed[rr.First.ReceiveId]} (tránh nhầm số liệu). "
+                        + "Phát hiện thêm hàng lỗi: báo bằng form Giao / xử lý hàng (Trả nơi làm lỗi).").ToList();
+
+    void ResetEdit()
+    {
+        _editError = ""; _editReason = ""; _editNotes = ""; _editNc = ""; _editCatId = null; _editNeedCat = false; _editCell = "";
+    }
+    void OpenEditIssue(long txId)
+    {
+        var tx = _logItems.FirstOrDefault(x => x.HandoverTxId == txId);
+        if (tx == null) return;
+        ResetEdit();
+        _editMode = "ISSUE"; _editTxId = txId;
+        _editTo = tx.ToGroupCode; _editQty = tx.QtyIssued; _editNc = tx.ToNC ?? ""; _editNotes = tx.Notes ?? "";
+        _editCatId = tx.NgCaseId is long c && _editInfo.Cases.TryGetValue(c, out var ci) ? ci.CategoryId : null;
+    }
+    void OpenEditRecv(long txId, long receiveId)
+    {
+        var tx = _logItems.FirstOrDefault(x => x.HandoverTxId == txId);
+        var rr = tx == null ? null : RecvRows(tx).FirstOrDefault(x => x.First.ReceiveId == receiveId);
+        if (tx == null || rr == null) return;
+        ResetEdit();
+        _editMode = "RECV"; _editTxId = txId; _editRecvId = receiveId;
+        _editOk0 = _editOk = rr.Ok; _editNg0 = _editNg = rr.Ng;
+        _editCell = rr.First.ToCell ?? (tx.SourceReceiveId != null ? HandoverCell.Loi : tx.ToCell) ?? "";
+        bool carry = tx.SourceReceiveId != null || HandoverCell.IssueCellOf(LogPurpose(tx), tx.FromCell) is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;
+        _editNeedCat = rr.Ng == 0 && !carry && rr.Items.All(x => x.NgCaseId == null);
+    }
+    void OpenCatEdit(long caseId)
+    {
+        ResetEdit();
+        _editMode = "CAT"; _editCaseId = caseId;
+        _editCatId = _editInfo.Cases.TryGetValue(caseId, out var ci) ? ci.CategoryId : null;
+    }
+    void CloseEdit() { _editMode = ""; _editError = ""; }
+    void OnEditToChanged(ChangeEventArgs e) { _editTo = e.Value?.ToString() ?? ""; if (_editTo != "GC") _editNc = ""; }
+    void OnEditNcChanged(ChangeEventArgs e) => _editNc = e.Value?.ToString() ?? "";
+    HandoverLogItem? EditTx => _logItems.FirstOrDefault(x => x.HandoverTxId == _editTxId);
+    bool EditIssueHasCat(HandoverLogItem tx) => tx.NgCaseId is long c ? CanCatEdit(c) : LogPurpose(tx) == HandoverPurpose.NgReturn;   // [rà độc lập G-B T2] ô Loại lỗi chỉ khi có quyền đổi loại lỗi của vụ
+    bool EditIssueShowNc(HandoverLogItem tx) => _editTo == "GC" && _editInfo.GcNcs.Count > 0 && LogPurpose(tx) is not (HandoverPurpose.NgReturn or HandoverPurpose.RepairSend)
+                                              && HandoverCell.IssueCellOf(LogPurpose(tx), tx.FromCell) != HandoverCell.Loi;
+    bool CanCatEdit(long caseId)
+        => _editInfo.Cases.TryGetValue(caseId, out var ci) && (ci.CreatedBy == _currentUserId || _myEditGroups.Contains(ci.DetectGroup));
+    bool CatEditLocked(long caseId) => _editInfo.WorkflowOn && _editInfo.CaseCatBlock.ContainsKey(caseId);
+
+    string EditTitle => _editMode switch
+    {
+        "ISSUE" => $"Sửa phiếu #{_editTxId}",
+        "RECV"  => $"Sửa lần nhận — phiếu #{_editTxId}",
+        _       => $"Đổi loại lỗi — {NgCaseNo.Format(_editCaseId)}"
+    };
+    string EditWillText()
+    {
+        var tx = EditTx;
+        if (_editMode == "ISSUE")
+            return $"Sẽ ghi: huỷ phiếu #{_editTxId} và lập phiếu mới (ghi \"sửa từ phiếu #{_editTxId}\")" + (tx?.NgCaseId is long c ? $", cùng mã vụ {NgCaseNo.Format(c)}." : ".");
+        if (_editMode == "RECV" && tx != null)
+        {
+            var t = $"Sẽ ghi: lần nhận {_editOk:0.##} OK + {_editNg:0.##} NG (tổng {_editOk + _editNg:0.##}, phiếu giao {tx.QtyIssued:0.##}).";
+            if (_editCell is HandoverCell.Loi or HandoverCell.Sua) return t;
+            var gl = HandoverLedgerService.GroupLabel(tx.FromGroupCode);
+            if (_editNg > _editNg0)
+                t += $" Phần mềm lập thêm phiếu trả {gl} {_editNg - _editNg0:0.##} chiếc" + (_editNg0 > 0 ? " cùng vụ" : "") + $", {gl} bấm Nhận" + (_editNg0 > 0 ? " (không sửa phiếu trả cũ)." : ".");
+            else if (_editNg < _editNg0)
+                t += $" Phiếu trả {gl} chưa ai nhận thì huỷ, lập lại phần NG còn lại; phần {gl} đã nhận thì giữ (không giảm NG xuống dưới số đó).";   // [rà độc lập L5]
+            return t;
+        }
+        return "Sẽ ghi: mọi chỗ hiện loại lỗi mới (kể cả phiếu đang chờ nhận); lịch sử ghi lần đổi.";
+    }
+
+    async Task SaveEditAsync()
+    {
+        if (_saving) return;
+        if (string.IsNullOrWhiteSpace(_editReason) || _editReason.Trim().Length < 3) { _editError = HandoverService.N22ReasonMsg; return; }
+        _saving = true;
+        try
+        {
+            (bool ok, string msg) res;
+            var tx = EditTx;
+            if (_editMode == "ISSUE")
+                res = await HandoverSvc.EditIssueAsync(_editTxId, _editTo, _editQty, tx != null && EditIssueHasCat(tx) ? _editCatId : null,
+                          string.IsNullOrWhiteSpace(_editNc) ? null : _editNc, _editNotes, _editReason, _currentUserId);
+            else if (_editMode == "RECV")
+                res = await HandoverSvc.EditReceiveAsync(_editRecvId, _editOk, _editNg, _editNeedCat && _editNg > 0 ? _editCatId : null, _editReason, _currentUserId);
+            else if (_editCatId is int cat)
+                res = await HandoverSvc.ChangeCaseCategoryAsync(_editCaseId, cat, _editReason, _currentUserId);
+            else
+                res = (false, NgCaseService.MsgPickCategory);
+            _saving = false;
+            if (!res.ok) { _editError = res.msg; return; }
+            _editMode = "";
+            await ReloadAfterSaveAsync(async () =>
+            {
+                _logItems = await HandoverSvc.GetLogsAsync(_logDetailId);
+                _editInfo = await HandoverSvc.GetEditInfoAsync(_logDetailId);
+                _ngLogs   = await HandoverSvc.GetNgReportsAsync(_logDetailId);
+                _repairLogs = await HandoverSvc.GetRepairsAsync(_logDetailId);
+                _buLogs = await HandoverSvc.GetReplacementsAsync(_logDetailId);
+                RebuildLogOrder();
+                await ReloadRowAsync(_logDetailId);
+            });
+            if (!string.IsNullOrWhiteSpace(res.msg)) _pageError = "Đã lưu — cảnh báo: " + res.msg;
+        }
+        catch (Exception ex) { _editError = ServerErr(ex); }
+        finally { _saving = false; }
+    }
+
+    RenderFragment CaseCatStrip(long cid) => __builder =>
+    {
+        <div class="px-3 py-2 border-bottom small" style="background:#fffdf5">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                @CaseChip(cid)
+                <span>Loại lỗi đang ghi: <strong>@(_editInfo.CaseCatLabel.TryGetValue(cid, out var cl) ? cl : "—")</strong></span>
+                @if (CanCatEdit(cid))
+                {
+                    <button class="btn btn-xs btn-primary ms-auto" style="font-size:10px;padding:1px 6px" disabled="@CatEditLocked(cid)" @onclick="() => OpenCatEdit(cid)">
+                        <i class="bi bi-pencil me-1"></i>Đổi loại lỗi
+                    </button>
+                }
+            </div>
+            @if (_editInfo.CaseCatBlock.TryGetValue(cid, out var cb))
+            {
+                <div class="text-muted mt-1">@(_editInfo.WorkflowOn ? "Đổi loại lỗi xám: " + cb : "Workflow OFF: vẫn đổi được (cảnh báo) — " + cb)</div>
+            }
+            @foreach (var lg in _editInfo.CatLogs.Where(x => x.CaseId == cid))
+            {
+                <div class="text-warning-emphasis mt-1">Đổi loại lỗi @lg.Old → @lg.New · @lg.ByName · @lg.At.ToString("dd/MM HH:mm")@(string.IsNullOrEmpty(lg.Reason) ? "" : " · " + lg.Reason)</div>
+            }
+        </div>
+    };
+
+    RenderFragment EditModal() => __builder =>
+    {
+        <div class="mes-modal-backdrop">
+            <div class="mes-modal" @onclick:stopPropagation style="width:520px;max-width:95vw">
+                <div class="mes-modal-header">
+                    <h6 class="mb-0"><i class="bi bi-pencil me-2"></i>@EditTitle</h6>
+                    <button class="btn-close btn-sm" @onclick="CloseEdit"></button>
+                </div>
+                <div class="mes-modal-body">
+                    @EditBody()
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm fw-semibold">Lý do sửa <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm border-danger" maxlength="150" @bind="_editReason" placeholder="Nhập lý do (ít nhất 3 ký tự)..." />
+                    </div>
+                    <div class="small text-muted border-top pt-2">@EditWillText()</div>
+                    @if (!string.IsNullOrEmpty(_editError))
+                    {
+                        <div class="alert alert-danger py-1 small mt-2" style="white-space:pre-line;max-height:40vh;overflow-y:auto">@_editError</div>
+                    }
+                </div>
+                <div class="mes-modal-footer">
+                    <button class="btn btn-sm btn-secondary" @onclick="CloseEdit">Đóng</button>
+                    <button class="btn btn-sm btn-primary" @onclick="SaveEditAsync" disabled="@_saving">
+                        @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Lưu sửa
+                    </button>
+                </div>
+            </div>
+        </div>
+    };
+
+    RenderFragment EditBody() => __builder =>
+    {
+        <div>
+            @if (_editMode == "ISSUE" && EditTx is HandoverLogItem etx)
+            {
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label form-label-sm">Giao đến</label>
+                        <select class="form-select form-select-sm" @onchange="OnEditToChanged">
+                            @foreach (var g in EditGroupCodes.Where(x => x != etx.FromGroupCode))
+                            {
+                                <option value="@g" selected="@(g == _editTo)">@HandoverLedgerService.GroupLabel(g)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label form-label-sm">Số lượng</label>
+                        <input type="number" min="1" step="1" class="form-control form-control-sm" @bind="_editQty" />
+                    </div>
+                </div>
+                @if (EditIssueShowNc(etx))
+                {
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm">NC nhận vào (Gia công)</label>
+                        <select class="form-select form-select-sm" @onchange="OnEditNcChanged">
+                            <option value="" selected="@(_editNc == "")">(không chọn)</option>
+                            @foreach (var nc in _editInfo.GcNcs)
+                            {
+                                <option value="@nc" selected="@(nc == _editNc)">@HandoverLedgerService.NcText(nc)</option>
+                            }
+                        </select>
+                    </div>
+                }
+                @if (EditIssueHasCat(etx))
+                {
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm">Loại lỗi</label>
+                        <NgCategoryPicker Categories="_ngCats" @bind-Value="_editCatId" Required="true" />
+                    </div>
+                }
+                <div class="mb-2">
+                    <label class="form-label form-label-sm">Ghi chú</label>
+                    <input type="text" class="form-control form-control-sm" maxlength="450" @bind="_editNotes" />
+                </div>
+            }
+            else if (_editMode == "RECV")
+            {
+                <div class="row g-2 mb-2">
+                    @if (_editCell != HandoverCell.Loi)
+                    {
+                        <div class="col-6">
+                            <label class="form-label form-label-sm">Nhận OK <span class="text-muted">(đang ghi @_editOk0.ToString("0.##"))</span></label>
+                            <input type="number" min="0" step="1" class="form-control form-control-sm" @bind="_editOk" />
+                        </div>
+                    }
+                    @if (_editCell != HandoverCell.Sua)
+                    {
+                        <div class="col-6">
+                            <label class="form-label form-label-sm">@(_editCell == HandoverCell.Loi ? "Số nhận (ô Hàng lỗi)" : "NG lúc nhận") <span class="text-muted">(đang ghi @_editNg0.ToString("0.##"))</span></label>
+                            <input type="number" min="0" step="1" class="form-control form-control-sm" @bind="_editNg" />
+                        </div>
+                    }
+                </div>
+                @if (_editNeedCat && _editNg > 0)
+                {
+                    <div class="mb-2">
+                        <label class="form-label form-label-sm">Loại lỗi chiếc NG</label>
+                        <NgCategoryPicker Categories="_ngCats" @bind-Value="_editCatId" Required="true" />
+                    </div>
+                }
+            }
+            else if (_editMode == "CAT")
+            {
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label form-label-sm">Loại lỗi đang ghi</label>
+                        <div class="form-control form-control-sm bg-light">@(_editInfo.CaseCatLabel.TryGetValue(_editCaseId, out var cur) ? cur : "—")</div>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label form-label-sm">Đổi thành</label>
+                        <NgCategoryPicker Categories="_ngCats" @bind-Value="_editCatId" Required="true" />
+                    </div>
+                </div>
+            }
+        </div>
+    };
 }

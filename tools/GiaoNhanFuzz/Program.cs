@@ -23,6 +23,7 @@ if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }
+if (args.Length > 0 && args[0] == "n22") { return await SuaScen.RunN22(); }   // [N22-SCEN 2026-11-25] Sửa phiếu / Sửa lần nhận / Đổi loại lỗi (G-B)
 if (args.Length > 0 && args[0] == "n21") { return await SuaScen.RunN21(); }   // [N21-SCEN 2026-11-25] WTS NG không tự sinh vụ, NG ở WTS chưa báo lỗi, báo lỗi riêng (G-D)
 if (args.Length > 0 && args[0] == "n18") { return await SuaScen.RunN18(); }   // [N18-SCEN 2026-11-25] Cách Y — hàng sửa trả về chưa đạt (G-E)   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
 if (args.Length > 0 && args[0] == "n17") { return await SuaScen.RunN17(); }   // [N17-KCS-BO 2026-11-23] sửa đạt không cần KCS xác nhận (chứng từ mới)
@@ -83,6 +84,7 @@ static decimal ExpLamHoRet(LedgerRow row, string from, string? tnc)
 bool dumped = false;
 var whyMs = new List<double>(); var whyComputes = new List<int>(); var whyMiss = new List<string>(); string lastErr = "";
 var All = new List<string> { "KHO", "GC", "HTSP", "KCS", "PKG" };
+int n22w = int.TryParse(Environment.GetEnvironmentVariable("N22"), out var n22e) ? n22e : 6;   // [N22-FUZZ 2026-11-25]
 
 string[] groups = { "KHO", "GC", "HTSP", "KCS", "PKG" };
 var editAll = groups.ToList();
@@ -242,6 +244,10 @@ for (int po = startPo; po < startPo + poCount; po++)
             // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận + huỷ. KQSUA=0 tắt (chạy lại seed cũ trước gói này ra đúng dãy thao tác cũ).
             ("kqsua", kq * 8), ("xnsua", kq * 7), ("vkqsua", kq * 3), ("vxnsua", kq * 3),
             ("form", int.TryParse(Environment.GetEnvironmentVariable("FORM"), out var fw) ? fw : 12),
+            // [N22-FUZZ 2026-11-25] G-B: Sửa phiếu / Sửa lần nhận / Đổi loại lỗi (hàm thật). N22=<trọng số> (mặc định 6; 0 tắt). Trọng số 0 khi không có chứng từ phù hợp.
+            ("suaphieu", db.HandoverTransactions.List.Any(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status == "PENDING" && t.SourceReceiveId == null) ? n22w : 0),
+            ("suanhan", db.HandoverReceives.List.Any(r => !r.IsVoided && r.Transaction.KhPlanDetailId == 1) ? n22w : 0),
+            ("doiloai", db.NgCases.List.Any(c => c.KhPlanDetailId == 1) ? Math.Max(1, n22w / 2) * (n22w > 0 ? 1 : 0) : 0),
             // [LAMHO-NHO-SUA][LAMHO-NHAN-NG 2026-11-08] Gói 11: thử gửi / nhận đổi ô vụ làm hộ vào ô Hàng sửa / ô hàng đạt nhóm khác Gia công (phải chặn).
             //   Chỉ lượt LAMHO=1 (trọng số 0 ở lượt khác → dãy thao tác các seed cũ không đổi). Nguồn: CLAUDE (Gói 10: fuzz chưa đi trúng đường này — chỉ T22 phủ).
             ("lhsua", Environment.GetEnvironmentVariable("LAMHO") == "1" ? 20 : 0),
@@ -814,6 +820,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                             {
                                 foreach (var rr in own)
                                 {
+                                    // [N22-FUZZ 2026-11-25] lần nhận đã sửa (nhóm dòng [N22#gốc]): huỷ 1 dòng đã huỷ cả nhóm → dòng sau đã huỷ, bỏ qua (kiem trạm 25/11 23:16 loi_phoi seed 22171 PO44,
+                                    //   vu_suawts seed 22172 PO15: "Bản ghi nhận không tồn tại hoặc đã bị huỷ" — giới hạn bộ kiểm, máy chủ đúng)
+                                    if (db.HandoverReceives.List.FirstOrDefault(x => x.ReceiveId == rr) is { IsVoided: true }) continue;
                                     foreach (var b in db.HandoverTransactions.List.Where(b => !b.IsVoided && b.SourceReceiveId == rr).ToList())
                                         foreach (var br in b.Receives.Where(x => !x.IsVoided).OrderByDescending(x => x.ReceivedAt).Select(x => x.ReceiveId).ToList())
                                         { var vr = await VoidRecvDeep(db, svc, led, br, 0); if (!vr.Ok) { lastErr = "auto-recv #" + br + ": " + vr.Error; if (Environment.GetEnvironmentVariable("WHYDBG") == "1") { foreach (var tt in db.HandoverTransactions.List) Console.WriteLine($"   tx#{tt.HandoverTxId} {tt.FromGroupCode}->{tt.ToGroupCode} {tt.Purpose} {tt.FromCell}->{tt.ToCell} q={tt.QtyIssued} void={tt.IsVoided} src={tt.SourceReceiveId} rec={string.Join(",", tt.Receives.Select(r => $"#{r.ReceiveId}:{r.QtyOk}/{r.QtyNg}{(r.IsVoided?"x":"")}@{r.ToCell}"))}"); Console.WriteLine("   phoi=" + db.KhoVatLieus.List.First().SoLuongThucNhan); } return false; } }
@@ -881,11 +890,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                             Inc("rej.wtsedit.loop"); continue;
                         }
                     }
-                    // 30%: đổi loại lỗi của vụ cũ (chỉ được khi vụ chưa đi phiếu nào / chưa có Kết quả sửa)
+                    // 30%: đổi loại lỗi của vụ cũ — [N22-SUA 2026-11-25] đáp án đổi: được khi vụ chưa giao HOẶC đã giao mà bên nhận chưa nhận
+                    //   (chặn: phiếu mang vụ đã có lần nhận, vụ Huỷ / Trả khách, vụ có Kết quả sửa). Trước: vụ có bất kỳ phiếu nào là chặn.
                     if (keep != null && rnd.NextDouble() < 0.3)
                     {
-                        var moved = db.HandoverTransactions.List.Any(t => !t.IsVoided && t.NgCaseId == keep);
-                        moved |= db.HandoverRepairResults.List.Any(r => !r.IsVoided && r.NgCaseId == keep);   // [GC-SUA-TAI-CHO] vụ có Kết quả sửa cũng không đổi loại lỗi
+                        var moved = N22Moved(db, keep.Value);
                         var cs0 = db.NgCases.List.First(x => x.NgCaseId == keep);
                         var newCat = cs0.NgCategoryId % 5 + 1;
                         var err = await NgCaseService.ChangeCaseCategoryAsync(db, keep.Value, newCat);
@@ -1847,6 +1856,165 @@ for (int po = startPo; po < startPo + poCount; po++)
                     ok = true;
                     break;
                 }
+                case "suaphieu":   // [N22-FUZZ 2026-11-25] Sửa phiếu (bên giao, phiếu chưa nhận) — hàm thật EditIssueAsync
+                {
+                    var ts = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.Status == "PENDING" && t.SourceReceiveId == null).ToList();
+                    if (!ts.Any()) { Inc("skip.suaphieu"); continue; }
+                    var t = ts[rnd.Next(ts.Count)];
+                    bool blocked = HandoverService.EditIssueBlock(t.Purpose, t.SourceReceiveId, t.ToCell, t.Status, t.Receives.Any(r => !r.IsVoided), t.QtyClosed) != null;
+                    var mode = rnd.Next(4);   // 0 giảm số · 1 tăng / giữ số · 2 đổi bộ phận nhận · 3 đổi loại lỗi
+                    var nq = mode == 0 ? Math.Max(1, t.QtyIssued - rnd.Next(1, 4)) : mode == 1 ? t.QtyIssued + rnd.Next(0, 4) : t.QtyIssued;
+                    var nto = mode == 2 ? All[rnd.Next(All.Count)] : t.ToGroupCode;
+                    if (nto == t.FromGroupCode) nto = t.ToGroupCode;
+                    int? ncat = null;
+                    var cs0 = t.NgCaseId is long tc ? db.NgCases.List.FirstOrDefault(x => x.NgCaseId == tc) : null;
+                    if (cs0 != null && (mode == 3 || t.Purpose == HandoverPurpose.NgReturn)) ncat = mode == 3 ? cs0.NgCategoryId % 5 + 1 : cs0.NgCategoryId;
+                    if (mode == 3 && cs0 == null) nq = Math.Max(1, t.QtyIssued - 1);
+                    desc = $"suaphieu #{t.HandoverTxId} {t.FromGroupCode}->{t.ToGroupCode} {t.Purpose} {t.FromCell}->{t.ToCell} q={t.QtyIssued} → {nto} q={nq} cat={ncat}";
+                    var sigB = ChuoiHelp.LedgerSig(row); var nT = db.HandoverTransactions.List.Count; var nC = db.NgCases.List.Count;
+                    var catB = cs0?.NgCategoryId;
+                    var deny = await svc.EditIssueAsync(t.HandoverTxId, nto, nq, ncat, t.ToNC, t.Notes, "sua thu", 99);
+                    checks++;
+                    if (deny.Ok) fails.Add($"[N22 Quyền] PO{po} op{op} người không có tài khoản sửa được phiếu — {desc}");
+                    var res = await svc.EditIssueAsync(t.HandoverTxId, nto, nq, ncat, t.ToNC, t.Notes, "sua thu", t.IssuedBy);
+                    ok = res.Ok;
+                    var tNow = db.HandoverTransactions.List.First(x => x.HandoverTxId == t.HandoverTxId);
+                    if (ok)
+                    {
+                        Inc("n22.suaphieu.ok." + mode);
+                        var nt = db.HandoverTransactions.List.OrderBy(x => x.HandoverTxId).Last();
+                        if (blocked) fails.Add($"[N22 Sửa phiếu lọt khi không được sửa] PO{po} op{op} {desc}");
+                        if (!tNow.IsVoided || nt.HandoverTxId == t.HandoverTxId || nt.QtyIssued != nq || nt.ToGroupCode != nto || nt.Purpose != t.Purpose || nt.FromCell != t.FromCell
+                            || (t.NgCaseId != null && nt.NgCaseId != t.NgCaseId) || db.NgCases.List.Count != nC)
+                            fails.Add($"[N22 Sửa phiếu ghi sai chứng từ] PO{po} op{op} {desc} → cũ void={tNow.IsVoided} mới #{nt.HandoverTxId} {nt.ToGroupCode} q={nt.QtyIssued} vụ {nt.NgCaseId} (vụ {nC}→{db.NgCases.List.Count})");
+                        if (ncat != null && cs0!.NgCategoryId != ncat) fails.Add($"[N22 Sửa phiếu không đổi loại lỗi] PO{po} op{op} {desc}");
+                    }
+                    else
+                    {
+                        Inc("n22.suaphieu.chan");
+                        if (tNow.IsVoided || db.HandoverTransactions.List.Count != nT || db.NgCases.List.Count != nC || ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!) != sigB || cs0?.NgCategoryId != catB)
+                            fails.Add($"[N22 Sửa phiếu bị chặn mà đã ghi] PO{po} op{op} {desc}: {res.Error}");
+                        // đáp án độc lập: phiếu chưa nhận, chỉ GIẢM số (cùng bên nhận, không đổi loại lỗi) → luôn lưu được (bên nhận chưa dùng, bên giao lấy lại hàng)
+                        if (!blocked && mode == 0 && nq < t.QtyIssued && res.Error != HandoverService.N22NoChangeMsg)
+                            fails.Add($"[N22 Sửa phiếu giảm số bị chặn oan] PO{po} op{op} {desc}: {res.Error}");
+                    }
+                    break;
+                }
+                case "suanhan":   // [N22-FUZZ 2026-11-25] Sửa lần nhận — hàm thật EditReceiveAsync; đáp án độc lập: đã dùng sau lần nhận / vượt số giao / giảm NG dưới phần đã được nhận
+                {
+                    var rs = db.HandoverReceives.List.Where(r => !r.IsVoided && r.Transaction.KhPlanDetailId == 1 && !r.Transaction.IsVoided
+                                                             && !HandoverPurpose.IsOut(r.Transaction.Purpose)).ToList();
+                    if (!rs.Any()) { Inc("skip.suanhan"); continue; }
+                    // 70%: chọn lần nhận bên nhận CHƯA dùng (đường sửa được) — tránh hầu hết lượt rơi vào "đã dùng" (bị chặn)
+                    string PgN(string pg) => pg switch { "TARO" or "BAVIA" or "WASHING" => "HTSP", _ => pg };
+                    bool UsedR(HandoverReceive r)
+                    {
+                        var rt = HandoverService.N22Root(r.Notes) ?? r.ReceiveId;
+                        var at = r.Transaction.Receives.Where(x => !x.IsVoided && (x.ReceiveId == r.ReceiveId || HandoverService.N22Root(x.Notes) == rt)).Min(x => x.ReceivedAt);
+                        var gg = r.Transaction.ToGroupCode;
+                        return db.WtsProductionLogs.List.Any(w => w.KhPlanDetailId == 1 && !w.IsVoided && PgN(w.ProcessGroup) == gg && w.CreatedAt > at)
+                            || db.HandoverTransactions.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.FromGroupCode == gg && x.SourceReceiveId == null && x.IssuedAt > at)
+                            || db.HandoverNgReports.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.GroupCode == gg && x.CreatedAt > at)
+                            || db.HandoverRepairResults.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.GroupCode == gg && x.CreatedAt > at);
+                    }
+                    var free = rs.Where(r => !UsedR(r)).ToList();
+                    var r0 = free.Any() && rnd.NextDouble() < 0.7 ? free[rnd.Next(free.Count)] : rs[rnd.Next(rs.Count)];
+                    var tx = r0.Transaction;
+                    var root = HandoverService.N22Root(r0.Notes) ?? r0.ReceiveId;
+                    var grp = tx.Receives.Where(x => !x.IsVoided && (x.ReceiveId == r0.ReceiveId || HandoverService.N22Root(x.Notes) == root)).ToList();
+                    decimal o0 = grp.Sum(x => x.QtyOk), g0 = grp.Sum(x => x.QtyNg);
+                    var eff = r0.ToCell ?? (tx.SourceReceiveId != null ? HandoverCell.Loi : HandoverCell.IsReceiveCell(HandoverCell.DesigOf(tx.ToCell)) ? HandoverCell.DesigOf(tx.ToCell) : null);
+                    decimal nOk = o0, nNg = g0;
+                    var mode = rnd.Next(5);   // 0 chuyển 1 OK → NG · 1 chuyển 1 NG → OK · 2 giảm OK · 3 tăng OK · 4 tăng NG (rà độc lập T4)
+                    if (mode == 0 && o0 > 0) { nOk--; nNg++; } else if (mode == 1 && g0 > 0) { nOk++; nNg--; } else if (mode == 2 && o0 > 1) nOk--; else if (mode == 4) nNg++; else nOk++;
+                    if (eff == HandoverCell.Loi) { nNg += nOk; nOk = 0; }
+                    if (eff == HandoverCell.Sua) { nOk += nNg; nNg = 0; }
+                    bool needCat = eff != HandoverCell.Loi && eff != HandoverCell.Sua && nNg > 0 && grp.All(x => x.NgCaseId == null) && tx.NgCaseId == null && tx.SourceReceiveId == null;
+                    desc = $"suanhan #{r0.ReceiveId} (nhóm {grp.Count}) phiếu #{tx.HandoverTxId} {tx.FromGroupCode}->{tx.ToGroupCode} ô {eff} {o0}+{g0} → {nOk}+{nNg}";
+                    // đáp án độc lập
+                    var at0 = grp.Min(x => x.ReceivedAt); var gT = tx.ToGroupCode;
+                    string PgG(string pg) => pg switch { "TARO" or "BAVIA" or "WASHING" => "HTSP", _ => pg };
+                    bool used = db.WtsProductionLogs.List.Any(w => w.KhPlanDetailId == 1 && !w.IsVoided && PgG(w.ProcessGroup) == gT && w.CreatedAt > at0)
+                             || db.HandoverTransactions.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.FromGroupCode == gT && x.SourceReceiveId == null && x.IssuedAt > at0)
+                             || db.HandoverNgReports.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.GroupCode == gT && x.CreatedAt > at0)
+                             || db.HandoverRepairResults.List.Any(x => x.KhPlanDetailId == 1 && !x.IsVoided && x.GroupCode == gT && x.CreatedAt > at0);
+                    var others = tx.Receives.Where(x => !x.IsVoided && !grp.Contains(x)).Sum(x => x.QtyOk + x.QtyNg);
+                    bool over = nOk + nNg > tx.QtyIssued - others;
+                    var grpIds = grp.Select(x => (long?)x.ReceiveId).ToHashSet();
+                    var backsB = db.HandoverTransactions.List.Where(x => !x.IsVoided && grpIds.Contains(x.SourceReceiveId)).ToList();
+                    decimal keptNg = grp.Where(x => x.QtyNg > 0).Sum(x => backsB.FirstOrDefault(b => b.SourceReceiveId == x.ReceiveId) is { } b
+                                        ? (b.Receives.Any(z => !z.IsVoided) || (b.QtyClosed ?? 0) > 0 ? x.QtyNg : 0m) : x.QtyNg);
+                    bool belowKept = eff != HandoverCell.Loi && eff != HandoverCell.Sua && nNg < g0 && nNg < keptNg;
+                    bool same = nOk == o0 && nNg == g0;
+                    var sigB = ChuoiHelp.LedgerSig(row); var nR = db.HandoverReceives.List.Count; var nT = db.HandoverTransactions.List.Count;
+                    var deny = await svc.EditReceiveAsync(r0.ReceiveId, nOk, nNg, needCat ? 2 : null, "sua thu", 99);
+                    checks++;
+                    if (deny.Ok) fails.Add($"[N22 Quyền] PO{po} op{op} người không có tài khoản sửa được lần nhận — {desc}");
+                    if (gT != "GC" && r0.ReceivedBy != FuzzPerm.GcOnlyId)   // [rà độc lập T4] người CÓ tài khoản, chỉ quyền Sửa Gia công
+                    {
+                        var deny2 = await svc.EditReceiveAsync(r0.ReceiveId, nOk, nNg, needCat ? 2 : null, "sua thu", FuzzPerm.GcOnlyUser(db));
+                        if (deny2.Ok) fails.Add($"[N22 Quyền] PO{po} op{op} người chỉ có quyền Gia công sửa được lần nhận của {gT} — {desc}");
+                    }
+                    var caseB = grp.Select(x => x.NgCaseId).FirstOrDefault(x => x != null) ?? (tx.SourceReceiveId != null || tx.NgCaseId != null ? tx.NgCaseId : null);
+                    var backsSnap = backsB.Select(b => (b.HandoverTxId, b.QtyIssued)).ToList();
+                    var res = await svc.EditReceiveAsync(r0.ReceiveId, nOk, nNg, needCat ? 2 : null, "sua thu", Uid(gT));
+                    ok = res.Ok;
+                    // [N22-FUZZ 2026-11-25] kiem trạm 23:16 thuong seed 22173 PO4: đáp án chưa biết 2 luật rà độc lập L2 / L1 → báo "chặn oan"
+                    bool closedLess = (tx.QtyClosed ?? 0) > 0 && nOk + nNg < o0 + g0;   // L2: phiếu đã Huỷ phần chưa nhận không giảm tổng nhận
+                    bool kcsTfc = row.ApplyWorkflow && tx.SourceReceiveId == null && nOk > 0 && row.TxFromCell.TryGetValue(tx.HandoverTxId, out var tfcB)
+                                  && tfcB is HandoverCell.Loi or HandoverCell.Sua && (eff ?? (tx.Purpose is string ppB ? HandoverCell.ReceiveCellOf(ppB) : null)) is HandoverCell.Xl or HandoverCell.Moi;   // L1 [SUA-QUA-KCS] lúc nhận
+                    if (closedLess) Inc("n22.suanhan.closed"); if (kcsTfc) Inc("n22.suanhan.kcs");
+                    var mustFail = same || over || belowKept || (used && row.ApplyWorkflow) || closedLess || kcsTfc;
+                    if (ok)
+                    {
+                        Inc("n22.suanhan.ok" + (used ? ".off" : ""));
+                        if (mustFail) fails.Add($"[N22 Sửa lần nhận lọt] PO{po} op{op} {desc} (đã dùng {used} vượt {over} dưới phần đã nhận {belowKept} không đổi {same} đã đóng {closedLess} KCS {kcsTfc})");
+                        var act = db.HandoverReceives.List.Where(x => x.HandoverTxId == tx.HandoverTxId && !x.IsVoided && HandoverService.N22Root(x.Notes) == root).ToList();
+                        var backs = db.HandoverTransactions.List.Where(x => !x.IsVoided && act.Select(a => (long?)a.ReceiveId).Contains(x.SourceReceiveId)).ToList();
+                        if (act.Sum(x => x.QtyOk) != nOk || act.Sum(x => x.QtyNg) != nNg || grp.Any(x => !x.IsVoided) || act.Any(x => x.ReceivedAt != at0)
+                            || act.Any(a => backs.Count(b => b.SourceReceiveId == a.ReceiveId) > 1)
+                            || (eff != HandoverCell.Loi && eff != HandoverCell.Sua && backs.Sum(b => b.QtyIssued + (b.QtyClosed ?? 0)) != nNg))
+                            fails.Add($"[N22 Sửa lần nhận ghi sai chứng từ] PO{po} op{op} {desc} → {string.Join(",", act.Select(a => $"#{a.ReceiveId}:{a.QtyOk}+{a.QtyNg}"))} trả {string.Join(",", backs.Select(b => $"#{b.HandoverTxId}:{b.QtyIssued}"))}");
+                        if (used && !res.Error.Contains("Workflow OFF")) fails.Add($"[N22 Sửa lần nhận OFF thiếu cảnh báo] PO{po} op{op} {desc}");
+                        // [rà độc lập T4] cùng vụ; NG tăng → phiếu trả cũ còn nguyên (không huỷ, số giữ)
+                        if (caseB != null && act.Any(a => a.QtyNg > 0 && a.NgCaseId != caseB)) fails.Add($"[N22 Sửa lần nhận đổi vụ] PO{po} op{op} {desc}");
+                        if (caseB != null && backs.Any(b => b.NgCaseId != caseB)) fails.Add($"[N22 phiếu trả không cùng vụ] PO{po} op{op} {desc}");
+                        if (nNg >= g0 && backsSnap.Any(b => db.HandoverTransactions.List.First(x => x.HandoverTxId == b.HandoverTxId) is var bx && (bx.IsVoided || bx.QtyIssued != b.QtyIssued)))
+                            fails.Add($"[N22 NG tăng mà phiếu trả cũ bị đổi / huỷ] PO{po} op{op} {desc}");
+                        Inc("n22.suanhan.mode" + mode);
+                    }
+                    else
+                    {
+                        Inc("n22.suanhan.chan");
+                        if (db.HandoverReceives.List.Count != nR || db.HandoverTransactions.List.Count != nT || grp.Any(x => x.IsVoided) || ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!) != sigB)
+                            fails.Add($"[N22 Sửa lần nhận bị chặn mà đã ghi] PO{po} op{op} {desc}: {res.Error}");
+                        if (!mustFail && !res.Error.StartsWith("Không lưu")) fails.Add($"[N22 Sửa lần nhận chặn oan] PO{po} op{op} {desc}: {res.Error}");
+                        if (!mustFail && res.Error.StartsWith("Không lưu")) Inc("n22.suanhan.k5");
+                        if (used && row.ApplyWorkflow && !same && !over && !res.Error.Contains("Không sửa lần nhận được")) Inc("n22.suanhan.chan.khac");
+                    }
+                    break;
+                }
+                case "doiloai":   // [N22-FUZZ 2026-11-25] Đổi loại lỗi (nút ở Lịch sử) — hàm thật ChangeCaseCategoryAsync; đáp án độc lập N22Moved
+                {
+                    var cs = db.NgCases.List.Where(c => c.KhPlanDetailId == 1).ToList();
+                    if (!cs.Any()) { Inc("skip.doiloai"); continue; }
+                    var c = cs[rnd.Next(cs.Count)];
+                    var nc = c.NgCategoryId % 5 + 1;
+                    var moved = N22Moved(db, c.NgCaseId);
+                    desc = $"doiloai {NgCaseNo.Format(c.NgCaseId)} {c.NgCategoryId} → {nc} (đã có bên nhận nhận / ra / sửa: {moved})";
+                    var b0 = c.NgCategoryId;
+                    var res = await svc.ChangeCaseCategoryAsync(c.NgCaseId, nc, "doi thu", c.CreatedBy);
+                    ok = res.Ok; checks++;
+                    bool expOk = !moved || !row.ApplyWorkflow;
+                    if (ok != expOk) fails.Add($"[N22 Đổi loại lỗi {(ok ? "lọt" : "chặn oan")}] PO{po} op{op} {desc}: {res.Error}");
+                    if (ok && c.NgCategoryId != nc) fails.Add($"[N22 Đổi loại lỗi báo được mà không đổi] PO{po} op{op} {desc}");
+                    if (!ok && c.NgCategoryId != b0) fails.Add($"[N22 Đổi loại lỗi bị chặn mà đã đổi] PO{po} op{op} {desc}");
+                    if (ok && moved && !res.Error.Contains("áp cho CẢ vụ")) fails.Add($"[N22 Đổi loại lỗi OFF thiếu cảnh báo] PO{po} op{op} {desc}");
+                    if (ok && !db.KhPlanDetailChangeLogs.List.Any(l => l.FieldName == HandoverService.CatLogField(c.NgCaseId) && l.NewValue == db.NgCategories.List.First(x => x.NgCategoryId == nc).Label))
+                        fails.Add($"[N22 Đổi loại lỗi không ghi lịch sử] PO{po} op{op} {desc}");
+                    Inc("n22.doiloai." + (ok ? "ok" : "chan"));
+                    break;
+                }
                 case "close":
                 {
 #if NEWAPI
@@ -2463,6 +2631,10 @@ static decimal? KhoConFromTables(AppDbContext db)
     return phoi + bu - giao - bl;
 }
 static decimal BuOf(AppDbContext db, long c) => db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided && b.NgCaseId == c).Sum(b => b.Qty);
+/// <summary>[N22-FUZZ 2026-11-25] Đáp án độc lập luật đổi loại lỗi N22: vụ có phiếu mang vụ đã có lần nhận, hoặc phiếu Huỷ / Trả khách, hoặc Kết quả sửa.</summary>
+static bool N22Moved(AppDbContext db, long caseId)
+    => db.HandoverTransactions.List.Any(t => !t.IsVoided && t.NgCaseId == caseId && (HandoverPurpose.IsOut(t.Purpose) || t.Receives.Any(r => !r.IsVoided)))
+    || db.HandoverRepairResults.List.Any(r => !r.IsVoided && r.NgCaseId == caseId);
 static int Uid(string g) => g switch { "KHO" => 1, "GC" => 2, "HTSP" => 3, "KCS" => 4, "PKG" => 5, _ => 6 };
 static T Pick<T>(Random r, params (T v, int w)[] xs)
 {
@@ -2477,7 +2649,12 @@ static T Pick<T>(Random r, params (T v, int w)[] xs)
 HashSet<string> RecvOpDocs(LedgerInput inp, long rid)
 {
     var d = new HashSet<string> { "R:" + rid };
-    foreach (var b in inp.Txs.Where(b => b.SourceReceiveId == rid)) { d.Add("T:" + b.Id); foreach (var br in b.Receives) d.Add("R:" + br.Id); }
+    // [N22-SUA 2026-11-25] lần nhận đã sửa: cả nhóm dòng cùng dấu [N22#gốc] huỷ cùng (như máy chủ)
+    var tg = inp.Txs.FirstOrDefault(x => x.Receives.Any(r => r.Id == rid));
+    var grp = tg?.Receives.First(r => r.Id == rid).N22Grp;
+    var ids = tg == null ? new List<long> { rid } : tg.Receives.Where(r => r.Id == rid || (grp != null && r.N22Grp == grp)).Select(r => r.Id).ToList();
+    foreach (var id in ids) d.Add("R:" + id);
+    foreach (var b in inp.Txs.Where(b => b.SourceReceiveId is long sr && ids.Contains(sr))) { d.Add("T:" + b.Id); foreach (var br in b.Receives) d.Add("R:" + br.Id); }
     return d;
 }
 

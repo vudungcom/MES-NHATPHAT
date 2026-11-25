@@ -230,7 +230,8 @@ namespace MES.Web.Services
                 var lbl = await db.NgCategories.AsNoTracking().Where(c => c.NgCategoryId == cs.NgCategoryId || c.NgCategoryId == newCategoryId)
                     .Select(c => new { c.NgCategoryId, c.Code, c.Name }).ToListAsync();
                 string L(int id) => lbl.FirstOrDefault(c => c.NgCategoryId == id) is { } c ? $"{c.Code} · {c.Name}" : "#" + id;   // như NgCategory.Label
-                offWarnings!.Add($"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — đổi loại lỗi {L(cs.NgCategoryId)} → {L(newCategoryId)} áp cho CẢ vụ"
+                // [N22-SUA] chữ theo luật đổi loại lỗi mới (trước: "đã giao / huỷ / trả khách / có Kết quả sửa")
+                offWarnings!.Add($"{NgCaseNo.Format(caseId)} đã có bên nhận nhận hàng / đã huỷ / trả khách / có Kết quả sửa — đổi loại lỗi {L(cs.NgCategoryId)} → {L(newCategoryId)} áp cho CẢ vụ"
                                  + " (kể cả phần đã giao đi / đã sửa; phiếu cũ hiện tên lỗi mới, dòng WTS cũ giữ tên lỗi cũ).");
             }
             cs.NgCategoryId = newCategoryId;
@@ -283,10 +284,23 @@ namespace MES.Web.Services
         {
             var cs = await db.NgCases.AsNoTracking().FirstOrDefaultAsync(x => x.NgCaseId == caseId);
             if (cs == null || cs.NgCategoryId == newCategoryId) return null;
-            var moved = await db.HandoverTransactions.AsNoTracking().AnyAsync(t => t.NgCaseId == caseId && !t.IsVoided);
+            // [N22-SUA 2026-11-25] Đổi loại lỗi được khi vụ chưa giao, HOẶC đã giao mà bên nhận chưa nhận (phiếu mang vụ còn chờ nhận).
+            //   Nguồn: KHÁCH 23/11 (mockup D7 bước 3, dòng 23/11 "đổi loại lỗi khi đã giao nhưng chưa nhận"); HÙNG 23/11 16:24 (N22) + 25/11 21:39 OK.
+            //   Chặn: phiếu mang vụ đã có lần nhận (bên nhận đã nhận — kể cả phiếu trả tự lập đã được bên giao nhận lại), vụ đã Huỷ / Trả khách,
+            //   vụ đã có Kết quả sửa. Lần nhận SINH ra vụ (NG đếm lúc nhận) không tính là "bên nhận đã nhận" (phiếu đó không mang vụ).
+            //   Trước: vụ có bất kỳ phiếu nào (kể cả phiếu đang chờ nhận) là chặn. Đường sửa dòng WTS dùng chung luật này; Workflow OFF vẫn chỉ cảnh báo (GOI9-LOAILOI-OFF).
+            var caseTxs = await db.HandoverTransactions.AsNoTracking().Where(t => t.NgCaseId == caseId && !t.IsVoided)
+                .Select(t => new { t.HandoverTxId, t.Purpose }).ToListAsync();
+            var moved = caseTxs.Any(t => HandoverPurpose.IsOut(t.Purpose));
+            if (!moved && caseTxs.Count > 0)
+            {
+                var ids = caseTxs.Select(t => t.HandoverTxId).ToList();
+                moved = await db.HandoverReceives.AsNoTracking().AnyAsync(r => !r.IsVoided && ids.Contains(r.HandoverTxId));
+            }
             // [GC-SUA-TAI-CHO 2026-11-04] Vụ đã có Kết quả sửa (KCS xác nhận theo loại lỗi đó) cũng không đổi loại lỗi được (rà độc lập V1)
             if (!moved) moved = await db.HandoverRepairResults.AsNoTracking().AnyAsync(r => r.NgCaseId == caseId && !r.IsVoided);
-            return moved ? $"{NgCaseNo.Format(caseId)} đã giao / huỷ / trả khách / có Kết quả sửa — không đổi loại lỗi được (huỷ các chứng từ đó trước, hoặc giữ loại lỗi cũ)." : null;
+            return moved ? $"{NgCaseNo.Format(caseId)} đã có bên nhận nhận hàng / đã huỷ / trả khách / có Kết quả sửa — không đổi loại lỗi được "
+                         + "(chỉ đổi được khi vụ chưa giao, hoặc đã giao mà bên nhận chưa nhận)." : null;
         }
 
         /// <summary>[VULOI] Loại lỗi dùng khi lưu: phải đang dùng; riêng vụ cũ giữ nguyên loại lỗi thì loại đã ngưng vẫn giữ được.</summary>
