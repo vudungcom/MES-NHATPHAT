@@ -316,7 +316,7 @@ public static class QuetCore
             var from = rp.TxFromCell.TryGetValue(t.HandoverTxId, out var fc) ? fc : t.FromCell;   // ô như sổ (như trang Nhận [G16-NHAN-CHONSAN])
             // ô chỉ định như máy chủ (HandoverService desigCell / danh sách chờ trang Nhận): phiếu cũ không ghi ô → suy theo loại phiếu
             //   (rà độc lập Gói 21 Trung 1: phiếu "Trả hàng đã sửa" cũ ToCell NULL bị bỏ sót)
-            var desig = HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell
+            var desig = HandoverCell.IsReceiveCell(HandoverCell.DesigOf(t.ToCell)) ? HandoverCell.DesigOf(t.ToCell)   // [N18-TRAVE] LOIV = ô Hàng lỗi
                       : (t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : null)) is string lp ? HandoverCell.ReceiveCellOf(lp) : null;
             if (from is HandoverCell.Loi or HandoverCell.Sua && desig is HandoverCell.Xl or HandoverCell.Moi)
                 Add(rp, PhieuChoODat, $"phiếu #{t.HandoverTxId} {HandoverLedgerService.GroupLabel(t.FromGroupCode)} → {HandoverLedgerService.GroupLabel(t.ToGroupCode)} lấy từ ô {HandoverCell.Label(from)}"

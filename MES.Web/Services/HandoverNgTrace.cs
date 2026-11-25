@@ -186,7 +186,7 @@ namespace MES.Web.Services
         {
             "PS"    => "Phát sinh",
             "GIAO"  => "Giao",
-            "NHAN"  => "Nhận",
+            "NHAN"  => h.TraVe ? "Nhận lại (sửa chưa đạt trả về)" : "Nhận",   // [N18-TRAVE]
             "TRA"   => "NG lúc nhận, trả bên giao",
             "HUY"   => "Huỷ",
             "KHACH" => "Trả khách",
@@ -219,7 +219,8 @@ namespace MES.Web.Services
                     At = cs.At, Who = cs.Who, SinhRa = cs.SinhRa,
                     PhatHien = cs.DetectGroup == null ? "—" : GL(cs.DetectGroup) + (string.IsNullOrEmpty(cs.DetectNc) ? "" : " " + (cs.DetectGroup == "GC" ? HandoverLedgerService.NcName(cs.DetectNc) : cs.DetectNc)),
                     GayLoi = cs.Cause == null ? "" : HandoverNgSource.CauseLabel(cs.Cause),
-                    NhanLoi = Join(cs.NhanLoi, g => cs.TuXuLy.Contains(g) ? " (tự xử lý)" : ""),
+                    NhanLoi = string.Join(" · ", new[] { Join(cs.NhanLoi, g => cs.TuXuLy.Contains(g) ? " (tự xử lý)" : ""),
+                                                         cs.NhanVe.Values.Any(v => v != 0) ? "sửa chưa đạt trả về: " + Join(cs.NhanVe) : "" }.Where(x => x != "")),   // [N18-TRAVE] chiếc lỗi cũ quay về — không cộng vào Nhận lỗi
                     Sua = Join(cs.NhanSua),
                     DaXuLy = Join(cs.DaXuLy), DaXuLyQty = cs.DaXuLyTotal,
                     Huy = cs.Huy, HuyText = Join(cs.HuyBy),
@@ -361,7 +362,7 @@ namespace MES.Web.Services
                         var e = New("KQ_SUA", r.Group, null, r.Pass + r.Fail, $"Kết quả sửa #{r.Id}", r.Id,
                             $"{GL(r.Group)} sửa {r.Pass + r.Fail:0.##} (ô {HandoverCell.Label(r.Cell)}): đạt {r.Pass:0.##}"
                             + (r.Checks.Any(c => c.Auto) ? " (không cần KCS xác nhận)" : " chờ KCS xác nhận")
-                            + (r.Fail != 0 ? $", không đạt {r.Fail:0.##} → ô Hàng lỗi" : ""));
+                            + (r.Fail != 0 && st.TraVeTxIds.Count == 0 ? $", không đạt {r.Fail:0.##} → ô Hàng lỗi" : ""));   // [N18-TRAVE rà độc lập L4a] có phiếu tự trả: chữ ở dòng GIAO_LOI ngay dưới
                         e.Who = r.Who; e.Code = r.ToNC;
                         if (okA != 0)
                         {
@@ -369,6 +370,16 @@ namespace MES.Web.Services
                             if (e.VeSx == 0) e.Text += $" → Tồn hàng lỗi đã xử lý {GL(r.Group)} (chờ trả nơi phát hiện)";
                         }
                         transit += r.Pass - okA;
+                        // [N18-TRAVE 2026-11-25] phiếu tự trả chiếc "Sửa chưa đạt" gộp cùng dòng B (ComputeSteps): hàng lỗi đang chuyển về nơi làm lỗi
+                        foreach (var tvId in st.TraVeTxIds)
+                        {
+                            if (!txById.TryGetValue(tvId, out var tv)) { tr.Problems.Add($"B{st.Index}: không thấy phiếu #{tvId}"); continue; }
+                            var tq = tv.Issued + tv.Closed;
+                            var te = New("GIAO_LOI", tv.From, tv.To, tq, $"Phiếu #{tv.Id}", tv.Id,
+                                $"{GL(tv.From)} sửa chưa đạt {tq:0.##} — phần mềm tự trả {GL(tv.To)} ô Hàng lỗi (Hàng sửa trả về chưa đạt)");
+                            te.Reason = tv.NgReason; te.Who = r.Who;
+                            transit += tq;
+                        }
                         break;
                     }
                     case "XNSUA":   // [GC-SUA-TAI-CHO] KCS xác nhận: đạt = đã xử lý (về hàng tốt), loại = về ô Hàng lỗi nhóm sửa

@@ -159,8 +159,8 @@ async def main():
         d5 = get("/harness/form")
         rr = [x for x in d5["txs"] if x not in d3["txs"] and x["fromGroupCode"] == "GC" and x["toGroupCode"] == "KHO"]
         nk5 = [x for x in d5["reps"] if x not in d3["reps"]]
-        ok(sent and len(rr) == 1 and rr[0]["fromCell"] == "LOI" and rr[0]["toCell"] == "LOI" and rr[0]["ngCaseId"] and len(nk5) == 1 and nk5[0]["qtyFail"] == 1 and nk5[0]["qtyPass"] == 0,
-           "D53 DB: Kết quả sửa chưa đạt 1 + phiếu Gia công → Kho ô Hàng lỗi 1, cùng vụ", {"tx": rr, "kq": nk5})
+        ok(sent and len(rr) == 1 and rr[0]["fromCell"] == "LOI" and rr[0]["toCell"] == "LOIV" and rr[0]["ngCaseId"] and len(nk5) == 1 and nk5[0]["qtyFail"] == 1 and nk5[0]["qtyPass"] == 0,
+           "D53 DB: Kết quả sửa chưa đạt 1 + phiếu Gia công → Kho ô Hàng lỗi 1 (ô chỉ định LOIV — [N18-TRAVE] đáp án đổi G-E), cùng vụ", {"tx": rr, "kq": nk5})
         sane(d5, "D54")
 
         print("[D6] [K2] V3: hàng của vụ giao vào Gia công ô Hàng lỗi đã xử lý → NC theo vụ")

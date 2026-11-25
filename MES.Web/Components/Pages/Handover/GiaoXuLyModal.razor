@@ -394,7 +394,7 @@
         if (p.HeldCell == HandoverCell.Loi)
         {
             var hop = c.Hops.LastOrDefault(h => h.Kind == "NHAN" && h.Group == _group && h.Cell == HandoverCell.Loi && !string.IsNullOrEmpty(h.Other) && HandoverLedgerService.GroupCodes.Contains(h.Other!));
-            if (hop != null) return no + " · " + HandoverLedgerService.GroupLabel(hop.Other!) + " trả";
+            if (hop != null) return no + " · " + HandoverLedgerService.GroupLabel(hop.Other!) + (hop.TraVe ? " sửa chưa đạt trả về" : " trả");   // [N18-TRAVE]
         }
         return no;
     }
@@ -893,7 +893,7 @@
     {
         var s = _pass > 0 ? $"Sẽ ghi: sửa đạt {_pass:0.##} — đạt vào thẳng ô đạt (không cần KCS xác nhận)" : "Sẽ ghi:";
         if (SuaToEff is string d) s = $"Sẽ ghi: sửa đạt {_pass:0.##} + phiếu {G} → {HandoverLedgerService.GroupLabel(d)} ô {GiveCellText} {_pass:0.##}" + (Give?.Cell == HandoverCell.Xl ? ", cùng vụ" : "");
-        if (FailTo != null && _fail > 0) s += (_pass > 0 ? " · " : " ") + $"chưa đạt {_fail:0.##}: phiếu {G} → {HandoverLedgerService.GroupLabel(FailTo)} ô Hàng lỗi ({FailToRole}), cùng vụ";
+        if (FailTo != null && _fail > 0) s += (_pass > 0 ? " · " : " ") + $"chưa đạt {_fail:0.##}: phiếu {G} → {HandoverLedgerService.GroupLabel(FailTo)} ô Hàng lỗi ({FailToRole}), cùng vụ — {HandoverLedgerService.GroupLabel(FailTo)} bấm Nhận, đếm ở cột Hàng sửa trả về chưa đạt";   // [N18-TRAVE] mockup TH6 bước 2
         else if (SuaFailInput && _fail > 0) s += (_pass > 0 ? " · " : " ") + $"chưa đạt {_fail:0.##} ở lại ô Hàng lỗi";
         return s + ".";
     }

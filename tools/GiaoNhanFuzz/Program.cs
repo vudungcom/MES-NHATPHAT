@@ -19,7 +19,8 @@ if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
 if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-SCEN 2026-11-19] Sổ luật ↔ code / Workflow ON-OFF (Gói 25: L7-WTS-CU)   // [A1-SCEN 2026-11-15] điểm ghi số lượng / khoá / đồng thời (Gói 22: A1-01, A1-02)
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
-if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
+if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }
+if (args.Length > 0 && args[0] == "n18") { return await SuaScen.RunN18(); }   // [N18-SCEN 2026-11-25] Cách Y — hàng sửa trả về chưa đạt (G-E)   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
 if (args.Length > 0 && args[0] == "n17") { return await SuaScen.RunN17(); }   // [N17-KCS-BO 2026-11-23] sửa đạt không cần KCS xác nhận (chứng từ mới)
 if (args.Length > 0 && args[0] == "bu") { return await BuScen.Run(); }
 if (args.Length > 0 && args[0] == "ktt") { return await KhoTaroScen.Run(); }   // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro (NC đầu là Taro) + Taro trả phôi lỗi Kho   // [KHACH-GUI-LAI 2026-11-11] Gói 14 khách gửi bù phôi
@@ -420,7 +421,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var t = pend[rnd.Next(pend.Count)];
                     var rem = t.QtyIssued - t.Receives.Where(x => !x.IsVoided).Sum(x => x.QtyOk + x.QtyNg);
                     var q = rnd.NextDouble() < 0.6 || rem <= 1 ? rem : rnd.Next(1, (int)rem);
-                    var cell = t.SourceReceiveId != null ? HandoverCell.Loi : (HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell : null);
+                    var cell = t.SourceReceiveId != null ? HandoverCell.Loi : (HandoverCell.IsReceiveCell(HandoverCell.DesigOf(t.ToCell)) ? HandoverCell.DesigOf(t.ToCell) : null);   // [N18-TRAVE] LOIV = ô Hàng lỗi
                     // [VULOI] 15%: bên nhận đổi ô (thử nhận vào Hàng lỗi / Hàng sửa / Hàng lỗi đã xử lý / Hàng mới khác ô chỉ định)
                     string? pickCell = null;
                     var desig0 = cell;   // [NHAN-DOI-O-NC] ô bên giao chỉ định
@@ -473,6 +474,20 @@ for (int po = startPo; po < startPo + poCount; po++)
                     { Inc(ok ? "g16.recv.LOT" : "g16.recv.chan"); if (ok) fails.Add($"[SUA-QUA-KCS nhận đổi ô hàng lỗi / hàng sửa vào ô hàng đạt lọt] PO{po} op{op} {desc}"); }
                     else if (!ok && (r.Error.StartsWith("Workflow ON: phiếu") || r.Error.StartsWith("Workflow ON: không đổi ô")))   // rà độc lập Gói 16 vòng 2 L4: chặn oan
                         fails.Add($"[SUA-QUA-KCS nhận bị chặn oan] PO{po} op{op} {desc}");
+                    if (row.ApplyWorkflow && HandoverCell.IsTraVe(t.ToCell) && pickCell != null)
+                    {   // [N18-TRAVE] đáp án: Workflow ON, phiếu tự trả chiếc sửa chưa đạt — bên nhận đổi ô → phải chặn (ô Hàng lỗi đã xử lý / Hàng mới: lời SUA-QUA-KCS; ô Hàng sửa: lời N18)
+                        Inc(ok ? "n18.recv.doio.LOT" : "n18.recv.doio.chan");
+                        if (ok) fails.Add($"[N18 nhận phiếu tự trả đổi ô lọt] PO{po} op{op} {desc}");
+                        else if (pickCell == HandoverCell.Sua && r.Error != HandoverService.TraVeOnlyLoiMsg && !r.Error.Contains("làm hộ")) fails.Add($"[N18 nhận phiếu tự trả chặn sai lời] PO{po} op{op} {desc}");
+                    }
+                    if (ok && HandoverCell.IsTraVe(t.ToCell)) Inc(pickCell == null ? "n18.recv.loi" : "n18.recv.off.doio");
+                    if (ok && HandoverCell.IsTraVe(t.ToCell) && pickCell == null)
+                    {   // [N18-TRAVE rà độc lập T2] bên nhận: Nhận · Hàng lỗi không đổi, cột Hàng sửa trả về chưa đạt + số nhận, Tồn hàng lỗi + số nhận
+                        var aR = (await led.GetLedgerForDetailAsync(1))!; var gT = t.ToGroupCode;
+                        checks++;
+                        if (aR.G(gT).NhanLoi != row.G(gT).NhanLoi || aR.G(gT).NhanLoiVe != row.G(gT).NhanLoiVe + q || aR.G(gT).LoiGiu != row.G(gT).LoiGiu + q)
+                            fails.Add($"[N18 nhận phiếu tự trả sai ô] PO{po} op{op} {desc}: nl {row.G(gT).NhanLoi}→{aR.G(gT).NhanLoi} nlv {row.G(gT).NhanLoiVe}→{aR.G(gT).NhanLoiVe} loi {row.G(gT).LoiGiu}→{aR.G(gT).LoiGiu}");
+                    }
                     if (row.ApplyWorkflow && carryR && t.ToGroupCode != "GC" && cell == HandoverCell.Sua && t.NgCaseId is long rlv && row.Cases.TryGetValue(rlv, out var rlvC) && rlvC.IsLamHo)
                     {   // [LAMHO-NHO-SUA 2026-11-08] đáp án: nhận vụ làm hộ vào ô Hàng sửa nhóm khác Gia công → phải chặn
                         Inc(ok ? "lamho.nhosua.recv.LOT" : "lamho.nhosua.recv.chan");
@@ -1451,9 +1466,13 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (suaTo != null && !newTx.Any(t => t.FromGroupCode == g && t.ToGroupCode == suaTo && t.QtyIssued == pass
                                                          && t.FromCell == (giu ? HandoverCell.Xl : HandoverCell.Moi) && t.ToCell == (giu ? HandoverCell.Xl : HandoverCell.Moi) && (!giu || t.NgCaseId == cs.Id)))
                         fails.Add($"[N23 phiếu giao kèm sai] PO{po} op{op} {desc}: {string.Join(";", newTx.Select(t => $"{t.FromGroupCode}→{t.ToGroupCode} {t.FromCell}→{t.ToCell} {t.QtyIssued} vụ {t.NgCaseId}"))}");
-                    if (failTo != null && !newTx.Any(t => t.FromGroupCode == g && t.ToGroupCode == failTo && t.QtyIssued == fail && t.FromCell == HandoverCell.Loi && t.ToCell == HandoverCell.Loi && t.NgCaseId == cs.Id))
+                    if (failTo != null && !newTx.Any(t => t.FromGroupCode == g && t.ToGroupCode == failTo && t.QtyIssued == fail && t.FromCell == HandoverCell.Loi && t.ToCell == HandoverCell.LoiVe && t.NgCaseId == cs.Id))   // [N18-TRAVE] đáp án đổi (G-E): ô chỉ định LOIV (trước LOI)
                         fails.Add($"[N23 phiếu trả chưa đạt sai] PO{po} op{op} {desc}: {string.Join(";", newTx.Select(t => $"{t.FromGroupCode}→{t.ToGroupCode} {t.FromCell}→{t.ToCell} {t.QtyIssued} vụ {t.NgCaseId}"))}");
                     var a23 = (await led.GetLedgerForDetailAsync(1))!;
+                    // [N18-TRAVE rà độc lập T2] Cách Y phía bên sửa: phần chưa đạt tự trả không vào Nhận / Giao · Hàng lỗi của nhóm sửa
+                    if (failTo != null && (a23.G(g).NhanLoi != row.G(g).NhanLoi || a23.G(g).GiaoLoi != row.G(g).GiaoLoi))
+                        fails.Add($"[N18 bên sửa đổi Nhận / Giao · Hàng lỗi] PO{po} op{op} {desc}: nl {row.G(g).NhanLoi}→{a23.G(g).NhanLoi} gl {row.G(g).GiaoLoi}→{a23.G(g).GiaoLoi}");
+                    if (failTo != null) Inc("n18.form23.benSua");
                     var h1 = a23.Cases[cs.Id].HeldAt(g, cell);
                     var expH = cell == HandoverCell.Loi ? held - pass : held - pass - fail;
                     var expLoiG = row.Cases[cs.Id].HeldAt(g, HandoverCell.Loi) + (cell == HandoverCell.Sua && failTo == null ? fail : 0) - (cell == HandoverCell.Loi ? pass : 0);
@@ -1882,6 +1901,25 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
     void F(string tag, string msg) => fails.Add($"[{tag}] PO{po} op{op} sau «{desc}»: {msg}");
     checks++;
     if (!row.Balanced) F("Lệch cân PO", $"Phôi {row.Phoi} + bù {row.Bu} ≠ {row.BalanceExplain.Result}");
+    {   // [N18-TRAVE 2026-11-25] đáp án độc lập đọc thẳng bảng (Cách Y): phiếu ô chỉ định LOIV chỉ là "Gửi sửa" từ ô Hàng lỗi, mang vụ; cột Hàng sửa trả về chưa đạt
+        //   của mỗi nhóm = Σ lần nhận (còn hiệu lực, vào ô Hàng lỗi) của phiếu LOIV tới nhóm đó; bên sửa Nhận · Hàng lỗi không âm; Tồn hàng lỗi = Σ vụ giữ ô Hàng lỗi.
+        var txTv = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.ToCell == HandoverCell.LoiVe).ToList();
+        foreach (var t in txTv)
+        {
+            checks++;
+            if (t.Purpose != HandoverPurpose.RepairSend || t.FromCell != HandoverCell.Loi || t.SourceReceiveId != null)   // rà độc lập L3: vụ 0 (hàng lỗi cũ chưa mã) cũng tự trả được — không đòi NgCaseId
+                F("N18 phiếu LOIV sai kiểu", $"#{t.HandoverTxId} {t.Purpose} {t.FromCell} vụ {t.NgCaseId}");
+        }
+        foreach (var g in row.Groups.Values)
+        {
+            checks++;
+            var expV = txTv.Where(t => t.ToGroupCode == g.Code).SelectMany(t => t.Receives.Where(r => !r.IsVoided && (r.ToCell ?? HandoverCell.Loi) == HandoverCell.Loi)).Sum(r => r.QtyOk + r.QtyNg);
+            if (g.NhanLoiVe != expV) F("N18 cột Hàng sửa trả về chưa đạt ≠ bảng", $"{g.Code}: {g.NhanLoiVe} ≠ {expV}");
+            if (g.NhanLoi < 0 && row.ApplyWorkflow) F("N18 Nhận · Hàng lỗi âm", $"{g.Code}: {g.NhanLoi}");
+            var heldLoi = row.Cases.Values.Sum(c => c.HeldAt(g.Code, HandoverCell.Loi));
+            if (g.LoiGiu != heldLoi) F("N18 Tồn hàng lỗi ≠ Σ vụ giữ ô Hàng lỗi", $"{g.Code}: {g.LoiGiu} ≠ {heldLoi}");
+        }
+    }
     {   // [KHACH-GUI-LAI 2026-11-11] đáp án độc lập đọc thẳng bảng: phôi + bù = vế phải; sổ bù = bảng; mỗi vụ đã bù ≤ Σ phiếu Trả khách / Huỷ còn hiệu lực
         var buAct = db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided).ToList();
         var phoiDb = db.KhoVatLieus.List.Where(k => k.PlanDetailId == 1 && k.IsActive).Sum(k => (decimal)(k.SoLuongThucNhan ?? 0));

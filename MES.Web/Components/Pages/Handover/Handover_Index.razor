@@ -225,8 +225,8 @@ else
                 <tr>
                     @foreach (var g in HandoverLedgerService.GroupCodes)
                     {
-                        <th colspan="4" class="gn-gl" style="background:@GroupBg(g)">Nhận</th>
-                        <th colspan="4" class="gn-gl" style="background:@GroupBg(g)">Giao</th>
+                        <th colspan="@ColsFor(g).Count(c => c.Band == "Nhận")" class="gn-gl" style="background:@GroupBg(g)">Nhận</th>   @* [N18-TRAVE] trước: colspan 4 cố định *@
+                        <th colspan="@ColsFor(g).Count(c => c.Band == "Giao")" class="gn-gl" style="background:@GroupBg(g)">Giao</th>
                         @foreach (var c in ColsFor(g).Where(c => c.Band == ""))
                         {
                             <th rowspan="2" class="gn-cell @(c.Key == "ChuaLam" || (g == "KHO" && c.Key == "Ton") ? "gn-gl" : "")" title="@c.Tip" style="background:@GroupBg(g)">
@@ -549,11 +549,16 @@ else
                                     <div style="flex:1">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @HandoverLedgerService.GroupLabel(p.FromGroupCode)</span>
-                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell, p.ToCell)</span>
+                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell, p.TraVe ? HandoverCell.LoiVe : p.ToCell)</span>
                                             @if (p.IsAutoReturn)
                                             {
                                                 @* [GN-RECV-NG] mục 38: phiếu trả tự lập khi bên kia đếm NG lúc nhận *@
                                                 <span class="badge bg-warning text-dark" style="font-size:10px" title="Phần mềm tự lập khi @HandoverLedgerService.GroupLabel(p.FromGroupCode) nhận hàng và đếm thấy NG">NG lúc nhận @(p.SourceTxId != null ? "phiếu #" + p.SourceTxId : "")</span>
+                                            }
+                                            @if (p.TraVe)
+                                            {
+                                                @* [N18-TRAVE 2026-11-25] phiếu phần mềm tự trả chiếc sửa chưa đạt về nơi làm lỗi (Cách Y — mockup TH6 bước 3) *@
+                                                <span class="badge bg-warning text-dark" style="font-size:10px" title="@TraVeTip">Sửa chưa đạt trả về</span>
                                             }
                                             @if (p.NgQty > 0)
                                             {
@@ -593,7 +598,12 @@ else
                                 @if (isExpanded)
                                 {
                                     <div class="px-3 pb-3 pt-2" style="background:#f0f7ff">
-                                        @if (p.ToCell != null && !p.IsAutoReturn && !HandoverCell.IsLamHoLoi(p.Purpose, p.FromCell))   @* [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ ô Hàng lỗi (máy chủ chặn đổi ô) *@
+                                        @if (p.TraVe && RecvLoi(p))   @* [N18-TRAVE rà độc lập L4b] OFF đổi sang ô khác thì không hiện *@
+                                        {
+                                            @* [N18-TRAVE] mockup TH6 bước 3: "Chiếc này là chiếc lỗi cũ quay về — không tính là lỗi mới" *@
+                                            <div class="alert alert-warning py-1 px-2 small mb-2">Vào ô <strong>Hàng lỗi@(p.NgCaseId != null ? " · " + NgCaseNo.Format(p.NgCaseId.Value) : "")</strong>. Chiếc này là chiếc lỗi cũ quay về (@HandoverLedgerService.GroupLabel(p.FromGroupCode) ghi Sửa chưa đạt) — <strong>không tính là lỗi mới</strong>: đếm ở cột "Hàng sửa trả về chưa đạt", nằm ở Tồn hàng lỗi để xử lý tiếp.</div>
+                                        }
+                                        @if (p.ToCell != null && !p.IsAutoReturn && !HandoverCell.IsLamHoLoi(p.Purpose, p.FromCell) && !TraVeFixed(p))   @* [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ ô Hàng lỗi (máy chủ chặn đổi ô) · [N18-TRAVE] ON: chỉ ô Hàng lỗi *@
                                         {
                                             @* [GN-CELL2] Bên nhận duyệt lại phân loại: mặc định ô bên giao chỉ định, đổi thì bắt buộc lý do *@
                                             <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào ô</label>
@@ -818,7 +828,7 @@ else
                             <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
                                 @HandoverLedgerService.GroupLabel(tx.FromGroupCode) → @HandoverLedgerService.GroupLabel(tx.ToGroupCode)
                             </span>
-                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.ToCell)</span>
+                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.TraVe ? HandoverCell.LoiVe : tx.ToCell)</span>   @* [N18-TRAVE rà độc lập T1] *@
                             @if (rcl != null && !HandoverPurpose.IsOut(lp))
                             {
                                 <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
@@ -1137,13 +1147,16 @@ else
         new("NhanLoi",   "Hàng lỗi",          "Nhận", "Hàng lỗi công đoạn trước bị trả về (lỗi do mình / phôi lỗi về Kho)", "", g => g.NhanLoi, ""),
         new("NhanSua",   "Hàng Sửa",          "Nhận", "Hàng nhóm khác gửi nhờ sửa — không tính vào số sản xuất", "", g => g.NhanSua, ""),
         new("NhanLoiXl", "Hàng lỗi đã xử lý", "Nhận", "Hàng sửa xong trả về nơi phát hiện — SP đã OK, nhập WTS tiếp được", "", g => g.NhanLoiXl, ""),
+        // [N18-TRAVE 2026-11-25] Cách Y (khách 23/11 mockup TH6, TH7): chiếc lỗi cũ quay về nơi làm lỗi sau khi bên sửa ghi "Sửa chưa đạt" — đếm ở cột riêng,
+        //   không vào Nhận · Hàng lỗi (không tính thêm 1 lỗi); hàng nằm ở Tồn hàng lỗi, tính vào Tồn. Cột luôn hiện (cột ẩn / hiện theo PO làm lệch tiêu đề bảng).
+        new("NhanLoiVe", "Hàng sửa trả về chưa đạt", "Nhận", "Chiếc lỗi cũ quay về sau khi bên sửa ghi Sửa chưa đạt (phần mềm tự trả nơi làm lỗi) — nằm ở Tồn hàng lỗi, không tính là lỗi mới", "", g => g.NhanLoiVe, ""),
         new("GiaoMoi",   "Hàng Mới",          "Giao", "Phiếu Hàng mới đã lập (tính cả phiếu chờ nhận)", "", g => g.GiaoMoi, ""),
         new("GiaoLoi",   "Hàng lỗi",          "Giao", "Phân loại Hàng lỗi: trả nơi gây lỗi (có tích) · gửi nhờ sửa · tự sửa trả · huỷ · trả khách", "", g => g.GiaoLoi, ""), // [GN-PLH] mục 36
         new("GiaoSua",   "Hàng Sửa",          "Giao", "Sửa hộ xong, trả về nơi phát hiện", "", g => g.GiaoSua, ""),
         new("GiaoLoiXl", "Hàng lỗi đã xử lý", "Giao", "Hàng đã sửa đạt giao tiếp về nơi phát hiện lỗi — không ghi WTS số lượng", "", g => g.GiaoLoiXl, ""),   // [SUA-XL-GIU 2026-11-10] trước: cột luôn trống
         new("ChuaLam",   "Chưa làm", "", "Trần nhập WTS (L3)", "Nhận mới + Nhận lỗi đã XL − Đã làm − NG (WTS) − Giao lỗi có tích", g => g.ChuaLam, "gn-calc"),
         new("DaLam",     "Đã làm",   "", "WTS OK (GC: NC cuối; HTSP: mã CV nhỏ nhất)", "WTS OK", g => g.DaLam, ""),
-        new("Ton",       "Tồn",      "", "Hàng thuộc nhóm, gồm cả hàng đã giao tới mà nhóm chưa bấm Nhận (chờ nhận), hàng đã sửa chờ trả nơi phát hiện (và hàng sửa chờ KCS xác nhận của Kết quả sửa ghi trước bản cập nhật N17)", "Σ Nhận − Σ Giao + Chờ nhận + Chờ KCS (chứng từ trước bản N17)", g => g.Ton, "gn-ton"),   // [N17-KCS-BO] chữ   // [SUA-XL-GIU] chữ // [GN-RECV-NG] mục 37; [GC-SUA-TAI-CHO] + Chờ KCS
+        new("Ton",       "Tồn",      "", "Hàng thuộc nhóm, gồm cả hàng đã giao tới mà nhóm chưa bấm Nhận (chờ nhận), hàng sửa trả về chưa đạt, hàng đã sửa chờ trả nơi phát hiện (và hàng sửa chờ KCS xác nhận của Kết quả sửa ghi trước bản cập nhật N17)", "Σ Nhận − Σ Giao + Chờ nhận + Chờ KCS (chứng từ trước bản N17)", g => g.Ton, "gn-ton"),   // [N17-KCS-BO] chữ   // [SUA-XL-GIU] chữ // [GN-RECV-NG] mục 37; [GC-SUA-TAI-CHO] + Chờ KCS
     };
 
     static List<ColDef> ColsFor(string group)
@@ -2211,7 +2224,10 @@ else
         return note.Length > 2 ? note[1..^1] : null;
     }
 
-    string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn ? HandoverCell.Loi
+    /// <summary>[N18-TRAVE 2026-11-25] Workflow ON: phiếu tự trả chiếc sửa chưa đạt chỉ nhận vào ô Hàng lỗi (máy chủ chặn đổi ô — HandoverService TraVeOnlyLoiMsg). OFF đổi được.</summary>
+    bool TraVeFixed(HandoverTxPending p) => p.TraVe && _selectedRow?.ApplyWorkflow == true;
+    const string TraVeTip = "Bên sửa ghi Sửa chưa đạt: phần mềm tự trả chiếc lỗi cũ về nơi làm lỗi (cùng mã vụ). Nhận vào ô Hàng lỗi, đếm ở cột Hàng sửa trả về chưa đạt — không tính là lỗi mới.";
+    string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn || TraVeFixed(p) ? HandoverCell.Loi   // [N18-TRAVE]
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : RecvMustLoi(p) ? HandoverCell.Loi : p.ToCell;   // [G16-NHAN-CHONSAN]
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
     bool RecvSua(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Sua;   // [GN-RECV-SUA] nhận hàng gửi sửa: chỉ 1 ô số lượng
@@ -2271,6 +2287,7 @@ else
     static string CellFlow(string purpose, string? sendCell, string? toCell = null)
     {
         var c = sendCell ?? HandoverCell.IssueCellOf(purpose, null);
+        if (HandoverCell.IsTraVe(toCell)) return "Giao · Hàng Sửa (sửa chưa đạt — phần mềm tự trả nơi làm lỗi)";   // [N18-TRAVE] mockup TH6 / TH7: bên sửa Giao · Hàng sửa
         return purpose switch
         {
             HandoverPurpose.NgReturn     => "Giao · Hàng lỗi ☑ công đoạn trước",

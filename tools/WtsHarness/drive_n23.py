@@ -86,8 +86,8 @@ async def main():
             d1 = get("/harness/form")
             nk = [x for x in d1["reps"] if x not in d0["reps"]]; nt = [x for x in d1["txs"] if x not in d0["txs"]]
             ok(sent and len(nk) == 1 and nk[0]["qtyPass"] == 1 and nk[0]["qtyFail"] == 1 and len(nt) == 1 and nt[0]["fromGroupCode"] == "GC" and nt[0]["toGroupCode"] == "KHO"
-               and nt[0]["fromCell"] == "LOI" and nt[0]["toCell"] == "LOI" and nt[0]["qtyIssued"] == 1 and nt[0]["ngCaseId"] == nk[0]["ngCaseId"],
-               "A5 DB: Kết quả sửa đạt 1 / chưa đạt 1 + phiếu Gia công → Kho ô Hàng lỗi 1, cùng vụ — 1 lần lưu", {"kq": nk, "tx": nt})
+               and nt[0]["fromCell"] == "LOI" and nt[0]["toCell"] == "LOIV" and nt[0]["qtyIssued"] == 1 and nt[0]["ngCaseId"] == nk[0]["ngCaseId"],
+               "A5 DB: Kết quả sửa đạt 1 / chưa đạt 1 + phiếu Gia công → Kho ô Hàng lỗi 1 (từ G-E [N18-TRAVE] ô chỉ định LOIV — đáp án đổi), cùng vụ — 1 lần lưu", {"kq": nk, "tx": nt})
             ok(d1["groups"]["GC"]["suaGiu"] == 0 and d1["groups"]["GC"]["loiGiu"] == 0 and d1["groups"]["KHO"]["choNhan"] == 1, "A6 Gia công không còn giữ gì; Kho chờ nhận 1", d1["groups"])
             sane(d1, "A7")
         else:
@@ -123,7 +123,8 @@ async def main():
         m = await open_form(pg, "Kho")
         await click(m, pg, "Hàng lỗi")
         rows = [(await x.inner_text()).replace("\n", " ").strip() for x in await m.locator("button.gn-cellbtn").all()]
-        ok(sum(1 for x in rows if x.startswith("Đang giữ ở ô Hàng lỗi — VL") and "Gia công trả" in x) == 2, "C1 Kho: 2 dòng ô Hàng lỗi theo mã vụ '· Gia công trả'", rows)
+        ok(sum(1 for x in rows if x.startswith("Đang giữ ở ô Hàng lỗi — VL") and "Gia công trả" in x) == 1 and sum(1 for x in rows if x.startswith("Đang giữ ở ô Hàng lỗi — VL") and "Gia công sửa chưa đạt trả về" in x) == 1,
+           "C1 Kho: 2 dòng ô Hàng lỗi theo mã vụ — '· Gia công trả' (TH4) + '· Gia công sửa chưa đạt trả về' (STEP A — [N18-TRAVE] đáp án đổi G-E)", rows)
         no = next((c["ngCaseId"] for c in d3["cases"] if c["ngCaseId"] == vu), None)
         r4 = m.locator("button.gn-cellbtn", has_text="Đang giữ ở ô Hàng lỗi — VL").filter(has_text="có 2").first
         if await r4.count():

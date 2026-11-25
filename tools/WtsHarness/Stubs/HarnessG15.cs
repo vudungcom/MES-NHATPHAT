@@ -87,7 +87,7 @@ public static class HarnessG15
         var det = db.KhPlanDetails.List.First(x => x.PurchaseOrder == "PO-G15");
         var tx = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == det.KhPlanDetailId && !t.IsVoided).OrderBy(t => t.HandoverTxId).Last();
         var admin = db.Users.List.First(u => u.Username == "admin");
-        bool loi = tx.ToCell == HandoverCell.Loi;   // phiếu vào ô Hàng lỗi: nhận ở ô Hàng lỗi (như seed)
+        bool loi = tx.ToCell == HandoverCell.Loi || tx.ToCell == "LOIV";   // [N18-TRAVE 2026-11-25] phiếu tự trả chiếc sửa chưa đạt (ô chỉ định LOIV) nhận như ô Hàng lỗi   // phiếu vào ô Hàng lỗi: nhận ở ô Hàng lỗi (như seed)
         var r = await new HandoverService(db).ReceiveAsync(tx.HandoverTxId, loi ? 0 : tx.QtyIssued, loi ? tx.QtyIssued : 0, null, admin.UserId);
         db.Fixup();
         return new { r.Ok, r.Error, tx.HandoverTxId };

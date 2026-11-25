@@ -177,6 +177,8 @@
         return h.Kind switch
         {
             "PS"    => $"{g} phát hiện {h.Qty:0.##}" + (string.IsNullOrEmpty(h.Other) || h.Other == h.Group ? "" : " · do " + HandoverNgSource.CauseLabel(h.Other)) + cell,
+            "GIAO" when h.TraVe => $"{g} sửa chưa đạt {h.Qty:0.##} — phần mềm tự trả {o}",   // [N18-TRAVE] Cách Y
+            "NHAN" when h.TraVe => $"{g} nhận lại {h.Qty:0.##} từ {o} (hàng sửa trả về chưa đạt — chiếc lỗi cũ, không tính lỗi mới)" + cell,   // [N18-TRAVE]
             "GIAO"  => $"{g} giao {h.Qty:0.##} → {o}" + cell,
             "NHAN"  => $"{g} nhận {h.Qty:0.##} từ {o}" + cell,
             "TRA"   => $"{g} nhận lại {h.Qty:0.##} (NG lúc {o} nhận)",

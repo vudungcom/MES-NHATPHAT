@@ -131,7 +131,7 @@ public static class HarnessG16
         var id = Id(db, po);
         var tx = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided && t.Status != "COMPLETED").OrderBy(t => t.HandoverTxId).Last();
         var admin = db.Users.List.First(u => u.Username == "admin");
-        bool loi = tx.ToCell == HandoverCell.Loi;
+        bool loi = tx.ToCell == HandoverCell.Loi || tx.ToCell == "LOIV";   // [N18-TRAVE 2026-11-25] phiếu tự trả chiếc sửa chưa đạt (ô chỉ định LOIV) nhận như ô Hàng lỗi
         var r = await new HandoverService(db).ReceiveAsync(tx.HandoverTxId, loi ? 0 : tx.QtyIssued, loi ? tx.QtyIssued : 0, null, admin.UserId);
         db.Fixup();
         return new { r.Ok, r.Error, tx.HandoverTxId };

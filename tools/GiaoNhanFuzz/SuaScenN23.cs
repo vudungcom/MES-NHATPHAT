@@ -184,13 +184,17 @@ public static partial class SuaScen
             var tx2 = db.HandoverTransactions.List.OrderBy(t => t.HandoverTxId).TakeLast(2).ToList();
             Ok(f.Ok && a.G("HTSP").SuaGiu == 0 && a.G("HTSP").LoiGiu == 0 && a.G("HTSP").XlGiu == 0
                && tx2.Any(t => t.ToGroupCode == "GC" && t.FromCell == HandoverCell.Xl && t.ToCell == HandoverCell.Xl && t.QtyIssued == 1)
-               && tx2.Any(t => t.ToGroupCode == "KHO" && t.FromCell == HandoverCell.Loi && t.ToCell == HandoverCell.Loi && t.QtyIssued == 1 && t.NgCaseId == vu)
+               && tx2.Any(t => t.ToGroupCode == "KHO" && t.FromCell == HandoverCell.Loi && t.ToCell == HandoverCell.LoiVe && t.QtyIssued == 1 && t.NgCaseId == vu)   // [N18-TRAVE] đáp án đổi (G-E): ô chỉ định LOIV (trước: LOI)
                && db.HandoverRepairResults.List.Last() is { QtyPass: 1, QtyFail: 1 },
                "1 lần lưu: Kết quả sửa đạt 1 / chưa đạt 1; đạt → phiếu HTSP → Gia công ô Hàng lỗi đã xử lý; chưa đạt → phiếu HTSP → Kho ô Hàng lỗi, cùng vụ; HTSP không còn giữ gì",
                f.Error + " | " + string.Join(" ; ", tx2.Select(t => $"{t.ToGroupCode} {t.FromCell}→{t.ToCell} {t.QtyIssued}")));
-            foreach (var t in tx2) await svc.ReceiveAsync(t.HandoverTxId, t.ToCell == HandoverCell.Loi ? 0 : 1, t.ToCell == HandoverCell.Loi ? 1 : 0, null, t.ToGroupCode == "KHO" ? 1 : Gc);
+            foreach (var t in tx2) await svc.ReceiveAsync(t.HandoverTxId, HandoverCell.DesigOf(t.ToCell) == HandoverCell.Loi ? 0 : 1, HandoverCell.DesigOf(t.ToCell) == HandoverCell.Loi ? 1 : 0, null, t.ToGroupCode == "KHO" ? 1 : Gc);   // [N18-TRAVE] LOIV nhận như ô Hàng lỗi
             var c = await Check(db, "X3 nhận cả 2 phiếu");
             Ok(c.G("KHO").LoiGiu == 1 && c.Cases[vu].HeldAt("KHO", HandoverCell.Loi) == 1, "Kho giữ lại 1 chiếc chưa đạt ở ô Hàng lỗi, cùng vụ");
+            // [N18-TRAVE] đáp án mới (G-E, Cách Y): Kho Nhận · Hàng lỗi giữ số cũ (2 — lần Gia công trả), chiếc quay về đếm ở cột riêng; HTSP không có Nhận / Giao · Hàng lỗi
+            Ok(c.G("KHO").NhanLoi == 2 && c.G("KHO").NhanLoiVe == 1 && c.G("HTSP").NhanLoi == 0 && c.G("HTSP").GiaoLoi == 0 && c.G("HTSP").NhanSua == 2 && c.G("HTSP").GiaoSua == 2,
+               "Cách Y: Kho Nhận · Hàng lỗi 2 (không cộng thêm) · Hàng sửa trả về chưa đạt 1 · HTSP chỉ Nhận / Giao · Hàng sửa 2",
+               $"Kho nl {c.G("KHO").NhanLoi} nlv {c.G("KHO").NhanLoiVe} · HTSP nl {c.G("HTSP").NhanLoi} gl {c.G("HTSP").GiaoLoi} ns {c.G("HTSP").NhanSua} gs {c.G("HTSP").GiaoSua}");
 
             // như cũ khi không bật SuaFailTra (bộ kiểm / trang cũ): chưa đạt ở lại ô Hàng lỗi của nhóm sửa
             WtsSvcHelp.Reset();

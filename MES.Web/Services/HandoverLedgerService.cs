@@ -102,6 +102,16 @@ namespace MES.Web.Services
         /// <summary>[TARO-LAMHO-NC] Ô giữ của VỤ LỖI (chỉ trong sổ, không ghi DB): hàng làm hộ bị lỗi (WTS Taro làm hộ NG) vẫn nằm trong
         ///   Tồn hàng giao theo NC của nhóm làm hộ tới khi trả Gia công vào ô Hàng lỗi (phiếu Trả về Gia công theo NC, FromCell = LOI, mang vụ).</summary>
         public const string LamHo = "LAMHO";
+        /// <summary>[N18-TRAVE 2026-11-25] Ô bên giao CHỈ ĐỊNH của phiếu phần mềm tự lập trả chiếc "Sửa chưa đạt" (ô Hàng sửa, luật N23) về nơi làm lỗi
+        ///   (chỉ ghi ở HandoverTransactions.ToCell; lần nhận vẫn ghi ô Hàng lỗi). Bên nhận: hàng vào ô Hàng lỗi như cũ (vụ, K5, xử lý tiếp không đổi) nhưng
+        ///   ĐẾM ở cột riêng "Nhận · Hàng sửa trả về chưa đạt", không vào Nhận · Hàng lỗi (không tính thêm 1 lỗi); bên sửa: phần trả về không đi qua
+        ///   Nhận / Giao · Hàng lỗi của mình (chỉ Giao · Hàng sửa). Cách Y — Nguồn: KHÁCH 23/11 (mockup TH6, TH7 chọn Cách Y; sheet dòng 15, 16);
+        ///   HÙNG 23/11 16:24 (N18) + 25/11 13:56 OK bản "em hiểu" G-E.</summary>
+        public const string LoiVe = "LOIV";
+        /// <summary>[N18-TRAVE] Ô chỉ định thật để kiểm / nhận (LOIV → Hàng lỗi); ô khác giữ nguyên.</summary>
+        public static string? DesigOf(string? toCell) => toCell == LoiVe ? Loi : toCell;
+        /// <summary>[N18-TRAVE] Phiếu tự trả chiếc sửa chưa đạt (Cách Y).</summary>
+        public static bool IsTraVe(string? toCell) => toCell == LoiVe;
 
         public static readonly string[] IssueCells = { Moi, Loi, Sua };
         /// <summary>[SUA-XL-GIU 2026-11-10] Ô giao được của phiếu (IssueCells + ô Hàng lỗi đã xử lý — chỉ phiếu Trả hàng đã sửa, mang vụ).
@@ -110,6 +120,7 @@ namespace MES.Web.Services
 
         public static string Label(string? c) => c switch
         {
+            LoiVe => "Hàng sửa trả về chưa đạt",   // [N18-TRAVE]
             Moi => "Hàng mới", Loi => "Hàng lỗi", Sua => "Hàng sửa", Xl => "Hàng lỗi đã xử lý", LamHo => "Tồn hàng giao theo NC (làm hộ bị lỗi)", _ => c ?? ""   // [TARO-LAMHO-NC]
         };
 
@@ -328,6 +339,10 @@ namespace MES.Web.Services
         public decimal NhanSua    { get; set; }
         public decimal NhanLoiXl  { get; set; }
         public decimal NhanLamHo  { get; set; }
+        /// <summary>[N18-TRAVE 2026-11-25] Nhận · Hàng sửa trả về chưa đạt (Cách Y): chiếc lỗi cũ quay về nơi làm lỗi sau khi bên sửa ghi "Sửa chưa đạt" —
+        ///   hàng nằm ở ô Hàng lỗi (Tồn hàng lỗi, cùng vụ) nhưng đếm ở cột riêng, không vào Nhận · Hàng lỗi. Tính vào Tổng Nhận / Tồn.
+        ///   Nguồn: KHÁCH 23/11 (mockup TH6, TH7 Cách Y); HÙNG 23/11 16:24 (N18).</summary>
+        public decimal NhanLoiVe  { get; set; }
         // Giao (theo loại phiếu, tính cả phiếu đang chờ nhận)
         public decimal GiaoMoi    { get; set; }
         public decimal GiaoLoi    { get; set; }
@@ -335,7 +350,7 @@ namespace MES.Web.Services
         public decimal GiaoLoiXl  { get; set; }
         public decimal GiaoLamHo  { get; set; }
 
-        public decimal NhanTong => NhanMoi + NhanLoi + NhanSua + NhanLoiXl + NhanLamHo;
+        public decimal NhanTong => NhanMoi + NhanLoi + NhanSua + NhanLoiXl + NhanLamHo + NhanLoiVe;   // [N18-TRAVE] + hàng sửa trả về chưa đạt
         /// <summary>[GN-WTS-CAP] Phần Làm hộ trả về (hàng của chính nhóm quay lại để làm tiếp).</summary>
         public decimal NhanLamHoVe { get; set; }
         /// <summary>[GN-WTS-CAP] Hàng vào SẢN XUẤT của nhóm = Nhận Hàng mới + Hàng lỗi đã xử lý + Làm hộ trả về
@@ -473,6 +488,8 @@ namespace MES.Web.Services
         public decimal   Qty   { get; set; }
         public string    Doc   { get; set; } = "";     // "Phiếu #12", "WTS #5", "Báo lỗi #3"
         public long      RefId { get; set; }
+        /// <summary>[N18-TRAVE] Chặng của phiếu tự trả chiếc sửa chưa đạt (Cách Y) — chỉ để ghi chữ.</summary>
+        public bool      TraVe { get; set; }
     }
 
     /// <summary>
@@ -527,6 +544,9 @@ namespace MES.Web.Services
         public Dictionary<string, decimal> KhachBy { get; set; } = new();
         /// <summary>Chặng "Nhận lỗi": số vào ô Hàng lỗi theo nhóm (gồm cả nơi tự giữ hàng mình làm hỏng).</summary>
         public Dictionary<string, decimal> NhanLoi { get; set; } = new();
+        /// <summary>[N18-TRAVE 2026-11-25] Chặng "Sửa chưa đạt trả về": số nhận lại vào ô Hàng lỗi theo nhóm qua phiếu tự trả (Cách Y) — không cộng vào NhanLoi
+        ///   (chiếc lỗi cũ quay về, không tính thêm lỗi). Chỉ hiển thị.</summary>
+        public Dictionary<string, decimal> NhanVe { get; set; } = new();
         /// <summary>Chặng "Sửa": số vào ô Hàng sửa theo nhóm (nhóm khác gửi nhờ sửa).</summary>
         public Dictionary<string, decimal> NhanSua { get; set; } = new();
         /// <summary>Nhóm tự xử lý (giao từ ô Hàng lỗi thẳng về ô Hàng lỗi đã xử lý / Hàng mới).</summary>
@@ -566,6 +586,8 @@ namespace MES.Web.Services
         public decimal  Ng     { get; set; }
         public long     RefId  { get; set; }
         public string   Text   { get; set; } = "";
+        /// <summary>[N18-TRAVE 2026-11-25] Dòng Kết quả sửa: các phiếu tự trả chiếc "Sửa chưa đạt" gộp vào cùng dòng (Id phiếu). Rỗng = không có.</summary>
+        public List<long> TraVeTxIds { get; set; } = new();
         /// <summary>Sổ sau bước này (mọi ô, mọi nhóm).</summary>
         public LedgerRow Row   { get; set; } = new();
     }
@@ -1052,7 +1074,7 @@ namespace MES.Web.Services
 
         /// <summary>[GN-CELL2] Ô bên giao chỉ định cho bên nhận. Phiếu cũ (ToCell NULL): suy từ loại phiếu (Excel B1/B2/B3). Phiếu theo NC / Huỷ / Trả khách: null.</summary>
         public static string? DesigCellOf(InTx t, string purpose)
-            => HandoverCell.IsReceiveCell(t.ToCell) ? t.ToCell : HandoverCell.ReceiveCellOf(purpose);
+            => HandoverCell.IsReceiveCell(HandoverCell.DesigOf(t.ToCell)) ? HandoverCell.DesigOf(t.ToCell) : HandoverCell.ReceiveCellOf(purpose);   // [N18-TRAVE] LOIV = chỉ định ô Hàng lỗi
 
         /// <summary>[GN-CELL2] Ghi chú khi bên nhận chọn ô khác ô bên giao chỉ định (hiện ở diễn giải + dòng B).</summary>
         static string CellChangeNote(string? desig, InRecv r)
@@ -1081,6 +1103,7 @@ namespace MES.Web.Services
             if (IsKhoTaro(t, purpose)) return KhoTaroLabel;   // [KHO-TARO-THANG]
             if (purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn || HandoverPurpose.IsOut(purpose)) return HandoverPurpose.Label(purpose);
             var from = HandoverCell.IssueCellOf(purpose, t.FromCell);
+            if (HandoverCell.IsTraVe(t.ToCell)) return "Sửa chưa đạt — phần mềm tự trả → ô Hàng lỗi (Hàng sửa trả về chưa đạt)";   // [N18-TRAVE]
             return $"{HandoverCell.Label(from)}{(purpose == HandoverPurpose.NgReturn ? " ☑ công đoạn trước" : "")} → ô {HandoverCell.Label(DesigCellOf(t, purpose))}";
         }
 
@@ -1657,9 +1680,9 @@ namespace MES.Web.Services
             // [VL8-TIMELINE] WTS có vụ: lúc vụ sinh ra (NgCases.CreatedAt, giờ máy chủ) — sửa dòng WTS (huỷ + dòng mới giữ vụ) không đẩy vụ ra sau phiếu đã lấy nó.
             //   [29/10] Không có lúc sinh vụ (dòng đang nhập trên form, vụ chưa lưu) → coi là sớm nhất: không bao giờ dùng giờ kết thúc WTS người nhập.
             DateTime WtsCaseAt(InWts w) => w.NgCaseId is long wid && inp.CaseInfo.TryGetValue(wid, out var wci) ? wci.At : DateTime.MinValue;
-            void CHop(LedgerCase cs, string kind, string g, string? other, string? cell, decimal q, string doc, long refId, DateTime? at)
+            void CHop(LedgerCase cs, string kind, string g, string? other, string? cell, decimal q, string doc, long refId, DateTime? at, bool traVe = false)   // [N18-TRAVE] + cờ phiếu tự trả
             {
-                if (q != 0) cs.Hops.Add(new LedgerCaseHop { Kind = kind, Group = g, Other = other, Cell = cell, Qty = q, Doc = doc, RefId = refId, At = at });
+                if (q != 0) cs.Hops.Add(new LedgerCaseHop { Kind = kind, Group = g, Other = other, Cell = cell, Qty = q, Doc = doc, RefId = refId, At = at, TraVe = traVe });
             }
 
             // [GN-CELL2] Bên nhận ghi vào 1 trong 4 ô (Excel): Hàng mới / Hàng lỗi / Hàng sửa / Hàng lỗi đã xử lý
@@ -1884,6 +1907,10 @@ namespace MES.Web.Services
                                 Add("GC", "rrNc:" + t.FromNC, "Trả hàng lỗi phát hiện ở " + NcText(t.FromNC), giao,   // [N3-FIRST] chữ @VAO
                                     new LedgerDoc { Kind = "PHIEU", RefId = t.Id, At = t.At, Text = TxText(t, purpose) });
                         }
+                        // [N18-TRAVE 2026-11-25] Phiếu tự trả chiếc "Sửa chưa đạt" (Cách Y): chiếc vừa vào ô Hàng lỗi của nhóm sửa nhờ Kết quả sửa (cùng 1 lần lưu) rời ngay —
+                        //   không tính Nhận · Hàng lỗi (Kết quả sửa) lẫn Giao · Hàng lỗi (phiếu) của nhóm sửa: nhóm sửa chỉ còn Nhận / Giao · Hàng sửa (mockup TH6, TH7).
+                        //   Trừ "nlTv" khỏi Nhận · Hàng lỗi thay cho cộng Giao · Hàng lỗi → Tồn, Tồn hàng lỗi, cân PO không đổi. Nguồn: KHÁCH 23/11 (TH7 "không nằm lại HTSP", Cách Y); HÙNG 23/11 16:24.
+                        else if (HandoverCell.IsTraVe(t.ToCell)) Add(t.From, "nlTv", "Sửa chưa đạt — phần mềm tự trả nơi làm lỗi (không giữ ô Hàng lỗi)", giao, txDoc);
                         else if (desig == HandoverCell.Sua) Add(t.From, "glGui", "Giao Hàng lỗi (gửi sửa)", giao, txDoc);
                         else if (desig == HandoverCell.Loi) Add(t.From, "glChuyen", "Giao Hàng lỗi (chuyển sang ô Hàng lỗi nhóm khác)", giao, txDoc);   // [GN-CELL2]
                         else Add(t.From, "glTu", "Giao Hàng lỗi (tự sửa xong, trả nơi phát hiện)", giao, txDoc);
@@ -1891,7 +1918,9 @@ namespace MES.Web.Services
                         {   // [VULOI] vụ rời ô Hàng lỗi bên giao, đang chuyển
                             CHold(csT!, t.From, HandoverCell.Loi, -giao, t.At); csT!.Transit += giao;
                             if (desig is HandoverCell.Xl or HandoverCell.Moi) csT.TuXuLy.Add(t.From);
-                            CHop(csT, "GIAO", t.From, t.To, HandoverCell.Loi, giao, txDocName, t.Id, t.At);
+                            bool tvS = HandoverCell.IsTraVe(t.ToCell);   // [N18-TRAVE] nhóm sửa: bỏ chặng "Nhận lỗi" của phần chưa đạt vừa trả về (không tính là nhóm đó nhận lỗi)
+                            if (tvS) CAdd(csT.NhanLoi, t.From, -giao);
+                            CHop(csT, "GIAO", t.From, t.To, tvS ? HandoverCell.Sua : HandoverCell.Loi, giao, txDocName, t.Id, t.At, tvS);
                         }
                         break;
                     case HandoverCell.Xl:   // [SUA-XL-GIU] hàng đã sửa (KCS xác nhận) rời ô Tồn hàng lỗi đã xử lý, đang chuyển (cùng vụ)
@@ -1963,6 +1992,9 @@ namespace MES.Web.Services
                     if (tpHere) row.TpNhap += r.Ok;
                     else
                     {
+                        if (cell == HandoverCell.Loi && HandoverCell.IsTraVe(t.ToCell))   // [N18-TRAVE] Cách Y: chiếc lỗi cũ quay về — cột riêng, không vào Nhận · Hàng lỗi
+                            Add(t.To, "nlv", "Nhận Hàng sửa trả về chưa đạt", r.Ok + r.Ng, rDoc);
+                        else
                         AddRecvCell(t.To, cell, r.Ok + r.Ng, rDoc);
                         if (xd == "GIU") Add(t.To, "nxGiu", "Nhận hàng đã sửa vào Tồn hàng lỗi đã xử lý (chờ trả nơi phát hiện)", r.Ok, new LedgerDoc { Kind = rDoc.Kind, RefId = rDoc.RefId, At = rDoc.At, Text = rDoc.Text });
                         else if (t.To == "GC" && xd != "GIU" && carry && fromCell == HandoverCell.Xl && cell == HandoverCell.Xl
@@ -1990,11 +2022,12 @@ namespace MES.Web.Services
                     if (carry)
                     {
                         csT!.Transit -= q;
-                        if (cell == HandoverCell.Loi) { CHold(csT, t.To, HandoverCell.Loi, q, r.At); CAdd(csT.NhanLoi, t.To, q); }
+                        bool tvR = cell == HandoverCell.Loi && HandoverCell.IsTraVe(t.ToCell);   // [N18-TRAVE] vụ: vẫn giữ ô Hàng lỗi nơi nhận; chặng riêng "sửa chưa đạt trả về"
+                        if (cell == HandoverCell.Loi) { CHold(csT, t.To, HandoverCell.Loi, q, r.At); CAdd(tvR ? csT.NhanVe : csT.NhanLoi, t.To, q); }
                         else if (cell == HandoverCell.Sua) { CHold(csT, t.To, HandoverCell.Sua, q - r.Ng, r.At); CAdd(csT.NhanSua, t.To, q - r.Ng); }
                         else if (xd == "GIU") CHold(csT, t.To, HandoverCell.Xl, q - r.Ng, r.At);   // [SUA-XL-GIU] chưa về nơi phát hiện: vụ vẫn giữ
                         else CAdd(csT.DaXuLy, t.To, q - r.Ng);
-                        CHop(csT, "NHAN", t.To, t.From, cell, q, txDocName, t.Id, r.At);
+                        CHop(csT, "NHAN", t.To, t.From, cell, q, txDocName, t.Id, r.At, tvR);
                         ngCs = csT;
                     }
                     else if (!tpHere && cell is HandoverCell.Loi or HandoverCell.Sua)
@@ -2176,7 +2209,8 @@ namespace MES.Web.Services
                 }
 
                 G.NhanMoi   = V("nm");
-                G.NhanLoi   = V("nl");
+                G.NhanLoi   = V("nl") - V("nlTv");   // [N18-TRAVE] − phần sửa chưa đạt nhóm mình (bên sửa) tự trả nơi làm lỗi
+                G.NhanLoiVe = V("nlv");              // [N18-TRAVE] hàng sửa trả về chưa đạt (Cách Y)
                 G.NhanSua   = V("ns");
                 G.NhanLoiXl = V("nx") + V("nbu");   // [KHACH-GUI-LAI] Kho: + phôi khách gửi bù (nhóm khác không có "nbu")
                 G.NhanLamHo = V("nhSend") + V("nhRet");
@@ -2205,6 +2239,13 @@ namespace MES.Web.Services
                 }
                 ListExplain("NhanMoi",   "Nhận · Hàng mới",          ("nm", code == "KHO" ? "Phôi Kho nhận" : "Phiếu Hàng mới đã nhận"));
                 ListExplain("NhanLoi",   "Nhận · Hàng lỗi",          ("nl", "Hàng lỗi bị trả về (lỗi do mình / phôi lỗi)"));
+                if (V("nlTv") != 0 && G.Explains.TryGetValue("NhanLoi", out var nlE))
+                {   // [N18-TRAVE] bên sửa: phần "Sửa chưa đạt" đã tự trả nơi làm lỗi không nằm lại ô Hàng lỗi của mình
+                    nlE.Terms.Add(Tm("nlTv", "Sửa chưa đạt — đã tự trả nơi làm lỗi", -1));
+                    nlE.Formula += " − Sửa chưa đạt đã tự trả nơi làm lỗi";
+                    nlE.Result = nlE.Terms.Sum(x => x.Sign * x.Value);
+                }
+                ListExplain("NhanLoiVe", "Nhận · Hàng sửa trả về chưa đạt", ("nlv", "Chiếc lỗi cũ quay về sau khi bên sửa ghi Sửa chưa đạt (không tính lỗi mới)"));   // [N18-TRAVE]
                 ListExplain("NhanSua",   "Nhận · Hàng sửa",          ("ns", "Hàng nhóm khác gửi nhờ sửa"));
                 if (code == "KHO") ListExplain("NhanLoiXl", "Nhận · Hàng lỗi đã xử lý", ("nx", "Phôi đã sửa trả về"), ("nbu", "Khách gửi bù (phôi bù cho hàng lỗi đã trả khách / huỷ)"));   // [KHACH-GUI-LAI]
                 else
@@ -2228,9 +2269,9 @@ namespace MES.Web.Services
 
                 // Tổng Nhận / Tổng Giao (cột gọn trên bảng chính)
                 {
-                    var en = new LedgerExplain { Title = $"{G.Label} · Tổng Nhận", Formula = "Hàng mới + Hàng lỗi + Hàng Sửa + Hàng lỗi đã xử lý + Giao theo NC",
+                    var en = new LedgerExplain { Title = $"{G.Label} · Tổng Nhận", Formula = "Hàng mới + Hàng lỗi + Hàng Sửa + Hàng lỗi đã xử lý + Giao theo NC + Hàng sửa trả về chưa đạt",   // [N18-TRAVE]
                         Note = "Số bên nhận đã đếm và xác nhận. Hàng quay vòng (lỗi trả về, sửa xong trả về) cũng tính, nên có thể lớn hơn số PO." };
-                    foreach (var k in new[] { "NhanMoi", "NhanLoi", "NhanSua", "NhanLoiXl", "NhanLamHo" })
+                    foreach (var k in new[] { "NhanMoi", "NhanLoi", "NhanSua", "NhanLoiXl", "NhanLamHo", "NhanLoiVe" })   // [N18-TRAVE]
                     {
                         var x = G.Explains[k];
                         var v = x.Terms.Sum(t => t.Sign * t.Value);
@@ -2262,7 +2303,7 @@ namespace MES.Web.Services
                              + "Phần Chờ nhận chưa được nhập WTS: phải đếm và bấm Nhận trước (không nằm trong Chưa làm).",
                         Result = G.Ton
                     };
-                    e.Terms.Add(new LedgerTerm { Label = "Tổng Nhận", Value = G.NhanTong, Sign = 1, Docs = AllDocs(acc, code, "nm", "nl", "ns", "nx", "nbu", "nhSend", "nhRet") });   // [KHACH-GUI-LAI] + phiếu bù (rà độc lập Gói 14 L2)
+                    e.Terms.Add(new LedgerTerm { Label = "Tổng Nhận", Value = G.NhanTong, Sign = 1, Docs = AllDocs(acc, code, "nm", "nl", "ns", "nx", "nbu", "nhSend", "nhRet", "nlv", "nlTv") });   // [N18-TRAVE] + hàng sửa trả về chưa đạt / phần tự trả   // [KHACH-GUI-LAI] + phiếu bù (rà độc lập Gói 14 L2)
                     e.Terms.Add(new LedgerTerm { Label = "Tổng Giao", Value = G.GiaoTong, Sign = -1, Docs = AllDocs(acc, code, "gm", "glTra", "glGui", "glTu", "glChuyen", "glSuaNg", "glLamHo", "glHuy", "glKhach", "gs", "ghSend", "ghRet", "glLhKho") });   // [KTT-PHOILOI] + trả phôi lỗi Kho
                     if (G.ChoNhan != 0)
                         e.Terms.Add(new LedgerTerm { Label = "Chờ nhận (đã giao tới, chưa bấm Nhận)", Value = G.ChoNhan, Sign = 1, Docs = AllDocs(acc, code, "cn") });
@@ -2297,7 +2338,7 @@ namespace MES.Web.Services
                     G.ConGiao = G.NhanMoi + G.NhanLoiXl - G.GiaoMoi - V("glTra") - V("blDa")   // [GN-NG-AFTER] − phôi báo lỗi
                               - V("nxGiu");   // [N23-KHO-SUA] hàng Kho sửa đạt giữ ở Tồn hàng lỗi đã xử lý (chờ trả nơi báo lỗi): không phải phôi còn
                     // [GN-CELL] Tách 2 ô đang giữ theo Excel: Hàng lỗi (của mình) / Hàng sửa (nhóm khác gửi nhờ)
-                    G.LoiGiu  = G.NhanLoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
+                    G.LoiGiu  = G.NhanLoi + G.NhanLoiVe /* [N18-TRAVE] */ + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
                     G.SuaGiu  = G.NhanSua - G.GiaoSua - V("glSuaNg");
                     G.LamHoGiu = V("nhSend") - V("ghRet") - V("glLamHo");   // [GN-ROUTE-FREE] trước: 0 (Gia công không giao theo NC cho Kho được)
                     var e = new LedgerExplain { Title = "Kho · Phôi còn giao", Formula = "Phôi nhận + Phôi đã sửa trả về + Khách gửi bù − Giao Hàng mới − Trả lỗi − Báo phôi lỗi − Hàng đã sửa giữ ô Tồn hàng lỗi đã xử lý", Rule = "L4", Result = G.ConGiao };   // [GN-NG-AFTER] · [KHACH-GUI-LAI] + bù
@@ -2310,9 +2351,10 @@ namespace MES.Web.Services
                     e.Terms.Add(Tm("nxGiu", "Hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý (chờ trả nơi báo lỗi)", -1));   // [N23-KHO-SUA]
                     e.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Phôi Kho nhận");
                     G.Explains["ConGiao"] = e;
-                    var l = new LedgerExplain { Title = "Kho · Tồn hàng lỗi", Formula = "Nhận Hàng lỗi + Báo phôi lỗi − Gửi đi nhờ sửa − Tự sửa trả − Chuyển hàng lỗi − Huỷ − Trả khách", Rule = "L5, N9", Result = G.LoiGiu,
+                    var l = new LedgerExplain { Title = "Kho · Tồn hàng lỗi", Formula = "Nhận Hàng lỗi + Nhận Hàng sửa trả về chưa đạt + Báo phôi lỗi − Gửi đi nhờ sửa − Tự sửa trả − Chuyển hàng lỗi − Huỷ − Trả khách", Rule = "L5, N9", Result = G.LoiGiu,
                         Note = "Phôi lỗi bị trả về Kho (Excel TH1 B1) hoặc Kho tự báo phôi lỗi phát hiện sau khi nhận, chờ Kho gửi nhờ sửa (TH1 B2), chuyển, huỷ hoặc trả khách." };
                     l.Terms.Add(Tm("nl", "Nhận Hàng lỗi", 1));
+                    l.Terms.Add(Tm("nlTv", "Sửa chưa đạt — đã tự trả nơi làm lỗi", -1)); l.Terms.Add(Tm("nlv", "Nhận Hàng sửa trả về chưa đạt", 1));   // [N18-TRAVE]
                     l.Terms.Add(Tm("bl", "Báo phôi lỗi (phát hiện sau khi nhận)", 1));   // [GN-NG-AFTER]
                     l.Terms.Add(Tm("glGui", "Gửi đi nhờ sửa", -1)); l.Terms.Add(Tm("glTu", "Tự sửa trả", -1)); l.Terms.Add(Tm("glChuyen", "Chuyển hàng lỗi", -1)); // [GN-CELL2]
                     l.Terms.Add(Tm("glHuy", "Huỷ hàng lỗi", -1)); l.Terms.Add(Tm("glKhach", "Trả khách hàng lỗi", -1)); // [GN-NG-OUT]
@@ -2338,7 +2380,7 @@ namespace MES.Web.Services
                               - V("nxGiu");   // [SUA-XL-GIU] hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý: không vào Chưa làm
                     G.ConGiao = G.DaLam - G.GiaoMoi - V("blDa");   // [GN-NG-AFTER] − báo lỗi lấy từ hàng đã làm chưa giao
                     // [GN-CELL] Tách 2 ô đang giữ theo Excel: Hàng lỗi (của mình: bị trả về + NG làm hỏng) / Hàng sửa (nhóm khác gửi nhờ)
-                    G.LoiGiu  = G.NhanLoi + G.NgCuoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
+                    G.LoiGiu  = G.NhanLoi + G.NhanLoiVe /* [N18-TRAVE] */ + G.NgCuoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
                     G.SuaGiu  = G.NhanSua - G.GiaoSua - V("glSuaNg");
                     G.LamHoGiu = V("nhSend") - V("ghRet") - V("glLamHo") - V("glLhKho");   // [KTT-PHOILOI] − phôi lỗi Taro trả thẳng Kho
 
@@ -2389,9 +2431,10 @@ namespace MES.Web.Services
                     G.Explains["ConGiao"] = cg;
 
                     var lg = new LedgerExplain { Title = $"{G.Label} · Tồn hàng lỗi",
-                        Formula = "Nhận Hàng lỗi + NG (WTS) + Báo hàng lỗi − Gửi đi nhờ sửa − Tự sửa trả − Chuyển hàng lỗi − Huỷ − Trả khách", Rule = "L5, K1",   // [GN-NG-AFTER]
+                        Formula = "Nhận Hàng lỗi + Nhận Hàng sửa trả về chưa đạt + NG (WTS) + Báo hàng lỗi − Gửi đi nhờ sửa − Tự sửa trả − Chuyển hàng lỗi − Huỷ − Trả khách", Rule = "L5, K1",   // [GN-NG-AFTER]
                         Note = "Hàng lỗi CỦA NHÓM (bị trả về vì lỗi công đoạn trước, hoặc tự làm hỏng). Trần khi giao phân loại Hàng lỗi không tích: gửi nhờ sửa / tự sửa xong trả về; và khi Huỷ / Trả khách.", Result = G.LoiGiu }; // [GN-PLH] mục 36: trước "giao từ ô"
                     lg.Terms.Add(Tm("nl", "Nhận Hàng lỗi", 1)); lg.Terms.Add(Tm("ngc", "NG (WTS)", 1));
+                    lg.Terms.Add(Tm("nlTv", "Sửa chưa đạt — đã tự trả nơi làm lỗi", -1)); lg.Terms.Add(Tm("nlv", "Nhận Hàng sửa trả về chưa đạt", 1));   // [N18-TRAVE]
                     lg.Terms.Add(Tm("bl", "Báo hàng lỗi (phát hiện sau khi nhận)", 1));   // [GN-NG-AFTER]
                     lg.Terms.Add(Tm("glGui", "Gửi đi nhờ sửa", -1)); lg.Terms.Add(Tm("glTu", "Tự sửa trả", -1)); lg.Terms.Add(Tm("glChuyen", "Chuyển hàng lỗi", -1)); // [GN-CELL2]
                     lg.Terms.Add(Tm("glHuy", "Huỷ hàng lỗi", -1)); lg.Terms.Add(Tm("glKhach", "Trả khách hàng lỗi", -1)); // [GN-NG-OUT]
@@ -2667,6 +2710,20 @@ namespace MES.Web.Services
             foreach (var a in inp.Txs.Where(x => x.SourceReceiveId != null && !HandoverPurpose.IsOut(x.Purpose)))
                 autoBySrc.TryAdd(a.SourceReceiveId!.Value, a);
             var recvIds = inp.Txs.SelectMany(x => x.Receives).Select(r => r.Id).ToHashSet();
+            // [N18-TRAVE 2026-11-25] Phiếu tự trả chiếc "Sửa chưa đạt" sinh cùng 1 lần lưu với Kết quả sửa → gộp vào CÙNG dòng B của Kết quả sửa
+            //   (Kết quả sửa gần nhất trước phiếu: cùng nhóm, cùng vụ, lấy từ ô Hàng sửa, số chưa đạt đủ) — không lộ bước trung gian "nhóm sửa giữ ô Hàng lỗi".
+            //   Không ghép được (dữ liệu lạ) → dòng riêng như mọi phiếu. Chỉ chữ / thứ tự dòng B, không đổi số. Nguồn: CLAUDE (G-E, mockup TH6 / TH7 Cách Y).
+            var tvMerge = new Dictionary<long, List<InTx>>();   // Id Kết quả sửa → các phiếu tự trả gộp vào
+            var tvMerged = new HashSet<long>();
+            foreach (var tv in inp.Txs.Where(x => HandoverCell.IsTraVe(x.ToCell) && x.SourceReceiveId == null).OrderBy(x => x.At).ThenBy(x => x.Id))
+            {
+                var kq = inp.Repairs.Where(r => r.Group == tv.From && r.Cell == HandoverCell.Sua && r.NgCaseId == tv.NgCaseId && r.At <= tv.At && (tv.At - r.At).TotalSeconds <= 10   // [N18-TRAVE rà độc lập L5] cùng 1 lần lưu (sát giờ) — Kết quả sửa gốc bị huỷ (OFF) không ghép nhầm vào Kết quả sửa cũ
+                                                && r.Fail - (tvMerge.TryGetValue(r.Id, out var used) ? used.Sum(u => u.Issued + u.Closed) : 0) >= tv.Issued + tv.Closed)
+                                    .OrderByDescending(r => r.At).ThenByDescending(r => r.Id).FirstOrDefault();
+                if (kq == null) continue;
+                if (!tvMerge.TryGetValue(kq.Id, out var lst)) tvMerge[kq.Id] = lst = new List<InTx>();
+                lst.Add(tv); tvMerged.Add(tv.Id);
+            }
             foreach (var t in inp.Txs)
             {
                 var purpose = Classify(t, gcLastNc);
@@ -2686,10 +2743,10 @@ namespace MES.Web.Services
                     _ => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô {HandoverCell.Label(cell)}"
                          + (purpose == HandoverPurpose.NgReturn ? " ☑ lỗi công đoạn trước" : "")
                          + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? (IsTaroPhoiLoi(t, purpose) ? $" ({TaroPhoiLoiFrom})" : $" (phát hiện ở {NcText(t.FromNC)})") : "")   // [GN-NC-PIN] [N3-FIRST] chữ @VAO · [KTT-PHOILOI]
-                         + $" → {GroupLabel(t.To)} ô {HandoverCell.Label(DesigCellOf(t, purpose))}"   // [GN-CELL2] ô bên giao chỉ định
+                         + $" → {GroupLabel(t.To)} ô {HandoverCell.Label(HandoverCell.IsTraVe(t.ToCell) ? HandoverCell.LoiVe : DesigCellOf(t, purpose))}"   // [GN-CELL2] ô bên giao chỉ định · [N18-TRAVE]
                          + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})")
                 };
-                if (!isAuto)   // [GN-RECV-NG]
+                if (!isAuto && !tvMerged.Contains(t.Id))   // [GN-RECV-NG] · [N18-TRAVE] phiếu tự trả gộp vào dòng Kết quả sửa
                     events.Add((t.At, 1, t.Id, () => Copy(tx), new LedgerStepRow
                     {
                         Kind = "GIAO", Group = t.From, Other = t.To, Cell = cell, PrevStageNg = purpose == HandoverPurpose.NgReturn,
@@ -2722,6 +2779,7 @@ namespace MES.Web.Services
                             : purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn
                             ? $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} " + (IsKhoTaro(t, purpose) ? "phôi Kho giao thẳng Taro" : "giao theo NC") + (r.Ng > 0 ? (back != null ? $" (NG {r.Ng:0.##} → phiếu trả #{back.Id})" : $" (NG {r.Ng:0.##} trả ngay)") : "") + $" · từ {GroupLabel(t.From)} · phiếu #{t.Id}"   // [KHO-TARO-THANG] chữ dòng B nhận phiếu Kho giao thẳng
                             : $"{GroupLabel(t.To)} nhận {r.Ok + r.Ng:0.##} · ô {HandoverCell.Label(recCell)}"
+                              + (recCell == HandoverCell.Loi && HandoverCell.IsTraVe(t.ToCell) ? " (hàng sửa trả về chưa đạt — chiếc lỗi cũ, không tính lỗi mới)" : "")   // [N18-TRAVE]
                               + (recCell is HandoverCell.Xl ? XlRecvNote(inp, t, recCell) : "")   // [XL-CHU-B] hàng đã sửa: giữ / đã làm — không WTS · [SUA-HO-TRA-NGUOC] Gia công: xong NC
                               + CellChangeNote(desigCell, r)   // [GN-CELL2]
                               + (!string.IsNullOrEmpty(r.ToNC) ? $" · vào {NcText(r.ToNC)}" : "")   // [NHAN-DOI-O-NC] NC của lần nhận
@@ -2773,16 +2831,19 @@ namespace MES.Web.Services
                 // [N17-KCS-BO 2026-11-23] chứng từ mới: dòng tự xác nhận gộp vào CÙNG 1 dòng B với Kết quả sửa (đạt vào thẳng ô đạt, không có bước KCS)
                 var autoCk = r.Checks.Where(c => c.Auto).ToList();
                 var okAuto = autoCk.Sum(c => c.Ok);
-                events.Add((r.At, 5, r.Id, () => { var rc = RCopy(rr0); rc.Checks.AddRange(autoCk); }, new LedgerStepRow
+                var tvs = tvMerge.TryGetValue(r.Id, out var tvl) ? tvl : new List<InTx>();   // [N18-TRAVE]
+                events.Add((r.At, 5, r.Id, () => { var rc = RCopy(rr0); rc.Checks.AddRange(autoCk); foreach (var tv in tvs) Copy(tv); }, new LedgerStepRow
                 {
-                    Kind = "KQSUA", Group = r.Group, Cell = r.Cell, Qty = r.Pass + r.Fail, Ng = r.Fail, RefId = r.Id,
+                    Kind = "KQSUA", Group = r.Group, Cell = r.Cell, Qty = r.Pass + r.Fail, Ng = r.Fail, RefId = r.Id, TraVeTxIds = tvs.Select(x => x.Id).ToList(),   // [N18-TRAVE]
                     Text = $"{GroupLabel(r.Group)} ghi Kết quả sửa {r.Pass + r.Fail:0.##} · ô {HandoverCell.Label(r.Cell)}"
                            + (r.NgCaseId is long v0 && v0 > 0 ? $" · {NgCaseNo.Format(v0)}" : "")
                            + (autoCk.Count > 0
                                ? $" · đạt {r.Pass:0.##} → ô Hàng lỗi đã xử lý (không cần KCS xác nhận — N17)" + XlStepNote(RepairDest(inp, r), r.Group)
                                  + (r.Group == "GC" && !string.IsNullOrEmpty(r.ToNC) && !IsRepMark(r.ToNC) && okAuto != 0 ? $" vào {NcText(r.ToNC)}" : "")
                                : $" · đạt {r.Pass:0.##} chờ KCS")
-                           + (r.Fail != 0 ? $" · không đạt {r.Fail:0.##} → ô Hàng lỗi" : "")
+                           + (r.Fail != 0 && tvs.Count == 0 ? $" · không đạt {r.Fail:0.##} → ô Hàng lỗi" : "")
+                           + string.Concat(tvs.Select(tv => $" · chưa đạt {tv.Issued + tv.Closed:0.##} tự trả {GroupLabel(tv.To)} (ô Hàng sửa trả về chưa đạt) · phiếu #{tv.Id}"))   // [N18-TRAVE]
+                           + (r.Fail - tvs.Sum(tv => tv.Issued + tv.Closed) is var failLeft && failLeft > 0 && tvs.Count > 0 ? $" · chưa đạt còn {failLeft:0.##} ở ô Hàng lỗi" : "")
                            + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · Kết quả sửa #{r.Id}"
                 }));
                 foreach (var c in r.Checks.Where(c => !c.Auto))   // [N17-KCS-BO] chỉ lần KCS bấm thật (chứng từ cũ)

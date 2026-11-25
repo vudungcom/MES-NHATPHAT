@@ -329,7 +329,7 @@ namespace MES.Web.Services
         //   Nguồn: KHÁCH 23/11 (mockup Form chung bảng 6 nút + Bước 4 "Giao đến — cho phần sửa đạt, mặc định nơi báo lỗi"; TH4 bước 3; TH10 bước 3); HÙNG 23/11 16:24 (N23).
         // [N23-SUA-CHUADAT 2026-11-25] Sửa ở ô Hàng sửa (bộ phận khác gửi sửa): chiếc sửa chưa đạt / không sửa được → phần mềm tự lập phiếu trả nơi làm lỗi, vào ô Hàng lỗi,
         //   cùng vụ (Kết quả sửa ghi cả số chưa đạt → ô Hàng lỗi nhóm sửa, rồi phiếu từ ô Hàng lỗi). Nơi làm lỗi là khách / không rõ → trả nơi gửi; không có cả hai → như cũ (ở ô Hàng lỗi của nhóm sửa).
-        //   Cách đếm ô riêng "Hàng sửa trả về chưa đạt" (N18 Cách Y) làm ở gói G-E. Nguồn: KHÁCH 23/11 16:03 ("sửa không đạt nhập ô Sửa chưa đạt, phần mềm tự trả về ô Hàng lỗi
+        //   Cách đếm ô riêng "Hàng sửa trả về chưa đạt" (N18 Cách Y): gói G-E [N18-TRAVE] — phiếu ghi ô chỉ định LOIV. Nguồn: KHÁCH 23/11 16:03 ("sửa không đạt nhập ô Sửa chưa đạt, phần mềm tự trả về ô Hàng lỗi
         //   của nơi làm lỗi"; Form chung dòng 2 "phần mềm tự tạo sẵn phiếu giao từ bộ phận sửa về bộ phận làm lỗi"); HÙNG 23/11 16:24 (N23).
         // =================================================================
         public const string SuaToFreshMsg = "Hàng lỗi do chính bộ phận mình phát hiện: sửa đạt tính là đã làm (không giao kèm) — giao tiếp như hàng tốt.";
@@ -373,9 +373,11 @@ namespace MES.Web.Services
                 else return (false, SuaToNoGiuMsg);
             }
             if (failTo != null)
-            {
+            {   // [N18-TRAVE 2026-11-25] ô chỉ định LOIV ("Hàng sửa trả về chưa đạt", Cách Y): bên nhận vẫn vào ô Hàng lỗi, cùng vụ; sổ đếm ở cột riêng,
+                //   nhóm sửa không hiện Nhận / Giao · Hàng lỗi cho phần này. Trước (G-A2): ô Hàng lỗi → bên nhận Nhận · Hàng lỗi cộng thêm (khách TH6 / TH7: "tăng ảo").
+                //   Nguồn: KHÁCH 23/11 (mockup TH6, TH7 Cách Y); HÙNG 23/11 16:24 (N18) + 25/11 13:56.
                 var (okF, errF) = await IssueWithPurposeOnceAsync(r.KhPlanDetailId, g, failTo, fail, r.UserId, HandoverPurpose.RepairSend, null, null, notes, null,
-                    HandoverCell.Loi, HandoverCell.Loi, null, cs, ftx);
+                    HandoverCell.Loi, HandoverCell.LoiVe, null, cs, ftx);
                 if (!okF) return (false, errF);
             }
             return (true, string.Empty);

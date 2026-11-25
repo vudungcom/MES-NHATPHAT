@@ -132,7 +132,7 @@ public static class HarnessSua
         var done = new List<string>();
         foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == det.KhPlanDetailId && !t.IsVoided && t.ToGroupCode == "KHO" && t.Status == "PENDING").ToList())
         {
-            var loi = t.ToCell == HandoverCell.Loi;
+            var loi = t.ToCell == HandoverCell.Loi || t.ToCell == "LOIV";   // [N18-TRAVE 2026-11-25] phiếu tự trả chiếc sửa chưa đạt (ô chỉ định LOIV) nhận như ô Hàng lỗi
             var r = await svc.ReceiveAsync(t.HandoverTxId, loi ? 0 : t.QtyIssued, loi ? t.QtyIssued : 0, null, admin.UserId);
             db.Fixup();
             done.Add($"#{t.HandoverTxId} {(r.Ok ? "ok" : r.Error)}");
@@ -160,7 +160,12 @@ public static class HarnessSua
             nc = row.G("GC").Steps.ToDictionary(s => s.Code, s => s.Waiting ?? 0),
             row.Balanced,
             neg = HandoverLedgerService.NegativeCells(row).Count,
-            cats = db.NgCategories.List.Where(c => c.IsActive).Select(c => c.Code).ToList()
+            cats = db.NgCategories.List.Where(c => c.IsActive).Select(c => c.Code).ToList(),
+            // [N18-SCEN 2026-11-25] drive_n18: ô Nhận / Giao từng nhóm (đọc bằng tên thuộc tính — bản cũ không có NhanLoiVe vẫn dựng được, trả null) + lần nhận
+            cells = HandoverLedgerService.GroupCodes.ToDictionary(g => g, g => { var G = row.G(g); object? P(string n) => G.GetType().GetProperty(n)?.GetValue(G);
+                return new { nl = P("NhanLoi"), nlv = P("NhanLoiVe"), ns = P("NhanSua"), gl = P("GiaoLoi"), gs = P("GiaoSua"), loi = P("LoiGiu"), ton = P("Ton") }; }),
+            recvs = db.HandoverReceives.List.Where(r => !r.IsVoided && db.HandoverTransactions.List.Any(t => t.HandoverTxId == r.HandoverTxId && t.KhPlanDetailId == id))
+                .Select(r => new { r.ReceiveId, r.HandoverTxId, r.QtyOk, r.QtyNg, r.ToCell }).ToList()
         };
     }
 
