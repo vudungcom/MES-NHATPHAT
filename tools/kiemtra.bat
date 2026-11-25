@@ -59,9 +59,14 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Processor | ForEach-Object
 rem [KIEM-75 2026-11-11] Hung 11/11 15:34: chay khoang 75%% so nhan that thi may khong giat, chay duoc ca gio lam viec (truoc: 100%% nhan that).
 if "%TAI%"=="100" if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT
 if "%TAI%"=="100" powershell -NoProfile -Command "try { $p = Get-Process -Id (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId; $p.PriorityClass = 'Normal'; 'Uu tien cua so lenh: ' + $p.PriorityClass + ' [KIEM-100] chay 100%% nhan that' } catch { 'Uu tien: khong doi duoc (' + $_.Exception.Message + ')' }" >> "%OUT%" 2>&1
+rem [KIEM-TAI-PHANTRAM 2026-11-25] Hung 25/11 10:48: "chay nang giat qua, sua file thanh 70" (truoc: chi hieu 100, so khac = 75%%).
+rem   claude_tai.txt = so 1-99 -> chay chung ay %% so nhan that (lam tron xuong, it nhat 1), uu tien Below Normal; 100 = [KIEM-100]; khong co file / chu la = 75%% nhu cu.
+set "TAI_SO=0"
+if defined TAI set /a TAI_SO=TAI 2>nul
+if %TAI_SO% GEQ 1 if %TAI_SO% LEQ 99 if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT*TAI_SO/100
 if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT*3/4
 if "%SONG_SONG%"=="0" set "SONG_SONG=1"
-echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; mac dinh = 75%% so nhan that %NHAN_THAT% [KIEM-75])>> "%OUT%"
+echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; claude_tai.txt = %TAI% [KIEM-TAI-PHANTRAM]; khong co file = 75%% so nhan that %NHAN_THAT% [KIEM-75])>> "%OUT%"
 echo [1/2] Bien dich bo kiem...
 dotnet build GiaoNhanFuzz.csproj -c Release -o bin2 -v q -nologo >> "%OUT%" 2>&1
 if errorlevel 1 ( echo BIEN DICH LOI - xem %OUT% & echo KET QUA: BIEN DICH LOI>> "%OUT%" & exit /b 2 )

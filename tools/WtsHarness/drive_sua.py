@@ -48,29 +48,29 @@ async def main():
         ok("Giao / xử lý hàng" in t0 and "Sửa xong tại nhóm" not in t0 and "Báo hàng lỗi phát hiện sau khi nhận" not in t0,
            "K11 form 'Giao / xử lý hàng' (không còn link 'Sửa xong tại nhóm' / 'Báo hàng lỗi phát hiện sau khi nhận')", t0[:300])
         await m.locator("button.gn-cellbtn", has_text="Hàng lỗi").first.click(); await pg.wait_for_timeout(800)
-        sua_btn = m.locator("button.gn-cellbtn", has_text="Tồn hàng sửa").first
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút): dòng ô Hàng sửa theo mã vụ (chọn dòng = chọn vụ, không còn ô chọn vụ riêng)
+        sua_btn = m.locator("button.gn-cellbtn", has_text="Đang giữ ở ô Hàng sửa").first
         bt = await sua_btn.inner_text() if await sua_btn.count() else ""
-        ok("có 2" in bt, "K12 dòng 'Đang ở Tồn hàng sửa (nhóm khác gửi nhờ sửa)' có 2", bt)
+        ok("có 2" in bt and "VL" in bt, "K12 dòng 'Đang giữ ở ô Hàng sửa (bộ phận khác gửi sửa) — VL…' có 2", bt)
         if await sua_btn.count():
             await sua_btn.click(); await pg.wait_for_timeout(900)
-            vu_btn = m.locator("button.gn-cellbtn", has_text="VL").first
-            vt = await vu_btn.inner_text() if await vu_btn.count() else ""
-            ok("VL" in vt and "giữ 2" in vt and "on" in (await vu_btn.get_attribute("class") or ""), "K13 vụ của Kho tự chọn (1 vụ), giữ 2", vt)
-            await m.locator("button.gn-cellbtn", has_text="Sửa tại nhóm").first.click(); await pg.wait_for_timeout(800)
+            ok("on" in (await sua_btn.get_attribute("class") or ""), "K13 bấm dòng = chọn vụ của Kho (giữ 2)")
+            await m.locator("button.gn-cellbtn", has_text="Sửa tại bộ phận mình").first.click(); await pg.wait_for_timeout(800)
             nums = m.locator("input[type=number]")
+            # [N23-SUA-CHUADAT 25/11] chưa đạt ở ô Hàng sửa nay tự trả nơi gửi (drive_n23) — driver kiểu cũ chỉ ghi đạt 1
             await nums.nth(0).fill("1"); await nums.nth(0).dispatch_event("change")
-            await nums.nth(1).fill("1"); await nums.nth(1).dispatch_event("change"); await pg.wait_for_timeout(600)
+            await nums.nth(1).fill("0"); await nums.nth(1).dispatch_event("change"); await pg.wait_for_timeout(600)
             sel_nc = m.locator("select", has=pg.locator("option", has_text="mặc định")).first
             nco = [ (await o.inner_text()).strip() for o in await sel_nc.locator("option").all() ] if await sel_nc.count() else []
             ok(len(nco) == 1 and nco[0].startswith("Như hàng mới") and "mặc định" in nco[0], "K14 [K2] phôi Kho gửi sửa: NC làm tiếp chỉ 'Như hàng mới (NC01) — mặc định' (không cho NC02)", nco)
             await m.locator(".mes-modal-footer button.btn-primary:has-text('Xác nhận')").click(); await pg.wait_for_timeout(2500)
             s1 = get("/harness/sua")
             rp = s1["reps"]
-            ok(len(rp) == 1 and rp[0]["sourceCell"] == "SUA" and rp[0]["qtyPass"] == 1 and rp[0]["qtyFail"] == 1 and rp[0]["toNC"] is None and rp[0]["ngCaseId"],
-               "K15 DB: 1 Kết quả sửa (Hàng sửa, đạt 1, không đạt 1, như hàng mới, có vụ)", rp)
+            ok(len(rp) == 1 and rp[0]["sourceCell"] == "SUA" and rp[0]["qtyPass"] == 1 and rp[0]["qtyFail"] == 0 and rp[0]["toNC"] is None and rp[0]["ngCaseId"],
+               "K15 DB: 1 Kết quả sửa (Hàng sửa, đạt 1, như hàng mới, có vụ)", rp)
             g = s1["gc"]
-            ok(g["suaGiu"] == 0 and g["loiGiu"] == 1 and g["choKcs"] == 1 and g["chuaLam"] == 8 and g["ton"] == s0["gc"]["ton"] and s1["balanced"] and s1["neg"] == 0,
-               "K16 sổ GC: Hàng sửa 0, Hàng lỗi 1, Chờ KCS 1, Chưa GC 8, Tồn không đổi, cân, 0 ô âm", g)
+            ok(g["suaGiu"] == 1 and g["loiGiu"] == 0 and g["choKcs"] == 1 and g["chuaLam"] == 8 and g["ton"] == s0["gc"]["ton"] and s1["balanced"] and s1["neg"] == 0,
+               "K16 sổ GC: Hàng sửa 1, Hàng lỗi 0, Chờ KCS 1, Chưa GC 8, Tồn không đổi, cân, 0 ô âm", g)
         else:
             s1 = get("/harness/sua")
         print("[K2] ô Tồn hiện chờ KCS")

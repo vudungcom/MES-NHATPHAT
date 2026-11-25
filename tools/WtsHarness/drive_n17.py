@@ -45,29 +45,30 @@ async def main():
         await modal(pg).locator("select").first.select_option(label="Gia công"); await pg.wait_for_timeout(1000)
         m = modal(pg)
         await m.locator("button.gn-cellbtn", has_text="Hàng lỗi").first.click(); await pg.wait_for_timeout(800)
-        sua_btn = m.locator("button.gn-cellbtn", has_text="Tồn hàng sửa").first
+        sua_btn = m.locator("button.gn-cellbtn", has_text="Đang giữ ở ô Hàng sửa").first   # [N23-FORM6 25/11] chữ dòng mới
         s1 = s0
         if await sua_btn.count():
             await sua_btn.click(); await pg.wait_for_timeout(900)
-            await m.locator("button.gn-cellbtn", has_text="Sửa tại nhóm").first.click(); await pg.wait_for_timeout(800)
+            await m.locator("button.gn-cellbtn", has_text="Sửa tại bộ phận mình").first.click(); await pg.wait_for_timeout(800)
             nums = m.locator("input[type=number]")
+            # [N23-SUA-CHUADAT 25/11] đáp án đổi: chưa đạt ở ô Hàng sửa nay tự trả nơi gửi (kiểm ở drive_n23) — driver N17 chỉ ghi đạt 1 (chưa đạt 0)
             await nums.nth(0).fill("1"); await nums.nth(0).dispatch_event("change")
-            await nums.nth(1).fill("1"); await nums.nth(1).dispatch_event("change"); await pg.wait_for_timeout(700)
+            await nums.nth(1).fill("0"); await nums.nth(1).dispatch_event("change"); await pg.wait_for_timeout(700)
             t1 = await m.inner_text()
             ok("vào thẳng ô đạt" in t1 and "không cần KCS xác nhận" in t1 and "chờ KCS" not in t1,
                "N11 form: 'Đạt → vào thẳng ô đạt … (không cần KCS xác nhận)', không còn chữ 'chờ KCS'", t1[-700:])
-            ok("Sẽ ghi: Kết quả sửa — đạt vào thẳng ô đạt" in t1, "N12 câu 'Sẽ ghi: Kết quả sửa — đạt vào thẳng ô đạt (không cần KCS xác nhận)'", t1[-400:])
+            ok("Sẽ ghi: sửa đạt 1 — đạt vào thẳng ô đạt" in t1, "N12 câu 'Sẽ ghi: sửa đạt 1 — đạt vào thẳng ô đạt (không cần KCS xác nhận)' [N23-FORM6 chữ mới]", t1[-400:])
             await m.locator(".mes-modal-footer button.btn-primary:has-text('Xác nhận')").click(); await pg.wait_for_timeout(2500)
             s1 = get("/harness/sua")
             rp = s1["reps"]; ck = s1["checks"]
-            ok(len(rp) == 1 and rp[0]["qtyPass"] == 1 and rp[0]["qtyFail"] == 1 and not rp[0]["isVoided"], "N13 DB: 1 Kết quả sửa (đạt 1, không đạt 1)", rp)
+            ok(len(rp) == 1 and rp[0]["qtyPass"] == 1 and rp[0]["qtyFail"] == 0 and not rp[0]["isVoided"], "N13 DB: 1 Kết quả sửa (đạt 1)", rp)
             ok(len(rp) == 1 and len(ck) == 1 and ck[0]["handoverRepairResultId"] == rp[0]["handoverRepairResultId"] and ck[0]["qtyOk"] == 1 and ck[0]["qtyNg"] == 0
                and ck[0]["checkedBy"] == rp[0]["createdBy"] and ck[0]["notes"] == NOTE and not ck[0]["isVoided"],
                "N14 DB: 1 dòng tự xác nhận (đạt 1, người = người ghi, ghi chú [N17])", ck)
             g = s1["gc"]
-            ok(g["suaGiu"] == 0 and g["loiGiu"] == 1 and g["choKcs"] == 0 and g["chuaLam"] == 9 and g["nc"]["NC01"] == s0["gc"]["nc"]["NC01"] + 1
+            ok(g["suaGiu"] == 1 and g["loiGiu"] == 0 and g["choKcs"] == 0 and g["chuaLam"] == 9 and g["nc"]["NC01"] == s0["gc"]["nc"]["NC01"] + 1
                and g["ton"] == s0["gc"]["ton"] and s1["balanced"] and s1["neg"] == 0,
-               "N15 sổ GC: Hàng sửa 0, Hàng lỗi 1, Chờ KCS 0, Chưa GC 9, chờ NC01 +1 (làm tiếp ngay), Tồn không đổi, cân, 0 ô âm", g)
+               "N15 sổ GC: Hàng sửa 1, Hàng lỗi 0, Chờ KCS 0, Chưa GC 9, chờ NC01 +1 (làm tiếp ngay), Tồn không đổi, cân, 0 ô âm", g)
         else:
             ok(False, "N11 không thấy dòng 'Tồn hàng sửa' trên form", await m.inner_text())
 

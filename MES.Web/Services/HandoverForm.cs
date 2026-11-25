@@ -454,6 +454,17 @@ namespace MES.Web.Services
         public static string? RepairTarget(LedgerRow row, string group, string? detectGroup, string? detectNc, string? origin, string? cause, bool fromDa)
         {
             int x = HandoverLedgerService.ProdIdx(group), d = HandoverLedgerService.ProdIdx(detectGroup);
+            // [N23-KHO-SUA 2026-11-25] Kho sửa / xác nhận khách hàng của vụ do bộ phận khác phát hiện (TH4: Gia công trả Kho 2 chiếc lỗi, Kho xác nhận khách OK):
+            //   đạt vào Tồn hàng lỗi đã xử lý của Kho (dấu @XONG → sổ RepairDest "GIU"), rồi giao về nơi báo lỗi từ ô đó, bên nhận vào ô Hàng lỗi đã xử lý.
+            //   Trước: không dấu → đạt thành phôi còn → Kho giao Hàng mới, Gia công nhận Hàng mới (mockup TH4 đánh dấu sai). Kho tự phát hiện (phôi khách) giữ như cũ.
+            //   Chứng từ Kho cũ không có dấu → giữ nghĩa cũ. Nguồn: KHÁCH 23/11 (mockup TH4 tích "Kho giao từ ô Hàng lỗi, Gia công nhận ô Hàng lỗi đã xử lý"); HÙNG 23/11 16:24 (N23).
+            //   Vụ sinh lúc bên nhận đếm NG khi nhận phiếu (NgOrigin.Nhan — "chiếc bị trả ngay lúc nhận coi như chưa nhận"): như cũ, đạt thành phôi còn rồi giao
+            //   Hàng mới (mockup TH3 bước 3 "Gia công chưa từng nhận 2 chiếc này → vào Hàng mới").
+            //   [N23-KHO-SUA rà độc lập C1] PO có NC đầu Gia công là Taro: phôi lỗi Taro trả Kho (HTSP phát hiện, nơi gây lỗi Khách hàng — [KTT-PHOILOI]) như cũ →
+            //   phôi còn, Kho giao thẳng Taro lại (không giữ ô XL rồi trả HTSP vào Chưa làm — bỏ qua Taro NC đầu). Nguồn: CLAUDE (rà độc lập G-A2 25/11).
+            if (group == "KHO")
+                return d > 0 && origin != NgOrigin.Nhan && !(detectGroup == "HTSP" && cause == "KHACH" && HandoverLedgerService.KhoTaroRun(row) != null)
+                    ? HandoverLedgerService.RepXong : null;
             if (x < 0 || d < 0) return null;   // Kho sửa / phát hiện ở Kho: như cũ
             if (group == "GC")
             {
@@ -492,7 +503,7 @@ namespace MES.Web.Services
 
         // [N17-KCS-BO 2026-11-23] luật N17 bỏ bước KCS xác nhận, KHÔNG bỏ chặn này: sửa vẫn phải ghi Kết quả sửa (truy vết ai sửa, đạt / chưa đạt, vụ) — chỉ đổi chữ.
         public const string SuaQuaKcsMsg = "Workflow ON: hàng lỗi / hàng sửa không giao thẳng vào ô Hàng lỗi đã xử lý / Hàng mới của bên nhận. "
-            + "Sửa xong thì chọn \"Sửa tại nhóm\" (ghi Kết quả sửa), rồi giao hàng đã sửa về nơi phát hiện lỗi.";
+            + "Sửa xong thì chọn \"Sửa tại bộ phận mình / XXN KH\" (ghi Kết quả sửa, có ô \"Sửa đạt → giao đến\").";   // [N23-FORM6] chữ nút mới
 
         public static string SuaQuaKcsRecvMsg(string desig, string eff)
             => $"Workflow ON: không đổi ô {HandoverCell.Label(desig)} sang {HandoverCell.Label(eff)} lúc nhận (= coi như đã sửa đạt mà chưa ghi Kết quả sửa). "
@@ -505,9 +516,9 @@ namespace MES.Web.Services
         // ================================================================
         public static bool XlToOk(string from, string to, string? detectGroup, LedgerRow? row = null)
         {
-            int f = HandoverLedgerService.ProdIdx(from), t = HandoverLedgerService.ProdIdx(to), d = HandoverLedgerService.ProdIdx(detectGroup);
+            int f = from == "KHO" ? 0 : HandoverLedgerService.ProdIdx(from), t = HandoverLedgerService.ProdIdx(to), d = HandoverLedgerService.ProdIdx(detectGroup);   // [N23-KHO-SUA] Kho đứng đầu chuỗi (0)
             if (f > 0 && d > 0 && f > d) return t == d;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa hộ đứng sau nơi phát hiện: chỉ trả ngược đúng nơi phát hiện
-            return f > 0 && t > f && d > 0 && t <= d && !XlHtspLamHo(to, row);
+            return f >= 0 && t > f && d > 0 && t <= d && !XlHtspLamHo(to, row);
         }
 
         /// <summary>[XL-TRA-LAI] Nhóm đã sửa chiếc của vụ (chặng Kết quả sửa gần nhất; không có thì nơi gây lỗi) — mặc định nơi trả lại hàng đã sửa bị hỏng lại.</summary>
@@ -644,6 +655,108 @@ namespace MES.Web.Services
         /// <summary>Nơi gây lỗi của vụ là 1 nhóm khác nhóm đang giữ ((b): "Trả nơi gây lỗi" chỉ khi khác nhóm mình).</summary>
         public static string? CaseCauseGroup(LedgerCase cs, string group)
             => !string.IsNullOrEmpty(cs.Cause) && cs.Cause != group && HandoverLedgerService.GroupCodes.Contains(cs.Cause) ? cs.Cause : null;
+
+        // ================================================================
+        // [N23-FORM6 2026-11-25] BƯỚC 3 "LÀM GÌ" — LUÔN ĐỦ 6 NÚT Ở MỌI BỘ PHẬN (luật N23, thay danh sách nút theo dòng của form 4 bước [GN-FORM1]).
+        //   Nguồn: KHÁCH 23/11 (mockup Form chung: bảng 6 nút "Dùng khi / Xám khi", "nút xám luôn ghi lý do ngay dưới"; Bước 4 ô bộ phận nhận luôn hiện + mặc định;
+        //   chat 16:03 "chỉ bỏ Trả nơi làm lỗi với hàng gửi bộ phận khác sửa"); HÙNG 23/11 16:24 (N23).
+        //   Mỗi nút = chứng từ ĐÃ CÓ (máy chủ SaveFormAsync không đổi cách ánh xạ): Sửa = Kết quả sửa · Gửi bộ phận khác sửa = phiếu vào ô Hàng sửa (NHO)
+        //   · Trả nơi làm lỗi = phiếu vào ô Hàng lỗi nơi làm lỗi (TRA) · Giữ lại = chỉ báo lỗi · Huỷ · Trả khách. Chỉ chọn nút + mặc định, không công thức số.
+        // ================================================================
+        public const string BNho = "NHO";   // nút "Gửi bộ phận khác sửa" (gửi máy chủ: Action GIAO + Purpose NHO)
+        public const string BTra = "TRA";   // nút "Trả nơi làm lỗi" (gửi máy chủ: Action GIAO + Purpose TRA)
+        public const string LblSua = "Sửa tại bộ phận mình / XXN KH", LblNho = "Gửi bộ phận khác sửa", LblTra = "Trả nơi làm lỗi",
+                            LblGiu = "Giữ lại, xử lý sau", LblHuy = "Huỷ", LblKhach = "Trả khách";
+
+        public record FormBtn(string Code, string Label, bool On, string Why);
+
+        /// <summary>[XL-TRA-NOILOI] Mặc định trả lại hàng đã sửa bị hỏng lại = bộ phận làm lỗi (không trả được thì nhóm đầu trong danh sách được trả). Chuyển từ GiaoXuLyModal (N23).</summary>
+        public static string XlTraLaiDefault(LedgerCase c, string group)
+        {
+            var rg = XlTraLaiGroups(c, group);
+            var def = XlRepairGroup(c);
+            if (def != null && def != group && (rg.Count == 0 || rg.Contains(def))) return def;
+            return rg.FirstOrDefault() ?? "";
+        }
+
+        /// <summary>[N23-FORM6] Nơi "Trả nơi làm lỗi" (ô "Trả đến" tự điền). null = không trả được (nơi làm lỗi là mình / khách / chưa chọn).</summary>
+        /// <param name="cause">Lỗi mới: nơi gây lỗi đã chọn khi tích "Lỗi công đoạn trước" (Kho: KHACH); null = không tích.</param>
+        public static string? TraTarget(string group, FormPos pos, LedgerCase? cs, string? cause)
+        {
+            if (pos.TaroPhoi) return "KHO";   // [KTT-PHOILOI] phôi lỗi Taro: chỉ trả Kho
+            if (pos.HeldCell == HandoverCell.Xl) { var d = cs == null ? "" : XlTraLaiDefault(cs, group); return d == "" ? null : d; }   // [XL-TRA-LAI][XL-TRA-NOILOI]
+            if (pos.Fresh)
+                return !string.IsNullOrEmpty(cause) && cause != "KHACH" && cause != group && HandoverLedgerService.GroupCodes.Contains(cause) ? cause : null;
+            if (pos.HeldCell == HandoverCell.Loi && cs != null) return CaseCauseGroup(cs, group);
+            return null;
+        }
+
+        /// <summary>[N23-FORM6] 6 nút + lý do xám cho dòng bước 2 đã chọn (Hàng lỗi). <paramref name="cause"/> như TraTarget.</summary>
+        public static List<FormBtn> FormButtons(LedgerRow row, string group, FormPos pos, LedgerCase? cs, string? cause, bool prevTicked)
+        {
+            var G = HandoverLedgerService.GroupLabel(group);
+            var b = new Dictionary<string, (bool On, string Why)>
+            {
+                [ASua] = (true, ""), [BNho] = (true, ""), [BTra] = (true, ""), [AGiu] = (true, ""), [AHuy] = (true, ""), [AKhach] = (true, "")
+            };
+            void Off(string why, params string[] codes) { foreach (var c in codes) b[c] = (false, why); }
+            if (pos.TaroPhoi)
+                Off("Phôi lỗi Taro phát hiện khi đang làm: chỉ trả về Kho (nơi gây lỗi Khách hàng)", ASua, BNho, AGiu, AHuy, AKhach);
+            else if (pos.HeldCell == HandoverCell.LamHo)
+                Off("Hàng làm hộ bị lỗi: chỉ Gia công sửa — gửi trả Gia công (ô Hàng lỗi, cùng vụ)", ASua, BTra, AGiu, AHuy, AKhach);
+            else if (pos.HeldCell == HandoverCell.Xl)
+            {
+                Off("Hàng đã sửa bị hỏng lại: trả lại bộ phận làm lỗi / bộ phận đã sửa (ô Hàng lỗi, cùng vụ)", ASua, BNho, AGiu, AHuy, AKhach);
+                if (TraTarget(group, pos, cs, cause) == null) Off("Không có bộ phận nào để trả lại", BTra);
+            }
+            else if (pos.HeldCell == HandoverCell.Sua)
+            {
+                //   [N23-FORM6 rà độc lập T3] đúng mockup (Form chung bảng "Xám khi" + TH3 bước 5): ô Hàng sửa chỉ xám Trả nơi làm lỗi, Huỷ, Trả khách.
+                Off("Hàng đang ở ô Hàng sửa (bộ phận khác gửi sửa): sửa không đạt nhập ô \"Sửa chưa đạt\" — phần mềm tự trả nơi làm lỗi", BTra);
+                Off("Hàng bộ phận khác gửi sửa — trả về để bộ phận đó quyết", AHuy, AKhach);
+            }
+            else
+            {
+                if (row.ApplyWorkflow && group != "GC" && cs is { IsLamHo: true })   // [TARO-LAMHO-NC][LAMHO-OFF] vụ làm hộ: chỉ Gia công sửa (máy chủ chặn — KetQuaSua)
+                    Off($"{cs.No} là {cs.LamHoTen}: chỉ Gia công sửa", ASua);
+                if (TraTarget(group, pos, cs, cause) == null)
+                {
+                    string why;
+                    if (pos.Fresh)
+                        why = group == "KHO" ? (prevTicked ? "Nơi làm lỗi là khách (phôi khách)" : "Nơi làm lỗi là chính Kho (không tích \"Lỗi có sẵn\")")   // [N23-FORM6 rà độc lập L4]
+                            : !prevTicked ? $"Nơi làm lỗi là chính {G} (không tích \"Lỗi công đoạn trước\")"
+                            : string.IsNullOrEmpty(cause) ? "Chọn nơi làm lỗi ở trên trước"
+                            : cause == "KHACH" ? "Nơi làm lỗi là khách" : $"Nơi làm lỗi là chính {G}";
+                    else
+                        why = cs?.Cause == group ? $"Nơi làm lỗi là chính {G}" : cs?.Cause == "KHACH" ? "Nơi làm lỗi là khách" : "Vụ chưa ghi nơi làm lỗi là bộ phận nào";
+                    Off(why, BTra);
+                }
+                //   [N23-FORM6 rà độc lập T3] Giữ lại không xám (mockup TH4 / TH10 bước 3): hàng đã nằm sẵn ở ô Hàng lỗi → form báo "không cần ghi gì" (GiuNoop)
+            }
+            return new List<FormBtn>
+            {
+                new(ASua, LblSua, b[ASua].On, b[ASua].Why), new(BNho, LblNho, b[BNho].On, b[BNho].Why), new(BTra, LblTra, b[BTra].On, b[BTra].Why),
+                new(AGiu, LblGiu, b[AGiu].On, b[AGiu].Why), new(AHuy, LblHuy, b[AHuy].On, b[AHuy].Why), new(AKhach, LblKhach, b[AKhach].On, b[AKhach].Why),
+            };
+        }
+
+        /// <summary>[N23-SUA-GIAO] Sửa tại bộ phận mình (vụ đang giữ, nơi báo lỗi là bộ phận sản xuất khác nhóm): ô "Đạt → giao đến", mặc định nơi báo lỗi.
+        ///   Cell = ô bên nhận: Hàng lỗi đã xử lý khi phần đạt giữ ô Tồn hàng lỗi đã xử lý (sổ RepairDest "GIU": dấu @XONG + nhóm sửa là bộ phận sản xuất / Kho);
+        ///   Hàng mới khi Kho sửa chiếc bên kia chưa từng nhận (NG lúc nhận — đạt thành phôi còn, mockup TH3 bước 3). null = không có ô (vụ do chính nhóm phát hiện,
+        ///   làm tiếp theo NC, vụ làm hộ, hàng cũ chưa mã vụ) — mockup TH3 bước 5 "Không lập phiếu".</summary>
+        public static (string Dest, string Cell)? SuaGive(LedgerRow row, string group, LedgerCase? cs)
+        {
+            if (cs == null || cs.Id <= 0 || cs.DetectGroup == null || cs.DetectGroup == group || HandoverLedgerService.ProdIdx(cs.DetectGroup) <= 0) return null;
+            if (RepairTarget(row, cs.Id, group) == HandoverLedgerService.RepXong && (HandoverLedgerService.ProdIdx(group) > 0 || group == "KHO"))
+                return (cs.DetectGroup, HandoverCell.Xl);
+            return group == "KHO" ? (cs.DetectGroup, HandoverCell.Moi) : null;
+        }
+
+        /// <summary>[N23-FORM6] "Giữ lại, xử lý sau" với hàng đã đang giữ theo vụ: không có chứng từ nào để ghi (hàng vẫn nằm ở ô đó).</summary>
+        public static bool GiuNoop(FormPos pos) => !pos.Fresh && pos.HeldCell != null;
+
+        /// <summary>[N23-FORM6] Mặc định "Gửi đến" của nút Gửi bộ phận khác sửa: bộ phận kế tiếp theo quy trình (Đóng gói đứng cuối → KCS). Chọn lại được.</summary>
+        public static string NhoDefault(string group, LedgerRow row) => group == "PKG" ? "KCS" : NextGroup(group, row);
 
         public static string NextGroup(string from) => from switch { "KHO" => "GC", "GC" => "HTSP", "HTSP" => "KCS", "KCS" => "PKG", "PKG" => "KHO", _ => "" };
         public static string PrevGroup(string from) => from switch { "GC" => "KHO", "HTSP" => "GC", "KCS" => "HTSP", "PKG" => "KCS", _ => "" };

@@ -169,6 +169,10 @@ public static class FormHelp
         if (c == null) return legacy;
         static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
         int gi = I(g), di = I(c.DetectGroupCode);
+        // [N23-KHO-SUA 2026-11-25] đáp án đổi theo luật N23 (mockup TH4 / TH3): Kho sửa vụ do bộ phận sản xuất phát hiện → "@XONG" (giữ ô Tồn hàng lỗi đã xử lý),
+        //   trừ vụ sinh lúc bên nhận đếm NG khi nhận (chưa từng nhận — TH3) → như cũ (không dấu, đạt thành phôi còn). Trước: Kho luôn không dấu.
+        //   [N23-KHO-SUA rà độc lập C1] trừ phôi lỗi Taro (PO NC đầu Taro — đọc snapshot KhoTaroPo; HTSP phát hiện, nơi gây lỗi Khách hàng) → như cũ
+        if (g == "KHO") return di > 0 && c.OriginKind != NgOrigin.Nhan && !(c.DetectGroupCode == "HTSP" && c.CauseGroupCode == "KHACH" && KhoTaroPo(db, id)) ? "@XONG" : null;
         if (gi < 0 || di < 0) return legacy;
         if (g == "GC")
         {
@@ -212,7 +216,7 @@ public static class FormHelp
             var ok = db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == rp.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk);
             var d = D(rp.NgCaseId);
             if (d == group) da += ok;
-            else if (I(group) > 0 && I(d) > 0) giu += ok;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa đứng trước HOẶC sau nơi phát hiện đều giữ ô XL (trước: chỉ đứng trước)
+            else if ((I(group) > 0 || group == "KHO") && I(d) > 0) giu += ok;   // [N23-KHO-SUA] + Kho sửa vụ bộ phận sản xuất phát hiện (dấu @XONG)   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa đứng trước HOẶC sau nơi phát hiện đều giữ ô XL (trước: chỉ đứng trước)
         }
         foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided && t.FromCell == HandoverCell.Xl))
         {
@@ -238,10 +242,10 @@ public static class FormHelp
     /// <summary>[XL-VUOT-CHAN] Đáp án độc lập: hàng đã sửa giao xuôi về nơi phát hiện (nhóm nhận sau nhóm giữ, không sau nơi phát hiện).</summary>
     public static bool XlDung(AppDbContext db, long caseId, string from, string to, bool htspOnlyLamHo = false)
     {
-        static int I(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+        static int I(string? x) => x switch { "KHO" => 0 /* [N23-KHO-SUA] Kho đứng đầu chuỗi — đáp án đổi 25/11 */, "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
         var d = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == caseId)?.DetectGroupCode;
         if (I(from) > 0 && I(d) > 0 && I(from) > I(d)) return to == d;   // [SUA-HO-TRA-NGUOC 2026-11-11] nhóm sửa hộ đứng sau nơi phát hiện: chỉ trả ngược đúng nơi phát hiện
-        return I(from) > 0 && I(to) > I(from) && I(d) > 0 && I(to) <= I(d) && !(htspOnlyLamHo && to == "HTSP");   // [XL-HTSP-LAMHO]
+        return I(from) >= 0 && I(to) > I(from) && I(d) > 0 && I(to) <= I(d) && !(htspOnlyLamHo && to == "HTSP");   // [XL-HTSP-LAMHO] · [N23-KHO-SUA] I(from) ≥ 0
     }
 
     /// <summary>[SUA-HO-TRA-NGUOC 2026-11-11] Đáp án độc lập (đọc NgCases + snapshot, rà độc lập Gói 16 L3): NC phiếu hàng đã sửa trả NGƯỢC về Gia công

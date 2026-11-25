@@ -64,8 +64,9 @@ async def main():
         await click(m, pg, "Hàng lỗi")
         bt = await btn_texts(m)
         def has(lbl, n): return any(x.startswith(lbl) and x.endswith(f"có {n}") for x in bt)
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung): dòng ô Hàng lỗi / Hàng sửa theo mã vụ
         ok(has("Vừa nhận, chưa làm NC01", 8) and has("Đã làm xong NC01 · chưa làm NC02", 0) and has("Đã làm xong NC02 (NC cuối) · chưa giao", 0)
-           and has("Đang ở Tồn hàng lỗi (đã có vụ)", 0) and has("Đang ở Tồn hàng sửa (nhóm khác gửi nhờ sửa)", 2),
+           and has("Đang giữ ở ô Hàng lỗi", 0) and has("Đang giữ ở ô Hàng sửa (bộ phận khác gửi sửa)", 2),
            "D13 [K2][K3] bước 2 Gia công: Vừa nhận chưa làm NC01 có 8 · Đã làm xong NC01 · chưa làm NC02 có 0 · Đã làm xong NC02 (NC cuối) · chưa giao có 0 · Tồn hàng lỗi 0 · Tồn hàng sửa 2", bt)
         await click(m, pg, "Hàng tốt")
         bt2 = await btn_texts(m)
@@ -82,20 +83,25 @@ async def main():
         cs = m.locator("select:has(option:text-is('-- Chọn nơi gây lỗi --'))")
         t0 = await m.inner_text()
         ok(await cs.count() == 1 and await cs.input_value() == "" and "Chọn nơi gây lỗi (bắt buộc)" in t0, "D20a [CAUSE-BAT-BUOC] tích Lỗi công đoạn trước: nơi gây lỗi trống, nhắc bắt buộc", t0[-400:])
-        await click(m, pg, "Giao cho nhóm khác")
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung): chưa chọn nơi gây lỗi → nút "Trả nơi làm lỗi" xám, lý do "Chọn nơi làm lỗi ở trên trước"
         t0 = await m.inner_text()
-        ok("Trả nơi gây lỗi" not in t0 and "Chọn nơi gây lỗi ở trên trước" in t0 and "sẽ nhận vào ô" not in t0,
-           "D20b chưa chọn nơi gây lỗi → chưa có nút 'Trả nơi gây lỗi', chưa xem trước chứng từ / ô nhận (rà Thấp 2)", t0[-400:])
+        tra = m.locator("button.gn-cellbtn", has_text="Trả nơi làm lỗi").first
+        ok(await tra.is_disabled() and "Chọn nơi làm lỗi ở trên trước" in t0,
+           "D20b chưa chọn nơi gây lỗi → 'Trả nơi làm lỗi' xám, ghi lý do (rà Thấp 2)", t0[-400:])
+        await click(m, pg, "Gửi bộ phận khác sửa")
         q0 = m.locator("input[type=number]").first; await q0.fill("1"); await q0.dispatch_event("change"); await pg.wait_for_timeout(400)
         await pick_cat(m, pg, cat)
         ok(await m.locator(".mes-modal-footer button.btn-primary:has-text('Xác nhận')").is_disabled(), "D20c đủ số lượng + loại lỗi nhưng chưa chọn nơi gây lỗi → nút Xác nhận tắt")
         await cs.select_option("KHO"); await pg.wait_for_timeout(700)
         t = await m.inner_text()
-        ok("Trả nơi gây lỗi (Kho)" in t and "Kho sẽ nhận vào ô Hàng lỗi" in t, "D21 (b) chọn Kho gây lỗi → có 'Trả nơi gây lỗi (Kho)', Kho sẽ nhận vào ô Hàng lỗi", t[-500:])
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung)
+        ok(not await tra.is_disabled(), "D21a chọn Kho gây lỗi → 'Trả nơi làm lỗi' bấm được")
+        await click(m, pg, "Trả nơi làm lỗi"); t = await m.inner_text()
+        ok("Kho (nơi làm lỗi) — ô Hàng lỗi" in t, "D21 (b) Trả đến tự điền 'Kho (nơi làm lỗi) — ô Hàng lỗi'", t[-500:])
         q = m.locator("input[type=number]").first; await q.fill("1"); await q.dispatch_event("change"); await pg.wait_for_timeout(400)
         await pick_cat(m, pg, cat)
         t = await m.inner_text()
-        ok("phiếu Hàng lỗi công đoạn trước" in t and "1 chứng từ" in t, "D22 dòng 'Sẽ ghi: phiếu Hàng lỗi công đoạn trước … (1 chứng từ)'", t[-300:])
+        ok("Sẽ ghi: phiếu Gia công → Kho, ô Hàng lỗi 1, mã vụ mới" in t and "1 chứng từ" in t, "D22 [N23-FORM6] dòng 'Sẽ ghi: phiếu Gia công → Kho, ô Hàng lỗi 1, mã vụ mới (… 1 chứng từ)' (mockup TH4)", t[-300:])
         sent = await confirm(m, pg)
         d2 = get("/harness/form")
         nt = [x for x in d2["txs"] if x["purpose"] == "NG_RETURN"]
@@ -106,7 +112,7 @@ async def main():
 
         print("[D3] [K2] lỗi đầu ra ở NC01 → sửa tại nhóm, NC làm tiếp đúng NC của vụ")
         m = await open_form(pg, "Gia công")
-        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Vừa nhận, chưa làm NC01"); await click(m, pg, "Sửa tại nhóm")
+        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Vừa nhận, chưa làm NC01"); await click(m, pg, "Sửa tại bộ phận mình")   # [N23-FORM6]
         nums = m.locator("input[type=number]")
         await nums.nth(0).fill("1"); await nums.nth(0).dispatch_event("change"); await pg.wait_for_timeout(600)
         sel = m.locator("select", has=pg.locator("option", has_text="mặc định")).first
@@ -126,7 +132,7 @@ async def main():
 
         print("[D4] nút Xác nhận khoá khi vượt tối đa / thiếu loại lỗi")
         m = await open_form(pg, "Gia công")
-        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Vừa nhận, chưa làm NC01"); await click(m, pg, "Chỉ báo lỗi")
+        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Vừa nhận, chưa làm NC01"); await click(m, pg, "Giữ lại, xử lý sau")   # [N23-FORM6]
         q = m.locator("input[type=number]").first; await q.fill("99"); await q.dispatch_event("change"); await pg.wait_for_timeout(500)
         await pick_cat(m, pg, cat)
         b1 = m.locator(".mes-modal-footer button.btn-primary")
@@ -137,23 +143,24 @@ async def main():
         await close_modal(pg)
         ok(get("/harness/form")["reports"] == d3["reports"], "D43 không ghi gì khi đóng form")
 
-        print("[D5] Tồn hàng sửa → trả lại nơi gửi (chưa sửa được)")
+        print("[D5] ô Hàng sửa → sửa không được: Sửa chưa đạt 1 → phần mềm tự trả Kho (nơi gửi — vụ phôi khách)")
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung): không còn nút "Trả lại nơi gửi (chưa sửa được)" / "Sửa xong, trả nơi gửi" — nhập "Sửa chưa đạt" (khách 23/11 16:03)
         m = await open_form(pg, "Gia công")
-        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng sửa")
+        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng sửa")
         bt = await btn_texts(m)
-        # [SUA-QUA-KCS 2026-11-11] Workflow ON ẩn "Sửa xong, trả nơi gửi" (Hùng 11/11 15:21) — mọi hàng sửa qua Kết quả sửa + KCS xác nhận
-        ok(any(x == "Trả lại nơi gửi (chưa sửa được)" for x in bt) and not any(x == "Sửa xong, trả nơi gửi" for x in bt) and any(x.startswith("Sửa tại nhóm") for x in bt),
-           "D51 [SUA-QUA-KCS] Tồn hàng sửa: Sửa tại nhóm · Trả lại nơi gửi (chưa sửa được) — không có 'Sửa xong, trả nơi gửi' (Workflow ON)", bt)
-        await click(m, pg, "Trả lại nơi gửi")
-        dsel = m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first
-        cur = await dsel.evaluate("s => s.options[s.selectedIndex].text")
-        ok(cur == "Kho", "D52 nhóm nhận mặc định = Kho (nơi gửi nhờ sửa)", cur)
-        q = m.locator("input[type=number]").first; await q.fill("1"); await q.dispatch_event("change"); await pg.wait_for_timeout(400)
+        ok(not any(x.startswith(("Trả lại nơi gửi", "Sửa xong, trả nơi gửi")) for x in bt) and any(x == "Sửa tại bộ phận mình / XXN KH" for x in bt),
+           "D51 ô Hàng sửa: 6 nút, không còn 'Trả lại nơi gửi' / 'Sửa xong, trả nơi gửi'", bt)
+        await click(m, pg, "Sửa tại bộ phận mình")
+        nums = m.locator("input[type=number]")
+        await nums.nth(0).fill("0"); await nums.nth(0).dispatch_event("change"); await nums.nth(1).fill("1"); await nums.nth(1).dispatch_event("change"); await pg.wait_for_timeout(600)
+        t5 = await m.inner_text()
+        ok("Chưa đạt → phần mềm tự trả Kho (nơi gửi), vào ô Hàng lỗi" in t5, "D52 chưa đạt tự trả Kho (nơi gửi nhờ sửa — nơi làm lỗi là khách)", t5[-400:])
         sent = await confirm(m, pg)
         d5 = get("/harness/form")
-        rr = [x for x in d5["txs"] if x["purpose"] == "REPAIR_RETURN"]
-        ok(sent and len(rr) == 1 and rr[0]["fromCell"] == "SUA" and rr[0]["toCell"] == "LOI" and rr[0]["toGroupCode"] == "KHO" and rr[0]["ngCaseId"],
-           "D53 DB: phiếu Gia công → Kho 1, ô Hàng sửa → ô Hàng lỗi, cùng vụ", rr)
+        rr = [x for x in d5["txs"] if x not in d3["txs"] and x["fromGroupCode"] == "GC" and x["toGroupCode"] == "KHO"]
+        nk5 = [x for x in d5["reps"] if x not in d3["reps"]]
+        ok(sent and len(rr) == 1 and rr[0]["fromCell"] == "LOI" and rr[0]["toCell"] == "LOI" and rr[0]["ngCaseId"] and len(nk5) == 1 and nk5[0]["qtyFail"] == 1 and nk5[0]["qtyPass"] == 0,
+           "D53 DB: Kết quả sửa chưa đạt 1 + phiếu Gia công → Kho ô Hàng lỗi 1, cùng vụ", {"tx": rr, "kq": nk5})
         sane(d5, "D54")
 
         print("[D6] [K2] V3: hàng của vụ giao vào Gia công ô Hàng lỗi đã xử lý → NC theo vụ")
@@ -164,29 +171,29 @@ async def main():
         vu3 = [c for c in d6a["cases"] if ret and c["ngCaseId"] == ret[0] and c["detectGroupCode"] == "GC" and c["detectNC"] == "NC01"]
         await pg.reload(); await pg.wait_for_timeout(4000)
         m = await open_form(pg, "Kho")
-        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi")
-        cbs = m.locator("button.gn-cellbtn", has_text="Gia công")
+        await click(m, pg, "Hàng lỗi")
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung): mỗi mã vụ 1 dòng
+        no3 = f"VL{vu3[0]['ngCaseId']:06d}" if vu3 else "?"
+        cbs = m.locator("button.gn-cellbtn", has_text=no3)
         n_c = await cbs.count()
-        ok(n_c >= 1 and len(vu3) == 1, "D62 Tồn hàng lỗi Kho có vụ phát hiện ở Gia công NC01", [await cbs.nth(i).inner_text() for i in range(n_c)])
+        ok(n_c >= 1 and len(vu3) == 1, "D62 ô Hàng lỗi Kho có dòng vụ phát hiện ở Gia công NC01", await btn_texts(m))
         if n_c >= 1:
             await cbs.first.click(); await pg.wait_for_timeout(700)
-        await click(m, pg, "Giao cho nhóm khác")
+        await click(m, pg, "Gửi bộ phận khác sửa")
         dsel = m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first
         await dsel.select_option(label="Gia công"); await pg.wait_for_timeout(800)
         t0 = await m.inner_text()
         ok("Gia công nhận vào NC (theo vụ)" not in t0, "D63 ô Hàng lỗi (mặc định): không hỏi NC", t0[-400:])
-        await m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')").click(); await pg.wait_for_timeout(500)
-        # [SUA-QUA-KCS 2026-11-11] Workflow ON: không có ô Hàng lỗi đã xử lý / Hàng mới bên nhận (Hùng 11/11 15:34 B1) — luật NC theo vụ (D64–D65) kiểm lúc Workflow OFF
-        cells_on = [(await x.inner_text()).strip() for x in await m.locator("button.gn-cellbtn").all()]
-        ok("Hàng lỗi đã xử lý" not in cells_on and "Hàng mới" not in cells_on, "D63b [SUA-QUA-KCS] Workflow ON: ô bên nhận không có Hàng lỗi đã xử lý / Hàng mới", cells_on)
+        # [N23-FORM6 25/11] đáp án đổi theo khách 23/11 (form 6 nút — mockup Form chung): Workflow ON hàng lỗi — ô bên nhận theo nút, không còn link đổi ô (trước [SUA-QUA-KCS]: có link, không có ô Hàng lỗi đã xử lý / Hàng mới)
+        ok(await m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')").count() == 0, "D63b Workflow ON: hàng lỗi không có link đổi ô bên nhận")
         await close_modal(pg)
         post("/harness/g16-wf?po=PO-SUA&on=0")
         await pg.reload(); await pg.wait_for_timeout(4000)
         m = await open_form(pg, "Kho")
-        await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi")
-        cbs = m.locator("button.gn-cellbtn", has_text="Gia công")
+        await click(m, pg, "Hàng lỗi")
+        cbs = m.locator("button.gn-cellbtn", has_text=no3)
         if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
-        await click(m, pg, "Giao cho nhóm khác")
+        await click(m, pg, "Gửi bộ phận khác sửa")
         dsel = m.locator("select", has=pg.locator("option", has_text="Chọn nhóm nhận")).first
         await dsel.select_option(label="Gia công"); await pg.wait_for_timeout(800)
         await m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')").click(); await pg.wait_for_timeout(500)

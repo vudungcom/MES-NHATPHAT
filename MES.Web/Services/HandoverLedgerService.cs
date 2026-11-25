@@ -2294,18 +2294,20 @@ namespace MES.Web.Services
                 if (code == "KHO")
                 {
                     // Kho: phôi tốt còn giao + hàng lỗi đang giữ
-                    G.ConGiao = G.NhanMoi + G.NhanLoiXl - G.GiaoMoi - V("glTra") - V("blDa");   // [GN-NG-AFTER] − phôi báo lỗi
+                    G.ConGiao = G.NhanMoi + G.NhanLoiXl - G.GiaoMoi - V("glTra") - V("blDa")   // [GN-NG-AFTER] − phôi báo lỗi
+                              - V("nxGiu");   // [N23-KHO-SUA] hàng Kho sửa đạt giữ ở Tồn hàng lỗi đã xử lý (chờ trả nơi báo lỗi): không phải phôi còn
                     // [GN-CELL] Tách 2 ô đang giữ theo Excel: Hàng lỗi (của mình) / Hàng sửa (nhóm khác gửi nhờ)
                     G.LoiGiu  = G.NhanLoi + V("bl") - V("glGui") - V("glTu") - V("glChuyen") - V("glHuy") - V("glKhach"); // [GN-NG-OUT] [GN-CELL2] + chuyển hàng lỗi; [GN-NG-AFTER] + báo lỗi sau khi nhận
                     G.SuaGiu  = G.NhanSua - G.GiaoSua - V("glSuaNg");
                     G.LamHoGiu = V("nhSend") - V("ghRet") - V("glLamHo");   // [GN-ROUTE-FREE] trước: 0 (Gia công không giao theo NC cho Kho được)
-                    var e = new LedgerExplain { Title = "Kho · Phôi còn giao", Formula = "Phôi nhận + Phôi đã sửa trả về + Khách gửi bù − Giao Hàng mới − Trả lỗi − Báo phôi lỗi", Rule = "L4", Result = G.ConGiao };   // [GN-NG-AFTER] · [KHACH-GUI-LAI] + bù
+                    var e = new LedgerExplain { Title = "Kho · Phôi còn giao", Formula = "Phôi nhận + Phôi đã sửa trả về + Khách gửi bù − Giao Hàng mới − Trả lỗi − Báo phôi lỗi − Hàng đã sửa giữ ô Tồn hàng lỗi đã xử lý", Rule = "L4", Result = G.ConGiao };   // [GN-NG-AFTER] · [KHACH-GUI-LAI] + bù
                     e.Terms.Add(Tm("nm", "Phôi Kho nhận", 1));
                     e.Terms.Add(Tm("nx", "Phôi đã sửa trả về", 1));
                     e.Terms.Add(Tm("nbu", "Khách gửi bù", 1));   // [KHACH-GUI-LAI]
                     e.Terms.Add(Tm("gm", "Giao Hàng mới", -1));
                     e.Terms.Add(Tm("glTra", "Trả lỗi", -1));
                     e.Terms.Add(Tm("blDa", "Báo phôi lỗi (phát hiện sau khi nhận)", -1));   // [GN-NG-AFTER]
+                    e.Terms.Add(Tm("nxGiu", "Hàng đã sửa giữ ở Tồn hàng lỗi đã xử lý (chờ trả nơi báo lỗi)", -1));   // [N23-KHO-SUA]
                     e.Terms.RemoveAll(x => x.Value == 0 && x.Label != "Phôi Kho nhận");
                     G.Explains["ConGiao"] = e;
                     var l = new LedgerExplain { Title = "Kho · Tồn hàng lỗi", Formula = "Nhận Hàng lỗi + Báo phôi lỗi − Gửi đi nhờ sửa − Tự sửa trả − Chuyển hàng lỗi − Huỷ − Trả khách", Rule = "L5, N9", Result = G.LoiGiu,
@@ -3731,7 +3733,10 @@ namespace MES.Web.Services
             if (rp.ToNC != RepXong || rp.NgCaseId is not long id || !inp.CaseInfo.TryGetValue(id, out var ci)) return "";
             // [SUA-HO-TRA-NGUOC 2026-11-11] + nhóm sửa hộ đứng SAU nơi phát hiện: cũng giữ ô Tồn hàng lỗi đã xử lý (rồi trả ngược đúng nơi phát hiện).
             //   Dấu @XONG cho nhóm sau nơi phát hiện chỉ có từ Gói 16 (HandoverForm.RepairTarget) — chứng từ cũ không đổi nghĩa.
-            return ci.DetectGroup == rp.Group ? "XONG" : ProdIdx(rp.Group) > 0 && ProdIdx(ci.DetectGroup) > 0 ? "GIU" : "";
+            // [N23-KHO-SUA 2026-11-25] + Kho sửa / xác nhận khách hàng của vụ do bộ phận sản xuất phát hiện: giữ ô Tồn hàng lỗi đã xử lý của Kho, rồi giao về nơi báo lỗi.
+            //   Dấu @XONG ở Kết quả sửa Kho chỉ có từ G-A2 (HandoverForm.RepairTarget) — chứng từ Kho cũ không dấu giữ nghĩa cũ (phôi còn).
+            //   Nguồn: KHÁCH 23/11 (mockup TH4); HÙNG 23/11 16:24 (N23).
+            return ci.DetectGroup == rp.Group ? "XONG" : (ProdIdx(rp.Group) > 0 || rp.Group == "KHO") && ProdIdx(ci.DetectGroup) > 0 ? "GIU" : "";
         }
 
         /// <summary>[XL-CHU-B 2026-11-10] Chữ dòng B khi hàng vào ô Hàng lỗi đã xử lý theo đích (XlDest / RepairDest). Rà độc lập Gói 15 (Thấp 5):

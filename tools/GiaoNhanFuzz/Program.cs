@@ -19,6 +19,7 @@ if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
 if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-SCEN 2026-11-19] Sổ luật ↔ code / Workflow ON-OFF (Gói 25: L7-WTS-CU)   // [A1-SCEN 2026-11-15] điểm ghi số lượng / khoá / đồng thời (Gói 22: A1-01, A1-02)
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
+if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
 if (args.Length > 0 && args[0] == "n17") { return await SuaScen.RunN17(); }   // [N17-KCS-BO 2026-11-23] sửa đạt không cần KCS xác nhận (chứng từ mới)
 if (args.Length > 0 && args[0] == "bu") { return await BuScen.Run(); }
 if (args.Length > 0 && args[0] == "ktt") { return await KhoTaroScen.Run(); }   // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro (NC đầu là Taro) + Taro trả phôi lỗi Kho   // [KHACH-GUI-LAI 2026-11-11] Gói 14 khách gửi bù phôi
@@ -235,6 +236,10 @@ for (int po = startPo; po < startPo + poCount; po++)
             ("lhsua", Environment.GetEnvironmentVariable("LAMHO") == "1" ? 20 : 0),
             // [SUA-XL-GIU 2026-11-10] giao hàng đã sửa từ ô Tồn hàng lỗi đã xử lý (hàm thật IssueByCellAsync). Trọng số 0 khi không có hàng đã sửa → dãy thao tác seed cũ không đổi.
             ("xlgiao", row.Groups.Values.Any(gx => gx.XlGiu > 0) ? 25 : 0),
+            // [N23-FUZZ 2026-11-25] G-A2: "Sửa tại bộ phận mình" + "Sửa đạt → giao đến" / "Sửa chưa đạt" tự trả nơi làm lỗi (hàm thật SaveFormAsync). Trọng số 0 khi không có vụ giữ
+            //   ô Hàng lỗi / Hàng sửa → dãy thao tác tới lúc đó không đổi (sau đó các seed cũ không chạy lại y hệt — rà độc lập L9). FORM23=<trọng số> (mặc định 14).
+            ("form23", row.Cases.Values.Any(c => c.Id > 0 && row.Groups.Keys.Any(g0 => c.HeldAt(g0, HandoverCell.Loi) > 0 || c.HeldAt(g0, HandoverCell.Sua) > 0))
+                       ? (int.TryParse(Environment.GetEnvironmentVariable("FORM23"), out var f23) ? f23 : 14) : 0),
             // [KHACH-GUI-LAI 2026-11-11] Gói 14: Kho nhận phôi khách gửi bù / huỷ phiếu bù (hàm thật). Trọng số 0 khi chưa có vụ trả khách / huỷ (bù) → dãy thao tác seed cũ không đổi tới lúc đó.
             ("bu", row.Cases.Values.Any(c => c.Id > 0 && c.TraKhach + c.Huy > 0) ? buW : 0), ("vbu", row.Bu > 0 ? Math.Max(1, buW / 2) : 0),
             // [KTT-PHOILOI 2026-11-12] Taro trả phôi lỗi (hàng đoạn đầu chuỗi chưa xong bộ Taro) về Kho. Trọng số 0 khi PO không đi đường Kho giao thẳng Taro
@@ -1379,6 +1384,82 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (exp.ToNcByCase && fncs.Count > 0 && req.NcReason is "lam lai NC truoc" or "da qua NC do" && !(db.HandoverTransactions.List.Last().Notes ?? "").Contains(req.NcReason))
                             fails.Add($"[Form V3 thiếu lý do lùi NC trong Ghi chú phiếu] PO{po} op{op} {desc}");
                     }
+                    break;
+                }
+                case "form23":   // [N23-FUZZ 2026-11-25] Sửa tại bộ phận mình (vụ đang giữ) + giao đến / chưa đạt tự trả — đáp án độc lập đọc bảng NgCases + chứng từ
+                {
+                    var cand = row.Cases.Values.Where(c => c.Id > 0).SelectMany(c => row.Groups.Keys.SelectMany(g0 => new[] { (c, g0, HandoverCell.Loi), (c, g0, HandoverCell.Sua) }))
+                                  .Where(x => x.c.HeldAt(x.g0, x.Item3) > 0).ToList();
+                    if (!cand.Any()) { Inc("skip.form23"); continue; }
+                    var (cs, g, cell) = cand[rnd.Next(cand.Count)];
+                    var held = cs.HeldAt(g, cell);
+                    var vc = db.NgCases.List.Single(v => v.NgCaseId == cs.Id);
+                    static int PI(string? x) => x switch { "GC" => 1, "HTSP" => 2, "KCS" => 3, "PKG" => 4, _ => -1 };
+                    bool lhK = LamHoVuDoc(db, cs) || !string.IsNullOrEmpty(cs.HelpFromNc);
+                    var tgt = FormHelp.ExpectRepairTarget(db, 1, cs.Id, g, lhK);
+                    bool giu = tgt == "@XONG" && vc.DetectGroupCode != g && PI(vc.DetectGroupCode) > 0 && (PI(g) > 0 || g == "KHO");
+                    bool khoMoi = !giu && g == "KHO";
+                    bool over = rnd.NextDouble() < 0.06;
+                    int n = over ? (int)held + 1 : rnd.Next(1, (int)held + 1);
+                    int fail = cell == HandoverCell.Sua ? rnd.Next(0, n + 1) : 0, pass = n - fail;
+                    var others = groups.Where(x => x != g).ToArray();
+                    string? suaTo = pass > 0 && rnd.NextDouble() < 0.75 ? (rnd.NextDouble() < 0.7 && vc.DetectGroupCode != null && vc.DetectGroupCode != g ? vc.DetectGroupCode : others[rnd.Next(others.Length)]) : null;
+                    if (rnd.NextDouble() < 0.03) suaTo = g;
+                    bool failTra = cell == HandoverCell.Sua && rnd.NextDouble() < 0.8;
+                    // nơi tự trả chiếc chưa đạt: nơi làm lỗi (nhóm khác mình) → nơi gửi (lần nhận gần nhất vào ô Hàng sửa của nhóm) — đọc bảng
+                    string? sender = db.HandoverTransactions.List.Where(t => !t.IsVoided && t.ToGroupCode == g && t.NgCaseId == cs.Id && t.Receives.Any(r => !r.IsVoided && (r.ToCell ?? t.ToCell) == HandoverCell.Sua))
+                                       .OrderBy(t => t.Receives.Where(r => !r.IsVoided).Max(r => r.ReceivedAt)).LastOrDefault()?.FromGroupCode;
+                    string? failTo = !failTra || fail <= 0 ? null : vc.CauseGroupCode is string cg && cg != g && groups.Contains(cg) ? cg : sender is string sd2 && sd2 != g ? sd2 : null;
+                    string? expErr = null;
+                    if (suaTo == g) expErr = "khác bộ phận mình";
+                    else if (row.ApplyWorkflow && g != "GC" && LamHoVuDoc(db, cs) && pass > 0) expErr = "";   // [TARO-LAMHO-NC] vụ làm hộ: chỉ Gia công sửa
+                    else if (suaTo != null && !giu && !khoMoi) expErr = "không vào Tồn hàng lỗi đã xử lý";
+                    else if (suaTo != null && giu && row.ApplyWorkflow && !FormHelp.XlDung(db, cs.Id, g, suaTo, HandoverLedgerService.HtspOnlyLamHo(row))) expErr = "";   // [XL-VUOT-CHAN]
+                    else if (suaTo != null && khoMoi && row.ApplyWorkflow && (FormHelp.KhoTaroPo(db, 1) && suaTo is "GC" or "HTSP" || FormHelp.Nguoc("KHO", suaTo))) expErr = "";
+                    else if (suaTo != null && khoMoi && row.ApplyWorkflow && suaTo == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(row)) expErr = "";
+                    var req = new FormGiaoRequest { KhPlanDetailId = 1, Group = g, UserId = Uid(g), Kind = HandoverForm.Loi, Pos = cell == HandoverCell.Loi ? "TONLOI" : "TONSUA",
+                                                    CaseId = cs.Id, Action = HandoverForm.ASua, Pass = pass, Fail = fail, SuaTo = suaTo, SuaFailTra = failTra };
+                    desc = $"form23 {g} {cell} vu={cs.Id} p={pass}/{fail} to={suaTo} failTra={failTra}→{failTo} giu={giu} khoMoi={khoMoi} tgt={tgt} held={held} over={over} exp={expErr}";
+                    var preDocs = FormHelp.Docs(db, 1); var preSig = ChuoiHelp.LedgerSig(row);
+                    int tx0 = db.HandoverTransactions.List.Count, kq0 = db.HandoverRepairResults.List.Count;
+                    var res = await svc.SaveFormAsync(req);
+                    ok = res.Ok;
+                    if (!ok)
+                    {
+                        Inc("rej.form23");
+                        if (FormHelp.Docs(db, 1) != preDocs || ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!) != preSig) fails.Add($"[N23 form bị chặn mà ghi dở] PO{po} op{op} {desc}: {res.Error}");
+                        // chặn ngoài đáp án: trần (over), lời đã biết; còn lại chỉ chấp nhận khi lời K5 / làm hộ / NC (luật cũ ngoài phạm vi đáp án này) — ghi để xem
+                        if (!over && expErr == null && !res.Error.StartsWith("Không lưu")) fails.Add($"[N23 form trong đáp án bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                        if (over && !res.Error.Contains("tối đa") && expErr == null) fails.Add($"[N23 form vượt trần không bị trần chặn] PO{po} op{op} {desc}: {res.Error}");
+                        if (!over && expErr is string ee && ee != "" && !res.Error.Contains(ee)) fails.Add($"[N23 form chặn sai lời] PO{po} op{op} {desc}: cần \"{ee}\" · {res.Error}");
+                        break;
+                    }
+                    Inc("n23.form23." + (suaTo == null ? "khonggiao" : giu ? "giu" : "khomoi") + (failTo != null ? ".tra" : ""));
+                    if (over || expErr != null) { fails.Add($"[N23 form lọt] PO{po} op{op} {desc}"); break; }
+                    var newTx = db.HandoverTransactions.List.Skip(tx0).ToList();
+                    int dKq = db.HandoverRepairResults.List.Count - kq0;
+                    int expTx = (suaTo != null ? 1 : 0) + (failTo != null ? 1 : 0);
+                    int expKq = 1;   // [N23-SUA-CHUADAT rà độc lập T4] luôn ghi Kết quả sửa (cả số chưa đạt)
+                    checks++;
+                    if (newTx.Count != expTx || dKq != expKq) { fails.Add($"[N23 form sai số chứng từ] PO{po} op{op} {desc}: phiếu {newTx.Count}/{expTx} KQ {dKq}/{expKq}"); break; }
+                    if (expKq == 1)
+                    {
+                        var kr = db.HandoverRepairResults.List.Last();
+                        if (kr.QtyPass != pass || kr.QtyFail != fail || kr.NgCaseId != cs.Id || kr.SourceCell != cell)
+                            fails.Add($"[N23 Kết quả sửa sai] PO{po} op{op} {desc}: {kr.QtyPass}/{kr.QtyFail} vụ {kr.NgCaseId} ô {kr.SourceCell}");
+                    }
+                    if (suaTo != null && !newTx.Any(t => t.FromGroupCode == g && t.ToGroupCode == suaTo && t.QtyIssued == pass
+                                                         && t.FromCell == (giu ? HandoverCell.Xl : HandoverCell.Moi) && t.ToCell == (giu ? HandoverCell.Xl : HandoverCell.Moi) && (!giu || t.NgCaseId == cs.Id)))
+                        fails.Add($"[N23 phiếu giao kèm sai] PO{po} op{op} {desc}: {string.Join(";", newTx.Select(t => $"{t.FromGroupCode}→{t.ToGroupCode} {t.FromCell}→{t.ToCell} {t.QtyIssued} vụ {t.NgCaseId}"))}");
+                    if (failTo != null && !newTx.Any(t => t.FromGroupCode == g && t.ToGroupCode == failTo && t.QtyIssued == fail && t.FromCell == HandoverCell.Loi && t.ToCell == HandoverCell.Loi && t.NgCaseId == cs.Id))
+                        fails.Add($"[N23 phiếu trả chưa đạt sai] PO{po} op{op} {desc}: {string.Join(";", newTx.Select(t => $"{t.FromGroupCode}→{t.ToGroupCode} {t.FromCell}→{t.ToCell} {t.QtyIssued} vụ {t.NgCaseId}"))}");
+                    var a23 = (await led.GetLedgerForDetailAsync(1))!;
+                    var h1 = a23.Cases[cs.Id].HeldAt(g, cell);
+                    var expH = cell == HandoverCell.Loi ? held - pass : held - pass - fail;
+                    var expLoiG = row.Cases[cs.Id].HeldAt(g, HandoverCell.Loi) + (cell == HandoverCell.Sua && failTo == null ? fail : 0) - (cell == HandoverCell.Loi ? pass : 0);
+                    if (h1 != expH || a23.Cases[cs.Id].HeldAt(g, HandoverCell.Loi) != expLoiG) fails.Add($"[N23 vụ còn giữ sai] PO{po} op{op} {desc}: ô {h1}/{expH} · Hàng lỗi {a23.Cases[cs.Id].HeldAt(g, HandoverCell.Loi)}/{expLoiG}");
+                    if (suaTo != null && giu && a23.Cases[cs.Id].HeldAt(g, HandoverCell.Xl) != row.Cases[cs.Id].HeldAt(g, HandoverCell.Xl))
+                        fails.Add($"[N23 giao kèm mà còn giữ Tồn hàng lỗi đã xử lý] PO{po} op{op} {desc}");
                     break;
                 }
                 case "xnsua":   // [GC-SUA-TAI-CHO] KCS xác nhận (hàm thật ConfirmRepairAsync)

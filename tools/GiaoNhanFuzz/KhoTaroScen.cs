@@ -130,6 +130,14 @@ public static class KhoTaroScen
         var kb2 = await svc.ReceiveAsync(ta.HandoverTxId, 0, 2, null, U);
         var r3b = await Row();
         Ok(kb2.Ok && r3b.G("KHO").LoiGiu == 3 && r3b.Cases[vua.NgCaseId].HeldAt("KHO", HandoverCell.Loi) == 2 && Clean(r3b), "Kho nhận → Tồn hàng lỗi 3 (vụ phôi lỗi giữ 2 ở Kho)", kb2.Error);
+        // [N23-KHO-SUA rà độc lập C1 2026-11-25] Kho sửa / xác nhận khách vụ phôi lỗi Taro: như cũ (không dấu → phôi còn, giao thẳng Taro lại) — không giữ ô XL rồi trả HTSP
+        //   (sẽ vào Chưa làm HTSP, bỏ qua Taro NC đầu). Sổ = đáp án độc lập; form không có ô giao Hàng mới cho Gia công / HTSP (KTT-CHI-TARO).
+        Ok(HandoverForm.RepairTarget(r3b, vua.NgCaseId, "KHO") == null && FormHelp.ExpectRepairTarget(db, det, vua.NgCaseId, "KHO", false) == null
+           && HandoverForm.SuaGive(r3b, "KHO", r3b.Cases[vua.NgCaseId])?.Cell == HandoverCell.Moi,
+           "N23: Kho sửa vụ phôi lỗi Taro → đích như cũ (phôi còn), ô giao đến kiểu Hàng mới (không giữ ô Tồn hàng lỗi đã xử lý)",
+           $"{HandoverForm.RepairTarget(r3b, vua.NgCaseId, "KHO")} / {FormHelp.ExpectRepairTarget(db, det, vua.NgCaseId, "KHO", false)} · đích nếu không có nhánh làm hộ {HandoverForm.RepairTarget(r3b, "KHO", "HTSP", null, NgOrigin.TraLoi, "KHACH", false)} · làm hộ {r3b.Cases[vua.NgCaseId].IsLamHo}/{r3b.Cases[vua.NgCaseId].HelpFromNc}");
+        Ok(HandoverForm.RepairTarget(r3b, "KHO", "HTSP", null, NgOrigin.TraLoi, "KHACH", false) == null,
+           "N23 (rà độc lập C1): cả hàm đích 7 tham số (không qua nhánh vụ làm hộ) cũng ra như cũ cho phôi lỗi Taro");
         var trace = HandoverNgTrace.Build((await led.GetInputForDetailAsync(det))!);
         Ok(trace.Problems.Count == 0 && trace.Events.Any(e => e.CausedBy == "KHACH" && e.DetectedAt == "HTSP" && e.Text.Contains("phôi lỗi")),
            "Đường đi hàng lỗi: sự kiện phát sinh ở HTSP, nơi gây lỗi Khách hàng (chữ \"phôi lỗi\"), không vấn đề", string.Join(" | ", trace.Problems));

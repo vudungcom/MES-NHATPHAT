@@ -64,11 +64,15 @@ async def main():
         print("[X1] [SUA-KHONG-LUI] Gia công sửa vụ KCS phát hiện: không chọn NC, không làm lại công đoạn")
         try:
             m = await open_form(pg, "Gia công")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi")
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi")   # [N23-FORM6 25/11] dòng theo mã vụ
             cbs = m.locator("button.gn-cellbtn", has_text="KCS")
             if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
-            await click(m, pg, "Sửa tại nhóm")
+            await click(m, pg, "Sửa tại bộ phận mình")
             await qty(m, pg, 2)
+            # [N23-SUA-GIAO 25/11] đáp án đổi: có ô "Sửa đạt → giao đến" (mặc định KCS — nơi báo lỗi); driver chọn "Chưa giao" để kiểm tiếp đường giữ ô như cũ
+            gsel = m.locator("select:has(option:text-is('Chưa giao — giữ ở Tồn hàng lỗi đã xử lý'))")
+            ok(await gsel.count() == 1, "X10 có ô 'Sửa đạt → giao đến' (mặc định nơi báo lỗi) + lựa chọn Chưa giao")
+            if await gsel.count(): await gsel.select_option(label='Chưa giao — giữ ở Tồn hàng lỗi đã xử lý'); await pg.wait_for_timeout(600)
             t = await m.inner_text()
             nsel = m.locator("select", has=pg.locator("option", has_text="mặc định"))
             ok(await nsel.count() == 0, "X11 không có ô chọn NC làm tiếp", t[-600:])
@@ -105,12 +109,11 @@ async def main():
         try:
             await pg.goto(BASE + "/handover"); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "Gia công")
-            await click(m, pg, "Hàng tốt")
+            # [N23-FORM6 25/11] đáp án đổi: hàng đã sửa chờ trả nằm ở "Hàng lỗi" (luật N23 "hàng lỗi luôn đi từ ô Hàng lỗi", mockup TH10 bước 4)
+            await click(m, pg, "Hàng lỗi")
             bt = await btn_texts(m)
-            ok(any(x.startswith("Hàng đã sửa — chờ trả nơi phát hiện lỗi") and x.endswith("có 2") for x in bt), "X31 Hàng tốt: nút 'Hàng đã sửa — chờ trả nơi phát hiện lỗi' có 2", bt)
-            await click(m, pg, "Hàng đã sửa — chờ trả nơi phát hiện lỗi")
-            cbs = m.locator("button.gn-cellbtn", has_text="KCS")
-            if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
+            ok(any(x.startswith("Đang giữ ở ô Hàng lỗi đã xử lý — VL") and "về KCS" in x and x.endswith("có 2") for x in bt), "X31 Hàng lỗi: dòng 'Đang giữ ở ô Hàng lỗi đã xử lý — VL… · về KCS' có 2", bt)
+            await click(m, pg, "Đang giữ ở ô Hàng lỗi đã xử lý")   # [N23-FORM6] dòng theo mã vụ: bấm dòng = chọn vụ (không còn ô chọn vụ riêng)
             sel, opts = await dest_opts(m)
             real = [o for o in opts if "Chọn nhóm nhận" not in o]
             ok(sorted(real) == ["HTSP", "KCS"], "X32 nhóm nhận chỉ HTSP / KCS (không Kho, không Đóng gói)", opts)
@@ -144,12 +147,10 @@ async def main():
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "HTSP")
             await click(m, pg, "Hàng lỗi")
-            await click(m, pg, "Hàng đã sửa bị hỏng lại")
-            cbs = m.locator("button.gn-cellbtn", has_text="KCS")
-            if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
+            await click(m, pg, "Hàng đã sửa bị hỏng lại")   # [N23-FORM6] dòng theo mã vụ: bấm dòng = chọn vụ
             bt = await btn_texts(m)
-            ok(any(x.startswith("Trả lại vào ô Hàng lỗi") for x in bt), "X51 có việc 'Trả lại vào ô Hàng lỗi (cùng vụ, để sửa lại)'", bt)
-            await click(m, pg, "cùng vụ, để sửa lại")   # chữ riêng của nút việc (nút vị trí cũng có "trả lại vào ô Hàng lỗi")
+            ok("Trả nơi làm lỗi" in bt, "X51 [N23-FORM6] hàng đã sửa bị hỏng lại: nút 'Trả nơi làm lỗi' (trả lại ô Hàng lỗi, cùng vụ)", bt)
+            await click(m, pg, "Trả nơi làm lỗi")
             sel, opts = await dest_opts(m)
             cur = await sel.evaluate("s => s.options[s.selectedIndex].text") if await sel.count() else ""
             ok(cur == "Gia công" and [o for o in opts if "Chọn nhóm nhận" not in o] == ["Gia công"], "X52 [XL-TRA-NHOMSUA] nhóm nhận chỉ Gia công (nhóm đã sửa), mặc định Gia công", {"cur": cur, "opts": opts})
@@ -171,10 +172,8 @@ async def main():
         try:
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "HTSP")
-            await click(m, pg, "Hàng tốt")
-            await click(m, pg, "Hàng đã sửa — chờ trả nơi phát hiện lỗi")
-            cbs = m.locator("button.gn-cellbtn", has_text="KCS")
-            if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
+            await click(m, pg, "Hàng lỗi")   # [N23-FORM6 25/11]
+            await click(m, pg, "Đang giữ ở ô Hàng lỗi đã xử lý")   # [N23-FORM6] dòng theo mã vụ: bấm dòng = chọn vụ (không còn ô chọn vụ riêng)
             sel, opts = await dest_opts(m)
             real = [o for o in opts if "Chọn nhóm nhận" not in o]
             ok(real == ["KCS"], "X61 nhóm nhận chỉ KCS (không vượt sang Đóng gói)", opts)
@@ -197,10 +196,10 @@ async def main():
             post("/harness/g15-off")
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "Gia công")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi")
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi")   # [N23-FORM6 25/11] dòng theo mã vụ
             cbs = m.locator("button.gn-cellbtn", has_text="KCS")
             if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
-            await click(m, pg, "Sửa tại nhóm")
+            await click(m, pg, "Sửa tại bộ phận mình")   # [N23-FORM6]
             await qty(m, pg, 1)
             sel = m.locator("select", has=pg.locator("option", has_text="Không làm lại NC")).first
             opts = await sel.evaluate("s => Array.from(s.options).map(o => o.text)") if await sel.count() else []

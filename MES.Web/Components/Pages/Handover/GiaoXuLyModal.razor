@@ -12,6 +12,10 @@
           KHÁCH 04/11 16:09 + HÙNG 17:35 (K4 bỏ link đỏ Báo lỗi / link Kết quả sửa / mục Khác — gộp vào form này).
    Trang chỉ hiện + gửi lựa chọn. Số trên từng dòng đọc từ sổ chung (HandoverForm.FormPositions); máy chủ (HandoverService.SaveFormAsync)
    tự ánh xạ chứng từ, kiểm lại trần / quyền / vụ / NC làm tiếp, ghi 1 giao dịch + K5. Nhận (và KCS xác nhận chứng từ cũ ghi trước bản N17) vẫn ở nút Nhận.
+   [N23-FORM6 2026-11-25] Luật N23 (khách chốt mockup 23/11 — Form chung, TH4, TH10): bước 2 mỗi mã vụ 1 dòng ("Đang giữ ở ô Hàng lỗi — VL… · Gia công trả"),
+   hàng đã sửa chờ trả nằm ở "Hàng lỗi" (luật "hàng lỗi luôn đi từ ô Hàng lỗi"); bước 3 luôn đủ 6 nút (HandoverForm.FormButtons — nút xám ghi lý do ngay dưới);
+   bước 4 ô bộ phận nhận luôn hiện + mặc định (Giao đến / Gửi đến / Trả đến); Sửa có "Đạt → giao đến"; nút Xác nhận chưa bấm được thì ghi rõ còn thiếu gì.
+   Nguồn: KHÁCH 23/11 (mockup Form chung / TH4 / TH10, chat 16:03); HÙNG 23/11 16:24 (N23).
    ===================================================================== *@
 
 <div class="mes-modal-backdrop">
@@ -66,6 +70,11 @@
             {
                 <div class="alert alert-danger py-1 small mt-2 mb-0" style="white-space:pre-line">@_err</div>
             }
+            @if (!string.IsNullOrEmpty(_group) && string.IsNullOrEmpty(_err) && Missing() is string miss)
+            {
+                @* [N23-FORM6] nút Xác nhận chưa bấm được → ghi rõ còn thiếu gì (mockup Form chung) *@
+                <div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>@miss</div>
+            }
         </div>
         <div class="mes-modal-footer">
             <button class="btn btn-sm btn-secondary" @onclick="CloseAsync">Huỷ</button>
@@ -99,7 +108,6 @@
     string  _cause = "";
     string  _action = "";
     string  _to    = "";      // "" = mặc định
-    string  _purpose = "";    // TRA | NHO ("" = mặc định)
     string  _toCell = "";     // "" = theo lựa chọn
     string  _toNc  = "";
     decimal _qty;
@@ -109,6 +117,9 @@
     string  _ncReason = "";
     int?    _catId;
     string  _notes = "";
+    string  _suaTo = "";      // [N23-SUA-GIAO] "" = mặc định (nơi báo lỗi), NoGive = chưa giao, còn lại = mã nhóm
+    bool    _posTot;          // [N23-FORM6] dòng đang chọn lấy từ danh sách Hàng tốt (hàng đã sửa chờ trả, hiện ở "Hàng lỗi")
+    const string NoGive = "@NO";
     bool    _showOpt;
     bool    _saving;
 
@@ -125,9 +136,14 @@
     decimal BuMax => IsBu && _caseId is long bc ? HandoverLedgerService.BuCap(Row, bc).Max : 0;
 
     // ── Dữ liệu suy từ sổ (đọc lại mỗi lần vẽ: trang tự cập nhật số khi người khác lưu) ──
-    List<FormPos> Positions => string.IsNullOrEmpty(_group) || string.IsNullOrEmpty(_kind) || _kind == BuKind ? new() : HandoverForm.FormPositions(Row, _group, _kind == HandoverForm.Tot);
-    FormPos? Pos => Positions.FirstOrDefault(p => p.Id == _pos);
-    bool IsTot => _kind == HandoverForm.Tot;
+    // [N23-FORM6] Hàng tốt: không còn dòng hàng đã sửa chờ trả (chuyển sang "Hàng lỗi" — mockup TH10 bước 4); máy chủ vẫn nhận Kind TOT + TONXL như cũ.
+    List<FormPos> Positions => string.IsNullOrEmpty(_group) || string.IsNullOrEmpty(_kind) || _kind == BuKind ? new()
+        : HandoverForm.FormPositions(Row, _group, _kind == HandoverForm.Tot).Where(p => !(_kind == HandoverForm.Tot && p.HeldCell == HandoverCell.Xl)).ToList();
+    /// <summary>[N23-FORM6] Dòng hàng đã sửa chờ trả (danh sách Hàng tốt của sổ) — hiện ở bước 2 của "Hàng lỗi".</summary>
+    List<FormPos> TotXlPositions => string.IsNullOrEmpty(_group) || _kind != HandoverForm.Loi ? new()
+        : HandoverForm.FormPositions(Row, _group, true).Where(p => p.HeldCell == HandoverCell.Xl).ToList();
+    FormPos? Pos => _posTot ? TotXlPositions.FirstOrDefault(p => p.Id == _pos) : Positions.FirstOrDefault(p => p.Id == _pos);
+    bool IsTot => _kind == HandoverForm.Tot || _posTot;
     bool IsFresh => !IsTot && Pos is { Fresh: true };
     bool IsHeld => Pos?.HeldCell != null && (!IsTot || IsXl);   // [SUA-XL-GIU] hàng tốt: dòng hàng đã sửa (theo vụ)
     /// <summary>[SUA-XL-GIU 2026-11-10] Dòng hàng đã sửa (Tồn hàng lỗi đã xử lý, theo vụ): Hàng tốt = trả tiếp nơi phát hiện; Hàng lỗi = trả lại ô Hàng lỗi [XL-TRA-LAI].
@@ -136,8 +152,11 @@
     List<LedgerCase> HeldCases => IsHeld ? Row.CasesHeldAt(_group, Pos!.HeldCell!) : new();
     LedgerCase? Case => _caseId == null ? null : HeldCases.FirstOrDefault(c => c.Id == _caseId);
     bool Ready => Pos != null && (!IsHeld || Case != null);
-    string Act => !Ready ? "" : IsTot ? HandoverForm.AGiao : _action;
-    bool IsGiao => Act is HandoverForm.AGiao or HandoverForm.ATraLai or HandoverForm.ASuaXong;
+    // [N23-FORM6] nút Gửi bộ phận khác sửa / Trả nơi làm lỗi = Giao (máy chủ: Purpose NHO / TRA)
+    string Act => !Ready ? "" : IsTot ? HandoverForm.AGiao : _action is HandoverForm.BNho or HandoverForm.BTra ? HandoverForm.AGiao : _action;
+    bool IsGiao => Act == HandoverForm.AGiao;
+    bool IsNho => !IsTot && _action == HandoverForm.BNho;
+    bool IsTra => !IsTot && _action == HandoverForm.BTra;
     bool IsSua => Act == HandoverForm.ASua;
     bool HelpFrom => Pos?.HelpFrom != null;
     bool LamHo => IsTot && Pos is { LamHo: true };
@@ -155,9 +174,9 @@
                   : LamHo ? HandoverLedgerService.IssueCap(Row, _group, HandoverPurpose.HelpReturn, null, null, string.IsNullOrEmpty(_toNc) ? null : _toNc).Max
                   : Pos.Have;
 
-    /// <summary>Nơi gây lỗi là nhóm khác nhóm mình ((b) Hùng 17:35: chỉ khi đó mới có "Trả nơi gây lỗi").</summary>
-    string? CauseGroup => IsFresh ? (PrevOn && _group != "KHO" && !string.IsNullOrEmpty(EffCause) && EffCause != "KHACH" && EffCause != _group ? EffCause : null)   // [CAUSE-BAT-BUOC] chưa chọn → chưa có "Trả nơi gây lỗi"
-                        : Case != null ? HandoverForm.CaseCauseGroup(Case, _group) : null;
+    /// <summary>[N23-FORM6] Nơi gây lỗi đã chọn (lỗi mới, có tích; Kho = khách) — đầu vào của 6 nút / "Trả đến".</summary>
+    string? TraCause => IsFresh && PrevOn ? EffCause : null;
+    List<HandoverForm.FormBtn> Btns => !Ready || IsTot || Pos == null ? new() : HandoverForm.FormButtons(Row, _group, Pos, Case, TraCause, PrevOn);
     // [CAUSE-BAT-BUOC 2026-11-10] "Lỗi công đoạn trước": người dùng BẮT BUỘC tự chọn nơi gây lỗi, không điền sẵn (trước: mặc định nhóm trước).
     //   Nguồn: HÙNG 10/11 16:52 "họ bắt buộc phải chọn mà, mình cũng ko cần gợi ý sẵn đâu, kệ họ". Kho: lỗi có sẵn = phôi khách (không chọn).
     string EffCause => _group == "KHO" ? "KHACH" : _cause;   // (trước [CAUSE-BAT-BUOC]: [LAMHO-L2-KCS] trống = nhóm trước theo PO)
@@ -165,8 +184,7 @@
     bool PrevOn => IsFresh && _prev && (Pos == null || Pos.PrevOk);
     // [CAUSE-BAT-BUOC] (rà độc lập Thấp 2) chưa chọn nơi gây lỗi → chưa xem trước chứng từ / ô nhận (sẽ đổi theo nơi chọn)
     bool CauseMissing => PrevOn && _group != "KHO" && string.IsNullOrEmpty(_cause);
-    bool ShowPurpose => IsGiao && !IsTot && Act == HandoverForm.AGiao && _group != "KHO" && !LamHoLoi && !IsXl && !IsTaroPhoi;   // [TARO-LAMHO-NC] · [SUA-XL-GIU] · [KTT-PHOILOI]
-    string EffPurpose => _group == "KHO" ? HandoverForm.PNho : !string.IsNullOrEmpty(_purpose) ? _purpose : (CauseGroup != null ? HandoverForm.PTra : HandoverForm.PNho);
+    string EffPurpose => IsTra ? HandoverForm.PTra : HandoverForm.PNho;   // [N23-FORM6] theo nút (trước: 2 nút Trả nơi gây lỗi / Gửi nhờ sửa ở Chi tiết)
 
     string DefaultDest
     {
@@ -174,25 +192,26 @@
         {
             if (LamHo || LamHoLoi) return "GC";   // [TARO-LAMHO-NC]
             if (IsTaroPhoi) return "KHO";   // [KTT-PHOILOI]
-            if (IsXl) return Case == null ? "" : IsTot ? (Case.DetectGroup ?? "") : XlTraLaiDefault(Case);   // mặc định nơi phát hiện [SUA-XL-GIU] · hỏng lại: bộ phận làm lỗi [XL-TRA-NOILOI]   // [SUA-XL-GIU] mặc định nơi phát hiện · [XL-TRA-LAI][XL-TRA-NHOMSUA] nhóm đã sửa (không phải chính mình)
+            if (IsXl) return Case == null ? "" : IsTot ? (Case.DetectGroup ?? "") : HandoverForm.XlTraLaiDefault(Case, _group);   // mặc định nơi phát hiện [SUA-XL-GIU] · hỏng lại: bộ phận làm lỗi [XL-TRA-NOILOI] / nhóm đã sửa [XL-TRA-NHOMSUA]
             if (IsTot && HelpFrom) return HandoverForm.NextGroup(_group);   // [GOI8-THAP-E rà độc lập Gói 10 T2] giao theo NC (làm hộ) mặc định HTSP như cũ — không theo "PO không có HTSP / HTSP chỉ làm hộ" (trước: ra KCS, máy chủ chặn). Nguồn: CLAUDE (rà độc lập Gói 10)
             if (IsTot) return HandoverForm.NextGroup(_group, Row);   // [TARO-LAMHO-NC] HTSP chỉ làm hộ: giao thẳng KCS · [GOI8-THAP-E] + PO không có công đoạn HTSP
-            if (Act is HandoverForm.ATraLai or HandoverForm.ASuaXong) return (Case == null ? null : HandoverForm.CaseSender(Case, _group)) ?? "";
-            if (EffPurpose == HandoverForm.PTra && CauseGroup != null) return CauseGroup;
-            return _group == "KHO" ? "GC" : HandoverForm.PrevGroup(_group, Row) is var p && p != "" ? p : HandoverForm.NextGroup(_group, Row);   // [LAMHO-L2-KCS] · [GOI8-THAP-E]
+            // [N23-FORM6] Trả đến = nơi làm lỗi (tự điền); Gửi đến = bộ phận kế tiếp theo quy trình (chọn lại được) — mockup Bước 4. Trước: theo 2 nút Trả / Nhờ ở Chi tiết.
+            if (IsTra) return HandoverForm.TraTarget(_group, Pos!, Case, TraCause) ?? "";
+            if (IsNho) return HandoverForm.NhoDefault(_group, Row);
+            return "";
         }
     }
-    string Dest => LamHo || LamHoLoi ? "GC" : IsTaroPhoi ? "KHO" : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC] · [KTT-PHOILOI] chỉ trả Kho
+    // [N23-FORM6] "Trả đến" tự điền (không chọn), trừ hàng đã sửa bị hỏng lại (nhiều nhóm đã sửa — chọn được như cũ [XL-TRA-NHOMSUA])
+    string Dest => LamHo || LamHoLoi ? "GC" : IsTaroPhoi ? "KHO" : IsTra && !IsXl ? DefaultDest : !string.IsNullOrEmpty(_to) ? _to : DefaultDest;   // [TARO-LAMHO-NC] · [KTT-PHOILOI] chỉ trả Kho
 
     /// <summary>Ô bên nhận theo lựa chọn (có thể đổi ở Tuỳ chọn).</summary>
     string DefaultToCell => IsXl ? (IsTot ? HandoverCell.Xl : HandoverCell.Loi)   // [SUA-XL-GIU][XL-TRA-LAI]
         : IsTot ? HandoverCell.Moi
         : LamHoLoi || IsTaroPhoi ? HandoverCell.Loi   // [TARO-LAMHO-NC] · [KTT-PHOILOI]
-        : Act == HandoverForm.ATraLai ? HandoverCell.Loi
-        : Act == HandoverForm.ASuaXong ? HandoverCell.Xl
-        : EffPurpose == HandoverForm.PTra ? HandoverCell.Loi : HandoverCell.Sua;
+        : IsTra ? HandoverCell.Loi : HandoverCell.Sua;   // [N23-FORM6] Trả nơi làm lỗi → ô Hàng lỗi · Gửi bộ phận khác sửa → ô Hàng sửa
     string ToCellNow => !string.IsNullOrEmpty(_toCell) ? _toCell : DefaultToCell;
-    bool CanPickCell => !IsXl && !KhoTaro && !IsTaroPhoi && ((IsTot && !HelpFrom && !LamHo) || (!IsTot && Act == HandoverForm.AGiao && !LamHoLoi));   // [TARO-LAMHO-NC] · [SUA-XL-GIU] ô cố định · [KHO-TARO-THANG][KTT-PHOILOI]
+    // [N23-FORM6] hàng lỗi: ô nhận theo nút (Workflow ON không đổi); Workflow OFF vẫn cho đổi ô như cũ
+    bool CanPickCell => !IsXl && !KhoTaro && !IsTaroPhoi && ((IsTot && !HelpFrom && !LamHo) || (!IsTot && !Row.ApplyWorkflow && IsGiao && !LamHoLoi));   // [TARO-LAMHO-NC] · [SUA-XL-GIU] ô cố định · [KHO-TARO-THANG][KTT-PHOILOI]
     bool GcHasNc => Row.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code));
     /// <summary>[K2] Hàng của vụ (đã xử lý) giao vào Gia công ô Hàng lỗi đã xử lý / Hàng mới: NC nhận theo vụ, như sửa tại nhóm (rà độc lập V3).</summary>
     bool CaseToGc => !IsTot && !IsXl && IsGiao && Dest == "GC" && GcHasNc && ToCellNow is HandoverCell.Moi or HandoverCell.Xl;
@@ -228,22 +247,35 @@
     //   Nguồn: KHÁCH 23/11 (mockup TH8); HÙNG 23/11 16:24 (N20).
     bool NotesRequired => false;
 
-    bool CanSave
+    bool CanSave => Missing() == null;
+
+    /// <summary>[N23-FORM6] Nút Xác nhận chưa bấm được thì còn thiếu gì (null = đủ). Cùng điều kiện CanSave cũ, thêm chữ (mockup Form chung).</summary>
+    string? Missing()
     {
-        get
+        if (string.IsNullOrEmpty(_kind)) return "Chọn hàng gì (bước 1).";
+        if (IsBu)   // [KHACH-GUI-LAI]
+            return _caseId is not long ? $"Chọn {NgCaseNo.Term} cần bù (bước 2)." : _qty <= 0 ? "Nhập số phôi khách gửi bù." : _qty > BuMax ? $"Số phôi bù vượt tối đa {BuMax:0.##}." : null;
+        if (Pos == null) return "Chọn hàng đang ở đâu (bước 2).";
+        if (IsHeld && Case == null) return $"Chọn {NgCaseNo.Term} ở bước 2.";
+        if (string.IsNullOrEmpty(Act)) return "Chọn làm gì (bước 3).";
+        if (Btns.FirstOrDefault(b => b.Code == _action) is { On: false } bo) return $"\"{bo.Label}\" đang xám: {bo.Why}.";
+        if (_action == HandoverForm.AGiu && Pos != null && HandoverForm.GiuNoop(Pos)) return "Hàng đã nằm sẵn ở ô này (đã có mã vụ) — giữ lại không cần ghi gì, bấm Huỷ để đóng.";   // [N23-FORM6 rà độc lập T3]
+        if (CauseMissing) return "Chọn nơi gây lỗi (bắt buộc khi tích \"Lỗi công đoạn trước\").";   // [CAUSE-BAT-BUOC]
+        if (IsSua)
         {
-            if (IsBu) return _caseId is long && _qty > 0 && _qty <= BuMax;   // [KHACH-GUI-LAI]
-            if (string.IsNullOrEmpty(Act)) return false;
-            if (IsSua) { if (_pass < 0 || _fail < 0 || _pass + _fail <= 0 || _pass + _fail > Have) return false; }
-            else if (_qty <= 0 || _qty > Have) return false;
-            if (IsGiao && (string.IsNullOrEmpty(Dest) || Dest == _group)) return false;
-            if (NeedCat && _catId == null) return false;
-            if (CauseMissing) return false;   // [CAUSE-BAT-BUOC] phải chọn nơi gây lỗi
-            if (NcEarlier && _ncReason.Trim().Length < HandoverForm.NcReasonMin) return false;
-            if (LamHo && NeedToNc && string.IsNullOrEmpty(_toNc)) return false;   // (rà độc lập T2) PO không có NC thường: không bắt chọn
-            if (NotesRequired && string.IsNullOrWhiteSpace(_notes)) return false;
-            return true;
+            if (_pass < 0 || _fail < 0) return "Số sửa đạt / chưa đạt không được âm.";
+            if (_pass + SuaFailSent <= 0) return "Nhập số sửa đạt" + (SuaFailInput ? " hoặc chưa đạt." : ".");
+            if (_pass + SuaFailSent > Have) return $"Sửa đạt + chưa đạt vượt tối đa {Have:0.##}.";
         }
+        else if (_qty <= 0) return "Nhập số lượng.";
+        else if (_qty > Have) return $"Số lượng vượt tối đa {Have:0.##}.";
+        if (IsGiao && string.IsNullOrEmpty(Dest)) return "Chọn bộ phận nhận.";
+        if (IsGiao && Dest == _group) return "Bộ phận nhận phải khác bộ phận đang giữ hàng.";
+        if (NeedCat && _catId == null) return "Chọn loại lỗi.";
+        if (NcEarlier && _ncReason.Trim().Length < HandoverForm.NcReasonMin) return $"Ghi lý do làm lại NC (ít nhất {HandoverForm.NcReasonMin} ký tự).";
+        if (LamHo && NeedToNc && string.IsNullOrEmpty(_toNc)) return "Chọn NC nhận vào.";   // (rà độc lập T2) PO không có NC thường: không bắt chọn
+        if (NotesRequired && string.IsNullOrWhiteSpace(_notes)) return "Ghi chú.";
+        return null;
     }
 
     // ── Bước 1 ──────────────────────────────────────────────────────────
@@ -318,25 +350,88 @@
     };
 
     // ── Bước 2 ──────────────────────────────────────────────────────────
+    // [N23-FORM6] Bước 2: dòng đang giữ theo vụ (ô Hàng lỗi / Hàng sửa / hàng đã sửa / hàng làm hộ bị lỗi) — MỖI MÃ VỤ 1 DÒNG (mockup TH4 bước 3:
+    //   "Đang giữ ở ô Hàng lỗi — VL000316 · Gia công trả"); không có vụ thì 1 dòng "có 0". Hàng lỗi: thêm dòng hàng đã sửa chờ trả (lấy từ danh sách Hàng tốt).
+    record ViewRow(string Key, FormPos P, bool FromTot, long? CaseId, string Label, string Sub, decimal Have);
+
+    List<ViewRow> ViewRows()
+    {
+        var list = new List<ViewRow>();
+        void AddPos(FormPos p, bool fromTot)
+        {
+            if (p.HeldCell == null) { list.Add(new ViewRow(p.Id, p, fromTot, null, p.Label, p.Sub, p.Have)); return; }
+            var cs = Row.CasesHeldAt(_group, p.HeldCell);
+            if (cs.Count == 0) { list.Add(new ViewRow(p.Id, p, fromTot, null, HeldHead(p, fromTot), "", 0)); return; }
+            foreach (var c in cs)
+                list.Add(new ViewRow(p.Id + "|" + c.Id, p, fromTot, c.Id, HeldHead(p, fromTot) + " — " + CaseWho(p, fromTot, c), CaseSub(c), Math.Max(0, c.HeldAt(_group, p.HeldCell))));
+        }
+        // hàng đã sửa chờ trả (mockup TH10 bước 4) đứng trước dòng "hàng đã sửa bị hỏng lại"
+        bool xlDone = false;
+        foreach (var p in Positions)
+        {
+            if (!xlDone && p.HeldCell is HandoverCell.Xl or HandoverCell.LamHo) { foreach (var x in TotXlPositions) AddPos(x, true); xlDone = true; }
+            AddPos(p, false);
+        }
+        if (!xlDone) foreach (var x in TotXlPositions) AddPos(x, true);
+        return list;
+    }
+
+    static string HeldHead(FormPos p, bool fromTot) => p.HeldCell switch
+    {
+        HandoverCell.Loi   => "Đang giữ ở ô Hàng lỗi",
+        HandoverCell.Sua   => "Đang giữ ở ô Hàng sửa (bộ phận khác gửi sửa)",
+        HandoverCell.Xl    => fromTot ? "Đang giữ ở ô Hàng lỗi đã xử lý" : HandoverForm.TonXlLoiText,
+        HandoverCell.LamHo => HandoverForm.LamHoLoiText,
+        _                  => p.Label
+    };
+
+    /// <summary>"VL000316 · Gia công trả" · "VL000320 · KCS gửi sửa" · "VL000325 · về KCS".</summary>
+    string CaseWho(FormPos p, bool fromTot, LedgerCase c)
+    {
+        var no = c.Id == 0 ? "hàng lỗi cũ (chưa có mã vụ)" : c.No;
+        if (p.HeldCell == HandoverCell.Xl && fromTot) return no + (c.DetectGroup != null ? " · về " + HandoverLedgerService.GroupLabel(c.DetectGroup) : "");
+        if (p.HeldCell == HandoverCell.Sua) return no + (HandoverForm.CaseSender(c, _group) is string sd ? " · " + HandoverLedgerService.GroupLabel(sd) + " gửi sửa" : "");
+        if (p.HeldCell == HandoverCell.Loi)
+        {
+            var hop = c.Hops.LastOrDefault(h => h.Kind == "NHAN" && h.Group == _group && h.Cell == HandoverCell.Loi && !string.IsNullOrEmpty(h.Other) && HandoverLedgerService.GroupCodes.Contains(h.Other!));
+            if (hop != null) return no + " · " + HandoverLedgerService.GroupLabel(hop.Other!) + " trả";
+        }
+        return no;
+    }
+
+    string CaseSub(LedgerCase c) => c.Id == 0 ? HandoverForm.CaseOriginText(Row, c) : c.CatLabel + " — " + HandoverForm.CaseOriginText(Row, c);
+
+    bool RowOn(ViewRow v) => _pos == v.P.Id && _posTot == v.FromTot && (v.CaseId == null || _caseId == v.CaseId);
+
     RenderFragment StepPos() => __builder =>
     {
         if (string.IsNullOrEmpty(_kind)) return;
         <div class="mb-3">
-            <div class="fw-semibold small mb-1">@StepNo(2) @(IsTot ? "Hàng đang ở đâu" : "Chiếc lỗi đang ở đâu")</div>
+            <div class="fw-semibold small mb-1">@StepNo(2) Hàng đang ở đâu</div>
             <div class="d-flex flex-column gap-1">
-                @foreach (var p in Positions)
+                @foreach (var v in ViewRows())
                 {
-                    var pid = p.Id;
-                    <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(_pos == pid ? "on" : "")"
-                            disabled="@(p.Have <= 0)" @onclick="() => PickPos(pid)">
-                        @PosText(p)
-                        <span class="small text-nowrap @(p.Have > 0 ? "text-success" : "text-muted")">có @p.Have.ToString("0.##")</span>
+                    var vr = v;
+                    <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(RowOn(vr) ? "on" : "")"
+                            disabled="@(vr.Have <= 0)" @onclick="() => PickRow(vr)">
+                        @RowText(vr)
+                        <span class="small text-nowrap @(vr.Have > 0 ? "text-success" : "text-muted")">có @vr.Have.ToString("0.##")</span>
                     </button>
                 }
             </div>
             @PrevBox()
-            @CasePicker()
         </div>
+    };
+
+    RenderFragment RowText(ViewRow v) => __builder =>
+    {
+        <span>
+            @v.Label
+            @if (!string.IsNullOrEmpty(v.Sub))
+            {
+                <br /><span class="small text-muted">@v.Sub</span>
+            }
+        </span>
     };
 
     RenderFragment PrevBox() => __builder =>
@@ -391,94 +486,29 @@
         return new[] { "KHACH" }.Concat(order.Take(Math.Max(0, idx)).Reverse()).Concat(order.Skip(idx + 1)).ToList();
     }
 
-    RenderFragment CasePicker() => __builder =>
-    {
-        if (!IsHeld) return;
-        <div class="mt-2">
-            <div class="small fw-semibold mb-1">@NgCaseNo.TermCap</div>
-            @if (HeldCases.Count == 0)
-            {
-                <div class="small text-muted">Không có @NgCaseNo.Term nào đang giữ ở ô này.</div>
-            }
-            <div class="d-flex flex-column gap-1">
-                @foreach (var c in HeldCases)
-                {
-                    var cid = c.Id;
-                    <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(_caseId == cid ? "on" : "")" @onclick="() => PickCase(cid)">
-                        <span>@CaseText(c)</span>
-                        <span class="small text-nowrap text-success">giữ @c.HeldAt(_group, Pos!.HeldCell!).ToString("0.##")</span>
-                    </button>
-                }
-            </div>
-        </div>
-    };
-
-    RenderFragment PosText(FormPos p) => __builder =>
-    {
-        <span>
-            @p.Label
-            @if (!string.IsNullOrEmpty(p.Sub))
-            {
-                <br /><span class="small text-muted">@p.Sub</span>
-            }
-        </span>
-    };
-
-    string CaseText(LedgerCase c) => (c.Id == 0 ? "Hàng lỗi cũ" : c.No + " · " + c.CatLabel) + " — " + HandoverForm.CaseOriginText(Row, c);
 
     // ── Bước 3 ──────────────────────────────────────────────────────────
-    record ActOpt(string Code, string Label, bool Red);
-
-    List<ActOpt> Actions()
-    {
-        var list = new List<ActOpt>();
-        if (!Ready || IsTot) return list;
-        if (IsTaroPhoi)   // [KTT-PHOILOI] chỉ trả Kho (HÙNG 12/11 14:00 câu B2)
-            list.Add(new(HandoverForm.AGiao, "Trả về Kho (ô Hàng lỗi — phôi lỗi)", false));
-        else if (IsFresh)
-        {
-            list.Add(new(HandoverForm.AGiao, _group == "KHO" ? "Gửi nhóm khác sửa" : "Giao cho nhóm khác", false));
-            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (không giao đi)", false));
-            list.Add(new(HandoverForm.AGiu, "Chỉ báo lỗi, giữ lại xử lý sau", false));
-            list.Add(new(HandoverForm.AHuy, "Huỷ", true));
-            list.Add(new(HandoverForm.AKhach, "Trả khách", true));
-        }
-        else if (Pos!.HeldCell == HandoverCell.Xl)   // [XL-TRA-LAI] hàng đã sửa bị hỏng lại
-            list.Add(new(HandoverForm.AGiao, "Trả lại vào ô Hàng lỗi (cùng vụ, để sửa lại)", false));
-        else if (Pos!.HeldCell == HandoverCell.LamHo)   // [TARO-LAMHO-NC] hàng làm hộ bị lỗi
-            list.Add(new(HandoverForm.AGiao, "Trả về Gia công (ô Hàng lỗi, cùng vụ)", false));
-        else if (Pos!.HeldCell == HandoverCell.Loi)
-        {
-            list.Add(new(HandoverForm.AGiao, "Giao cho nhóm khác", false));
-            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (không giao đi)", false));
-            list.Add(new(HandoverForm.AHuy, "Huỷ", true));
-            list.Add(new(HandoverForm.AKhach, "Trả khách", true));
-        }
-        else
-        {
-            list.Add(new(HandoverForm.ASua, "Sửa tại nhóm (ghi kết quả sửa)", false));
-            list.Add(new(HandoverForm.ATraLai, "Trả lại nơi gửi (chưa sửa được)", false));
-            // [SUA-QUA-KCS 2026-11-11] Workflow ON ẩn "Sửa xong, trả nơi gửi" (giao thẳng, không qua KCS xác nhận) — sửa xong ghi Kết quả sửa ở nút trên.
-            //   Máy chủ cũng chặn (HandoverService [SUA-QUA-KCS]). Nguồn: HÙNG 11/11 15:21. OFF giữ nút như cũ.
-            if (!Row.ApplyWorkflow) list.Add(new(HandoverForm.ASuaXong, "Sửa xong, trả nơi gửi", false));
-        }
-        return list;
-    }
-
+    // [N23-FORM6] luôn đủ 6 nút (HandoverForm.FormButtons); nút xám ghi lý do ngay dưới. Trước [GN-FORM1]: danh sách nút đổi theo dòng bước 2.
     RenderFragment StepAction() => __builder =>
     {
         if (!Ready || IsTot) return;
+        var bs = Btns;
         <div class="mb-3">
-            <div class="fw-semibold small mb-1">@StepNo(3) Làm gì</div>
+            <div class="fw-semibold small mb-1">@StepNo(3) Làm gì <span class="small text-muted fw-normal">(6 nút giống nhau ở mọi bộ phận)</span></div>
             <div class="row g-1">
-                @foreach (var a in Actions())
+                @foreach (var a in bs)
                 {
                     var code = a.Code;
+                    var ab = a;
                     <div class="col-6">
-                        <button type="button" class="gn-cellbtn w-100 @(_action == code ? "on" : "") @(a.Red && _action == code ? "border-danger" : "")" @onclick="() => PickAction(code)">@a.Label</button>
+                        <button type="button" class="@BtnClass(ab)" style="@BtnStyle(ab)" disabled="@(!ab.On)" @onclick="() => PickAction(code)">@ab.Label</button>
                     </div>
                 }
             </div>
+            @foreach (var a in bs.Where(x => !x.On))
+            {
+                <div class="small text-muted mt-1"><em>@a.Label</em> xám: @a.Why</div>
+            }
         </div>
     };
 
@@ -548,7 +578,7 @@
     {
         if (!IsGiao) return;
         <div class="mb-2">
-            <label class="form-label form-label-sm mb-1">Giao đến nhóm</label>
+            <label class="form-label form-label-sm mb-1">@DestTitle</label>
             @if (LamHo || LamHoLoi)
             {
                 <div class="p-2 border rounded bg-light small"><strong>Gia công</strong> <span class="text-muted">— @(LamHoLoi ? "trả hàng làm hộ bị lỗi về Gia công, vào ô Hàng lỗi (cùng vụ)" : "trả hàng làm hộ về Gia công")</span></div>
@@ -557,6 +587,11 @@
             {
                 @* [KTT-PHOILOI] chỉ trả Kho *@
                 <div class="p-2 border rounded bg-light small"><strong>Kho</strong> <span class="text-muted">— vào ô Hàng lỗi (phôi lỗi, nơi gây lỗi Khách hàng)</span></div>
+            }
+            else if (IsTra && !IsXl)
+            {
+                @* [N23-FORM6] "Trả đến" tự điền = nơi làm lỗi, vào ô Hàng lỗi bên đó (mockup Bước 4) *@
+                <div class="p-2 border rounded bg-light small"><strong>@HandoverLedgerService.GroupLabel(Dest)</strong> <span class="text-muted">(nơi làm lỗi) — ô Hàng lỗi</span></div>
             }
             else
             {
@@ -573,16 +608,6 @@
         if (IsTot && HelpFrom)   // [N20-O-NC] ô riêng "Giao làm NC" (chọn dòng giao theo NC ở bước 2 — cùng 1 nguồn)
         {
             @HelpNcSelect()
-        }
-        if (ShowPurpose)
-        {
-            <div class="row g-1 mb-2">
-                @if (CauseGroup != null)
-                {
-                    <div class="col-6"><button type="button" class="gn-cellbtn w-100 @(EffPurpose == HandoverForm.PTra ? "on" : "")" @onclick="PickTra">Trả nơi gây lỗi (@HandoverLedgerService.GroupLabel(CauseGroup))</button></div>
-                }
-                <div class="col-6"><button type="button" class="gn-cellbtn w-100 @(EffPurpose == HandoverForm.PNho ? "on" : "")" @onclick="PickNho">Gửi nhờ sửa</button></div>
-            </div>
         }
         if (NeedToNc)
         {
@@ -611,7 +636,7 @@
         {
             <div class="small p-2 rounded mb-2 text-warning-emphasis" style="background:#fff3cd"><i class="bi bi-exclamation-triangle me-1"></i>@HandoverForm.KhoTaroOffWarn(Row)</div>
         }
-        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi && !CauseMissing && !KhoTaro)   // [CAUSE-BAT-BUOC] (rà Thấp 2) · [KHO-TARO-THANG] chữ riêng ở trên
+        if (!string.IsNullOrEmpty(Dest) && !HelpFrom && !LamHo && !LamHoLoi && !CauseMissing && !KhoTaro && !(IsTra && !IsXl))   // [CAUSE-BAT-BUOC] (rà Thấp 2) · [KHO-TARO-THANG] chữ riêng ở trên
         {
             <div class="small p-2 rounded mb-2" style="background:#e8f5ee;color:#0f5132">@HandoverLedgerService.GroupLabel(Dest) sẽ nhận vào ô @HandoverCell.Label(ToCellNow)@TailNote — bên nhận đếm lại và được đổi ô khi bấm Nhận.</div>
         }
@@ -659,18 +684,8 @@
     string DestLabel(string g) => g == "HTSP" && IsTot && KhoTaroPo && Pos?.Id == "PHOI"
         ? HandoverLedgerService.GroupLabel(g) + " — " + HandoverForm.KhoTaroText(Row) : HandoverLedgerService.GroupLabel(g);
 
-    /// <summary>[XL-TRA-LAI] Nhóm đã sửa chiếc của vụ — mặc định khi trả lại hàng đã sửa bị hỏng lại (chung máy chủ: HandoverForm.XlRepairGroup).</summary>
-    static string? XlRepairGroup(LedgerCase c) => HandoverForm.XlRepairGroup(c);
-
-    /// <summary>[XL-TRA-NOILOI 2026-11-11] Mặc định trả lại hàng đã sửa bị hỏng lại = bộ phận làm lỗi (khách 11/11 "NG trả bộ phận làm lỗi"),
-    ///   nếu không trả được thì nhóm đầu trong danh sách được trả. Trước: nhóm đã sửa đầu tiên.</summary>
-    string XlTraLaiDefault(LedgerCase c)
-    {
-        var rg = HandoverForm.XlTraLaiGroups(c, _group);
-        var def = XlRepairGroup(c);
-        if (def != null && def != _group && (rg.Count == 0 || rg.Contains(def))) return def;
-        return rg.FirstOrDefault() ?? "";
-    }
+    /// <summary>[N23-FORM6] Tên ô bộ phận nhận (mockup Bước 4): Giao đến / Gửi đến / Trả đến.</summary>
+    string DestTitle => IsNho || LamHoLoi ? "Gửi đến" : IsTra || (IsXl && !IsTot) || IsTaroPhoi ? "Trả đến" : "Giao đến";
 
     /// <summary>[SUA-QUA-KCS 2026-11-11] Ô bên nhận chọn được: Workflow ON, hàng lỗi / hàng sửa không vào ô Hàng lỗi đã xử lý / Hàng mới (phải qua Kết quả sửa — [N17-KCS-BO] không còn KCS).</summary>
     IEnumerable<string> ToCellOpts => HandoverCell.ReceiveCells.Where(c => !(Row.ApplyWorkflow && !IsTot && HandoverForm.SuaQuaKcsBlocked(HandoverCell.Loi, c)));
@@ -705,30 +720,89 @@
         ? (LamHo ? "-- Chọn NC --" : $"-- {HandoverLedgerService.VaoLabel} (mặc định) --")
         : (LamHo ? "-- Chọn NC --" : "-- NC đầu (mặc định) --");
 
+    // [N23-FORM6][N23-SUA-GIAO][N23-SUA-CHUADAT 2026-11-25] Sửa tại bộ phận mình / XXN KH: Sửa đạt + Sửa chưa đạt (mockup TH4 / TH10 bước 3).
+    //   Ô Hàng lỗi: chưa đạt = phần còn lại, chỉ xem (vẫn ở ô Hàng lỗi). Ô Hàng sửa: chưa đạt nhập được → phần mềm tự trả nơi làm lỗi (ô Hàng lỗi).
+    //   Phần đạt giữ ô Tồn hàng lỗi đã xử lý (HandoverForm.SuaGiveDefault) → ô "Sửa đạt → giao đến" (mặc định nơi báo lỗi; chọn "chưa giao" được).
+    bool SuaFailInput => IsFresh || Pos?.HeldCell == HandoverCell.Sua;
+    decimal SuaFailSent => SuaFailInput ? _fail : 0;
+    (string Dest, string Cell)? Give => IsSua && IsHeld ? HandoverForm.SuaGive(Row, _group, Case) : null;
+    string? GiveDefault => Give?.Dest;
+    // [N23-SUA-GIAO rà độc lập T1/T2] Workflow OFF chọn làm lại NC (khác dấu mặc định) → phần đạt không vào giữ ô → không giao kèm; mặc định không có trong danh sách được
+    //   giao (luật máy chủ) → coi như "Chưa giao".
+    bool GiveOff => GiveDefault == null || _pass <= 0 || _suaTo == NoGive || (NcForSua && !string.IsNullOrEmpty(_ncNext));
+    string? SuaToEff => GiveOff ? null : string.IsNullOrEmpty(_suaTo) ? (GiveOptions.Contains(GiveDefault!) ? GiveDefault : null) : _suaTo;
+    /// <summary>[N23-SUA-CHUADAT] Nơi tự trả chiếc sửa chưa đạt (ô Hàng sửa) — cùng hàm máy chủ.</summary>
+    string? FailTo => IsSua && Pos?.HeldCell == HandoverCell.Sua && Case != null && HandoverService.SuaFailReturnGroup(Row, Case.Id, _group) is string f && f != _group ? f : null;
+    List<string> GiveOptions => GiveDefault == null || Case == null ? new()
+        : HandoverLedgerService.GroupCodes.Where(x => x != _group && (Give?.Cell == HandoverCell.Xl ? !Row.ApplyWorkflow || HandoverForm.XlToOk(_group, x, Case.DetectGroup, Row)
+              // [N23-KHO-SUA rà độc lập T2] Kho giao Hàng mới: cùng luật máy chủ — NC đầu là Taro (ON) không giao Gia công / HTSP Hàng mới, HTSP chỉ làm hộ (ON) không nhận Hàng mới
+              : !(Row.ApplyWorkflow && HandoverLedgerService.KhoTaroRun(Row) != null && x is "GC" or "HTSP") && !(Row.ApplyWorkflow && x == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(Row)))).ToList();
+
+    string SuaFailHint => FailTo != null ? $"Chưa đạt → phần mềm tự trả {HandoverLedgerService.GroupLabel(FailTo)} ({FailToRole}), vào ô Hàng lỗi, cùng vụ."
+        : SuaFailInput ? "Chưa đạt → ở lại ô Hàng lỗi, cùng vụ." : "Chưa đạt vẫn ở ô Hàng lỗi.";
+    string GiveVal(string g) => g == GiveDefault ? "" : g;
+    string NoGiveLabel => Give?.Cell == HandoverCell.Moi ? "Chưa giao — để ở phôi còn" : "Chưa giao — giữ ở Tồn hàng lỗi đã xử lý";   // [N23-KHO-SUA rà độc lập L2]
+    /// <summary>[N23-SUA-CHUADAT rà độc lập L1] nơi tự trả chiếc chưa đạt là nơi làm lỗi hay nơi gửi.</summary>
+    string FailToRole => Case != null && FailTo == HandoverForm.CaseCauseGroup(Case, _group) ? "nơi làm lỗi" : "nơi gửi";
+    string GiveCellText => SuaToEff == null || Give == null ? "—" : HandoverCell.Label(Give.Value.Cell);
+    string GiveLabel(string g) => HandoverLedgerService.GroupLabel(g) + (g == GiveDefault ? " (nơi báo lỗi)" : "");
+    static string BtnStyle(HandoverForm.FormBtn a) => a.On ? "" : "border-style:dashed";
+    string BtnClass(HandoverForm.FormBtn a) => "gn-cellbtn w-100" + (_action == a.Code ? " on" : "") + (_action == a.Code && a.Code is HandoverForm.AHuy or HandoverForm.AKhach ? " border-danger" : "");
+
     RenderFragment SuaBlock() => __builder =>
     {
         if (!IsSua) return;
-        bool failOk = IsFresh || Pos!.HeldCell == HandoverCell.Sua;
+        bool kho = _group == "KHO";
         <div class="row g-2 mb-1">
             <div class="col-6">
-                <label class="form-label form-label-sm mb-1 text-success fw-semibold">Sửa đạt</label>
+                <label class="form-label form-label-sm mb-1 text-success fw-semibold">@(kho ? "Sửa / xác nhận đạt" : "Sửa đạt")</label>
                 <input type="number" class="form-control form-control-sm border-success" min="0" @bind="_pass" @bind:after="ClearError" />
             </div>
             <div class="col-6">
-                <label class="form-label form-label-sm mb-1 @(failOk ? "text-danger fw-semibold" : "text-muted")">Không đạt</label>
-                <input type="number" class="form-control form-control-sm border-danger" min="0" @bind="_fail" @bind:after="ClearError" disabled="@(!failOk)" />
+                <label class="form-label form-label-sm mb-1 @(SuaFailInput ? "text-danger fw-semibold" : "text-muted")">@(kho ? "Chưa đạt" : "Sửa chưa đạt")</label>
+                @if (SuaFailInput)
+                {
+                    <input type="number" class="form-control form-control-sm border-danger" min="0" @bind="_fail" @bind:after="ClearError" />
+                }
+                else
+                {
+                    <div class="form-control form-control-sm bg-light text-muted">@Math.Max(0, Have - _pass).ToString("0.##")</div>
+                }
             </div>
         </div>
         <div class="small text-muted mb-2">
             @* [N17-KCS-BO 2026-11-23] khách 23/11: sửa đạt không cần KCS xác nhận — trước: "Đạt → chờ KCS xác nhận (người KCS khác người ghi)." *@
-            Tối đa @Have.ToString("0.##"). Đạt → vào thẳng ô đạt, làm tiếp / giao luôn (không cần KCS xác nhận).
-            @(failOk ? "Không đạt → ở lại Tồn hàng lỗi, cùng vụ." : "Lấy từ Tồn hàng lỗi: chiếc không đạt vẫn ở Tồn hàng lỗi.")
+            Tối đa @Have.ToString("0.##"). Đạt → vào thẳng ô đạt (không cần KCS xác nhận).
+            @SuaFailHint
         </div>
-        if (_pass + _fail > Have)
+        if (_pass + SuaFailSent > Have)
         {
-            <div class="small text-danger mb-2">Đạt + không đạt vượt tối đa @Have.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
+            <div class="small text-danger mb-2">Đạt + chưa đạt vượt tối đa @Have.ToString("0.##") — phần mềm sẽ không cho lưu.</div>
         }
-        if (RepMark)   // [SUA-XL-GIU][SUA-OK-NC] khách 10/11: sửa xong không quay lại NC
+        if (GiveDefault != null && _pass > 0)
+        {
+            <div class="row g-2 mb-1">
+                <div class="col-6">
+                    <label class="form-label form-label-sm mb-1">@(kho ? "Đạt → giao đến" : "Sửa đạt → giao đến")</label>
+                    <select class="form-select form-select-sm" @onchange="OnSuaToChanged">
+                        @foreach (var g in GiveOptions)
+                        {
+                            <option value="@GiveVal(g)" selected="@(SuaToEff == g)">@GiveLabel(g)</option>
+                        }
+                        <option value="@NoGive" selected="@(SuaToEff == null)">@NoGiveLabel</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label form-label-sm mb-1">vào ô</label>
+                    <div class="form-control form-control-sm bg-light">@GiveCellText</div>
+                </div>
+            </div>
+            if (SuaToEff != null)
+            {
+                <div class="small text-muted mb-2">@SuaGiveNote()</div>
+            }
+        }
+        if (RepMark && SuaToEff == null)   // [SUA-XL-GIU][SUA-OK-NC] khách 10/11: sửa xong không quay lại NC · [N23-SUA-GIAO] chưa giao: chữ đích như cũ
         {
             <div class="small p-2 rounded mb-2" style="background:#e0f2fe;color:#075985">@HandoverForm.RepairTargetText(Row, _group, RepTarget, RepDetect)</div>
         }
@@ -737,6 +811,25 @@
             @NcSelect(RepMark ? "Workflow OFF — sửa đạt thì" : "Sửa đạt thì làm tiếp ở")
         }
     };
+
+    /// <summary>[N23-SUA-GIAO] Chữ dưới ô "Sửa đạt → giao đến" (mockup TH4: "Gia công đã từng nhận 2 chiếc này → vào Hàng lỗi đã xử lý, làm tiếp từ NC 1. Giao từ ô Hàng lỗi…").</summary>
+    string SuaGiveNote()
+    {
+        if (SuaToEff == null) return Give?.Cell == HandoverCell.Moi ? "Hàng sửa đạt thành phôi còn — giao sau như Hàng tốt."
+            : "Hàng sửa đạt giữ ở Tồn hàng lỗi đã xử lý của " + HandoverLedgerService.GroupLabel(_group) + " — giao sau ở dòng \"Đang giữ ở ô Hàng lỗi đã xử lý\".";
+        var d = SuaToEff;
+        if (Give?.Cell == HandoverCell.Moi)   // [N23-KHO-SUA] mockup TH3 bước 3
+            return $"{HandoverLedgerService.GroupLabel(d)} chưa từng nhận chiếc này (lỗi lúc nhận) → vào ô Hàng mới. Chọn được bộ phận khác (vd HTSP để Bavia + Rửa).";
+        var tail = d == GiveDefault ? $"Mặc định là {HandoverLedgerService.GroupLabel(d)} (nơi báo lỗi)." : $"Đổi sang {HandoverLedgerService.GroupLabel(d)} (làm lại công đoạn trước khi về nơi báo lỗi {HandoverLedgerService.GroupLabel(GiveDefault!)}).";
+        if (d == "GC" && Case != null && Case.DetectGroup == "GC") return GcBackNote(Case) + " " + tail;
+        var x = HandoverLedgerService.XlDest(d, Case?.DetectGroup, Case?.FromDa == true);
+        var D = HandoverLedgerService.GroupLabel(d);
+        var how = x == "GIU" ? $"{D} nhận vào ô Hàng lỗi đã xử lý (không ghi WTS số lượng, giờ làm lại ghi \"Việc không làm ra SP\") rồi giao tiếp về nơi báo lỗi."
+                : x == "XONG" && d == "KCS" ? "KCS nhận vào ô Hàng lỗi đã xử lý, kiểm lại — giờ ghi \"Việc không làm ra SP\"."
+                : x == "XONG" ? $"{D} nhận vào ô Hàng lỗi đã xử lý, tính là đã làm (không ghi WTS số lượng)."
+                : $"{D} nhận vào ô Hàng lỗi đã xử lý.";
+        return how + " " + tail;
+    }
 
     /// <summary>[K2] Ô chọn NC làm tiếp (mặc định của vụ + NC đứng trước, bắt lý do) — dùng cho sửa tại nhóm và hàng của vụ vào Gia công.</summary>
     RenderFragment NcSelect(string label) => __builder =>
@@ -777,13 +870,13 @@
         if (IsHeld)
             return Act switch
             {
-                HandoverForm.ASua     => "Sẽ ghi: Kết quả sửa — đạt vào thẳng ô đạt (không cần KCS xác nhận).",   // [N17-KCS-BO]
+                HandoverForm.ASua     => SuaWill(G),   // [N17-KCS-BO][N23-SUA-GIAO][N23-SUA-CHUADAT]
                 HandoverForm.AHuy     => "Sẽ ghi: phiếu Huỷ hàng lỗi (ra khỏi PO).",
                 HandoverForm.AKhach   => "Sẽ ghi: phiếu Trả khách hàng lỗi (ra khỏi PO).",
-                _                     => $"Sẽ ghi: phiếu giao hàng {(Pos!.HeldCell == HandoverCell.Sua ? "sửa" : "lỗi")} {G} → {D}, cùng vụ."
+                _                     => $"Sẽ ghi: phiếu {G} → {D}, ô {HandoverCell.Label(ToCellNow)} {_qty:0.##}, cùng vụ."   // [N23-FORM6] chữ theo mockup TH4
             };
         bool one = Act == HandoverForm.AGiao && PrevOn && Pos!.Unworked && _group != "KHO" && EffPurpose == HandoverForm.PTra && Dest == EffCause && ToCellNow == HandoverCell.Loi;
-        if (one) return $"Sẽ ghi: phiếu Hàng lỗi công đoạn trước {G} → {D} (1 chứng từ, sinh vụ mới).";
+        if (one) return $"Sẽ ghi: phiếu {G} → {D}, ô Hàng lỗi {_qty:0.##}, mã vụ mới (Hàng lỗi công đoạn trước — 1 chứng từ).";   // [N23-FORM6] chữ theo mockup TH4 bước 1
         var tail = Act switch
         {
             HandoverForm.AGiu   => "",
@@ -795,12 +888,30 @@
         return "Sẽ ghi: báo hàng lỗi phát hiện sau khi nhận (sinh vụ mới)" + tail + " — cùng 1 lần lưu.";
     }
 
+    /// <summary>[N23-SUA-GIAO][N23-SUA-CHUADAT] "Sẽ ghi" của Sửa tại bộ phận mình (vụ đang giữ).</summary>
+    string SuaWill(string G)
+    {
+        var s = _pass > 0 ? $"Sẽ ghi: sửa đạt {_pass:0.##} — đạt vào thẳng ô đạt (không cần KCS xác nhận)" : "Sẽ ghi:";
+        if (SuaToEff is string d) s = $"Sẽ ghi: sửa đạt {_pass:0.##} + phiếu {G} → {HandoverLedgerService.GroupLabel(d)} ô {GiveCellText} {_pass:0.##}" + (Give?.Cell == HandoverCell.Xl ? ", cùng vụ" : "");
+        if (FailTo != null && _fail > 0) s += (_pass > 0 ? " · " : " ") + $"chưa đạt {_fail:0.##}: phiếu {G} → {HandoverLedgerService.GroupLabel(FailTo)} ô Hàng lỗi ({FailToRole}), cùng vụ";
+        else if (SuaFailInput && _fail > 0) s += (_pass > 0 ? " · " : " ") + $"chưa đạt {_fail:0.##} ở lại ô Hàng lỗi";
+        return s + ".";
+    }
+
     // ── Sự kiện ─────────────────────────────────────────────────────────
     void OnGroupChanged(ChangeEventArgs e) { _group = e.Value?.ToString() ?? ""; ResetFrom(1); }
     void PickTot() { _kind = HandoverForm.Tot; ResetFrom(2); }
     void PickLoi() { _kind = HandoverForm.Loi; ResetFrom(2); }
     void PickBu() { _kind = BuKind; ResetFrom(2); var l = BuCaseList; if (l.Count == 1) PickBuCase(l[0].Id); }   // [KHACH-GUI-LAI 2026-11-11]
     void PickBuCase(long id) { _caseId = id; _qty = HandoverLedgerService.BuCap(Row, id).Max; ClearError(); }   // [KHACH-GUI-LAI] điền sẵn số còn bù
+
+    /// <summary>[N23-FORM6] Chọn 1 dòng bước 2 (dòng theo vụ: chọn luôn vụ).</summary>
+    void PickRow(ViewRow v)
+    {
+        _posTot = v.FromTot;
+        PickPos(v.P.Id);
+        if (v.CaseId != null) { _caseId = v.CaseId; if (IsTot) _qty = Have; }
+    }
 
     void PickPos(string id)
     {
@@ -819,21 +930,20 @@
         if (IsTot) _qty = Have;
     }
 
-    void PickCase(long id) { _caseId = id; ResetFrom(4); _action = ""; if (IsTot) _qty = Have; }   // [SUA-XL-GIU] hàng tốt (hàng đã sửa): điền sẵn số
-    void OnPrevChanged(ChangeEventArgs e) { _prev = e.Value is bool b && b; _cause = ""; _to = ""; _purpose = ""; ClearError(); }
-    void OnCauseChanged(ChangeEventArgs e) { _cause = e.Value?.ToString() ?? ""; _to = ""; _purpose = ""; ClearError(); }
+    void OnPrevChanged(ChangeEventArgs e) { _prev = e.Value is bool b && b; _cause = ""; _to = ""; ClearError(); }
+    void OnCauseChanged(ChangeEventArgs e) { _cause = e.Value?.ToString() ?? ""; _to = ""; ClearError(); }
 
     void PickAction(string code)
     {
+        if (Btns.FirstOrDefault(b => b.Code == code) is { On: false }) return;   // [N23-FORM6] nút xám
         _action = code;
-        _to = ""; _purpose = ""; _toCell = ""; _toNc = ""; _ncNext = ""; _ncReason = ""; _showOpt = false;
+        _to = ""; _toCell = ""; _toNc = ""; _ncNext = ""; _ncReason = ""; _showOpt = false; _suaTo = "";
         _qty = code == HandoverForm.ASua ? 0 : Have; _pass = 0; _fail = 0;
         ClearError();
     }
 
     void OnDestChanged(ChangeEventArgs e) { _to = e.Value?.ToString() ?? ""; _toNc = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
-    void PickTra() { _purpose = HandoverForm.PTra; _to = ""; _toCell = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
-    void PickNho() { _purpose = HandoverForm.PNho; _to = ""; _toCell = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
+    void OnSuaToChanged(ChangeEventArgs e) { _suaTo = e.Value?.ToString() ?? ""; ClearError(); }   // [N23-SUA-GIAO]
     void OnToNcChanged(ChangeEventArgs e) { _toNc = e.Value?.ToString() ?? ""; ClearError(); }
     void ToggleOpt() => _showOpt = !_showOpt;
     void PickToCell(string c) { _toCell = c == DefaultToCell ? "" : c; _toNc = ""; _ncNext = ""; _ncReason = ""; ClearError(); }
@@ -843,10 +953,10 @@
     void ResetFrom(int step)
     {
         if (step <= 1) _kind = "";
-        if (step <= 2) { _pos = ""; _caseId = null; _prev = false; _cause = ""; }
+        if (step <= 2) { _pos = ""; _posTot = false; _caseId = null; _prev = false; _cause = ""; }
         if (step <= 3) _action = "";
-        _to = ""; _purpose = ""; _toCell = ""; _toNc = ""; _qty = 0; _pass = 0; _fail = 0;
-        _ncNext = ""; _ncReason = ""; _catId = null; _showOpt = false;
+        _to = ""; _toCell = ""; _toNc = ""; _qty = 0; _pass = 0; _fail = 0;
+        _ncNext = ""; _ncReason = ""; _catId = null; _showOpt = false; _suaTo = "";
         ClearError();
     }
 
@@ -879,16 +989,17 @@
         }
         var req = new FormGiaoRequest
         {
-            KhPlanDetailId = detailId, Group = _group, UserId = UserId, Kind = _kind, Pos = _pos,
+            KhPlanDetailId = detailId, Group = _group, UserId = UserId, Kind = _posTot ? HandoverForm.Tot : _kind, Pos = _pos,   // [N23-FORM6] hàng đã sửa chờ trả: sổ để ở danh sách Hàng tốt
             CaseId = IsHeld ? _caseId : null,
             Prev = PrevOn || IsTaroPhoi, Cause = IsTaroPhoi ? "KHACH" : PrevOn ? EffCause : null,   // [CAUSE-BAT-BUOC] (rà Thấp 1) · [KTT-PHOILOI] phôi lỗi
             Action = Act,
             ToGroup = IsGiao ? Dest : null,
-            Purpose = ShowPurpose ? EffPurpose : (IsGiao && !IsTot && _group == "KHO" ? HandoverForm.PNho : null),
+            Purpose = IsNho || IsTra ? EffPurpose : null,   // [N23-FORM6] theo nút (máy chủ: TRA → ô Hàng lỗi, NHO → ô Hàng sửa; Kho lỗi mới luôn ô Hàng sửa như cũ)
             ToCell = string.IsNullOrEmpty(_toCell) || KhoTaro || IsTaroPhoi ? null : _toCell,   // [KHO-TARO-THANG][KTT-PHOILOI] ô nhận cố định (ô chọn bị ẩn) — không gửi ô chọn từ trước khi đổi nhóm (rà độc lập Gói 18 Thấp 1)
             ToNC = CaseToGc ? (NcOpts.Count == 0 || string.IsNullOrEmpty(_ncNext) ? null : _ncNext)   // [K2] "" = mặc định của vụ (máy chủ tự điền)
                  : NeedToNc && !string.IsNullOrEmpty(_toNc) ? _toNc : null,
-            Qty = IsSua ? 0 : _qty, Pass = IsSua ? _pass : 0, Fail = IsSua ? _fail : 0,
+            Qty = IsSua ? 0 : _qty, Pass = IsSua ? _pass : 0, Fail = IsSua ? SuaFailSent : 0,
+            SuaTo = IsSua ? SuaToEff : null, SuaFailTra = IsSua && Pos?.HeldCell == HandoverCell.Sua,   // [N23-SUA-GIAO][N23-SUA-CHUADAT]
             NcNext = !NcForSua || NcOpts.Count == 0 || string.IsNullOrEmpty(_ncNext) ? null : _ncNext,
             NcReason = NcEarlier ? _ncReason : null,
             CatId = NeedCat ? _catId : null,

@@ -64,6 +64,10 @@ namespace MES.Web.Services
         public string? NcReason { get; set; }
         public int?    CatId    { get; set; }
         public string? Notes    { get; set; }
+        /// <summary>[N23-SUA-GIAO] "Sửa tại bộ phận mình / XXN KH": nhóm nhận phần sửa đạt ("Đạt → giao đến", vào ô Hàng lỗi đã xử lý). null = chưa giao / không giao.</summary>
+        public string? SuaTo    { get; set; }
+        /// <summary>[N23-SUA-CHUADAT] Sửa ở ô Hàng sửa: chiếc sửa chưa đạt tự trả nơi làm lỗi (ô Hàng lỗi). false = như cũ (về ô Hàng lỗi của nhóm sửa).</summary>
+        public bool    SuaFailTra { get; set; }
     }
 
     public partial class HandoverService
@@ -193,7 +197,7 @@ namespace MES.Web.Services
                         }
                         case HandoverForm.ASua:
                             if (r.Fail != 0) return (false, "Lấy từ Tồn hàng lỗi: chiếc sửa không đạt vẫn nằm ở Tồn hàng lỗi — chỉ ghi số đạt.");
-                            return await RepairInFormAsync(r, g, HandoverCell.Loi, cs, r.Pass, 0, notes, ftx);
+                            return await RepairGiveInFormAsync(r, g, HandoverCell.Loi, cs, r.Pass, 0, notes, ftx, before);   // [N23-SUA-GIAO]
                         case HandoverForm.AHuy:
                         case HandoverForm.AKhach:
                         {
@@ -206,8 +210,16 @@ namespace MES.Web.Services
                 }
                 switch (act)   // Tồn hàng sửa (nhóm khác gửi nhờ sửa)
                 {
+                    case HandoverForm.AGiao when r.Purpose == HandoverForm.PNho:
+                    {   // [N23-FORM6 rà độc lập T3] "Gửi bộ phận khác sửa" từ ô Hàng sửa (mockup TH3 bước 5 nút không xám): chuyển tiếp nhờ bộ phận khác sửa —
+                        //   phiếu trả hàng sửa (ô Hàng sửa → ô Hàng sửa bên nhận), cùng vụ; sửa không đạt bên đó tự trả nơi làm lỗi. Nguồn: KHÁCH 23/11 (mockup); CLAUDE (rà độc lập G-A2).
+                        if (r.Qty <= 0) return (false, "Số lượng phải lớn hơn 0.");
+                        if (to == null) return (false, "Chọn nhóm nhận.");
+                        if (toCellOpt != null && toCellOpt != HandoverCell.Sua) return (false, "Gửi bộ phận khác sửa: bên nhận vào ô Hàng sửa.");
+                        return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.RepairReturn, null, null, notes, null, HandoverCell.Sua, HandoverCell.Sua, null, cs, ftx);
+                    }
                     case HandoverForm.ASua:
-                        return await RepairInFormAsync(r, g, HandoverCell.Sua, cs, r.Pass, r.Fail, notes, ftx);
+                        return await RepairGiveInFormAsync(r, g, HandoverCell.Sua, cs, r.Pass, r.Fail, notes, ftx, before);   // [N23-SUA-GIAO][N23-SUA-CHUADAT]
                     case HandoverForm.ATraLai:    // chưa sửa được → trả nơi gửi, vào ô Hàng lỗi bên kia (cùng vụ)
                     case HandoverForm.ASuaXong:   // (a) sửa xong trả nơi gửi → ô Hàng lỗi đã xử lý bên kia
                     {
@@ -276,6 +288,7 @@ namespace MES.Web.Services
                     return await IssueWithPurposeOnceAsync(id, g, to!, n, uid, p, null, tnc, nts, null, HandoverCell.Loi, tc, null, vu, ftx);
                 }
                 case HandoverForm.ASua:
+                    if (!string.IsNullOrWhiteSpace(r.SuaTo)) return (false, SuaToFreshMsg);   // [N23-SUA-GIAO] (kiểm sau báo lỗi: lỗi → không Commit, không ghi gì)
                     if (r.Pass <= 0) return (true, string.Empty);   // chỉ có chiếc không đạt: vẫn ở Tồn hàng lỗi (= chỉ báo lỗi)
                     return await RepairInFormAsync(r, g, HandoverCell.Loi, vu, r.Pass, 0, notes, ftx);
                 default:   // Huỷ / Trả khách
@@ -305,6 +318,67 @@ namespace MES.Web.Services
             if (err != null) return (err, null, notes);
             if (add != null) { notes = notes == null ? add : add + " | " + notes; if (notes.Length > 500) notes = notes[..500]; }
             return (null, chosen, notes);
+        }
+
+        // =================================================================
+        // [N23-SUA-GIAO 2026-11-25] Nút "Sửa tại bộ phận mình / XXN KH" (form 6 nút, luật N23): phần sửa đạt có ô "Đạt → giao đến" (mặc định nơi báo lỗi).
+        //   Nguồn: KHÁCH 23/11 (mockup Form chung bảng 6 nút + Bước 4; TH4 bước 3; TH10 bước 3); HÙNG 23/11 16:24 (N23) — chi tiết dưới.
+        //   Cùng 1 lần lưu: Kết quả sửa (N17 tự xác nhận) → hàng đạt vào Tồn hàng lỗi đã xử lý của nhóm sửa (đích "GIU" sẵn có — SUA-XL-GIU) → phiếu trả hàng đã sửa
+        //   từ ô đó tới nhóm nhận, ô Hàng lỗi đã xử lý, cùng vụ (đúng chứng từ cũ "Hàng đã sửa — chờ trả nơi phát hiện"; mọi luật XL-VUOT-CHAN / K2 / trần kiểm như cũ).
+        //   Không có đích giữ ô (vụ do chính nhóm phát hiện, Gia công làm hỏng ở NC k, vụ làm hộ…) → không giao kèm được (báo lỗi, không ghi gì).
+        //   Nguồn: KHÁCH 23/11 (mockup Form chung bảng 6 nút + Bước 4 "Giao đến — cho phần sửa đạt, mặc định nơi báo lỗi"; TH4 bước 3; TH10 bước 3); HÙNG 23/11 16:24 (N23).
+        // [N23-SUA-CHUADAT 2026-11-25] Sửa ở ô Hàng sửa (bộ phận khác gửi sửa): chiếc sửa chưa đạt / không sửa được → phần mềm tự lập phiếu trả nơi làm lỗi, vào ô Hàng lỗi,
+        //   cùng vụ (Kết quả sửa ghi cả số chưa đạt → ô Hàng lỗi nhóm sửa, rồi phiếu từ ô Hàng lỗi). Nơi làm lỗi là khách / không rõ → trả nơi gửi; không có cả hai → như cũ (ở ô Hàng lỗi của nhóm sửa).
+        //   Cách đếm ô riêng "Hàng sửa trả về chưa đạt" (N18 Cách Y) làm ở gói G-E. Nguồn: KHÁCH 23/11 16:03 ("sửa không đạt nhập ô Sửa chưa đạt, phần mềm tự trả về ô Hàng lỗi
+        //   của nơi làm lỗi"; Form chung dòng 2 "phần mềm tự tạo sẵn phiếu giao từ bộ phận sửa về bộ phận làm lỗi"); HÙNG 23/11 16:24 (N23).
+        // =================================================================
+        public const string SuaToFreshMsg = "Hàng lỗi do chính bộ phận mình phát hiện: sửa đạt tính là đã làm (không giao kèm) — giao tiếp như hàng tốt.";
+        public const string SuaToNoGiuMsg = "Hàng sửa đạt của vụ này không vào Tồn hàng lỗi đã xử lý (vụ do bộ phận mình phát hiện / làm tiếp theo NC) — bỏ ô \"Đạt → giao đến\".";
+
+        /// <summary>[N23-SUA-CHUADAT] Nơi trả chiếc sửa chưa đạt (ô Hàng sửa): nơi làm lỗi (nhóm khác mình) → nơi gửi → null (như cũ).</summary>
+        public static string? SuaFailReturnGroup(LedgerRow row, long caseKey, string g)
+            => row.Cases.TryGetValue(caseKey, out var c) ? HandoverForm.CaseCauseGroup(c, g) ?? HandoverForm.CaseSender(c, g) : null;
+
+        private async Task<(bool Ok, string Error)> RepairGiveInFormAsync(FormGiaoRequest r, string g, string cell, long? cs, decimal pass, decimal fail, string? notes, FormTx ftx, LedgerRow before)
+        {
+            var suaTo = string.IsNullOrWhiteSpace(r.SuaTo) ? null : r.SuaTo.Trim();
+            if (suaTo != null)
+            {
+                if (!HandoverLedgerService.GroupCodes.Contains(suaTo) || suaTo == g) return (false, "\"Đạt → giao đến\": chọn bộ phận nhận khác bộ phận mình.");
+                if (pass <= 0) return (false, "\"Đạt → giao đến\" chỉ cho phần sửa đạt — nhập số sửa đạt.");
+            }
+            string? failTo = cell == HandoverCell.Sua && fail > 0 && r.SuaFailTra ? SuaFailReturnGroup(before, cs ?? 0, g) : null;
+            if (failTo == g) failTo = null;
+            // [N23-SUA-CHUADAT rà độc lập T4] chiếc chưa đạt vẫn ghi vào Kết quả sửa (truy vết: ai sửa, đạt / chưa đạt — như N17) → về ô Hàng lỗi của nhóm sửa, cùng vụ;
+            //   rồi phiếu từ ô Hàng lỗi đó trả nơi làm lỗi (ô Hàng lỗi). Trước bản rà: phiếu thẳng từ ô Hàng sửa, Kết quả sửa không ghi số chưa đạt.
+            var (ok, err) = await RepairInFormAsync(r, g, cell, cs, pass, fail, notes, ftx);
+            if (!ok) return (false, err);
+            if (suaTo != null)
+            {
+                var now = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(r.KhPlanDetailId);   // sổ sau Kết quả sửa (cùng giao dịch)
+                // [N23-SUA-GIAO rà độc lập T1] so phần TĂNG của lần sửa này (không lấy hàng đã sửa giữ từ trước khi lần này không vào giữ ô — vd Workflow OFF chọn làm lại NC)
+                decimal xl0 = cs is long v0 && before.Cases.TryGetValue(v0, out var c0) ? c0.HeldAt(g, HandoverCell.Xl) : 0;
+                if (now != null && cs is long vu && now.Cases.TryGetValue(vu, out var c) && c.HeldAt(g, HandoverCell.Xl) - xl0 >= pass)
+                {   // phần đạt đang giữ ô Tồn hàng lỗi đã xử lý → phiếu trả hàng đã sửa, bên nhận ô Hàng lỗi đã xử lý (mockup TH4 / TH10)
+                    var (okG, errG) = await IssueWithPurposeOnceAsync(r.KhPlanDetailId, g, suaTo, pass, r.UserId, HandoverPurpose.RepairReturn, null, null, notes, null,
+                        HandoverCell.Xl, HandoverCell.Xl, null, vu, ftx);
+                    if (!okG) return (false, errG);
+                }
+                else if (g == "KHO")
+                {   // [N23-KHO-SUA] Kho: phần đạt thành phôi còn (chiếc bên kia chưa từng nhận — NG lúc nhận) → phiếu Hàng mới (mockup TH3 bước 3); NC nhận theo luật Kho → Gia công
+                    var (okN, errN) = await IssueWithPurposeOnceAsync(r.KhPlanDetailId, g, suaTo, pass, r.UserId, HandoverPurpose.New, null, null, notes, null,
+                        HandoverCell.Moi, HandoverCell.Moi, ftx: ftx);
+                    if (!okN) return (false, errN);
+                }
+                else return (false, SuaToNoGiuMsg);
+            }
+            if (failTo != null)
+            {
+                var (okF, errF) = await IssueWithPurposeOnceAsync(r.KhPlanDetailId, g, failTo, fail, r.UserId, HandoverPurpose.RepairSend, null, null, notes, null,
+                    HandoverCell.Loi, HandoverCell.Loi, null, cs, ftx);
+                if (!okF) return (false, errF);
+            }
+            return (true, string.Empty);
         }
 
         /// <summary>[GN-FORM1] Kết quả sửa trong form: NC làm tiếp (Gia công) — null = mặc định của vụ, "@NEW" = như hàng mới; máy chủ kiểm luật NC (K2).</summary>

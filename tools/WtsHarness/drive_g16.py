@@ -50,8 +50,12 @@ async def dest_opts(m):
 def sane(d, name):
     ok(d["balanced"] and d["neg"] == 0, name + ": sổ cân, 0 ô âm", d)
 async def pick_case(m, pg):
-    cbs = m.locator("button.gn-cellbtn", has_text="VL")
-    if await cbs.count(): await cbs.first.click(); await pg.wait_for_timeout(700)
+    return   # [N23-FORM6 25/11] dòng bước 2 theo mã vụ: bấm dòng = chọn vụ (không còn ô chọn vụ riêng — bấm thêm nút "VL" có thể chọn nhầm dòng khác)
+
+async def chua_giao(m, pg):   # [N23-SUA-GIAO 25/11] Sửa có ô "Sửa đạt → giao đến" (mặc định nơi báo lỗi) — driver chọn "Chưa giao" để kiểm tiếp đường giữ ô như cũ
+    g = m.locator("select:has(option:text-is('Chưa giao — giữ ở Tồn hàng lỗi đã xử lý'))")
+    if await g.count(): await g.select_option(label="Chưa giao — giữ ở Tồn hàng lỗi đã xử lý"); await pg.wait_for_timeout(600)
+    return await g.count()
 
 async def recv_must_loi(pg, yy, po, nm):
     print(f"[Y{yy}] [G16-NHAN-CHONSAN] {po}: {nm}, từ ô Hàng lỗi chỉ định Hàng lỗi đã xử lý, nay Workflow ON — trang Nhận chọn sẵn ô Hàng lỗi")
@@ -100,16 +104,14 @@ async def main():
         print("[Y1] [SUA-QUA-KCS] Gia công giao Tồn hàng lỗi: không có ô bên nhận Hàng lỗi đã xử lý / Hàng mới (Workflow ON)")
         try:
             m = await open_form(pg, "PO-G16", "Gia công")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi"); await pick_case(m, pg)
-            await click(m, pg, "Giao cho nhóm khác")
-            nho = m.get_by_role("button", name="Gửi nhờ sửa", exact=True)
-            if await nho.count(): await nho.first.click(); await pg.wait_for_timeout(600)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi"); await pick_case(m, pg)   # [N23-FORM6 25/11] dòng theo mã vụ
+            await click(m, pg, "Gửi bộ phận khác sửa")   # [N23-FORM6] trước: Giao cho nhóm khác + Gửi nhờ sửa
             sel, opts = await dest_opts(m)
             if "HTSP" in opts: await sel.select_option(label="HTSP"); await pg.wait_for_timeout(600)
+            # [N23-FORM6 25/11] đáp án đổi: Workflow ON ô bên nhận theo nút (Gửi bộ phận khác sửa = ô Hàng sửa), không còn link đổi ô
             tg = m.locator("button:has-text('Tuỳ chọn: đổi ô bên nhận')")
-            if await tg.count(): await tg.first.click(); await pg.wait_for_timeout(600)
-            cells = [x for x in await btn_texts(m) if x in ("Hàng mới", "Hàng lỗi", "Hàng sửa", "Hàng lỗi đã xử lý")]
-            ok("Hàng lỗi đã xử lý" not in cells and "Hàng mới" not in cells and "Hàng sửa" in cells, "Y11 ô bên nhận chỉ Hàng lỗi / Hàng sửa", cells)
+            t11 = await m.inner_text()
+            ok(await tg.count() == 0 and "sẽ nhận vào ô Hàng sửa" in t11, "Y11 Workflow ON: bên nhận vào ô Hàng sửa, không có link đổi ô (không thể chọn Hàng lỗi đã xử lý / Hàng mới)", t11[-400:])
             await qty(m, pg, 2)
             done = await confirm(m, pg)
             a1 = get(A); nt = a1["txs"][-1]
@@ -140,19 +142,21 @@ async def main():
             post("/harness/g16-wf?po=PO-G16&on=0")   # Y30: Workflow OFF — nút vẫn còn (họ tự kiểm soát, N7)
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16", "HTSP")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng sửa"); await pick_case(m, pg)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng sửa"); await pick_case(m, pg)
             bt0 = await btn_texts(m)
-            ok(any("Sửa xong, trả nơi gửi" in x for x in bt0), "Y30 Workflow OFF: còn 'Sửa xong, trả nơi gửi'", bt0)
+            # [N23-FORM6 25/11] đáp án đổi: form 6 nút giống nhau cả Workflow OFF — không còn "Sửa xong, trả nơi gửi" (thay bằng Sửa + "Sửa đạt → giao đến")
+            ok(not any("Sửa xong, trả nơi gửi" in x for x in bt0) and "Sửa tại bộ phận mình / XXN KH" in bt0, "Y30 Workflow OFF: 6 nút, không còn 'Sửa xong, trả nơi gửi'", bt0)
             await close_modal(pg)
             post("/harness/g16-wf?po=PO-G16&on=1")
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16", "HTSP")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng sửa"); await pick_case(m, pg)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng sửa"); await pick_case(m, pg)
             bt = await btn_texts(m)
-            ok(not any("Sửa xong, trả nơi gửi" in x for x in bt) and any("Sửa tại nhóm" in x for x in bt) and any("Trả lại nơi gửi" in x for x in bt),
-               "Y31 việc: Sửa tại nhóm + Trả lại nơi gửi, KHÔNG có 'Sửa xong, trả nơi gửi'", bt)
-            await click(m, pg, "Sửa tại nhóm")
+            ok(not any("Sửa xong, trả nơi gửi" in x or "Trả lại nơi gửi" in x for x in bt) and "Sửa tại bộ phận mình / XXN KH" in bt,
+               "Y31 [N23-FORM6] 6 nút: có Sửa tại bộ phận mình, KHÔNG có 'Sửa xong, trả nơi gửi' / 'Trả lại nơi gửi'", bt)
+            await click(m, pg, "Sửa tại bộ phận mình")
             await qty(m, pg, 2)
+            ok(await chua_giao(m, pg) == 1, "Y31b có ô 'Sửa đạt → giao đến' (driver chọn Chưa giao)")
             done = await confirm(m, pg)
             a3 = get(A)
             ok(done and a3["reps"] and a3["reps"][-1]["groupCode"] == "HTSP" and a3["reps"][-1]["toNC"] == "@XONG" and a3["reps"][-1]["qtyPass"] == 2,
@@ -168,7 +172,7 @@ async def main():
             ok((xn["ok"] or "không cần KCS xác nhận" in (xn.get("error") or "")) and a4["htsp"]["xlGiu"] == 2, "Y41 HTSP Tồn hàng lỗi đã xử lý 2", {"xn": xn, "htsp": a4["htsp"]})
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16", "HTSP")
-            await click(m, pg, "Hàng tốt"); await click(m, pg, "Hàng đã sửa — chờ trả nơi phát hiện lỗi"); await pick_case(m, pg)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi đã xử lý"); await pick_case(m, pg)   # [N23-FORM6] hàng đã sửa ở "Hàng lỗi"
             sel, opts = await dest_opts(m)
             real = [o for o in opts if "Chọn nhóm nhận" not in o]
             ok(real == ["KCS"], "Y51 nhóm nhận chỉ KCS (nơi phát hiện)", opts)
@@ -188,25 +192,23 @@ async def main():
         try:
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16B", "Gia công")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng lỗi"); await pick_case(m, pg)
-            await click(m, pg, "Giao cho nhóm khác")
-            nho = m.get_by_role("button", name="Gửi nhờ sửa", exact=True)
-            if await nho.count(): await nho.first.click(); await pg.wait_for_timeout(600)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi"); await pick_case(m, pg)   # [N23-FORM6 25/11] dòng theo mã vụ
+            await click(m, pg, "Gửi bộ phận khác sửa")   # [N23-FORM6] trước: Giao cho nhóm khác + Gửi nhờ sửa
             sel, opts = await dest_opts(m)
             if "HTSP" in opts: await sel.select_option(label="HTSP"); await pg.wait_for_timeout(600)
             await qty(m, pg, 2); await confirm(m, pg); await close_modal(pg)
             post("/harness/g16-recv?po=PO-G16B")
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16B", "HTSP")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Tồn hàng sửa"); await pick_case(m, pg)
-            await click(m, pg, "Sửa tại nhóm"); await qty(m, pg, 2); await confirm(m, pg); await close_modal(pg)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng sửa"); await pick_case(m, pg)
+            await click(m, pg, "Sửa tại bộ phận mình"); await qty(m, pg, 2); await chua_giao(m, pg); await confirm(m, pg); await close_modal(pg)
             b6 = get(B)
             ok(b6["reps"] and b6["reps"][-1]["toNC"] == "@XONG", "Y61 Kết quả sửa HTSP (đứng sau nơi phát hiện Gia công): dấu @XONG", b6["reps"])
             post("/harness/g16-xn?po=PO-G16B"); b6b = get(B)
             ok(b6b["htsp"]["xlGiu"] == 2 and b6b["htsp"]["chuaLam"] == b0["htsp"]["chuaLam"], "Y62 KCS xác nhận → HTSP Tồn hàng lỗi đã xử lý 2, Chưa làm HTSP không đổi", b6b["htsp"])
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16B", "HTSP")
-            await click(m, pg, "Hàng tốt"); await click(m, pg, "Hàng đã sửa — chờ trả nơi phát hiện lỗi"); await pick_case(m, pg)
+            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đang giữ ở ô Hàng lỗi đã xử lý"); await pick_case(m, pg)   # [N23-FORM6] hàng đã sửa ở "Hàng lỗi"
             sel, opts = await dest_opts(m)
             real = [o for o in opts if "Chọn nhóm nhận" not in o]
             ok(real == ["Gia công"], "Y63 nhóm nhận chỉ Gia công (trả ngược về nơi phát hiện)", opts)

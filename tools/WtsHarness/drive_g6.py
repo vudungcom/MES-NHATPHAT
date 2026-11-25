@@ -88,9 +88,10 @@ async def main():
         ll = [x for x in bt if x.startswith("Hàng làm hộ bị lỗi")]
         ok(len(ll) == 1 and ll[0].endswith("có 1"), "L3a dòng 'Hàng làm hộ bị lỗi (Taro làm hộ NG, đã có vụ)' có 1", bt)
         await click(m, pg, "Hàng làm hộ bị lỗi")
-        acts = [x for x in await btn_texts(m) if x.startswith("Trả về Gia công") or x in ("Giao cho nhóm khác", "Huỷ", "Trả khách", "Sửa tại nhóm (không giao đi)")]
-        ok(acts == ["Trả về Gia công (ô Hàng lỗi, cùng vụ)"], "L3b chỉ có việc 'Trả về Gia công (ô Hàng lỗi, cùng vụ)'", acts)
-        await click(m, pg, "Trả về Gia công (ô Hàng lỗi, cùng vụ)")
+        # [N23-FORM6 25/11] đáp án đổi: 6 nút, chỉ "Gửi bộ phận khác sửa" bấm được (trả Gia công ô Hàng lỗi — chỉ Gia công sửa)
+        en = [ (await x.inner_text()).strip() for x in await m.locator("div.row.g-1 button.gn-cellbtn").all() if not await x.is_disabled() ]
+        ok(en == ["Gửi bộ phận khác sửa"], "L3b 6 nút: chỉ 'Gửi bộ phận khác sửa' (trả Gia công, ô Hàng lỗi, cùng vụ)", en)
+        await click(m, pg, "Gửi bộ phận khác sửa")
         t3 = await m.inner_text()
         ok("trả hàng làm hộ bị lỗi về Gia công" in t3 and "Sẽ ghi: phiếu trả hàng làm hộ bị lỗi" in t3, "L3c nhóm nhận cố định Gia công, dòng Sẽ ghi đúng", t3[-500:])
         okc = await confirm(m, pg)

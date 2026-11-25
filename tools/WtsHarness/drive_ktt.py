@@ -141,8 +141,8 @@ async def main():
             await click(m, pg, "Hàng lỗi")
             bt = await btn_texts(m)
             await click(m, pg, "Hàng giao theo NC chưa làm xong Taro")
-            bt3 = await btn_texts(m)
-            await click(m, pg, "Trả về Kho")
+            bt3 = [ (await x.inner_text()).strip() for x in await m.locator("div.row.g-1 button.gn-cellbtn").all() if not await x.is_disabled() ]   # [N23-FORM6 25/11] nút bấm được
+            await click(m, pg, "Trả nơi làm lỗi")
             opts5, _ = await dest_opts(m, pg)
             t5 = await m.inner_text()
             await qty(m, pg, 1); await pick_cat(m, pg, cat)
@@ -151,8 +151,8 @@ async def main():
             print("   lỗi T5:", e)
         ok(any(x.startswith("Hàng giao theo NC chưa làm xong Taro NC01 (NC đầu)") and "5" in x for x in bt),
            "T51 bước 2 HTSP có dòng 'Hàng giao theo NC chưa làm xong Taro NC01 (NC đầu)' có 5", bt)
-        ok("Trả về Kho (ô Hàng lỗi — phôi lỗi)" in bt3 and not any(x.startswith(("Giao cho nhóm khác", "Sửa tại nhóm", "Huỷ", "Trả khách")) for x in bt3),
-           "T52 bước 3 chỉ có 'Trả về Kho (ô Hàng lỗi — phôi lỗi)' (B2: chỉ trả Kho)", bt3)
+        # [N23-FORM6 25/11] đáp án đổi: 6 nút, chỉ "Trả nơi làm lỗi" (→ Kho, phôi lỗi) bấm được
+        ok(bt3 == ["Trả nơi làm lỗi"], "T52 bước 3: 6 nút, chỉ 'Trả nơi làm lỗi' bấm được (B2: chỉ trả Kho)", bt3)
         ok(not opts5 and "Kho — vào ô Hàng lỗi (phôi lỗi, nơi gây lỗi Khách hàng)" in t5.replace("\n", " "),
            "T53 nhóm nhận cố định Kho (không có ô chọn), nơi gây lỗi Khách hàng tự điền", [opts5, t5[-500:]])
         d5 = get("/harness/ktt")
