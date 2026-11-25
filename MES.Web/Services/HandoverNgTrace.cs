@@ -155,7 +155,7 @@ namespace MES.Web.Services
             "DONG"         => "Huỷ phần chưa nhận",
             "HUY"          => "Huỷ hàng lỗi",
             "TRA_KHACH"    => "Trả khách hàng lỗi",
-            "KQ_SUA"       => "Kết quả sửa (đạt chờ KCS)",   // [GC-SUA-TAI-CHO]
+            "KQ_SUA"       => "Kết quả sửa",   // [GC-SUA-TAI-CHO] · [N17-KCS-BO 2026-11-23] bỏ "(đạt chờ KCS)" — chứng từ mới đạt vào thẳng ô đạt
             "KCS_XN"       => "KCS xác nhận hàng sửa",       // [GC-SUA-TAI-CHO]
             "NHAN_XL"      => "Nhận hàng đã sửa (chờ trả nơi phát hiện)",   // [SUA-XL-GIU]
             _ => t
@@ -191,7 +191,7 @@ namespace MES.Web.Services
             "HUY"   => "Huỷ",
             "KHACH" => "Trả khách",
             "SUA"   => "Kết quả sửa",     // [GC-SUA-TAI-CHO] nhóm sửa tại chỗ ghi đạt (chờ KCS) / không đạt
-            "XN"    => "KCS xác nhận",    // [GC-SUA-TAI-CHO]
+            "XN"    => h.Other == null ? "Sửa đạt (không cần KCS)" : "KCS xác nhận",    // [GC-SUA-TAI-CHO] · [N17-KCS-BO] dòng tự xác nhận không có nơi "KCS"
             _ => h.Kind
         };
 
@@ -356,11 +356,19 @@ namespace MES.Web.Services
                     case "KQSUA":   // [GC-SUA-TAI-CHO] hàng lỗi vẫn ở nhóm: phần đạt chờ KCS = đang chuyển; không đạt sang ô Hàng lỗi (vẫn đang giữ)
                     {
                         if (!kqById.TryGetValue(st.RefId, out var r)) { tr.Problems.Add($"B{st.Index}: không thấy Kết quả sửa #{st.RefId}"); break; }
+                        // [N17-KCS-BO 2026-11-23] chứng từ mới: phần đạt tự xác nhận nằm cùng dòng B (sổ gộp) → về hàng tốt ngay như KCS xác nhận đạt
+                        var okA = r.Checks.Where(c => c.Auto).Sum(c => c.Ok);
                         var e = New("KQ_SUA", r.Group, null, r.Pass + r.Fail, $"Kết quả sửa #{r.Id}", r.Id,
-                            $"{GL(r.Group)} sửa {r.Pass + r.Fail:0.##} (ô {HandoverCell.Label(r.Cell)}): đạt {r.Pass:0.##} chờ KCS xác nhận"
+                            $"{GL(r.Group)} sửa {r.Pass + r.Fail:0.##} (ô {HandoverCell.Label(r.Cell)}): đạt {r.Pass:0.##}"
+                            + (r.Checks.Any(c => c.Auto) ? " (không cần KCS xác nhận)" : " chờ KCS xác nhận")
                             + (r.Fail != 0 ? $", không đạt {r.Fail:0.##} → ô Hàng lỗi" : ""));
                         e.Who = r.Who; e.Code = r.ToNC;
-                        transit += r.Pass;
+                        if (okA != 0)
+                        {
+                            e.VeSx = HandoverLedgerService.RepairDest(inp, r) == "GIU" ? 0 : okA;   // như KCS xác nhận đạt ([SUA-XL-GIU])
+                            if (e.VeSx == 0) e.Text += $" → Tồn hàng lỗi đã xử lý {GL(r.Group)} (chờ trả nơi phát hiện)";
+                        }
+                        transit += r.Pass - okA;
                         break;
                     }
                     case "XNSUA":   // [GC-SUA-TAI-CHO] KCS xác nhận: đạt = đã xử lý (về hàng tốt), loại = về ô Hàng lỗi nhóm sửa

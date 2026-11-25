@@ -19,6 +19,7 @@ if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
 if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-SCEN 2026-11-19] Sổ luật ↔ code / Workflow ON-OFF (Gói 25: L7-WTS-CU)   // [A1-SCEN 2026-11-15] điểm ghi số lượng / khoá / đồng thời (Gói 22: A1-01, A1-02)
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
+if (args.Length > 0 && args[0] == "n17") { return await SuaScen.RunN17(); }   // [N17-KCS-BO 2026-11-23] sửa đạt không cần KCS xác nhận (chứng từ mới)
 if (args.Length > 0 && args[0] == "bu") { return await BuScen.Run(); }
 if (args.Length > 0 && args[0] == "ktt") { return await KhoTaroScen.Run(); }   // [KHO-TARO-THANG 2026-11-12] Kho giao thẳng Taro (NC đầu là Taro) + Taro trả phôi lỗi Kho   // [KHACH-GUI-LAI 2026-11-11] Gói 14 khách gửi bù phôi
 if (args.Length > 0 && args[0] == "form") { return await FormScen.Run(); }
@@ -1027,8 +1028,23 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var fl = await svc.CreateRepairResultAsync(1, g, cell, caseId, 0, 1, null, null, Uid(g));
                         if (fl.Ok) fails.Add($"[Kết quả sửa không đạt từ ô Hàng lỗi] PO{po} op{op} {desc}");
                     }
-                    var res = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, toNc, null, Uid(g), ncWhy);
-                    ok = res.Ok; if (!ok) Inc("rej.kqsua");
+                    // [N17-KCS-BO 2026-11-23] 30% ghi Kết quả sửa KIỂU CŨ (dữ liệu trước 23/11: đạt chờ KCS) để thao tác KCS xác nhận / huỷ xác nhận vẫn được thử;
+                    //   70% kiểu mới (đạt tự xác nhận, không qua KCS)
+                    var cuK = rnd.NextDouble() < 0.3;
+                    var repMaxK = FormHelp.MaxRepId(db);
+                    var preCellsK = FormHelp.Cells(row);
+                    HandoverService.TuXacNhanSuaDat = !cuK;
+                    (bool Ok, string Error) res;
+                    try { res = await svc.CreateRepairResultAsync(1, g, cell, caseId, pass, fail, toNc, null, Uid(g), ncWhy); }
+                    finally { HandoverService.TuXacNhanSuaDat = true; }
+                    ok = res.Ok; if (!ok) Inc("rej.kqsua"); else Inc(cuK ? "n17.kqsua.cu" : "n17.kqsua.moi");
+                    if (ok && !cuK)
+                    {   // [N17-KCS-BO] đạt tự xác nhận đúng + không vào Chờ KCS
+                        checks++;
+                        var afterK = (await led.GetLedgerForDetailAsync(1))!;
+                        if (FormHelp.AutoOkCheck(db, repMaxK, preCellsK, FormHelp.Cells(afterK)) is string auK) fails.Add($"[N17 Kết quả sửa dòng tự xác nhận sai] PO{po} op{op} {desc}: {auK}");
+                    }
+                    if (ok && cuK && pass > 0 && FormHelp.AutoOkCheck(db, repMaxK, preCellsK, preCellsK) == null) fails.Add($"[N17 kiểu cũ lại có dòng tự xác nhận] PO{po} op{op} {desc}");
                     if (ok && g != "GC" && pass > 0)
                     {   // [SUA-XL-GIU] nhóm khác: dấu đúng đáp án
                         var kr0 = db.HandoverRepairResults.List.Last();
@@ -1304,6 +1320,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     desc = $"form {g} {req.Kind} {pos.Id} {req.Action} q={req.Qty} p={req.Pass}/{req.Fail} to={req.ToGroup} {req.Purpose} cell={req.ToCell} nc={req.NcNext} tonc={req.ToNC} vu={req.CaseId} prev={req.Prev}:{req.Cause} cat={req.CatId} have={have} over={over} exp={expErr}";
                     var preCells = FormHelp.Cells(row); var preDocs = FormHelp.Docs(db, 1); var preSig = ChuoiHelp.LedgerSig(row);
                     int tx0 = db.HandoverTransactions.List.Count, bl0 = db.HandoverNgReports.List.Count, kq0 = db.HandoverRepairResults.List.Count, vu0 = db.NgCases.List.Count;
+                    var repMax0 = FormHelp.MaxRepId(db);   // [N17-KCS-BO]
                     if (rnd.NextDouble() < 0.03)
                     {   // người không có quyền nhóm → chặn, không ghi
                         var r99 = new FormGiaoRequest { KhPlanDetailId = 1, Group = req.Group, UserId = 99, Kind = req.Kind, Pos = req.Pos, Action = req.Action, Qty = req.Qty, Pass = req.Pass, Fail = req.Fail,
@@ -1343,8 +1360,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var tiF = kr.ToNC == null ? -1 : fncs.FindIndex(x => x.Equals(kr.ToNC, StringComparison.OrdinalIgnoreCase));
                         if (mxF != null && tiF > mxF) fails.Add($"[Form sửa đạt vào NC sau công đoạn đã tới] PO{po} op{op} {desc}: {kr.ToNC} (#{tiF}) > xa nhất #{mxF}");
                     }
-                    var badCells = FormHelp.CheckCells(preCells, FormHelp.Cells(after), exp);
+                    // [N17-KCS-BO 2026-11-23] đáp án độc lập cũ (đạt → Chờ KCS) so ở góc nhìn kiểu cũ (bỏ dòng tự xác nhận của Kết quả sửa vừa ghi) + kiểm dòng tự xác nhận riêng
+                    var badCells = FormHelp.CheckCells(preCells, await FormHelp.CellsKieuCu(db, 1, repMax0), exp);
                     if (badCells != null) fails.Add($"[Form ô sổ sai đáp án] PO{po} op{op} {desc}: {badCells}");
+                    if (exp.Kq == 1 && FormHelp.AutoOkCheck(db, repMax0, preCells, FormHelp.Cells(after)) is string auF) fails.Add($"[N17 Form dòng tự xác nhận sai] PO{po} op{op} {desc}: {auF}");
                     if (dTx == exp.Tx && dBl == exp.Bl)
                     {   // [GN-FORM1] rà độc lập T4: truy vết (NC phiếu theo vụ, nguồn / nơi gây lỗi / NC của báo lỗi, vụ phát hiện)
                         var tr = FormHelp.CheckTrace(db, exp, g, caseNcExp);
@@ -1531,16 +1550,21 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!reps.Any()) { Inc("skip.vkqsua"); continue; }
                     var rp = reps[rnd.Next(reps.Count)];
                     var rid = rp.HandoverRepairResultId; var by = rp.CreatedBy;
-                    var hasChk = db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && !c.IsVoided);
-                    desc = $"vkqsua #{rid} {rp.GroupCode} {rp.SourceCell} dat={rp.QtyPass} khong={rp.QtyFail} coXN={hasChk}";
+                    // [N17-KCS-BO 2026-11-23] dòng tự xác nhận (chứng từ mới) huỷ cùng Kết quả sửa; chỉ lần KCS bấm thật (chứng từ cũ) mới chặn huỷ
+                    var hasAuto = db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && !c.IsVoided && HandoverService.IsAutoCheck(c.CheckedBy, by, c.Notes));
+                    var hasChk = db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && !c.IsVoided && !HandoverService.IsAutoCheck(c.CheckedBy, by, c.Notes));
+                    desc = $"vkqsua #{rid} {rp.GroupCode} {rp.SourceCell} dat={rp.QtyPass} khong={rp.QtyFail} coXN={hasChk} tuXN={hasAuto}";
                     var deny = await svc.VoidRepairResultAsync(rid, "huy thu", 99);
                     if (deny.Ok) fails.Add($"[Quyền huỷ Kết quả sửa] PO{po} op{op} {desc}");
                     var res = await svc.VoidRepairResultAsync(rid, "huy thu", by);
                     ok = res.Ok; if (!ok) Inc("rej.vkqsua");
                     if (hasChk && ok) fails.Add($"[Huỷ Kết quả sửa còn lần KCS xác nhận] PO{po} op{op} {desc}");
+                    if (ok && db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && !c.IsVoided)) fails.Add($"[N17 huỷ Kết quả sửa còn dòng xác nhận chưa huỷ] PO{po} op{op} {desc}");
+                    if (!ok && hasAuto && db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == rid && c.IsVoided && HandoverService.IsAutoCheck(c.CheckedBy, by, c.Notes))) fails.Add($"[N17 huỷ bị chặn mà dòng tự xác nhận đã huỷ] PO{po} op{op} {desc}");
+                    if (ok) Inc(hasAuto ? "n17.vkqsua.moi.ok" : "n17.vkqsua.cu.ok"); else if (hasAuto) Inc("n17.vkqsua.moi.chan");
                     if (!ok && res.Error.StartsWith("Không lưu"))
                         await WhyCheck(db, svc, led, HandoverWhy.OpVoidRepair(rid), new HashSet<string> { "K:" + rid },
-                            async () => (await svc.VoidRepairResultAsync(rid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error);
+                            async () => (await svc.VoidRepairResultAsync(rid, "thu lai", by)).Ok, null, rnd, po, op, desc, res.Error, loop: hasAuto);   // [N17-KCS-BO] có dòng tự xác nhận = huỷ chứng từ nguồn (K5 theo thời gian)
                     break;
                 }
                 case "vxnsua":   // [GC-SUA-TAI-CHO] huỷ lần KCS xác nhận
@@ -1549,7 +1573,17 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (!chks.Any()) { Inc("skip.vxnsua"); continue; }
                     var ck = chks[rnd.Next(chks.Count)];
                     var cid = ck.HandoverRepairCheckId; var by = ck.CheckedBy;
-                    desc = $"vxnsua #{cid} (KQ #{ck.HandoverRepairResultId} {ck.RepairResult.GroupCode}) dat={ck.QtyOk} loai={ck.QtyNg}";
+                    var autoX = HandoverService.IsAutoCheck(ck.CheckedBy, ck.RepairResult.CreatedBy, ck.Notes);   // [N17-KCS-BO]
+                    desc = $"vxnsua #{cid} (KQ #{ck.HandoverRepairResultId} {ck.RepairResult.GroupCode}) dat={ck.QtyOk} loai={ck.QtyNg} tu={autoX}";
+                    if (autoX)
+                    {   // [N17-KCS-BO 2026-11-23] dòng tự xác nhận không huỷ riêng — mọi người đều bị chặn, không đổi gì
+                        var sigX = ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!);
+                        var rx = await svc.VoidRepairCheckAsync(cid, "huy thu", rnd.NextDouble() < 0.5 ? by : 1);
+                        checks++; Inc("n17.vxnsua.tu.chan");
+                        if (rx.Ok || !rx.Error.Contains("không huỷ riêng") || ck.IsVoided || ChuoiHelp.LedgerSig((await led.GetLedgerForDetailAsync(1))!) != sigX)
+                            fails.Add($"[N17 huỷ riêng dòng tự xác nhận không bị chặn đúng] PO{po} op{op} {desc}: {rx.Error}");
+                        continue;
+                    }
                     var deny = await svc.VoidRepairCheckAsync(cid, "huy thu", 99);
                     if (deny.Ok) fails.Add($"[Quyền huỷ KCS xác nhận] PO{po} op{op} {desc}");
                     var res = await svc.VoidRepairCheckAsync(cid, "huy thu", by);

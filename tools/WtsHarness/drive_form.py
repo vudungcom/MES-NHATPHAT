@@ -119,7 +119,9 @@ async def main():
         ok(sent and len(nr) == 1 and nr[0]["nc"] == "NC01" and nr[0]["origin"] == "DAU_RA" and len(nk) == 1 and nk[0]["toNC"] == "NC01" and nk[0]["qtyPass"] == 1
            and nk[0]["sourceCell"] == "LOI" and nk[0]["ngCaseId"] == nr[0]["ngCaseId"],
            "D32 DB: báo lỗi 1 (NC01, đầu ra) + Kết quả sửa đạt 1 làm tiếp NC01, cùng vụ — 1 lần lưu", {"bl": nr, "kq": nk})
-        ok(d3["groups"]["GC"]["choKcs"] == 1, "D33 Gia công: Chờ KCS 1")
+        # [N17-KCS-BO 23/11] đáp án đổi theo khách 23/11 (N17): sửa đạt không cần KCS xác nhận → đạt về chờ NC01 ngay, Chờ KCS 0 (trước: Chờ KCS 1)
+        ok(d3["groups"]["GC"]["choKcs"] == 0 and d3["groups"]["GC"]["chuaLam"] == d2["groups"]["GC"]["chuaLam"],
+           "D33 [N17] Gia công: Chờ KCS 0, đạt 1 về chờ NC01 ngay (Chưa GC như trước khi báo lỗi)", {"truoc": d2["groups"]["GC"], "sau": d3["groups"]["GC"]})
         sane(d3, "D34")
 
         print("[D4] nút Xác nhận khoá khi vượt tối đa / thiếu loại lỗi")

@@ -11,7 +11,7 @@
           KHÁCH 15:39 (K2 Gia công chọn theo "đã làm xong NC nào", sửa xong làm tiếp đúng NC kế), HÙNG 16:43 (K3 chữ bước 2),
           KHÁCH 04/11 16:09 + HÙNG 17:35 (K4 bỏ link đỏ Báo lỗi / link Kết quả sửa / mục Khác — gộp vào form này).
    Trang chỉ hiện + gửi lựa chọn. Số trên từng dòng đọc từ sổ chung (HandoverForm.FormPositions); máy chủ (HandoverService.SaveFormAsync)
-   tự ánh xạ chứng từ, kiểm lại trần / quyền / vụ / NC làm tiếp, ghi 1 giao dịch + K5. Nhận và KCS xác nhận vẫn ở nút Nhận.
+   tự ánh xạ chứng từ, kiểm lại trần / quyền / vụ / NC làm tiếp, ghi 1 giao dịch + K5. Nhận (và KCS xác nhận chứng từ cũ ghi trước bản N17) vẫn ở nút Nhận.
    ===================================================================== *@
 
 <div class="mes-modal-backdrop">
@@ -672,7 +672,7 @@
         return rg.FirstOrDefault() ?? "";
     }
 
-    /// <summary>[SUA-QUA-KCS 2026-11-11] Ô bên nhận chọn được: Workflow ON, hàng lỗi / hàng sửa không vào ô Hàng lỗi đã xử lý / Hàng mới (phải qua Kết quả sửa + KCS).</summary>
+    /// <summary>[SUA-QUA-KCS 2026-11-11] Ô bên nhận chọn được: Workflow ON, hàng lỗi / hàng sửa không vào ô Hàng lỗi đã xử lý / Hàng mới (phải qua Kết quả sửa — [N17-KCS-BO] không còn KCS).</summary>
     IEnumerable<string> ToCellOpts => HandoverCell.ReceiveCells.Where(c => !(Row.ApplyWorkflow && !IsTot && HandoverForm.SuaQuaKcsBlocked(HandoverCell.Loi, c)));
 
     /// <summary>[SUA-XL-GIU] Chữ: bên nhận hàng đã sửa sẽ tính thế nào (cùng hàm sổ XlDest).</summary>
@@ -720,7 +720,8 @@
             </div>
         </div>
         <div class="small text-muted mb-2">
-            Tối đa @Have.ToString("0.##"). Đạt → chờ KCS xác nhận (người KCS khác người ghi).
+            @* [N17-KCS-BO 2026-11-23] khách 23/11: sửa đạt không cần KCS xác nhận — trước: "Đạt → chờ KCS xác nhận (người KCS khác người ghi)." *@
+            Tối đa @Have.ToString("0.##"). Đạt → vào thẳng ô đạt, làm tiếp / giao luôn (không cần KCS xác nhận).
             @(failOk ? "Không đạt → ở lại Tồn hàng lỗi, cùng vụ." : "Lấy từ Tồn hàng lỗi: chiếc không đạt vẫn ở Tồn hàng lỗi.")
         </div>
         if (_pass + _fail > Have)
@@ -776,7 +777,7 @@
         if (IsHeld)
             return Act switch
             {
-                HandoverForm.ASua     => "Sẽ ghi: Kết quả sửa — đạt chờ KCS xác nhận.",
+                HandoverForm.ASua     => "Sẽ ghi: Kết quả sửa — đạt vào thẳng ô đạt (không cần KCS xác nhận).",   // [N17-KCS-BO]
                 HandoverForm.AHuy     => "Sẽ ghi: phiếu Huỷ hàng lỗi (ra khỏi PO).",
                 HandoverForm.AKhach   => "Sẽ ghi: phiếu Trả khách hàng lỗi (ra khỏi PO).",
                 _                     => $"Sẽ ghi: phiếu giao hàng {(Pos!.HeldCell == HandoverCell.Sua ? "sửa" : "lỗi")} {G} → {D}, cùng vụ."
@@ -786,7 +787,7 @@
         var tail = Act switch
         {
             HandoverForm.AGiu   => "",
-            HandoverForm.ASua   => " + Kết quả sửa (đạt chờ KCS)",
+            HandoverForm.ASua   => " + Kết quả sửa (đạt vào thẳng ô đạt)",   // [N17-KCS-BO]
             HandoverForm.AHuy   => " + phiếu Huỷ",
             HandoverForm.AKhach => " + phiếu Trả khách",
             _                   => (ToCellNow is HandoverCell.Xl or HandoverCell.Moi ? " + phiếu trả hàng đã sửa " : " + phiếu giao hàng lỗi ") + $"{G} → {D}"

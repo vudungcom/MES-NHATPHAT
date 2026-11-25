@@ -1435,10 +1435,13 @@ public static class TaroScen
             var n1 = await svc.ReceiveAsync(db.HandoverTransactions.List.Last().HandoverTxId, 2, 0, null, U);
             var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = det, Group = "HTSP", UserId = U, Kind = HandoverForm.Loi, Pos = "TONSUA", CaseId = cs, Action = HandoverForm.ASua, Pass = 1, Fail = 1, Notes = "sua" });
             var k = db.HandoverRepairResults.List.LastOrDefault();
-            var x = k == null ? (false, "không có Kết quả sửa") : await svc.ConfirmRepairAsync(k.HandoverRepairResultId, 1, 0, null, 4);
+            // [N17-KCS-BO 2026-11-23] đổi theo khách 23/11 (N17): sửa đạt không cần KCS xác nhận — đạt 1 tự xác nhận lúc ghi (trước: KCS bấm xác nhận)
+            var x = k == null ? (false, "không có Kết quả sửa")
+                  : db.HandoverRepairChecks.List.Any(c => c.HandoverRepairResultId == k.HandoverRepairResultId && !c.IsVoided && c.QtyOk == 1 && c.Notes == HandoverService.AutoCheckNote)
+                    ? (true, "") : (false, "không có dòng tự xác nhận đạt 1");
             var row = (await led.GetLedgerForDetailAsync(det))!; var s = await Sach(db, det);
             Ok(row.Cases[cs].IsLamHo && !row.Cases[cs].LamHoNhan && g.Ok && n1.Ok && f.Ok && x.Item1 && W(row, "HTSP", cs).Contains("Workflow OFF không chặn") && s == "",
-               "T27f OFF, vụ Taro làm hộ NG: gửi HTSP ô Hàng sửa → nhận → Kết quả sửa → KCS xác nhận đều lưu được; sổ sạch (cân, Đang ở đâu = phôi, vụ cân) + cảnh báo HTSP",
+               "T27f OFF, vụ Taro làm hộ NG: gửi HTSP ô Hàng sửa → nhận → Kết quả sửa (đạt tự xác nhận — N17) đều lưu được; sổ sạch (cân, Đang ở đâu = phôi, vụ cân) + cảnh báo HTSP",
                $"{g.Error} {n1.Error} {f.Error} {x.Item2} | {W(row, "HTSP", cs)} | {s}");
         }
         {   // [T27g] phiếu lập lúc OFF vào ô hàng đạt KCS (chưa nhận) → bật Workflow → nhận bị chặn; đổi sang ô Hàng lỗi (lý do) → được

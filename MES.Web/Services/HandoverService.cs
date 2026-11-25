@@ -796,7 +796,7 @@ namespace MES.Web.Services
                 && HandoverForm.XlTraLaiGroups(xtlCase, fromGroupCode) is { Count: > 0 } xrg && !xrg.Contains(toGroupCode))
                 return (false, $"Hàng đã sửa bị hỏng lại chỉ trả lại ô Hàng lỗi của nhóm đã sửa ({string.Join(" / ", xrg.Select(HandoverLedgerService.GroupLabel))}), cùng vụ.");
             // [SUA-QUA-KCS 2026-11-11] Workflow ON: hàng lỗi / hàng sửa không giao thẳng vào ô hàng đạt bên nhận (Hàng lỗi đã xử lý / Hàng mới) —
-            //   mọi hàng sửa phải ghi Kết quả sửa ("Sửa tại nhóm") để KCS xác nhận rồi mới trả (ô Tồn hàng lỗi đã xử lý). Gồm nút "Sửa xong, trả nơi gửi"
+            //   mọi hàng sửa phải ghi Kết quả sửa ("Sửa tại nhóm") [N17-KCS-BO 23/11: không còn bước KCS xác nhận] rồi mới trả (ô Tồn hàng lỗi đã xử lý). Gồm nút "Sửa xong, trả nơi gửi"
             //   (Tồn hàng sửa → ô Hàng lỗi đã xử lý bên gửi) và cặp ô "tự sửa xong" (Tồn hàng lỗi → ô Hàng lỗi đã xử lý / Hàng mới). OFF: như cũ (N7).
             //   Nguồn: KHÁCH 11/11 ("KCS là trung gian đánh giá tạm hàng sửa" · "OK trả bộ phận báo lỗi"); HÙNG 11/11 15:21 (ẩn nút) + 15:34 (B1: chặn cả 2 đường).
             if (row.ApplyWorkflow && HandoverForm.SuaQuaKcsBlocked(fromCell, toCell))
@@ -1036,8 +1036,8 @@ namespace MES.Web.Services
             //   (ô Hàng lỗi đã xử lý) chỉ nhận vào ô Hàng lỗi đã xử lý hoặc ô Hàng lỗi — đổi sang Hàng mới / Hàng sửa = thoát luật "sửa không quay lại NC" / ô giữ.
             //   Nguồn: CLAUDE (rà độc lập Gói 16 11/11); HÙNG 11/11 15:34 (B1).
             if (before != null && before.ApplyWorkflow && txHead.SourceReceiveId == null && qtyOk > 0 && txFromCell is HandoverCell.Loi or HandoverCell.Sua && effCell is HandoverCell.Xl or HandoverCell.Moi)   // cả phiếu đếm NG lúc nhận (trả về ngay) thì không chặn
-                return (false, $"Workflow ON: phiếu này lấy từ ô {HandoverCell.Label(txFromCell)} (chưa qua KCS xác nhận) — không nhận vào ô {HandoverCell.Label(effCell)}. "
-                             + "Nhận vào ô Hàng lỗi (ghi lý do đổi ô), hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa để KCS xác nhận.");
+                return (false, $"Workflow ON: phiếu này lấy từ ô {HandoverCell.Label(txFromCell)} (chưa ghi Kết quả sửa) — không nhận vào ô {HandoverCell.Label(effCell)}. "   // [N17-KCS-BO] chữ
+                             + "Nhận vào ô Hàng lỗi (ghi lý do đổi ô), hoặc bên giao huỷ phiếu rồi ghi Kết quả sửa.");
             if (before != null && before.ApplyWorkflow && txFromCell == HandoverCell.Xl && effCell is not (HandoverCell.Xl or HandoverCell.Loi))
                 return (false, "Workflow ON: phiếu hàng đã sửa chỉ nhận vào ô Hàng lỗi đã xử lý (hoặc ô Hàng lỗi nếu hỏng lại) — không đổi sang ô khác.");
             bool newCase = !autoTx && !carryTx && (effCell is HandoverCell.Loi or HandoverCell.Sua || qtyNg > 0);

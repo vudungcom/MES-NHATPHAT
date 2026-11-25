@@ -193,7 +193,7 @@ namespace MES.Web.Services
                     list.Add(new FormPos { Id = "LAMHO", Label = LamHoText, Sub = "trả về Gia công, chọn NC nhận vào" + (defNc != null ? $" (Taro làm hộ xong bộ → {HandoverLedgerService.NcName(defNc)})" : ""),
                                            Have = Pos0(cap), LamHo = true });
                 }
-                if (G.XlGiu != 0)   // [SUA-XL-GIU] hàng đã sửa (KCS xác nhận) giữ vụ → giao tiếp về nơi phát hiện, vào ô Hàng lỗi đã xử lý
+                if (G.XlGiu != 0)   // [SUA-XL-GIU] hàng đã sửa đạt giữ vụ → giao tiếp về nơi phát hiện, vào ô Hàng lỗi đã xử lý
                     list.Add(new FormPos { Id = "TONXL", Label = TonXlText, Sub = "không ghi WTS số lượng — giao về nơi phát hiện (hoặc nhóm cần làm lại công đoạn trước đó)",
                                            Have = Pos0(G.XlGiu), HeldCell = HandoverCell.Xl });
                 return list;
@@ -472,14 +472,14 @@ namespace MES.Web.Services
             return x < d || x > d || fromDa ? HandoverLedgerService.RepXong : null;
         }
 
-        /// <summary>[SUA-XL-GIU] Chữ cho người dùng: hàng sửa đạt (KCS xác nhận) đi đâu.</summary>
+        /// <summary>[SUA-XL-GIU] Chữ cho người dùng: hàng sửa đạt đi đâu. [N17-KCS-BO 2026-11-23] bỏ "(KCS xác nhận)" — sửa đạt không cần KCS.</summary>
         public static string RepairTargetText(LedgerRow row, string group, string? target, string? detectGroup)
         {
-            if (target == HandoverLedgerService.RepOk) return "Sửa đạt (KCS xác nhận) tính là xong NC của chiếc lỗi — không ghi WTS lại, giờ sửa ghi \"Việc không làm ra SP\".";
+            if (target == HandoverLedgerService.RepOk) return "Sửa đạt tính là xong NC của chiếc lỗi — không ghi WTS lại, giờ sửa ghi \"Việc không làm ra SP\".";
             if (target != HandoverLedgerService.RepXong) return "";
             if (detectGroup == group)
-                return $"Sửa đạt (KCS xác nhận) tính là {HandoverLedgerService.GroupLabel(group)} đã làm xong — không làm lại công đoạn, không ghi WTS số lượng.";
-            return $"Sửa đạt (KCS xác nhận) vào Tồn hàng lỗi đã xử lý của {HandoverLedgerService.GroupLabel(group)} — không làm lại công đoạn; sau đó giao về nơi phát hiện ({HandoverLedgerService.GroupLabel(detectGroup)}).";
+                return $"Sửa đạt tính là {HandoverLedgerService.GroupLabel(group)} đã làm xong — không làm lại công đoạn, không ghi WTS số lượng.";
+            return $"Sửa đạt vào Tồn hàng lỗi đã xử lý của {HandoverLedgerService.GroupLabel(group)} — không làm lại công đoạn; sau đó giao về nơi phát hiện ({HandoverLedgerService.GroupLabel(detectGroup)}).";
         }
 
         // ================================================================
@@ -490,12 +490,13 @@ namespace MES.Web.Services
         public static bool SuaQuaKcsBlocked(string? fromCell, string? toCell)
             => fromCell is HandoverCell.Loi or HandoverCell.Sua && toCell is HandoverCell.Xl or HandoverCell.Moi;
 
+        // [N17-KCS-BO 2026-11-23] luật N17 bỏ bước KCS xác nhận, KHÔNG bỏ chặn này: sửa vẫn phải ghi Kết quả sửa (truy vết ai sửa, đạt / chưa đạt, vụ) — chỉ đổi chữ.
         public const string SuaQuaKcsMsg = "Workflow ON: hàng lỗi / hàng sửa không giao thẳng vào ô Hàng lỗi đã xử lý / Hàng mới của bên nhận. "
-            + "Sửa xong thì chọn \"Sửa tại nhóm\" (ghi Kết quả sửa) để KCS xác nhận, rồi giao hàng đã sửa về nơi phát hiện lỗi.";
+            + "Sửa xong thì chọn \"Sửa tại nhóm\" (ghi Kết quả sửa), rồi giao hàng đã sửa về nơi phát hiện lỗi.";
 
         public static string SuaQuaKcsRecvMsg(string desig, string eff)
-            => $"Workflow ON: không đổi ô {HandoverCell.Label(desig)} sang {HandoverCell.Label(eff)} lúc nhận (= coi như đã sửa đạt, chưa qua KCS xác nhận). "
-             + "Nhận vào ô bên giao chỉ định (hoặc ô Hàng lỗi / Hàng sửa); sửa xong ghi Kết quả sửa để KCS xác nhận.";
+            => $"Workflow ON: không đổi ô {HandoverCell.Label(desig)} sang {HandoverCell.Label(eff)} lúc nhận (= coi như đã sửa đạt mà chưa ghi Kết quả sửa). "
+             + "Nhận vào ô bên giao chỉ định (hoặc ô Hàng lỗi / Hàng sửa); sửa xong ghi Kết quả sửa.";
 
         // ================================================================
         // [XL-VUOT-CHAN 2026-11-10] Hàng đã sửa (ô Hàng lỗi đã xử lý) chỉ giao xuôi về nơi phát hiện: nhóm nhận đứng sau nhóm giữ và không sau nơi phát hiện.

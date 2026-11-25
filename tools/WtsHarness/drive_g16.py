@@ -71,7 +71,8 @@ async def recv_must_loi(pg, yy, po, nm):
         ok(on == ["Hàng lỗi"], f"Y{yy}1 ô nhận chọn sẵn: Hàng lỗi", {"on": on, "cells": cells})
         ok(not any(c.startswith("Hàng lỗi đã xử lý") or c.startswith("Hàng mới") for c in cells), f"Y{yy}2 không còn nút ô Hàng lỗi đã xử lý / Hàng mới", cells)
         t = await m.inner_text()
-        ok("chưa qua KCS xác nhận" in t and "đã chọn sẵn ô Hàng lỗi" in t, f"Y{yy}3 dòng cảnh báo", t[:900])
+        # [N17-KCS-BO 23/11] chữ đổi: "chưa qua KCS xác nhận" → "chưa ghi Kết quả sửa" (bản cũ vẫn chữ cũ)
+        ok(("chưa ghi Kết quả sửa" in t or "chưa qua KCS xác nhận" in t) and "đã chọn sẵn ô Hàng lỗi" in t, f"Y{yy}3 dòng cảnh báo", t[:900])
         rs = m.locator("input.border-warning").first
         rv = await rs.input_value() if await rs.count() else ""
         ok("Workflow ON" in rv, f"Y{yy}4 lý do đổi ô điền sẵn", rv)
@@ -163,7 +164,8 @@ async def main():
         print("[Y4..Y5] KCS xác nhận → HTSP giao hàng đã sửa về KCS: KCS kiểm lại, giờ ghi Việc không làm ra SP")
         try:
             xn = post("/harness/g16-xn?po=PO-G16"); a4 = get(A)
-            ok(xn["ok"] and a4["htsp"]["xlGiu"] == 2, "Y41 HTSP Tồn hàng lỗi đã xử lý 2", {"xn": xn, "htsp": a4["htsp"]})
+            # [N17-KCS-BO 23/11] bản có N17: đạt đã tự xác nhận lúc ghi → KCS xác nhận bị từ chối "không cần KCS xác nhận", sổ đã như sau xác nhận
+            ok((xn["ok"] or "không cần KCS xác nhận" in (xn.get("error") or "")) and a4["htsp"]["xlGiu"] == 2, "Y41 HTSP Tồn hàng lỗi đã xử lý 2", {"xn": xn, "htsp": a4["htsp"]})
             await pg.reload(); await pg.wait_for_timeout(4000)
             m = await open_form(pg, "PO-G16", "HTSP")
             await click(m, pg, "Hàng tốt"); await click(m, pg, "Hàng đã sửa — chờ trả nơi phát hiện lỗi"); await pick_case(m, pg)

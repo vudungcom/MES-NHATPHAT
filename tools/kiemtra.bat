@@ -16,6 +16,11 @@ chcp 65001 >nul
 rem [KIEM-UUTIEN 2026-11-23] Hung 23/11 15:55 (may giat luc tram kiem, chon cach 2): giu 75%% nhan [KIEM-75] nhung chay muc uu tien BELOW NORMAL
 rem   -> Windows nhuong CPU cho viec Hung dang lam. Dat cua so lenh nay xuong Below Normal (moi tien trinh con dotnet / powershell ke thua);
 rem   bo kiem nang (Nang.cs) cung tu dat Below Normal cho tung luot. Chay muc thuong: set UU_TIEN=thuong truoc khi chay.
+rem [KIEM-100 2026-11-24] Hung 24/11 08:25: "nay may nay ban cho test 100%% duoc, dang remote, ko lo giat" -> Claude ghi tools\claude_tai.txt:
+rem   100 = chay 100%% so nhan that, muc uu tien THUONG (may khong ai dung) · 75 (hoac khong co file) = nhu cu [KIEM-75] + Below Normal.
+set "TAI="
+if exist "%~dp0claude_tai.txt" set /p TAI=<"%~dp0claude_tai.txt"
+if "%TAI%"=="100" set "UU_TIEN=thuong"
 if /i not "%UU_TIEN%"=="thuong" set "DAT_UU_TIEN=1"
 cd /d "%~dp0GiaoNhanFuzz"
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyMMdd_HHmm"') do set TS=%%i
@@ -52,6 +57,8 @@ rem [KIEM-NHAN] ten CPU + so nhan THAT (vat ly) / luong. Mac dinh chay cung luc 
 for /f %%c in ('powershell -NoProfile -Command "Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum | Select-Object -ExpandProperty Sum"') do set NHAN_THAT=%%c
 powershell -NoProfile -Command "Get-CimInstance Win32_Processor | ForEach-Object { 'CPU: ' + $_.Name + ' | nhan that ' + $_.NumberOfCores + ' | luong ' + $_.NumberOfLogicalProcessors + ' | xung toi da ' + $_.MaxClockSpeed + ' MHz' }; $m=Get-CimInstance Win32_OperatingSystem; 'RAM trong: ' + [math]::Round($m.FreePhysicalMemory/1MB,1) + ' / ' + [math]::Round($m.TotalVisibleMemorySize/1MB,1) + ' GB'" >> "%OUT%" 2>&1
 rem [KIEM-75 2026-11-11] Hung 11/11 15:34: chay khoang 75%% so nhan that thi may khong giat, chay duoc ca gio lam viec (truoc: 100%% nhan that).
+if "%TAI%"=="100" if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT
+if "%TAI%"=="100" powershell -NoProfile -Command "try { $p = Get-Process -Id (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId; $p.PriorityClass = 'Normal'; 'Uu tien cua so lenh: ' + $p.PriorityClass + ' [KIEM-100] chay 100%% nhan that' } catch { 'Uu tien: khong doi duoc (' + $_.Exception.Message + ')' }" >> "%OUT%" 2>&1
 if "%SONG_SONG%"=="" if not "%NHAN_THAT%"=="" set /a SONG_SONG=NHAN_THAT*3/4
 if "%SONG_SONG%"=="0" set "SONG_SONG=1"
 echo Chay cung luc: %SONG_SONG% tien trinh (SONG_SONG; mac dinh = 75%% so nhan that %NHAN_THAT% [KIEM-75])>> "%OUT%"

@@ -88,7 +88,8 @@ async def main():
         try:
             xn = post("/harness/g15-xn")
             d2 = get("/harness/g15")
-            ok(xn["ok"] and d2["gc"]["xlGiu"] == 2 and d2["gc"]["conGiao"] == d0["gc"]["conGiao"] and d2["gc"]["choKcs"] == 0,
+            # [N17-KCS-BO 23/11] bản có N17: đạt đã tự xác nhận lúc ghi (X1) → KCS xác nhận bị từ chối "không cần KCS xác nhận", sổ đã như sau xác nhận
+            ok((xn["ok"] or "không cần KCS xác nhận" in (xn.get("error") or "")) and d2["gc"]["xlGiu"] == 2 and d2["gc"]["conGiao"] == d0["gc"]["conGiao"] and d2["gc"]["choKcs"] == 0,
                "X21 GC: Tồn hàng lỗi đã xử lý 2, Đã làm chưa giao không đổi, Chờ KCS 0", {"xn": xn, "gc": d2["gc"]})
             sane(d2, "X2")
             await pg.reload(); await pg.wait_for_timeout(4000)

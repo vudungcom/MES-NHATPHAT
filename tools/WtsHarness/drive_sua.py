@@ -1,4 +1,6 @@
 # [GC-SUA-TAI-CHO 04/11/2026] Trang Giao nhận thật (harness EF giả) — Kết quả sửa + KCS xác nhận.
+# [N17-KCS-BO 23/11] Từ luật N17 (sửa đạt không cần KCS) driver này kiểm CHỨNG TỪ KIỂU CŨ: chạy với HARNESS_KIEUCU=1 (mk.sh) —
+#   vd HARNESS_KIEUCU=1 bash rundrv.sh <harness> <port> drive_sua.py new. Chứng từ mới: drive_n17.py.
 #   Dữ liệu: POST /harness/sua-seed (Stubs/HarnessSua.cs): PO-SUA, GC đang giữ ô Hàng sửa 2 (Kho gửi nhờ sửa), Chưa GC 8.
 #   K1 admin: Giao → form "Giao / xử lý hàng" [GN-FORM1] → Gia công · Hàng lỗi · Tồn hàng sửa có 2, vụ tự chọn → Sửa tại nhóm: đạt 1 + không đạt 1,
 #       NC làm tiếp chỉ "như hàng mới" (phôi Kho gửi sửa — K2) → DB 1 dòng (SUA, đạt 1, không đạt 1, ToNC null); sổ GC: ô Hàng sửa 0, ô Hàng lỗi 1, Chờ KCS 1, Chưa GC 8
@@ -109,7 +111,8 @@ async def main():
             ok(g["choKcs"] == 0 and g["chuaLam"] == 9 and g["nc"]["NC01"] == s1["gc"]["nc"]["NC01"] + 1 and s4["balanced"] and s4["neg"] == 0,
                "K43 sổ GC: Chờ KCS 0, Chưa GC 9, chờ NC01 +1 (như hàng mới), cân, 0 ô âm", g)
             tk2 = await modal(pk).inner_text()
-            ok("Hàng sửa chờ KCS xác nhận: 0" in tk2, "K44 mục chờ KCS về 0 sau khi xác nhận", tk2[:300])
+            # [N17-KCS-BO 23/11] bản N17: mục chờ KCS chỉ hiện khi còn chứng từ cũ chờ → hết chờ thì mục ẩn (bản cũ: "…: 0")
+            ok("Hàng sửa chờ KCS xác nhận: 0" in tk2 or "Hàng sửa chờ KCS xác nhận" not in tk2, "K44 mục chờ KCS về 0 / ẩn sau khi xác nhận", tk2[:300])
         await close_modal(pk)
 
         print("[K5] kcsgn huỷ lần xác nhận trong Lịch sử")

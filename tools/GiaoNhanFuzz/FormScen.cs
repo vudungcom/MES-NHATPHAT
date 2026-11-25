@@ -87,6 +87,7 @@ public static class FormScen
         var pre = await Row(db);
         var preCells = FormHelp.Cells(pre); var preDocs = FormHelp.Docs(db, 1); var preSig = ChuoiHelp.LedgerSig(pre);
         int tx0 = db.HandoverTransactions.List.Count, bl0 = db.HandoverNgReports.List.Count, kq0 = db.HandoverRepairResults.List.Count, vu0 = db.NgCases.List.Count;
+        var repMax0 = FormHelp.MaxRepId(db);   // [N17-KCS-BO]
         var exp = FormHelp.Build(pre, r);
         var caseNc = FormHelp.CaseNcFor(db, r);
         var res = await svc.SaveFormAsync(r);
@@ -113,8 +114,11 @@ public static class FormScen
         }
         if (exp.Kq == 1 && dKq == 1 && exp.Bl == 1)
             Ok(db.HandoverRepairResults.List.Last().NgCaseId == db.HandoverNgReports.List.Last().NgCaseId, name + " → Kết quả sửa mang đúng vụ vừa sinh");
-        var bad = FormHelp.CheckCells(preCells, FormHelp.Cells(post), exp);
+        // [N17-KCS-BO 2026-11-23] Kết quả sửa mới tự xác nhận đạt: đáp án độc lập cũ (đạt → Chờ KCS) áp vào góc nhìn kiểu cũ (bỏ dòng tự xác nhận);
+        //   dòng tự xác nhận kiểm riêng; đích hàng đạt = như KCS xác nhận (kịch bản n17 N2 so tương đương).
+        var bad = FormHelp.CheckCells(preCells, await FormHelp.CellsKieuCu(db, 1, repMax0), exp);
         Ok(bad == null, name + " → ô sổ đổi đúng đáp án", bad);
+        if (exp.Kq == 1) { var au = FormHelp.AutoOkCheck(db, repMax0, preCells, FormHelp.Cells(post)); Ok(au == null, name + " → [N17] đạt tự xác nhận (không Chờ KCS)", au); }
         var tr = FormHelp.CheckTrace(db, exp, r.Group, caseNc);
         Ok(tr == null, name + " → truy vết đúng (NC phiếu, nguồn / nơi gây lỗi, vụ)", tr);
         await Check(db, name);
@@ -227,13 +231,14 @@ public static class FormScen
                string.Join(" | ", ex.Select(o => o.Code + ":" + o.Label)));
             var exOn = HandoverForm.NcOptions(await Row(db), "NC2", allowEarlier: false);   // [SUA-KHONG-LUI]
             Ok(exOn.Count == 1 && exOn[0].Code == "NC2" && exOn[0].Default, "[SUA-KHONG-LUI] Workflow ON: chỉ NC2 (mặc định), không có làm lại NC1", string.Join(" | ", exOn.Select(o => o.Code + ":" + o.Label)));
+            var w0F4 = (await Row(db)).G("GC").Steps.First(s => s.Code == "NC2").Waiting;   // [N17-KCS-BO] đo trước khi ghi (đạt vào NC2 ngay lúc ghi)
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 2, fail: 1, cat: 4), "GC lỗi đầu ra 3 chiếc chưa làm NC2 → sửa đạt 2, không đạt 1 (NC mặc định)");
             var k = db.HandoverRepairResults.List.Last();
             Ok(k.ToNC == "NC2" && k.QtyPass == 2 && k.QtyFail == 0 && k.SourceCell == HandoverCell.Loi, "Kết quả sửa: đạt 2 làm tiếp NC2 (mặc định = NC của vụ), không đạt ở lại Tồn hàng lỗi", $"{k.ToNC} {k.QtyPass}/{k.QtyFail}");
-            var w0 = (await Row(db)).G("GC").Steps.First(s => s.Code == "NC2").Waiting;
-            await svc.ConfirmRepairAsync(k.HandoverRepairResultId, 2, 0, null, Kcs);
-            var r = await Check(db, "F4 KCS xác nhận");
-            Ok(r.G("GC").Steps.First(s => s.Code == "NC2").Waiting == w0 + 2, "KCS đạt → chờ NC2 +2 (làm tiếp đúng NC kế)");
+            // [N17-KCS-BO 2026-11-23] đổi theo khách 23/11 (N17): sửa đạt không cần KCS xác nhận → chờ NC2 +2 ngay lúc ghi (trước: sau khi KCS xác nhận)
+            var r = await Check(db, "F4 sửa đạt (N17)");
+            Ok(r.G("GC").Steps.First(s => s.Code == "NC2").Waiting == w0F4 - 3 + 2 && !(await svc.ConfirmRepairAsync(k.HandoverRepairResultId, 2, 0, null, Kcs)).Ok,   // báo lỗi 3 lấy từ chờ NC2, sửa đạt 2 về chờ NC2
+               "[N17] sửa đạt → chờ NC2 +2 ngay (làm tiếp đúng NC kế), KCS không xác nhận thêm được");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, ncNext: "NC1", ncReason: "lam lai vat", cat: 4), "[SUA-KHONG-LUI] Làm lại từ NC1 có lý do (Workflow ON)", false, "Không làm lại NC");
             WorkflowSet(db, false);   // [SUA-KHONG-LUI] chỉ còn khi Workflow OFF (họ tự kiểm soát)
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.ASua, pass: 1, ncNext: "NC1", ncReason: "lam lai vat", cat: 4), "Workflow OFF: làm lại từ NC1 có lý do");

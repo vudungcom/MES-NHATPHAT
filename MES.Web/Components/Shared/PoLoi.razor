@@ -83,7 +83,7 @@
                         <th class="text-center" title="Lỗi do nơi này gây ra: NG (WTS) của nơi này, hàng lỗi nơi khác trả về / báo là lỗi đầu vào do nơi này">Do nơi này gây ra</th>
                         <th class="text-center" title="Ô Tồn hàng lỗi (sổ Giao nhận)">Đang giữ · Hàng lỗi</th>
                         <th class="text-center" title="Ô Tồn hàng sửa (sổ Giao nhận) — hàng nơi khác gửi nhờ sửa">Đang giữ · Hàng sửa</th>
-                        <th class="text-center" title="Ô Tồn hàng lỗi đã xử lý (sổ Giao nhận) — hàng đã sửa (KCS xác nhận), chờ trả nơi phát hiện">Đang giữ · Đã sửa chờ trả</th>@* [XL-HIEN-LOI] *@
+                        <th class="text-center" title="Ô Tồn hàng lỗi đã xử lý (sổ Giao nhận) — hàng đã sửa đạt, chờ trả nơi phát hiện">Đang giữ · Đã sửa chờ trả</th>@* [XL-HIEN-LOI] · [N17-KCS-BO] chữ *@
                         <th class="text-center">Đã huỷ</th>
                         <th class="text-center">Trả khách</th>
                         <th style="width:90px"></th>
@@ -182,8 +182,9 @@
             "TRA"   => $"{g} nhận lại {h.Qty:0.##} (NG lúc {o} nhận)",
             "HUY"   => $"{g} huỷ {h.Qty:0.##}",
             "KHACH" => $"{g} trả khách {h.Qty:0.##}",
-            "SUA"   => $"{g} sửa tại nhóm {h.Qty:0.##}" + cell + " (đạt chờ KCS xác nhận)",   // [GC-SUA-TAI-CHO]
-            "XN"    => $"KCS xác nhận hàng {g} sửa {h.Qty:0.##}",                              // [GC-SUA-TAI-CHO]
+            "SUA"   => $"{g} sửa tại nhóm {h.Qty:0.##}" + cell,   // [GC-SUA-TAI-CHO] · [N17-KCS-BO 2026-11-23] bỏ "(đạt chờ KCS xác nhận)" — chứng từ mới đạt vào thẳng ô đạt
+            "XN"    => h.Other == null ? $"{g} sửa đạt {h.Qty:0.##} (không cần KCS xác nhận)"   // [N17-KCS-BO] dòng tự xác nhận
+                                       : $"KCS xác nhận hàng {g} sửa {h.Qty:0.##}",                              // [GC-SUA-TAI-CHO] chứng từ cũ
             _ => h.Kind
         };
     }

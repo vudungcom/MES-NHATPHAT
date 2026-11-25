@@ -299,6 +299,33 @@ public static class FormHelp
          + $" bl{db.HandoverNgReports.List.Count(b => b.KhPlanDetailId == id)} kq{db.HandoverRepairResults.List.Count(k => k.KhPlanDetailId == id)}"
          + $" xn{db.HandoverRepairChecks.List.Count} vu{db.NgCases.List.Count(c => c.KhPlanDetailId == id)} wts{db.WtsProductionLogs.List.Count(w => w.KhPlanDetailId == id)}";
 
+    /// <summary>[N17-KCS-BO 2026-11-23] Ô sổ "nhìn như chứng từ kiểu cũ": bỏ dòng tự xác nhận của các Kết quả sửa mới ghi (Id &gt; minRepId) — đạt về lại
+    ///   Chờ KCS. Đáp án độc lập cũ (FormHelp.Build: Kết quả sửa → Chờ KCS + đạt) áp vào góc nhìn này; phần tự xác nhận kiểm riêng (AutoOkCheck)
+    ///   + kịch bản n17 (sổ N17 = sổ kiểu cũ + KCS xác nhận đạt hết).</summary>
+    public static async Task<Dictionary<string, decimal>> CellsKieuCu(AppDbContext db, int id, long minRepId)
+    {
+        var inp = (await new HandoverLedgerService(db).GetInputForDetailAsync(id))!;
+        foreach (var rp in inp.Repairs.Where(r => r.Id > minRepId)) rp.Checks.RemoveAll(c => c.Auto);
+        return Cells(HandoverLedgerService.Compute(inp));
+    }
+    public static long MaxRepId(AppDbContext db) => db.HandoverRepairResults.List.Select(x => x.HandoverRepairResultId).DefaultIfEmpty(0).Max();
+    /// <summary>[N17-KCS-BO] Mỗi Kết quả sửa mới ghi (Id &gt; minRepId) có đạt &gt; 0 phải có đúng 1 dòng tự xác nhận (đạt = số đạt, người = người ghi, cùng giờ,
+    ///   chưa huỷ); đạt 0 thì không có. Ô Chờ KCS sau = trước (chứng từ mới không vào Chờ KCS). null = đúng.</summary>
+    public static string? AutoOkCheck(AppDbContext db, long minRepId, Dictionary<string, decimal> pre, Dictionary<string, decimal> post)
+    {
+        foreach (var rp in db.HandoverRepairResults.List.Where(r => r.HandoverRepairResultId > minRepId))
+        {
+            var cks = db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == rp.HandoverRepairResultId).ToList();
+            var ok = rp.QtyPass == 0 ? cks.Count == 0
+                   : cks.Count == 1 && cks[0].QtyOk == rp.QtyPass && cks[0].QtyNg == 0 && cks[0].CheckedBy == rp.CreatedBy && cks[0].CheckedAt == rp.CreatedAt
+                     && cks[0].Notes == HandoverService.AutoCheckNote && !cks[0].IsVoided;
+            if (!ok) return $"Kết quả sửa #{rp.HandoverRepairResultId} đạt {rp.QtyPass}: dòng xác nhận {string.Join(",", cks.Select(c => $"{c.QtyOk}/{c.QtyNg} by{c.CheckedBy} {c.Notes}"))}";
+        }
+        foreach (var g in HandoverLedgerService.GroupCodes)
+            if (post[g + ".ChoKcs"] != pre[g + ".ChoKcs"]) return $"{g}.ChoKcs {pre[g + ".ChoKcs"]} → {post[g + ".ChoKcs"]} (chứng từ mới không vào Chờ KCS)";
+        return null;
+    }
+
     /// <summary>Ô sổ so sánh: mọi nhóm + từng NC Gia công + ra khỏi PO.</summary>
     public static Dictionary<string, decimal> Cells(LedgerRow r)
     {

@@ -223,7 +223,9 @@ public static class WhyScen
         await Task.Delay(20);
         // [SUA-OK-NC 2026-11-10] Kết quả sửa kiểu cũ (về chờ NC02, làm lại NC02) chỉ còn ở dữ liệu cũ / Workflow OFF → dựng lúc OFF rồi bật lại (ca K5 theo thời gian giữ nguyên)
         var plY = db.KhPlans.List.Single(x => x.KhPlanId == db.KhPlanDetails.List.Single(d0 => d0.KhPlanDetailId == det).KhPlanId); plY.ApplyWorkflow = false;
+        HandoverService.TuXacNhanSuaDat = false;   // [N17-KCS-BO 2026-11-23] ca này dựng chứng từ KIỂU CŨ (đạt chờ KCS) — bước gỡ là "lần KCS xác nhận"
         var kq = await svc.CreateRepairResultAsync(det, "GC", HandoverCell.Loi, vu, 1, 0, "NC02", null, U);
+        HandoverService.TuXacNhanSuaDat = true;
         plY.ApplyWorkflow = true;
         var repId = db.HandoverRepairResults.List.Last().HandoverRepairResultId;
         await Task.Delay(20);

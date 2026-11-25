@@ -8,7 +8,7 @@ namespace MES.Web.Data.Entities
     /// Khách chốt 04/11 14:53: nhóm nào cũng có thể sửa tại chỗ; hàng sửa ĐẠT phải có KCS xác nhận rồi mới làm tiếp;
     /// hàng KHÔNG ĐẠT theo quy trình lỗi bình thường (ở lại ô Hàng lỗi của nhóm, cùng vụ).
     /// Lấy từ ô Hàng sửa (SUA: nhóm khác gửi nhờ sửa) hoặc ô Hàng lỗi (LOI: hàng lỗi của mình), 1 chứng từ = 1 vụ lỗi.
-    /// QtyPass = đạt (chờ KCS xác nhận — bảng HandoverRepairChecks); QtyFail = không đạt (chỉ khi lấy từ SUA → ô Hàng lỗi cùng vụ ngay).
+    /// QtyPass = đạt (chứng từ cũ: chờ KCS xác nhận — bảng HandoverRepairChecks · [N17-KCS-BO 23/11] chứng từ mới: kèm 1 dòng tự xác nhận, vào thẳng ô đạt); QtyFail = không đạt (chỉ khi lấy từ SUA → ô Hàng lỗi cùng vụ ngay).
     /// Không lưu số tồn: sổ chung HandoverLedgerService tính lại (L6). Chỉ ghi thêm: sai thì huỷ, không sửa / xoá.
     /// </summary>
     public class HandoverRepairResult

@@ -10,6 +10,7 @@ namespace MES.Web.Services
     //   hoặc hàng lỗi của mình (ô Hàng lỗi); hàng sửa ĐẠT phải có KCS xác nhận rồi mới làm tiếp; KHÔNG ĐẠT theo quy trình
     //   lỗi bình thường (ở lại ô Hàng lỗi của nhóm, cùng vụ). Hùng chốt 04/11 16:11: 2 bảng mới (SQL 08), người KCS xác nhận
     //   phải khác người ghi Kết quả sửa.
+    //   [N17-KCS-BO 2026-11-23] Bỏ bước KCS xác nhận cho chứng từ mới (khách 23/11): đạt vào thẳng ô đạt — xem AutoCheckNote.
     //   Trước: nhóm không tự trả cho chính mình được (CheckRoute chặn nhóm giao = nhóm nhận) → phải vòng qua nhóm khác,
     //   hoặc đổi ô lúc nhận (mất vết vụ gốc khi sửa hỏng).
     //   Số: chỉ sổ chung HandoverLedgerService tính (xem Compute "Kết quả sửa"). Mọi lưu / huỷ: khoá PO MES_PO_ + K5 trong
@@ -37,6 +38,8 @@ namespace MES.Web.Services
         public string    VoidedByName  { get; set; } = string.Empty;
         public DateTime? VoidedAt      { get; set; }
         public List<HandoverRepairCheckItem> Checks { get; set; } = new();
+        /// <summary>[N17-KCS-BO 2026-11-23] Kết quả sửa ghi từ 23/11: phần đạt tự tính vào ô đạt lúc ghi (không cần KCS xác nhận) — có dòng tự xác nhận.</summary>
+        public bool      AutoOk        => Checks.Any(c => c.Auto);
         /// <summary>Số KCS đã xác nhận (đạt + loại) ở các lần chưa huỷ.</summary>
         public decimal   Checked       => Checks.Where(c => !c.IsVoided).Sum(c => c.QtyOk + c.QtyNg);
         /// <summary>Số đạt còn chờ KCS xác nhận (chứng từ đã huỷ: 0).</summary>
@@ -57,12 +60,33 @@ namespace MES.Web.Services
         public string?   VoidReason    { get; set; }
         public string    VoidedByName  { get; set; } = string.Empty;
         public DateTime? VoidedAt      { get; set; }
+        /// <summary>[N17-KCS-BO 2026-11-23] Dòng tự xác nhận lúc ghi Kết quả sửa (không phải KCS bấm) — Lịch sử ẩn dòng này, không có nút huỷ riêng.</summary>
+        public bool      Auto          { get; set; }
     }
 
     public partial class HandoverService
     {
         /// <summary>[GC-SUA-TAI-CHO] Nhóm phải xác nhận hàng sửa đạt.</summary>
         public const string RepairCheckGroup = "KCS";
+
+        // [N17-KCS-BO 2026-11-23] Luật N17 (khách chốt mockup giao nhận 23/11 — TH3 + sheet dòng 14 "bỏ", Hùng 23/11 16:24 OK ghi sổ, 19:05 cho code):
+        //   Nguồn: KHÁCH 23/11 (mockup PGi3QtkmwVSZFCXZXWrGiZ TH3, sheet dòng 14); HÙNG 23/11 16:24 + 19:05; Sổ luật N17.
+        //   sửa đạt KHÔNG cần KCS xác nhận trên phần mềm, ở mọi bộ phận (cả Kho) — hàng sửa đạt vào thẳng ô đạt, làm tiếp / giao luôn.
+        //   Cách làm (không SQL, không đổi công thức sổ): ghi Kết quả sửa có số đạt thì ghi luôn 1 dòng xác nhận trong CÙNG giao dịch
+        //   (người = người ghi, giờ = giờ ghi, ghi chú cố định AutoCheckNote) → sổ chung tính y như KCS đã xác nhận đạt; Chờ KCS của chứng từ mới = 0.
+        //   Dòng tự xác nhận nhận ra được: KCS bấm thật không thể trùng người ghi (ConfirmRepair chặn từ 04/11) + ghi chú cố định.
+        //   Chứng từ cũ (ghi trước bản này, chưa có dòng tự xác nhận) GIỮ NGHĨA CŨ: phần đạt còn chờ thì KCS vẫn xác nhận được (Hùng 23/11 câu B).
+        //   Trước: đạt → ô Chờ KCS (tính vào Tồn, chưa WTS / giao được) → người KCS khác người ghi xác nhận.
+        /// <summary>[N17-KCS-BO] Tiền tố cố định (chỉ chữ ASCII) của ghi chú dòng tự xác nhận — KHÔNG đổi (dòng đã lưu nhận ra bằng tiền tố này).</summary>
+        public const string AutoCheckTag = "[N17]";
+        /// <summary>[N17-KCS-BO] Ghi chú ghi vào dòng tự xác nhận (phần sau tiền tố chỉ để đọc — đổi chữ phần này không làm hỏng dòng cũ).</summary>
+        public const string AutoCheckNote = AutoCheckTag + " Sửa đạt — không cần KCS xác nhận";
+        /// <summary>[N17-KCS-BO] Dòng xác nhận này là dòng tự xác nhận lúc ghi Kết quả sửa (không phải KCS bấm): người xác nhận = người ghi (KCS bấm thật
+        ///   không thể trùng — ConfirmRepair chặn từ 04/11) + ghi chú bắt đầu bằng AutoCheckTag. [rà độc lập G-C Thấp 5: so tiền tố, không so nguyên câu tiếng Việt]</summary>
+        public static bool IsAutoCheck(int checkedBy, int createdBy, string? notes) => checkedBy == createdBy && notes != null && notes.StartsWith(AutoCheckTag, StringComparison.Ordinal);
+        /// <summary>[N17-KCS-BO] CHỈ bộ kiểm đặt false để dựng chứng từ kiểu cũ (ghi trước bản N17: đạt chờ KCS xác nhận). Phần mềm luôn true.
+        ///   public vì tools\SqlDongThoi tham chiếu MES.Web như thư viện ngoài (không dùng được internal).</summary>
+        public static bool TuXacNhanSuaDat = true;
 
         /// <summary>[GC-SUA-TAI-CHO] Huỷ Kết quả sửa: người ghi, hoặc người có quyền Sửa nhóm sửa.</summary>
         public static bool CanVoidRepair(int createdBy, string groupCode, int userId, IReadOnlyCollection<string> editGroups)
@@ -167,7 +191,8 @@ namespace MES.Web.Services
             if (qtyPass + qtyFail > max)
                 return (false, $"Ô {HandoverCell.Label(sourceCell)}: tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể ghi {qtyPass + qtyFail:0.##}.");
 
-            _db.HandoverRepairResults.Add(new HandoverRepairResult
+            var nowRep = DateTime.Now;   // [N17-KCS-BO] dòng tự xác nhận cùng giờ với Kết quả sửa (sổ cắt theo thời gian thấy cả 2 cùng lúc)
+            var repRow = new HandoverRepairResult
             {
                 KhPlanDetailId = khPlanDetailId,
                 GroupCode      = groupCode,
@@ -178,9 +203,23 @@ namespace MES.Web.Services
                 ToNC           = toNC,
                 Notes          = notes,
                 CreatedBy      = userId,
-                CreatedAt      = DateTime.Now,
-            });
+                CreatedAt      = nowRep,
+            };
+            _db.HandoverRepairResults.Add(repRow);
             await _db.SaveChangesAsync();
+            if (qtyPass > 0 && TuXacNhanSuaDat)
+            {   // [N17-KCS-BO 2026-11-23] sửa đạt vào thẳng ô đạt: dòng tự xác nhận trong cùng giao dịch (K5 bên dưới / ở SaveFormAsync xét cả dòng này)
+                _db.HandoverRepairChecks.Add(new HandoverRepairCheck
+                {
+                    HandoverRepairResultId = repRow.HandoverRepairResultId,
+                    QtyOk     = qtyPass,
+                    QtyNg     = 0,
+                    Notes     = AutoCheckNote,
+                    CheckedBy = userId,
+                    CheckedAt = nowRep,
+                });
+                await _db.SaveChangesAsync();
+            }
             if (ftx != null) return (true, string.Empty);   // [GN-FORM1] K5 + Commit ở SaveFormAsync
             var k8 = await CheckNoNewNegativeAsync(khPlanDetailId, row);   // [GN-K8][K5]
             if (k8 != null) { _db.ChangeTracker.Clear(); return (false, k8); }   // không Commit → rollback
@@ -208,6 +247,13 @@ namespace MES.Web.Services
             if (deny != null) return (false, deny);
             if (head.CreatedBy == userId)
                 return (false, "Người KCS xác nhận phải khác người ghi Kết quả sửa.");
+            // [N17-KCS-BO 2026-11-23] Kết quả sửa ghi từ 23/11: phần đạt đã tính vào ô đạt lúc ghi — không còn bước KCS xác nhận
+            //   (trước: rơi xuống "Còn chờ KCS xác nhận 0 chiếc"). Chứng từ cũ vẫn xác nhận như trước.
+            var autoNotes = await _db.HandoverRepairChecks.AsNoTracking()
+                .Where(c => c.HandoverRepairResultId == repairId && !c.IsVoided && c.CheckedBy == head.CreatedBy)
+                .Select(c => c.Notes).ToListAsync();
+            if (autoNotes.Any(n => n != null && n.StartsWith(AutoCheckTag, StringComparison.Ordinal)))
+                return (false, $"Kết quả sửa #{repairId}: sửa đạt không cần KCS xác nhận (luật N17) — hàng đạt đã vào ô đạt lúc ghi.");
             notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
             if (notes != null && notes.Length > 500) notes = notes[..500];
 
@@ -265,27 +311,43 @@ namespace MES.Web.Services
             using var trx = await _db.Database.BeginTransactionAsync();
             var lockErr = await LockPoAsync(head.KhPlanDetailId);
             if (lockErr != null) return (false, lockErr);
-            var before = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(head.KhPlanDetailId);
+            // [N17-KCS-BO] đọc sổ dạng đầu vào để xét K5 theo thời gian khi chứng từ có dòng tự xác nhận (= huỷ chứng từ nguồn, như huỷ lần KCS xác nhận)
+            var beforeIn = await new HandoverLedgerService(_db).GetInputForDetailAsync(head.KhPlanDetailId);
+            var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
             var rep = await _db.HandoverRepairResults.FirstOrDefaultAsync(x => x.HandoverRepairResultId == repairId && !x.IsVoided);
             if (rep == null) return (false, "Kết quả sửa không tồn tại hoặc đã huỷ.");
-            var nCheck = await _db.HandoverRepairChecks.CountAsync(c => c.HandoverRepairResultId == repairId && !c.IsVoided);
+            var liveChecks = await _db.HandoverRepairChecks.Where(c => c.HandoverRepairResultId == repairId && !c.IsVoided).ToListAsync();
+            // [N17-KCS-BO 2026-11-23] dòng tự xác nhận huỷ cùng Kết quả sửa; lần KCS bấm thật (chứng từ cũ) vẫn phải huỷ trước như cũ
+            var autoChecks = liveChecks.Where(c => IsAutoCheck(c.CheckedBy, rep.CreatedBy, c.Notes)).ToList();
+            var nCheck = liveChecks.Count - autoChecks.Count;
             if (nCheck > 0)
                 return (false, $"Kết quả sửa #{repairId} đã có {nCheck} lần KCS xác nhận — huỷ các lần xác nhận đó trước (Lịch sử phiếu).");
+            var reasonT = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();
+            var nowV = DateTime.Now;
             rep.IsVoided   = true;
-            rep.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();
+            rep.VoidReason = reasonT;
             rep.VoidedBy   = userId;
-            rep.VoidedAt   = DateTime.Now;
+            rep.VoidedAt   = nowV;
+            foreach (var ac in autoChecks)
+            {   // [N17-KCS-BO] cùng giao dịch, chỉ ghi thêm cờ huỷ (không xoá dòng)
+                ac.IsVoided   = true;
+                ac.VoidReason = reasonT;
+                ac.VoidedBy   = userId;
+                ac.VoidedAt   = nowV;
+            }
             await _db.SaveChangesAsync();
             if (before != null)
             {
-                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before);   // [K5] vd hàng không đạt đã đem đi / huỷ
+                // [K5] vd hàng không đạt đã đem đi / huỷ · [N17-KCS-BO] + có dòng tự xác nhận: hàng đạt đã vào ô đạt → xét thêm theo thời gian ([K5-VONG-SUA])
+                var hasAuto = autoChecks.Count > 0;
+                var k5 = await CheckNoNewNegativeAsync(head.KhPlanDetailId, before, hasAuto ? beforeIn : null);
                 if (k5 != null)
                 {
                     _db.ChangeTracker.Clear();
                     await trx.RollbackAsync();
                     await trx.DisposeAsync();   // [WHY-TRAN-DB] trả giao dịch ngay trước khi tìm gốc rễ
                     var whyTxt = await HandoverWhy.ExplainAsync(_db, head.KhPlanDetailId, HandoverWhy.OpVoidRepair(repairId),
-                        new HashSet<string> { "K:" + repairId }, new[] { $"Huỷ Kết quả sửa #{repairId}" });
+                        new HashSet<string> { "K:" + repairId }, new[] { $"Huỷ Kết quả sửa #{repairId}" }, loopOp: hasAuto);
                     return (false, k5 + whyTxt);
                 }
             }
@@ -306,8 +368,11 @@ namespace MES.Web.Services
             if (string.IsNullOrWhiteSpace(voidReason) || voidReason.Trim().Length < 3)
                 return (false, "Lý do huỷ phải có ít nhất 3 ký tự.");
             var head = await _db.HandoverRepairChecks.AsNoTracking().Where(c => c.HandoverRepairCheckId == checkId && !c.IsVoided)
-                .Select(c => new { c.CheckedBy, c.RepairResult.KhPlanDetailId, c.HandoverRepairResultId }).FirstOrDefaultAsync();
+                .Select(c => new { c.CheckedBy, c.RepairResult.KhPlanDetailId, c.HandoverRepairResultId, c.Notes, RepBy = c.RepairResult.CreatedBy }).FirstOrDefaultAsync();
             if (head == null) return (false, "Lần KCS xác nhận không tồn tại hoặc đã huỷ.");
+            // [N17-KCS-BO 2026-11-23] dòng tự xác nhận không huỷ riêng (huỷ riêng = đưa chứng từ mới về "chờ KCS" — luật cũ đã bỏ)
+            if (IsAutoCheck(head.CheckedBy, head.RepBy, head.Notes))
+                return (false, $"Kết quả sửa #{head.HandoverRepairResultId}: phần sửa đạt không qua KCS (luật N17) — không huỷ riêng. Ghi nhầm thì huỷ Kết quả sửa #{head.HandoverRepairResultId} ở Lịch sử phiếu.");
             var rights = await VoidRightsAsync(userId);
             if (rights == null) return (false, VoidInactiveMsg);
             if (!CanVoidRepairCheck(head.CheckedBy, userId, rights))
@@ -373,7 +438,7 @@ namespace MES.Web.Services
                     c.HandoverRepairResultId,
                     Item = new HandoverRepairCheckItem
                     {
-                        Id = c.HandoverRepairCheckId, QtyOk = c.QtyOk, QtyNg = c.QtyNg, Notes = c.Notes, CheckedBy = c.CheckedBy,
+                        Id = c.HandoverRepairCheckId, QtyOk = c.QtyOk, QtyNg = c.QtyNg, Notes = c.Notes, CheckedBy = c.CheckedBy,   // [N17-KCS-BO] Auto tính sau
                         CheckedByName = c.CheckedByUser != null ? (c.CheckedByUser.FullName ?? c.CheckedByUser.Username) : "",
                         CheckedAt = c.CheckedAt, IsVoided = c.IsVoided, VoidReason = c.VoidReason,
                         VoidedByName = c.VoidedByUser != null ? (c.VoidedByUser.FullName ?? c.VoidedByUser.Username) : "",
@@ -381,7 +446,11 @@ namespace MES.Web.Services
                     }
                 })
                 .ToListAsync();
-            foreach (var r in list) r.Checks = checks.Where(c => c.HandoverRepairResultId == r.Id).Select(c => c.Item).ToList();
+            foreach (var r in list)
+            {
+                r.Checks = checks.Where(c => c.HandoverRepairResultId == r.Id).Select(c => c.Item).ToList();
+                foreach (var c in r.Checks) c.Auto = IsAutoCheck(c.CheckedBy, r.CreatedBy, c.Notes);   // [N17-KCS-BO]
+            }
             var caseLbl = await NgCaseService.GetCaseLabelsAsync(_db, list.Select(x => x.NgCaseId));
             foreach (var r in list)
                 r.CaseLabel = r.NgCaseId is long v && v > 0

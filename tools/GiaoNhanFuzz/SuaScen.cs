@@ -8,7 +8,7 @@ using MES.Web.Data;
 using MES.Web.Data.Entities;
 using MES.Web.Services;
 
-public static class SuaScen
+public static partial class SuaScen   // [N17-KCS-BO 2026-11-23] partial: + SuaScenN17.cs (kịch bản n17)
 {
     static int fails = 0;
     static void Ok(bool cond, string name, string? info = null)
@@ -110,7 +110,16 @@ public static class SuaScen
         return row;
     }
 
+    /// <summary>[N17-KCS-BO 2026-11-23] Kịch bản "sua" giữ nguyên đáp án cũ = chứng từ KIỂU CŨ (ghi trước 23/11: đạt chờ KCS xác nhận) — chứng minh
+    ///   chứng từ cũ giữ nghĩa cũ (Hùng 23/11 câu B). Chứng từ mới (sửa đạt không cần KCS): kịch bản "n17" (SuaScenN17.cs).</summary>
     public static async Task<int> Run()
+    {
+        HandoverService.TuXacNhanSuaDat = false;   // [N17-KCS-BO] dựng Kết quả sửa kiểu cũ bằng hàm thật
+        try { return await RunCu(); }
+        finally { HandoverService.TuXacNhanSuaDat = true; }
+    }
+
+    static async Task<int> RunCu()
     {
         // ─────────────────────────────────────────────────────────────────
         Console.WriteLine("[S1] Kho gửi GC sửa 2 phôi lỗi (ô Hàng sửa) → GC ghi Kết quả sửa: đạt 1 (chờ KCS), không đạt 1");
@@ -1085,7 +1094,7 @@ public static class SuaScen
                 var gx = await OldRepair(f, () => sf.IssueByCellAsync(1, "KHO", "GC", 1, 1, "LOI", false, "XL", ngCaseId: vf)); var tx = LastTx(f);
                 var bf = await Check(f, "S36 C1 trước");
                 var rOnT3 = await sf.ReceiveAsync(tx, 1, 0, null, Gc);
-                Ok(!rOnT3.Ok && rOnT3.Error.Contains("chưa qua KCS xác nhận"), "[SUA-QUA-KCS] rà độc lập T3: phiếu kiểu cũ (Hàng lỗi → ô Hàng lỗi đã xử lý) nhận lúc Workflow ON bị chặn", rOnT3.Error);
+                Ok(!rOnT3.Ok && rOnT3.Error.Contains("chưa ghi Kết quả sửa"), /* [N17-KCS-BO] đáp án chữ đổi 23/11 (trước "chưa qua KCS xác nhận") */ "[SUA-QUA-KCS] rà độc lập T3: phiếu kiểu cũ (Hàng lỗi → ô Hàng lỗi đã xử lý) nhận lúc Workflow ON bị chặn", rOnT3.Error);
                 var rz = await OldRepair(f, () => sf.ReceiveAsync(tx, 1, 0, null, Gc, null, null, null, null, "NC2", null));
                 var rf = await OldRepair(f, () => sf.ReceiveAsync(tx, 1, 0, null, Gc));
                 var af = await Check(f, "S36 C1 nhận");

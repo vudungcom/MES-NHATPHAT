@@ -26,6 +26,8 @@ namespace MES.Web.Services
             public string    Text  { get; set; } = "";
             /// <summary>[H10-KET-WHY-3] Lời khuyên riêng của bước (null = theo Kind). Bước WTSV: "sửa dòng này về OK a NG b …".</summary>
             public string?   Hint  { get; set; }
+            /// <summary>[N17-KCS-BO 2026-11-23] Bước KQSUA của Kết quả sửa có dòng tự xác nhận (sửa đạt không cần KCS): huỷ = huỷ chứng từ nguồn → xét K5 theo thời gian như máy chủ.</summary>
+            public bool      Loop  { get; set; }
         }
 
         public class WhyPlan
@@ -376,7 +378,7 @@ namespace MES.Web.Services
                         if (st.Kind is not ("WTS" or "WTSV" or "NHAN" or "BAOLOI" or "KQSUA" or "XNSUA" or "BU") && sim.Txs.Any(t => t.Id == st.Id && t.Receives.Any())) return false;   // [H10-KET-WHY-3] + WTSV
                         if (st.Kind == "WTSV" && !sim.Wts.Any(w => w.Id == st.Id && CanRevertWts(w))) return false;   // [H10-KET-WHY-3] dòng đã xoá / đã sửa về
                         if (!StepAllowed(sim, st, Calc)) return false;   // [WHY-WTSV-TRAN 2026-11-11] bỏ bước trước làm bước WTSV sau vượt trần nhập WTS
-                        if (st.Kind == "KQSUA" && sim.Repairs.Any(r => r.Id == st.Id && r.Checks.Any(c => c.Id > 0))) return false;
+                        if (st.Kind == "KQSUA" && sim.Repairs.Any(r => r.Id == st.Id && r.Checks.Any(c => c.Id > 0 && !c.Auto))) return false;   // [N17-KCS-BO] dòng tự xác nhận huỷ cùng Kết quả sửa
                         // huỷ lần nhận có phiếu trả tự lập đã được nhận lại: tìm đường luôn gợi ý huỷ lần nhận phiếu trả trước (Actionable) → không bỏ bước đó
                         //   (bỏ thì máy chủ chỉ cho làm theo dây chuyền H10, cần quyền cả 2 nhóm, lời gợi ý không nói) — rà độc lập gói 5 vòng 2 mục 1
                         if (st.Kind == "NHAN" && sim.Txs.Any(b => b.SourceReceiveId == st.Id && b.Receives.Any())) return false;
@@ -440,7 +442,7 @@ namespace MES.Web.Services
         public static Action<LedgerInput> StepOpOf(WhyStep d) => StepOp(d);
         /// <summary>Bước gỡ là huỷ chứng từ nguồn → xét thêm K5 theo thời gian hàng sửa trả về như máy chủ ([K5-VONG-SUA][K5-VONG-HO-WTS]).
         ///   [H10-KET-WHY-3] + WTSV: sửa dòng WTS cũng là huỷ chứng từ nguồn (WtsSaveService kiểm theo thời gian khi sửa — [WTS-SUA-PHAN]).</summary>
-        public static bool LoopKind(WhyStep d) => d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS" or "WTSV" or "BU";   // [KHACH-GUI-LAI 2026-11-11] + BU: huỷ phiếu bù = huỷ chứng từ nguồn, máy chủ kiểm cả theo thời gian (rà độc lập Gói 14 T1)
+        public static bool LoopKind(WhyStep d) => d.Kind is "NHAN" or "PHIEU" or "XNSUA" or "WTS" or "WTSV" or "BU" || (d.Kind == "KQSUA" && d.Loop);   // [N17-KCS-BO] + Kết quả sửa có dòng tự xác nhận   // [KHACH-GUI-LAI 2026-11-11] + BU: huỷ phiếu bù = huỷ chứng từ nguồn, máy chủ kiểm cả theo thời gian (rà độc lập Gói 14 T1)
         /// <summary>[H10-KET-WHY-3] Bước thuộc tập bỏ qua (chứng từ của chính thao tác): WTSV của dòng thao tác gốc xoá / sửa cũng bỏ.</summary>
         static bool InSkip(WhyStep d, ICollection<string> skip) => skip.Contains(Key(d)) || (d.Kind == "WTSV" && skip.Contains("W:" + d.Id));
 
@@ -520,7 +522,11 @@ namespace MES.Web.Services
                     foreach (var r in s.Repairs.Where(r => r.Id > 0 && r.Group == g))   // (rà độc lập T2) chỉ lần KCS xác nhận có đạt — lần chỉ loại không phải hàng sửa về
                     {
                         var c0 = r.Checks.Where(x => x.Id > 0 && x.Ok > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
-                        if (c0 != null)
+                        if (c0 != null && c0.Auto)
+                        {   // [N17-KCS-BO 2026-11-23] hàng sửa về nhờ dòng tự xác nhận: gỡ = huỷ Kết quả sửa (không có lần KCS để huỷ riêng)
+                            c.Add(StepRepair(r)); units?.Add("K:" + r.Id);
+                        }
+                        else if (c0 != null)
                         {
                             c.Add(new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
                                 Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
@@ -698,12 +704,12 @@ namespace MES.Web.Services
 
         static WhyStep StepRepair(InRepair r)
         {
-            var c0 = r.Checks.Where(x => x.Id > 0).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();
+            var c0 = r.Checks.Where(x => x.Id > 0 && !x.Auto).OrderByDescending(x => x.At).ThenByDescending(x => x.Id).FirstOrDefault();   // [N17-KCS-BO] dòng tự xác nhận không huỷ riêng
             if (c0 != null)
                 return new WhyStep { Kind = "XNSUA", Id = c0.Id, TxId = r.Id, At = c0.At,
                     Text = $"Lần KCS xác nhận #{c0.Id} của Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · đạt {c0.Ok:0.##}"
                          + (c0.Ng > 0 ? $" loại {c0.Ng:0.##}" : "") + (string.IsNullOrEmpty(c0.Who) ? "" : $" · {c0.Who}") + $" · {c0.At:dd/MM HH:mm}" };
-            return new WhyStep { Kind = "KQSUA", Id = r.Id, TxId = r.Id, At = r.At,
+            return new WhyStep { Kind = "KQSUA", Id = r.Id, TxId = r.Id, At = r.At, Loop = r.Checks.Any(x => x.Auto),   // [N17-KCS-BO]
                 Text = $"Kết quả sửa #{r.Id} · {HandoverLedgerService.GroupLabel(r.Group)} · ô {HandoverCell.Label(r.Cell)} · đạt {r.Pass:0.##}"
                      + (r.Fail > 0 ? $" không đạt {r.Fail:0.##}" : "") + (string.IsNullOrEmpty(r.Who) ? "" : $" · {r.Who}") + $" · {r.At:dd/MM HH:mm}" };
         }

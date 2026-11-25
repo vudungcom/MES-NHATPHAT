@@ -176,7 +176,7 @@ public static class HarnessSua
             reps = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == det.KhPlanDetailId)
                 .Select(r => new { r.HandoverRepairResultId, r.GroupCode, r.SourceCell, r.NgCaseId, r.QtyPass, r.QtyFail, r.ToNC, r.CreatedBy, r.IsVoided }).ToList(),
             checks = db.HandoverRepairChecks.List
-                .Select(c => new { c.HandoverRepairCheckId, c.HandoverRepairResultId, c.QtyOk, c.QtyNg, c.CheckedBy, c.IsVoided }).ToList(),
+                .Select(c => new { c.HandoverRepairCheckId, c.HandoverRepairResultId, c.QtyOk, c.QtyNg, c.CheckedBy, c.IsVoided, c.Notes, c.VoidReason }).ToList(),   // [N17-KCS-BO] + Notes, VoidReason (drive_n17)
             gc = new { gc.SuaGiu, gc.LoiGiu, gc.ChoKcs, gc.ChuaLam, gc.Ton, nc = gc.Steps.ToDictionary(s => s.Code, s => s.Waiting ?? 0) },
             row.Balanced,
             neg = HandoverLedgerService.NegativeCells(row).Count,

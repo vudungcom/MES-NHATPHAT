@@ -309,7 +309,11 @@ public static class Core
                     w.Db.ChangeTracker.Clear();
                     var back = await w.Db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == p6.Id && t.SourceReceiveId != null).Select(t => new { t.HandoverTxId, t.NgCaseId }).FirstAsync();
                     var rb = await w.Gn.ReceiveAsync(back.HandoverTxId, 0, 4, null, _admin);   // Kho nhận lại 4 vào ô Hàng lỗi
-                    var k = await w.Gn.CreateRepairResultAsync(p6.Id, "KHO", HandoverCell.Loi, back.NgCaseId, 4, 0, null, "T1 S6 Kho sua", _admin);
+                    // [N17-KCS-BO 2026-11-23] S6 thử KCS xác nhận chứng từ KIỂU CŨ (ghi trước bản N17, đạt chờ KCS) — chứng từ mới không còn bước KCS (S6b)
+                    HandoverService.TuXacNhanSuaDat = false;
+                    (bool Ok, string Error) k;
+                    try { k = await w.Gn.CreateRepairResultAsync(p6.Id, "KHO", HandoverCell.Loi, back.NgCaseId, 4, 0, null, "T1 S6 Kho sua", _admin); }
+                    finally { HandoverService.TuXacNhanSuaDat = true; }
                     if (!g.Ok || !r.Ok || !rb.Ok || !k.Ok) throw new Exception($"S6 chuẩn bị lỗi: {g.Error} | {r.Error} | {rb.Error} | {k.Error}");
                     w.Db.ChangeTracker.Clear();
                     rep6 = await w.Db.HandoverRepairResults.AsNoTracking().Where(x => x.KhPlanDetailId == p6.Id).Select(x => x.HandoverRepairResultId).FirstAsync();
@@ -322,6 +326,47 @@ public static class Core
                    $"lưu được {r6.Count(x => x.Ok)} · DB {done6} · {string.Join(" | ", r6.Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
                 var e6 = await CheckPoAsync(p6.Id, p6.Po);
                 Ok(e6 == null, "Sổ PO S6 cân, không ô âm sau xác nhận", e6);
+            }
+        }
+
+        // ── S6b [N17-KCS-BO 2026-11-23] 8 người CÙNG LÚC ghi Kết quả sửa (đạt 1) từ cùng ô Hàng lỗi Kho còn 4 → đúng 4 lưu được, mỗi Kết quả sửa có
+        //   đúng 1 dòng tự xác nhận (sửa đạt không cần KCS — N17), không vượt trần. Nguồn: CLAUDE (rà độc lập G-C 24/11: S6 cũ không còn kiểm chứng từ mới).
+        Log("\n[S6b] 8 người CÙNG LÚC ghi Kết quả sửa đạt 1 từ ô Hàng lỗi Kho còn 4 (N17: tự xác nhận)");
+        {
+            int cat6b;
+            await using (var w = new Who())
+                cat6b = await w.Db.NgCategories.AsNoTracking().Where(x => x.IsActive).OrderBy(x => x.NgCategoryId).Select(x => x.NgCategoryId).FirstOrDefaultAsync();
+            if (cat6b == 0) Log("  BỎ QUA S6b: DS Lỗi chưa có loại lỗi đang dùng");
+            else
+            {
+                var p6b = (await NewPosAsync(1, 20, "S6b"))[0];
+                long vu6b;
+                await using (var w = new Who())
+                {
+                    var g = await w.Gn.IssueByCellAsync(p6b.Id, "KHO", "GC", 20, _admin, "MOI", false, "MOI", null, "NC01", "T1 S6b");
+                    var tx = await w.Db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == p6b.Id && t.SourceReceiveId == null).OrderByDescending(t => t.HandoverTxId).Select(t => t.HandoverTxId).FirstAsync();
+                    var r = await w.Gn.ReceiveAsync(tx, 16, 4, null, _admin, null, null, null, cat6b);
+                    w.Db.ChangeTracker.Clear();
+                    var back = await w.Db.HandoverTransactions.AsNoTracking().Where(t => t.KhPlanDetailId == p6b.Id && t.SourceReceiveId != null).Select(t => new { t.HandoverTxId, t.NgCaseId }).FirstAsync();
+                    var rb = await w.Gn.ReceiveAsync(back.HandoverTxId, 0, 4, null, _admin);
+                    if (!g.Ok || !r.Ok || !rb.Ok || back.NgCaseId == null) throw new Exception($"S6b chuẩn bị lỗi: {g.Error} | {r.Error} | {rb.Error}");
+                    vu6b = back.NgCaseId.Value;
+                }
+                var r6b = await AllAtOnce(8, (i, w) => Run("Ghi Kết quả sửa cùng lúc", async () => { var x = await w.Gn.CreateRepairResultAsync(p6b.Id, "KHO", HandoverCell.Loi, vu6b, 1, 0, null, "T1 S6b", _admin); return (x.Ok, x.Error); }));
+                List<long> reps6b; List<(long R, decimal Ok, int By, string? N)> cks6b;
+                await using (var w = new Who())
+                {
+                    reps6b = await w.Db.HandoverRepairResults.AsNoTracking().Where(x => x.KhPlanDetailId == p6b.Id && !x.IsVoided).Select(x => x.HandoverRepairResultId).ToListAsync();
+                    cks6b = (await w.Db.HandoverRepairChecks.AsNoTracking().Where(c => reps6b.Contains(c.HandoverRepairResultId) && !c.IsVoided)
+                        .Select(c => new { c.HandoverRepairResultId, c.QtyOk, c.CheckedBy, c.Notes }).ToListAsync())
+                        .Select(c => (c.HandoverRepairResultId, c.QtyOk, c.CheckedBy, c.Notes)).ToList();
+                }
+                Ok(r6b.Count(x => x.Ok) == 4 && reps6b.Count == 4, "Đúng 4 Kết quả sửa lưu được (= ô Hàng lỗi còn 4) — không vượt",
+                   $"lưu được {r6b.Count(x => x.Ok)} · DB {reps6b.Count} · {string.Join(" | ", r6b.Where(x => !x.Ok).Select(x => Short(x.Err ?? "")).Distinct())}");
+                Ok(cks6b.Count == reps6b.Count && reps6b.All(id => cks6b.Count(c => c.R == id && c.Ok == 1 && c.By == _admin && c.N == HandoverService.AutoCheckNote) == 1),
+                   "Mỗi Kết quả sửa có đúng 1 dòng tự xác nhận đạt 1 (N17), không dòng thừa", $"{reps6b.Count} KQ · {cks6b.Count} dòng xác nhận");
+                var e6b = await CheckPoAsync(p6b.Id, p6b.Po);
+                Ok(e6b == null, "Sổ PO S6b cân, không ô âm", e6b);
             }
         }
 

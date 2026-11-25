@@ -117,7 +117,9 @@ public static class HarnessG20
             await Must(svc.ReceiveAsync(Last(), 0, 2, null, admin.UserId), "GC nhận 2 ô Hàng lỗi");
             await Must(svc.CreateRepairResultAsync(id, "GC", HandoverCell.Loi, v3, 2, 0, HandoverLedgerService.RepXong, null, admin.UserId), "GC Kết quả sửa 2 (V3)");
             var rep = db.HandoverRepairResults.List.Where(r => r.KhPlanDetailId == id).OrderBy(r => r.HandoverRepairResultId).Last();
-            await Must(svc.ConfirmRepairAsync(rep.HandoverRepairResultId, 2, 0, null, kcsU.UserId), "KCS xác nhận 2");
+            // [N17-KCS-BO 2026-11-23] bản có luật N17: đạt đã tự xác nhận lúc ghi — chỉ KCS xác nhận khi còn chờ (bản cũ / HARNESS_KIEUCU)
+            if (rep.QtyPass - db.HandoverRepairChecks.List.Where(c => c.HandoverRepairResultId == rep.HandoverRepairResultId && !c.IsVoided).Sum(c => c.QtyOk + c.QtyNg) > 0)
+                await Must(svc.ConfirmRepairAsync(rep.HandoverRepairResultId, 2, 0, null, kcsU.UserId), "KCS xác nhận 2");
             await Must(svc.IssueByCellAsync(id, "GC", "HTSP", 2, admin.UserId, "XL", false, "XL", ngCaseId: v3), "GC giao HTSP 2 ô Hàng lỗi đã xử lý (nhóm giữa giữ ô)");
             await Must(svc.ReceiveAsync(Last(), 2, 0, null, admin.UserId), "HTSP nhận 2 ô Hàng lỗi đã xử lý");
             await Must(svc.IssueByCellAsync(id, "HTSP", "GC", 1, admin.UserId, "XL", false, "LOI", ngCaseId: v3), "HTSP trả lại GC 1 ô Hàng lỗi (chưa đạt)");
