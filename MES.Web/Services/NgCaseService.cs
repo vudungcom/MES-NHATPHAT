@@ -18,10 +18,16 @@ namespace MES.Web.Services
         public const string NhanLoi = "NHANLOI";  // nhận phiếu chưa mang vụ vào ô Hàng lỗi / Hàng sửa
         public const string BaoLoi  = "BAOLOI";   // báo hàng lỗi phát hiện sau khi nhận
         public const string TraLoi  = "TRALOI";   // phiếu Hàng lỗi công đoạn trước (lập tay)
+        // [N21-NGW 2026-11-25] báo lỗi từ "NG ở WTS chưa báo lỗi" (WTS không tự sinh vụ — luật N21). Đi như vụ WTS cũ (NC phát hiện = NC của dòng WTS:
+        //   Gia công sửa đạt = xong NC đó). Nguồn: KHÁCH 23/11 (mockup TH10 Cách 2); HÙNG 23/11 16:24 (N21) + 25/11 16:27.
+        public const string WtsBao  = "WTSBL";
+        /// <summary>[N21-NGW] Vụ sinh từ NG ở WTS (dòng WTS cũ có vụ, hoặc báo lỗi từ NG ở WTS chưa báo lỗi).</summary>
+        public static bool IsWts(string? o) => o is Wts or WtsBao;
 
         public static string Label(string? o) => o switch
         {
             Wts => "WTS (NG làm hỏng)",
+            WtsBao => "Báo lỗi NG ở WTS",   // [N21-NGW]
             Nhan => "NG đếm lúc nhận",
             NhanLoi => "Nhận vào ô Hàng lỗi",
             BaoLoi => "Báo lỗi sau khi nhận",

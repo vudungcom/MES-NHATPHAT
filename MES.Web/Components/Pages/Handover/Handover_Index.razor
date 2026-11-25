@@ -807,8 +807,9 @@ else
                             }
                         </div>
                         <div class="small">
-                            <strong>@b.Qty.ToString("0.##") chiếc</strong> lấy từ @HandoverNgSource.SourceLabel(b.SourceCell, b.GroupCode)@(string.IsNullOrEmpty(b.NC) ? "" : " NC " + b.NC)
-                            → Tồn hàng lỗi · @HandoverNgSource.OriginLabel(b.Origin, b.CauseGroupCode)
+                            @* [N21-NGW rà độc lập G-D L4] báo lỗi NG ở WTS Taro làm hộ: hàng giữ ở Tồn hàng giao theo NC (vụ làm hộ), không vào Tồn hàng lỗi *@
+                            <strong>@b.Qty.ToString("0.##") chiếc</strong> lấy từ @(NgwLh(b) ? "NG ở WTS Taro làm hộ chưa báo lỗi (đoạn NC " + b.NC + ")" : HandoverNgSource.SourceLabel(b.SourceCell, b.GroupCode) + (string.IsNullOrEmpty(b.NC) ? "" : " NC " + b.NC))
+                            → @(NgwLh(b) ? "Tồn hàng giao theo NC (hàng làm hộ bị lỗi)" : "Tồn hàng lỗi") · @HandoverNgSource.OriginLabel(b.Origin, b.CauseGroupCode)
                         </div>
                         <div class="small text-danger">Lỗi: @b.NgReason@(string.IsNullOrEmpty(b.Notes) ? "" : " — " + b.Notes) @CaseChip(b.NgCaseId)</div>   @* [VULOI] + mã vụ *@
                         @if (b.IsVoided)
@@ -1194,6 +1195,11 @@ else
                 @* [GC-SUA-TAI-CHO] hàng nhóm đã sửa đạt, chờ KCS xác nhận *@
                 <span class="d-block text-nowrap" style="font-size:9.5px;color:#15803d" title="Nhóm đã sửa xong (đạt), chờ KCS xác nhận: tính vào Tồn nhưng chưa nhập WTS được">chờ KCS @g.ChoKcs.ToString("0.##")</span>
             }
+            @if (c.Key == "Ton" && NgCb(row, g) > 0)
+            {
+                @* [N21-NGW 2026-11-25] NG ở WTS chưa báo lỗi (WTS không tự sinh mã vụ) — mockup TH10 "sổ KCS hiện dòng NG chưa báo lỗi" *@
+                <span class="d-block text-nowrap" style="font-size:9.5px;color:#b02a37" title="NG ghi ở WTS, chưa báo lỗi: tính vào Tồn, chưa giao đi được — báo lỗi ở form Giao / xử lý hàng (Hàng lỗi → NG ở WTS chưa báo lỗi)">NG chưa báo lỗi @NgCb(row, g).ToString("0.##")</span>
+            }
             @if (c.Key == "Ton" && g.XlGiu > 0)
             {
                 @* [SUA-XL-GIU 2026-11-10] hàng đã sửa (KCS xác nhận) chờ giao về nơi phát hiện — không ghi WTS số lượng *@
@@ -1262,7 +1268,7 @@ else
                 <div class="border rounded p-2 bg-white" style="min-width:360px">
                     <div class="fw-semibold small mb-1"><i class="bi bi-box-seam me-1"></i>Tồn theo loại hàng (trần khi lập phiếu)</div>
                     <table class="table table-sm mb-0" style="font-size:10.5px">
-                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th><th class="text-end" style="color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận — tính vào Tồn, chưa nhập WTS được">Chờ nhận</th><th class="text-end" style="color:#15803d;@KcsColStyle(row)" title="Hàng nhóm đã sửa xong (đạt), chờ KCS xác nhận — chỉ Kết quả sửa ghi trước bản cập nhật N17 (từ bản N17 sửa đạt không cần KCS). Tính vào Tồn, chưa nhập WTS được">Chờ KCS</th><th class="text-end" style="color:#0e7490" title="Hàng đã sửa đạt, chờ giao về nơi phát hiện — không ghi WTS số lượng">Đã sửa chờ trả</th></tr></thead> @* [SUA-XL-GIU] + cột *@ @* [GN-RECV-NG] mục 37: + cột Chờ nhận; [GC-SUA-TAI-CHO] + Chờ KCS · [N17-KCS-BO] cột Chờ KCS ẩn khi PO không còn chứng từ cũ chờ *@
+                        <thead class="table-light"><tr><th>Nhóm</th><th class="text-end" title="Hàng đã làm xong, chưa giao (Kho: phôi còn)">Đã làm chưa giao</th><th class="text-end" title="Hàng lỗi của nhóm chưa gửi sửa / tự sửa / huỷ / trả khách">Tồn hàng lỗi</th><th class="text-end" title="Hàng nhóm khác gửi nhờ sửa, chưa trả">Tồn hàng sửa</th><th class="text-end" title="Hàng Gia công giao theo NC (máy loại trừ), chưa trả về">Tồn theo NC</th><th class="text-end text-danger" title="NG nhập trên WTS của nhóm">NG (WTS)</th><th class="text-end" style="color:#b45309" title="Đã giao tới nhóm, chưa bấm Nhận — tính vào Tồn, chưa nhập WTS được">Chờ nhận</th><th class="text-end" style="color:#15803d;@KcsColStyle(row)" title="Hàng nhóm đã sửa xong (đạt), chờ KCS xác nhận — chỉ Kết quả sửa ghi trước bản cập nhật N17 (từ bản N17 sửa đạt không cần KCS). Tính vào Tồn, chưa nhập WTS được">Chờ KCS</th><th class="text-end" style="color:#0e7490" title="Hàng đã sửa đạt, chờ giao về nơi phát hiện — không ghi WTS số lượng">Đã sửa chờ trả</th><th class="text-end" style="color:#b02a37;@NgwColStyle(row)" title="NG ghi ở WTS chưa báo lỗi (WTS không tự sinh mã vụ) — tính vào Tồn, chưa giao đi được; báo lỗi ở form Giao / xử lý hàng">NG chưa báo lỗi</th></tr></thead> @* [N21-NGW] + cột, ẩn khi PO không có *@ @* [SUA-XL-GIU] + cột *@ @* [GN-RECV-NG] mục 37: + cột Chờ nhận; [GC-SUA-TAI-CHO] + Chờ KCS · [N17-KCS-BO] cột Chờ KCS ẩn khi PO không còn chứng từ cũ chờ *@
                         <tbody>
                             @foreach (var code in HandoverLedgerService.GroupCodes)
                             {
@@ -1277,6 +1283,7 @@ else
                                     <td class="text-end @(_showFormula ? "gn-click" : "")" style="color:#b45309" @onclick='() => OpenExplain(row, g, "ChoNhan")'>@g.ChoNhan.ToString("0.##")</td>
                                     <td class="text-end @(_showFormula ? "gn-click" : "") @(g.ChoKcs < 0 ? "gn-neg" : "")" style="color:#15803d;@KcsColStyle(row)" @onclick='() => OpenExplain(row, g, "ChoKcs")'>@g.ChoKcs.ToString("0.##")</td>
                                     <td class="text-end @(_showFormula ? "gn-click" : "") @(g.XlGiu < 0 ? "gn-neg" : "")" style="color:#0e7490" @onclick='() => OpenExplain(row, g, "XlGiu")'>@g.XlGiu.ToString("0.##")</td>
+                                    <td class="text-end @(_showFormula ? "gn-click" : "")" style="color:#b02a37;@NgwColStyle(row)" @onclick='() => OpenExplain(row, g, "NgChuaBao")'>@(g.IsKho ? "·" : NgCb(row, g).ToString("0.##"))</td> @* [N21-NGW] *@
                                 </tr>
                             }
                         </tbody>
@@ -1892,6 +1899,12 @@ else
 
     /// <summary>[N17-KCS-BO 2026-11-23] Cột "Chờ KCS" chỉ hiện khi PO còn Kết quả sửa ghi trước 23/11 đang chờ (từ 23/11 sửa đạt không cần KCS — mockup khách bỏ dòng chờ KCS).</summary>
     static string KcsColStyle(LedgerRow row) => row.Groups.Values.Any(x => x.ChoKcs != 0) ? "" : "display:none";
+    /// <summary>[N21-NGW 2026-11-25] Cột "NG chưa báo lỗi" chỉ hiện khi PO có NG ở WTS chưa báo lỗi.</summary>
+    static string NgwColStyle(LedgerRow row) => row.Groups.Values.Any(x => NgCb(row, x) != 0) ? "" : "display:none";
+    /// <summary>[N21-NGW rà độc lập G-D T5] Số hiện "NG chưa báo lỗi" của nhóm: NG chưa báo của nhóm + (HTSP) NG ở WTS Taro làm hộ chưa báo lỗi
+    ///   (nằm trong Tồn hàng giao theo NC, không cộng vào NgChuaBao để giữ các phần của sổ). Chỉ hiển thị.</summary>
+    static bool NgwLh(HandoverNgReportItem b) => b.SourceCell == HandoverNgSource.NgW && b.GroupCode == "HTSP" && !string.IsNullOrEmpty(b.NC);   // [N21-NGW rà độc lập L4]
+    static decimal NgCb(LedgerRow row, LedgerGroup g) => g.NgChuaBao + row.LamHoNgPendOf(g.Code);
 
     void VoidRepairFromLog(long id)
     {

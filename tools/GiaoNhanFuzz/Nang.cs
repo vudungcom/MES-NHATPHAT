@@ -30,6 +30,8 @@ public static class Nang
         ("chuoi_lamho", "đi đủ chuỗi + Taro làm hộ ở NC máy loại trừ giữa chuỗi", new[] { ("CHUOI", "1"), ("LOI", "1"), ("EXCL", "1"), ("LAMHO", "1") }),
         // [KHO-TARO-THANG 2026-11-12] đi đủ chuỗi, NC đầu Gia công là máy loại trừ có Taro (Kho giao thẳng Taro, Taro trả phôi lỗi về Kho), hàng lỗi
         ("chuoi_ktt",   "đi đủ chuỗi + NC đầu là Taro (Kho giao thẳng Taro)", new[] { ("CHUOI", "1"), ("LOI", "1"), ("EXCL", "1"), ("KTTPO", "1"), ("KTT", "15") }),
+        // [N21-NGW 2026-11-25] WTS NG không sinh vụ: nhiều báo lỗi (cả từ NG ở WTS chưa báo lỗi, báo dư) + sửa dòng WTS (giảm NG sau khi báo) + form chọn dòng NG chưa báo
+        ("loi_n21",     "hàng lỗi + NG ở WTS chưa báo lỗi (báo lỗi riêng, báo dư, sửa WTS)", new[] { ("LOI", "1"), ("NGREP", "40"), ("WTSEDIT", "20"), ("NGWF", "0.8") }),
     };
 
     public static async Task<int> Run(string[] args)
@@ -55,7 +57,7 @@ public static class Nang
         //   KHUC = số PO mỗi khúc (mặc định tự tính để có ≈ 4 khúc / nhân).
         int khuc = int.TryParse(Environment.GetEnvironmentVariable("KHUC"), out var kq) && kq > 0 ? kq
                  : Math.Max(1, (int)Math.Ceiling(po * Configs.Length / (double)(par * 4)));
-        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std", "sua", "form", "taro", "why", "bu", "ktt", "a1", "len", "a2", "g26", "g28", "rpt", "saoluu", "n17", "n23", "n18" };   // [N18-SCEN 2026-11-25] n18   // [N23-SCEN 2026-11-25] n23   // [N17-KCS-BO 2026-11-23] n17   // [G32-SCEN 2026-11-22] saoluu   // [G29-SCEN 2026-11-21] rpt   // [G28-SCEN 2026-11-20] g28   // [G26-SCEN 2026-11-20] g26   // [A2-SCEN 2026-11-19] a2   // [LEN-SCEN 2026-11-16] len   // [A1-SCEN 2026-11-15] a1   // [KHO-TARO-THANG 2026-11-12] ktt   // [KHACH-GUI-LAI 2026-11-11] bu   // [H10-KET-WHY] why   // [TARO-NC-MA] taro   // [GN-FORM1] form   // [GC-SUA-TAI-CHO] sua   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
+        var scens = new[] { "kh", "loi", "vu", "chuoi", "wts", "quyen", "iso", "quet", "nghi", "viec", "auth", "std", "sua", "form", "taro", "why", "bu", "ktt", "a1", "len", "a2", "g26", "g28", "rpt", "saoluu", "n17", "n23", "n18", "n21" };   // [N21-SCEN 2026-11-25] n21   // [N18-SCEN 2026-11-25] n18   // [N23-SCEN 2026-11-25] n23   // [N17-KCS-BO 2026-11-23] n17   // [G32-SCEN 2026-11-22] saoluu   // [G29-SCEN 2026-11-21] rpt   // [G28-SCEN 2026-11-20] g28   // [G26-SCEN 2026-11-20] g26   // [A2-SCEN 2026-11-19] a2   // [LEN-SCEN 2026-11-16] len   // [A1-SCEN 2026-11-15] a1   // [KHO-TARO-THANG 2026-11-12] ktt   // [KHACH-GUI-LAI 2026-11-11] bu   // [H10-KET-WHY] why   // [TARO-NC-MA] taro   // [GN-FORM1] form   // [GC-SUA-TAI-CHO] sua   // [STD-UPDATE] std · [TOOLS-PUSH] viec   // [ML17-XN] nghi · [RA-SOCHUNG] quet · [RS-C1][RS-C2] quyen · [WTS-SVC] wts · [VULOI] vu · [CHUOI] chuoi
         Console.WriteLine($"KIỂM NẶNG: {scens.Length} kịch bản + {Configs.Length} lượt ngẫu nhiên × {po} PO × {ops} thao tác · {Environment.ProcessorCount} nhân · chạy cùng lúc {par} tiến trình · mỗi khúc {khuc} PO");
         Console.WriteLine($"Kết quả từng khúc: {dir}");
         var sw = Stopwatch.StartNew();

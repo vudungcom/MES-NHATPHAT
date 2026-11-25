@@ -45,6 +45,7 @@ async def set_num(row, idx, val):
 
 async def set_ngcat(row, label):
     i = row.locator("input[placeholder='Loại lỗi…']")
+    if not await i.is_visible(): return   # [N21-SCEN 25/11] luật N21: dòng mới có NG không chọn loại lỗi (ô ẩn) — bản cũ vẫn chọn như trước
     await i.fill(label); await i.dispatch_event("change"); await row.page.wait_for_timeout(300)
 
 async def read_errors(pg):
@@ -132,6 +133,11 @@ async def main():
         await ensure_group(pg); g = grp(pg); row = g.locator("tr", has=pg.locator("input[placeholder='Gõ PO...']")).nth(0)
         await gc_row(pg, row, "PO1", "NC1", "M1", ok=2, ng=1, start="11:05", end="11:30", times=[5, 2, 1])
         await save(pg, "S8 NG chưa chọn loại lỗi")
+        if not log[-1]["loi"] or all(x.startswith("Sao lưu") for x in log[-1]["loi"]):
+            # [N21-SCEN 25/11] luật N21: dòng NG không chọn loại lỗi LƯU ĐƯỢC (bản cũ chặn) → xoá lặng dòng đó để các bước sau so được với bản cũ
+            r8 = (await saved_row(pg, "PO1", "NC1", "11:05")).first
+            await r8.locator("button[title='Xóa WTS này']").click(); await pg.wait_for_timeout(500)
+            await pg.click("button.btn-danger:has-text('Xóa WTS này')"); await pg.wait_for_timeout(2500)
         await remove_groups(pg); await pg.wait_for_timeout(400)
         # S9 sửa dòng S1: OK 10 → 12
         r1 = (await saved_row(pg, "PO1", "NC1", "08:00")).first

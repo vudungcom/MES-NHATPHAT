@@ -134,6 +134,22 @@ public static class FormHelp
                 }
             }
         }
+        // [N21-NGW 2026-11-25] vụ sinh từ báo lỗi "NG ở WTS Taro làm hộ chưa báo lỗi" (phiếu báo lỗi HTSP nguồn NGW, NC = NC máy loại trừ đầu đoạn): như vụ WTS
+        //   Taro làm hộ kiểu cũ — NC làm tiếp = NC ngay trước đoạn; đoạn ở đầu chuỗi → như hàng mới. Đọc thẳng phiếu báo lỗi + snapshot.
+        //   Trước: rơi xuống "HTSP phát hiện → NC cuối" (fuzz seed 2102 PO15 / 2104 PO27 — đáp án thiếu, sổ đúng).
+        var rpL = db.HandoverNgReports.List.FirstOrDefault(b => b.NgCaseId == caseId && !b.IsVoided && b.SourceCell == HandoverNgSource.NgW && b.GroupCode == "HTSP" && !string.IsNullOrWhiteSpace(b.NC));
+        if (rpL != null)
+        {
+            var exclL = db.KhPlanRouteSnapshotMachineExclude.List.Where(e => e.KhPlanDetailId == id && !string.IsNullOrWhiteSpace(e.SoMay)).Select(e => e.SoMay!.Trim().ToUpperInvariant()).ToHashSet();
+            var rowsL = db.KhPlanRouteSnapshotMachining.List.Where(s => s.KhPlanDetailId == id && !s.IsBackup).OrderBy(s => s.StepOrder).ToList();
+            bool ExL(KhPlanRouteSnapshotMachining s) => !string.IsNullOrWhiteSpace(s.MachineRegistered) && exclL.Contains(s.MachineRegistered!.Trim().ToUpperInvariant());
+            int k = rowsL.FindIndex(r => r.NC.Trim().Equals(rpL.NC!.Trim(), IC) && ExL(r));
+            if (k >= 0)
+            {
+                int i = k - 1; while (i >= 0 && ExL(rowsL[i])) i--;
+                return i < 0 ? null : ncs.FirstOrDefault(x => x.Equals(rowsL[i].NC, IC));
+            }
+        }
         // [KTT-PHOILOI 2026-11-12] vụ sinh từ phiếu Taro trả phôi lỗi về Kho (HTSP → Kho, NC nguồn @VAO — phôi chưa qua NC nào): sửa đạt như hàng mới.
         //   Nguồn: KHÁCH 12/11 (3.3 a = A) — lỗi do phôi (nơi gây lỗi Khách hàng), không phải do HTSP làm sau NC cuối.
         if (db.HandoverTransactions.List.Any(t => t.NgCaseId == caseId && !t.IsVoided && t.Purpose == HandoverPurpose.NgReturn && t.FromGroupCode == "HTSP"
@@ -179,7 +195,7 @@ public static class FormHelp
             var (ncs, _) = Chain(db, id);
             if (ncs.Count == 0) return legacy;
             if (di > 1 || (di == 1 && string.IsNullOrWhiteSpace(c.DetectNC) && (c.OriginKind == NgOrigin.BaoLoi || c.CauseGroupCode is "HTSP" or "KCS" or "PKG"))) return "@XONG";
-            if (di == 1 && c.OriginKind == NgOrigin.Wts && !string.IsNullOrWhiteSpace(c.DetectNC))
+            if (di == 1 && NgOrigin.IsWts(c.OriginKind) && !string.IsNullOrWhiteSpace(c.DetectNC))   // [N21-NGW] + vụ báo lỗi từ NG ở WTS (đi như vụ WTS)
             {
                 var d = c.DetectNC!.Trim();
                 var bk = db.KhPlanRouteSnapshotMachining.List.FirstOrDefault(s => s.KhPlanDetailId == id && s.IsBackup && s.NC.Trim().Equals(d, IC) && !string.IsNullOrWhiteSpace(s.ParentNC));
@@ -198,7 +214,10 @@ public static class FormHelp
     public static string? ExpectFreshTarget(AppDbContext db, int id, string g, string pos)
     {
         if (g == "KHO") return null;
-        if (g == "GC") { var (ncs, _) = Chain(db, id); return ncs.Count > 0 && pos == "DA" ? "@XONG" : ExpectFreshNc(db, id, g, pos); }
+        if (g == "GC") { var (ncs, _) = Chain(db, id);
+            // [N21-NGW] NG ở WTS của NC X (Gia công làm hỏng ở NC X): sửa đạt = xong NC X (luật SUA-OK-NC của vụ WTS)
+            if (pos.StartsWith("NGW:")) return ncs.Count > 0 && ncs.Any(x => x.Equals(pos[4..], IC)) ? "@OK" : null;
+            return ncs.Count > 0 && pos == "DA" ? "@XONG" : ExpectFreshNc(db, id, g, pos); }
         return pos == "DA" ? "@XONG" : null;
     }
 
@@ -256,7 +275,7 @@ public static class FormHelp
         var (ncs, _) = Chain(db, id);
         if (c == null || c.DetectGroupCode != "GC" || ncs.Count == 0) return ExpectNextNc(db, id, caseId, "GC");
         if (string.IsNullOrWhiteSpace(c.DetectNC) && (c.OriginKind == NgOrigin.BaoLoi || c.CauseGroupCode is "HTSP" or "KCS" or "PKG")) return null;
-        if (c.OriginKind == NgOrigin.Wts && !string.IsNullOrWhiteSpace(c.DetectNC))
+        if (NgOrigin.IsWts(c.OriginKind) && !string.IsNullOrWhiteSpace(c.DetectNC))   // [N21-NGW] + vụ báo lỗi từ NG ở WTS
         {
             var d = c.DetectNC!.Trim();
             var bk = db.KhPlanRouteSnapshotMachining.List.FirstOrDefault(s => s.KhPlanDetailId == id && s.IsBackup && s.NC.Trim().Equals(d, IC) && !string.IsNullOrWhiteSpace(s.ParentNC));
@@ -290,6 +309,7 @@ public static class FormHelp
     {
         var (ncs, _) = Chain(db, id);
         if (ncs.Count == 0) return null;
+        if (g == "GC" && pos.StartsWith("NGW:")) return ncs.FirstOrDefault(x => x.Equals(pos[4..], IC));   // [N21-NGW] NC của NG ở WTS
         if (g == "GC") return pos.StartsWith("NC:") ? (pos[3..].Equals("@VAO", IC) ? null : ncs.FirstOrDefault(x => x.Equals(pos[3..], IC))) : ncs.Last();
         return g == "KHO" ? null : ncs.Last();
     }
@@ -340,6 +360,7 @@ public static class FormHelp
             d[g + ".Chua"] = G.ChuaLam; d[g + ".Da"] = G.ConGiao; d[g + ".Loi"] = G.LoiGiu; d[g + ".Sua"] = G.SuaGiu;
             d[g + ".ChoNhan"] = G.ChoNhan; d[g + ".ChoKcs"] = G.ChoKcs; d[g + ".LamHo"] = G.LamHoGiu; d[g + ".Ton"] = G.Ton;
             d[g + ".Xl"] = G.XlGiu;   // [SUA-XL-GIU]
+            d[g + ".Ngw"] = G.NgChuaBao;   // [N21-NGW] NG ở WTS chưa báo lỗi
         }
         foreach (var s in r.G("GC").Steps.Where(s => !s.IsExcluded && s.Waiting != null)) d["GC.w." + s.Code] = s.Waiting!.Value;
         d["DaHuy"] = r.DaHuy; d["TraKhach"] = r.TraKhach; d["DangGiao"] = r.DangGiao; d["TpNhap"] = r.TpNhap;
@@ -355,6 +376,8 @@ public static class FormHelp
         /// <summary>[T4] Truy vết: FromNC / ToNC phiếu (ToNcByCase = NC theo vụ, bộ kiểm tự đặt); báo lỗi: NC, nguồn, nơi gây lỗi.</summary>
         public string? TxFromNc, TxToNc, RepNc, RepOrigin, RepCause;
         public bool ToNcByCase;
+        /// <summary>[N21-NGW] Báo lỗi từ NG ở WTS chưa báo lỗi: phiếu báo lỗi nguồn NGW, vụ nguồn "Báo lỗi NG ở WTS".</summary>
+        public bool RepNgw;
         /// <summary>[QF-KIEM-02 2026-11-16] Hàng đã sửa (ô XL) hàng tốt trả về Gia công có NC: máy chủ tự điền NC của chiếc lỗi ([SUA-HO-TRA-NGUOC] Gói 16 —
         /// chiếc đã xong NC k / NC cuối → không NC). Đáp án: ToNC trống hoặc = NC theo vụ (ExpectNextNc); đáp án cũ đòi trống → SAI giả (kiem trạm 16/11 08:09 seed 15394 PO8; 84d9b9e y hệt).</summary>
         public bool XlToGc; public long XlCase;
@@ -413,6 +436,12 @@ public static class FormHelp
             e.Add(g + ".LamHo", -n); ToRecv(HandoverCell.Loi);
             return e;
         }
+        if (pos.StartsWith("NGWLH:"))
+        {   // [N21-NGW] NG ở WTS Taro làm hộ chưa báo lỗi: báo lỗi (vụ làm hộ giữ trong Tồn hàng giao theo NC — không ô nào đổi) [+ trả Gia công ô Hàng lỗi, cùng vụ]
+            e.Vu = 1; e.Bl = 1; e.RepNc = pos[6..]; e.RepNgw = true; e.RepOrigin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa; e.RepCause = r.Prev ? r.Cause?.Trim() : null;
+            if (r.Action == HandoverForm.AGiao) { e.Tx = 1; to = "GC"; e.Purpose = HandoverPurpose.HelpReturn; e.FromCell = HandoverCell.Loi; e.ToCell = HandoverCell.Loi; e.Add(g + ".LamHo", -n); ToRecv(HandoverCell.Loi); }
+            return e;
+        }
         if (pos == "LAMHOLOI")
         {   // [TARO-LAMHO-NC] hàng làm hộ bị lỗi (vụ ô LAMHO, nằm trong Tồn hàng giao theo NC) → 1 phiếu Trả về Gia công theo NC từ ô Hàng lỗi → ô Hàng lỗi, cùng vụ
             e.Tx = 1; to = "GC"; e.Purpose = HandoverPurpose.HelpReturn; e.FromCell = HandoverCell.Loi; e.ToCell = HandoverCell.Loi;
@@ -451,6 +480,26 @@ public static class FormHelp
             if (pos == "PHOI" || pos == "DA") e.Add(g + ".Da", -n);
             else if (pos == "CHUA") e.Add(g + ".Chua", -n);
             else if (pos.StartsWith("NC:")) { e.Add("GC.Chua", -n); e.Add("GC.w." + pos[3..], -n); }
+            else if (pos.StartsWith("NGW:"))
+            {   // [N21-NGW] đáp án luật N21: lấy NG ở WTS chưa báo lỗi trước; phần dư = hàng đã làm xong — Gia công NC giữa: chiếc đã xong NC đó (chờ NC sau,
+                //   ra khỏi Chưa GC); NC cuối / nhóm khác: Đã làm chưa giao. Số NG chưa báo đầu vào = ô sổ trước khi lưu (như mọi ô "pre").
+                var nk = pos[4..];
+                var have = pre.NgPendAt(g, nk == "" ? null : nk);
+                var take = Math.Min(n, have); var exc = n - take;
+                e.Add(g + ".Ngw", -take);
+                if (exc > 0)
+                {
+                    var st = pre.G("GC").Steps;
+                    var i = g == "GC" ? st.FindIndex(x => x.Code == nk && !x.IsExcluded) : -1;
+                    var lastN = st.LastOrDefault(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code));
+                    if (g == "GC" && i >= 0 && lastN != null && lastN.Code != nk)
+                    {
+                        e.Add("GC.Chua", -exc);
+                        if (i + 1 < st.Count && !st[i + 1].IsExcluded) e.Add("GC.w." + st[i + 1].Code, -exc);
+                    }
+                    else e.Add(g + ".Da", -exc);
+                }
+            }
         }
         e.Vu = 1;
         Source();
@@ -460,7 +509,8 @@ public static class FormHelp
         //   (rà độc lập Gói 10 T1) PO không có mã HTSP nhưng HTSP đã nhận làm hàng thật (Hàng mới / Hàng lỗi xử lý / làm hộ về > 0) → vẫn HTSP.
         // [CAUSE-BAT-BUOC 2026-11-10] nơi gây lỗi bỏ trống bị máy chủ chặn (người gọi đặt expErr "nơi gây lỗi" — Build chỉ dựng đáp án ca lưu được) → không còn mặc định nhóm trước
         string? cause = !r.Prev ? null : g == "KHO" ? "KHACH" : r.Cause?.Trim();
-        e.RepNc = pos.StartsWith("NC:") ? pos[3..] : null;
+        e.RepNc = pos.StartsWith("NC:") ? pos[3..] : pos.StartsWith("NGW:") && pos.Length > 4 ? pos[4..] : null;   // [N21-NGW] + NC của NG ở WTS
+        e.RepNgw = pos.StartsWith("NGW:");
         e.RepOrigin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa; e.RepCause = cause;
         bool unworked = pos == "CHUA" || pos.StartsWith("NC:");
         if (r.Action == HandoverForm.AGiao && r.Prev && unworked && g != "KHO" && r.Purpose == HandoverForm.PTra && to == cause && (r.ToCell == null || r.ToCell == HandoverCell.Loi))
@@ -575,6 +625,8 @@ public static class FormHelp
             var c = db.NgCases.List.Last();
             if (c.NgCaseId != b.NgCaseId || c.DetectGroupCode != g || c.DetectNC != e.RepNc || c.CauseGroupCode != (e.RepOrigin == HandoverNgSource.DauVao ? e.RepCause : g))
                 bad.Add($"vụ phát hiện {c.DetectGroupCode} {c.DetectNC} do {c.CauseGroupCode}");
+            if ((b.SourceCell == HandoverNgSource.NgW) != e.RepNgw || (c.OriginKind == NgOrigin.WtsBao) != e.RepNgw)   // [N21-NGW]
+                bad.Add($"báo lỗi nguồn {b.SourceCell} / vụ {c.OriginKind} ≠ {(e.RepNgw ? "NGW / WTSBL" : "khác NGW")}");
         }
         return bad.Count == 0 ? null : string.Join("; ", bad);
     }

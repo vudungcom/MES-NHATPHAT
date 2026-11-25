@@ -589,7 +589,7 @@ namespace MES.Web.Services
                             AddWts(w => GroupOfPg(w.ProcessGroup) == g);
                             AddTx(t => t.From == g && (t.Purpose == HandoverPurpose.NgReturn || t.Purpose == HandoverPurpose.HelpSend)
                                        && !HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? ""));   // [KTT-PHOILOI] phiếu Taro trả phôi lỗi Kho không trừ Chưa làm HTSP (lấy từ hàng giao theo NC)
-                            AddRep(b => b.Group == g && b.Source == HandoverNgSource.Chua);   // [GN-NG-AFTER]
+                            AddRep(b => b.Group == g && (b.Source == HandoverNgSource.Chua || b.Source == HandoverNgSource.NgW));   // [GN-NG-AFTER] · [N21-NGW] + báo lỗi NG ở WTS (báo dư ở NC giữa trừ Chưa làm)
                             break;
                         case "ConGiao":
                             AddTx(t => t.From == g && !HandoverPurpose.IsOut(t.Purpose) && HandoverCell.IssueCellOf(HandoverLedgerService.Classify(t, null), t.FromCell) == HandoverCell.Moi);
@@ -636,14 +636,18 @@ namespace MES.Web.Services
                                 AddTx(t => HandoverLedgerService.IsTaroPhoiLoi(t, t.Purpose ?? ""));
                             var lh = row.G("HTSP").Steps.Where(x => x.LamHoNc != null && run.Ncs.Contains(x.LamHoNc, StringComparer.OrdinalIgnoreCase)).Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
                             AddWts(w => w.Ng > 0 && w.ProcessGroup == "TARO" && lh.Contains(Main("TARO", WtsKeyOf(w))));
+                            AddRep(b => b.Group == "HTSP" && b.Source == HandoverNgSource.NgW && string.Equals(b.NC, run.Key, StringComparison.OrdinalIgnoreCase));   // [N21-NGW] báo lỗi NG ở WTS Taro làm hộ (báo dư trừ số dư đoạn)
                         }
                     }
                     else                     if (pg == "LamHoTaro")   // [TARO-LAMHO-NC] câu 1: đã trả về NC sau đoạn > OK bộ Taro làm hộ → gỡ phiếu trả về (hàng tốt) vào NC đó trước
                     {
                         var run = row.LamHoRuns.FirstOrDefault(x => x.Key == code);
                         if (run != null)
+                        {
                             AddTx(t => t.From == "HTSP" && t.Purpose == HandoverPurpose.HelpReturn && !HandoverCell.IsLamHoLoi(t.Purpose, t.FromCell)
                                        && string.Equals(t.ToNC, run.NextNc, StringComparison.OrdinalIgnoreCase));
+                            AddRep(b => b.Group == "HTSP" && b.Source == HandoverNgSource.NgW && string.Equals(b.NC, run.Key, StringComparison.OrdinalIgnoreCase));   // [N21-NGW] báo lỗi dư lấy từ chiếc đã xong bộ Taro
+                        }
                     }
                     else if (pg == "helpOut")
                         AddTx(t => t.From == "GC" && t.Purpose == HandoverPurpose.HelpSend && t.FromNC == code);
@@ -652,6 +656,9 @@ namespace MES.Web.Services
                         AddWts(w => w.ProcessGroup == "GC" && string.Equals(Main("GC", w.NC), code, StringComparison.OrdinalIgnoreCase));
                         AddTx(t => t.From == "GC" && t.FromNC == code && t.Purpose == HandoverPurpose.NgReturn);
                         AddRep(b => b.Group == "GC" && b.Source == HandoverNgSource.Chua && string.Equals(b.NC, code, StringComparison.OrdinalIgnoreCase));   // [GN-NG-AFTER]
+                        // [N21-NGW 2026-11-25] báo lỗi NG ở WTS của Gia công: phần báo dư ở NC trước trừ hàng NC đó làm xong → trừ "nhận vào" NC sau (OkBao).
+                        //   Trước khi thêm: xoá dòng WTS có NG đã báo dư → NC sau âm mà gợi ý "chưa lần ra chứng từ" (harness drive_n21 X1). Nguồn: CLAUDE (G-D 25/11).
+                        AddRep(b => b.Group == "GC" && b.Source == HandoverNgSource.NgW);
                         // Giao theo NC từ NC trước cũng trừ vào "nhận vào" của NC này (N1: nhận vào = OK NC trước − đã giao đi)
                         AddTx(t => t.From == "GC" && t.Purpose == HandoverPurpose.HelpSend);
                     }

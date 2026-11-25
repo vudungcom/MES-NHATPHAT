@@ -413,6 +413,10 @@ public static class TaroScen
     //   và NC "5" (2T). Khách (a): làm xong NC 2 → gửi Taro → về NC 4 → lại gửi Taro (NC 5). Đáp án tính tay theo luật Hùng 07/11 10:18.
     //   Mã ca: [T16] [T17] (+ [T18] ca rà độc lập). Đột biến phần máy chủ: 9 / 9 bị bắt.
     // =====================================================================
+    // [N21-SCEN 2026-11-25] dùng lại cho kịch bản n21 (D8: NG ở WTS Taro làm hộ chưa báo lỗi)
+    public static Task<int> BuildLamHoPartN21(AppDbContext db, string partNo) => BuildLamHoPart(db, partNo);
+    public static void SeedGopN21(AppDbContext db) => SeedGop(db);
+
     static async Task<int> BuildLamHoPart(AppDbContext db, string partNo)
     {
         var pid = await ChuoiHelp.BuildPartAsync(db, partNo, new ChuoiHelp.Shape { Gc = 0, DongDang = false, DuPhong = false, Taro = 0, Bavia = 0, Rua = 0, Kcs = 1, Pkg = 0, Prep = false });

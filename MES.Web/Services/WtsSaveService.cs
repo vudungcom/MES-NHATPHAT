@@ -43,6 +43,18 @@ namespace MES.Web.Services
             public long?    SrcRowId        { get; set; }
         }
 
+        // =====================================================================
+        // [N21-NGW 2026-11-25] WTS có NG KHÔNG tự sinh mã vụ (mọi bộ phận, cả Taro làm hộ): NG nằm ở "NG ở WTS chưa báo lỗi" của sổ,
+        //   báo lỗi riêng ở form Giao / xử lý hàng (chọn nơi làm lỗi + loại lỗi → mã vụ). Dòng đã có vụ (lưu trước bản này) sửa lại vẫn giữ vụ + loại lỗi.
+        //   Nguồn: KHÁCH 23/11 (mockup TH10 Cách 2, sheet dòng 19, chat 16:09–16:19 câu 2); HÙNG 23/11 16:24 (N21) + 25/11 16:27 "ok tự làm đi".
+        // =====================================================================
+        /// <summary>[N21-NGW] CHỈ để bộ kiểm dựng chứng từ kiểu cũ (dòng WTS có NG sinh vụ như trước N21). Phần mềm thật luôn false.</summary>
+        public static bool SinhVuWts = false;
+        /// <summary>[N21-NGW] Dòng có NG giữ / sinh vụ (cần loại lỗi): dòng sửa của dòng đã có vụ (NgCaseId đã kiểm thuộc đúng dòng cũ), hoặc chế độ kiểu cũ của bộ kiểm.</summary>
+        public static bool GiuVu(WtsSaveRow r) => r.QtyNg > 0 && (r.NgCaseId != null || SinhVuWts);
+        /// <summary>[N21-NGW] Vụ của dòng khi tính thử sổ (K5): giữ vụ cũ; dòng mới = không vụ (N21) — kiểu cũ: vụ mới (Id âm).</summary>
+        static long? SimCase(WtsSaveRow s) => s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? (SinhVuWts ? -1L : (long?)null) : null;
+
         public sealed class WtsSaveExtra
         {
             public string? WtsCode { get; set; }
@@ -671,9 +683,9 @@ namespace MES.Web.Services
                 }
 
                 // [VULOI][DS-LOI] NG: bắt buộc CHỌN loại lỗi trong DS Lỗi (trước: gõ lý do). Sửa dòng đã có vụ lỗi đã đi phiếu: không đổi loại lỗi.
-                if (sub.QtyNg > 0 && sub.NgCategoryId == null)
+                if (sub.QtyNg > 0 && GiuVu(sub) && sub.NgCategoryId == null)   // [N21-NGW] chỉ dòng giữ vụ cũ (sửa dòng trước N21) mới chọn loại lỗi
                 { sub.ErrorMsg = "Chọn loại lỗi (DS Lỗi)."; grp.ErrorMsg = "Có hàng NG chưa chọn loại lỗi. " + NgCaseService.MsgPickCategory; return Fail(); }
-                if (sub.QtyNg > 0 && (await NgCaseService.GetCategoryForCaseAsync(_db, sub.NgCategoryId, sub.IsEditing ? sub.NgCaseId : null)) == null)
+                if (sub.QtyNg > 0 && GiuVu(sub) && (await NgCaseService.GetCategoryForCaseAsync(_db, sub.NgCategoryId, sub.IsEditing ? sub.NgCaseId : null)) == null)   // [N21-NGW]
                 { sub.ErrorMsg = "Loại lỗi đã ngưng dùng — chọn loại khác."; grp.ErrorMsg = sub.ErrorMsg; return Fail(); }
                 if (sub.QtyNg > 0 && sub.IsEditing && sub.NgCaseId != null && sub.NgCategoryId != null
                     && await NgCaseService.CategoryChangeBlockedAsync(_db, sub.NgCaseId.Value, sub.NgCategoryId.Value) is string _catBlk
@@ -956,6 +968,16 @@ namespace MES.Web.Services
                 var before  = await _ledger.GetLedgerForDetailAsync(id);
                 var basis   = editIds.Any() ? await _ledger.GetLedgerForDetailAsync(id, editIds) : before;
                 keyRow = basis;
+                // [N21-NGW rà độc lập G-D C1] dòng sửa: thử lưu xếp NG ở WTS theo giờ lưu gốc của dòng bị sửa (như sau khi lưu thật — NgwTimeline)
+                var ngwAtOf = editIds.Any() ? (await _ledger.GetInputForDetailAsync(id))?.Wts.Where(w => editIds.Contains(w.Id)).ToDictionary(w => w.Id) : null;
+                // [N21-NGW rà độc lập G-D lượt 2 M1] chỉ khi dòng sửa CÙNG KHOÁ dòng cũ (nhóm, NC, mã, NC Taro — như EditOriginsFull ghép chuỗi sửa); đổi khoá (máy đồng dạng,
+                //   mã CV, NC Taro) → sau khi lưu là dòng mới (giờ lưu mới) → thử lưu cũng xếp mới nhất. Trước: luôn giờ gốc → thử lưu cho qua, lưu thật âm / đếm 2 lần.
+                static string KeyNg(string? x) => (x ?? "").Trim().ToUpperInvariant();
+                DateTime? NgwAt(WtsSaveRow s) => s.IsEditing && s.WtsLogId is long o && ngwAtOf != null && ngwAtOf.TryGetValue(o, out var v)
+                    && KeyNg(v.ProcessGroup) == KeyNg(pg) && KeyNg(v.NC) == KeyNg(grp.IsGc ? s.NC : null) && KeyNg(v.WtsCode) == KeyNg(grp.IsGc ? null : s.NC)
+                    && KeyNg(v.StepNC) == KeyNg(pg == "TARO" ? s.StepNC : null) ? v.Saved : null;
+                // [N21-NGW rà độc lập G-D T4] dòng sửa của dòng rất cũ (CuNg) giữ nghĩa cũ khi thử lưu — như SaveRowAsync giữ chữ lý do
+                bool CuOf(WtsSaveRow s) => s.IsEditing && s.QtyNg > 0 && SimCase(s) == null && s.WtsLogId is long o && ngwAtOf != null && ngwAtOf.TryGetValue(o, out var v) && v.CuNg;
 
                 // [TARO-NC-MA 2026-11-06] Taro: mã CV dùng ở NHIỀU NC của PO (snapshot) → dòng phải chọn đúng 1 NC có mã đó (đọc sổ dưới khoá PO,
                 //   không tin trang); lưu NC đúng chữ của quy trình. Mã chỉ ở 1 NC → bỏ NC trang gửi (sổ không cần, StepNC = NULL như dòng cũ).
@@ -1025,7 +1047,7 @@ namespace MES.Web.Services
                     if (chgLh.Count > 0)
                     {
                         var extraLh = subs.Select(s => new InWts(-1, DateTime.Now, pg, null, CodeOf(s), s.QtyOk, s.QtyNg, null,
-                                                                 s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null, StepNC: pg == "TARO" ? s.StepNC : null)).ToList();
+                                                                 SimCase(s) /* [N21-NGW] */, StepNC: pg == "TARO" ? s.StepNC : null, NgwAt: NgwAt(s), CuNg: CuOf(s))).ToList();
                         var afterLh = await _ledger.GetLedgerForDetailAsync(id, editIds, extraLh);
                         foreach (var s in chgLh)
                         {
@@ -1070,8 +1092,8 @@ namespace MES.Web.Services
                         if (oldCases.Count > 0)
                         {
                             var extraOff = subs.Select(s => new InWts(-1, DateTime.Now, pg, grp.IsGc ? grp.NC : null, grp.IsGc ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
-                                                                      s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null,
-                                                                      StepNC: pg == "TARO" ? s.StepNC : null)).ToList();   // = phần "thử lưu xong" của Workflow ON
+                                                                      SimCase(s) /* [N21-NGW] */,
+                                                                      StepNC: pg == "TARO" ? s.StepNC : null, NgwAt: NgwAt(s), CuNg: CuOf(s))).ToList();   // = phần "thử lưu xong" của Workflow ON
                             var afterOff = await _ledger.GetLedgerForDetailAsync(id, editIds, extraOff);
                             if (afterOff != null)
                                 foreach (var oc in oldCases)
@@ -1081,6 +1103,18 @@ namespace MES.Web.Services
                                     if (badOff.Count > 0 && wRow != null)
                                         warns.Add((wRow, CaseNegWarn(po, oc.Cid, "sửa", badOff) + OffWarnTail));
                                 }
+                        }
+                        // [N21-NGW rà độc lập G-D L1] dòng WTS N21 sửa giảm NG sau khi đã báo lỗi từ "NG ở WTS": phần báo thành dư, ô hàng đã làm xong âm → OFF cảnh báo
+                        //   (ON: K5 bên dưới chặn). Chỉ xét khi PO có phiếu báo lỗi nguồn NGW và tổng phần dư TĂNG (rà lượt 2 M3: ô âm vì lý do khác khi OFF là bình thường).
+                        //   Nguồn: CLAUDE (rà độc lập G-D 25/11; luật N7 "OFF chỉ cảnh báo").
+                        if (await _db.HandoverNgReports.AsNoTracking().Where(b => b.KhPlanDetailId == id && !b.IsVoided && b.SourceCell == HandoverNgSource.NgW).AnyAsync())
+                        {
+                            var extraN = subs.Select(s => new InWts(-1, DateTime.Now, pg, grp.IsGc ? grp.NC : null, grp.IsGc ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
+                                                                    SimCase(s), StepNC: pg == "TARO" ? s.StepNC : null, NgwAt: NgwAt(s), CuNg: CuOf(s))).ToList();
+                            var afterN = await _ledger.GetLedgerForDetailAsync(id, editIds, extraN);
+                            var badN = afterN == null ? new List<string>() : HandoverLedgerService.NewNegatives(before, afterN).ToList();
+                            if (badN.Count > 0 && afterN!.NgwDu > before.NgwDu && (grp.Rows.FirstOrDefault(r => r.IsEditing && r.KhPlanDetailId == id) ?? subs.FirstOrDefault()) is { } nRow)
+                                warns.Add((nRow, $"PO {po}: sau khi sửa, số đã báo lỗi từ NG ở WTS nhiều hơn NG ở WTS — phần báo dư làm âm {string.Join("; ", badN)}." + OffWarnTail));
                         }
                     }
                     continue;
@@ -1109,8 +1143,8 @@ namespace MES.Web.Services
                 // 3) Thử lưu xong — ô nào mới âm thì chặn (K5, K8)
                 // [VULOI] dòng sửa giữ vụ cũ (NG giảm mà vụ đã đi phiếu → ô vụ âm → chặn); dòng mới = vụ mới (Id âm)
                 var extra = subs.Select(s => new InWts(-1, DateTime.Now, pg, grp.IsGc ? grp.NC : null, grp.IsGc ? null : CodeOf(s), s.QtyOk, s.QtyNg, null,
-                                                       s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? -1 : null,
-                                                       StepNC: pg == "TARO" ? s.StepNC : null)).ToList();   // [TARO-NC-MA] + NC Taro
+                                                       SimCase(s) /* [N21-NGW] */,
+                                                       StepNC: pg == "TARO" ? s.StepNC : null, NgwAt: NgwAt(s), CuNg: CuOf(s))).ToList();   // [TARO-NC-MA] + NC Taro
                 var after = await _ledger.GetLedgerForDetailAsync(id, editIds, extra);
                 if (after == null) continue;
                 var bad = HandoverLedgerService.NewNegatives(before, after);
@@ -1215,8 +1249,12 @@ namespace MES.Web.Services
             // [WTS-SUA-GIO-GOC 2026-11-05] 1 giờ máy chủ chung: VoidedAt dòng cũ = CreatedAt dòng mới → sổ ghép đúng dòng mới với dòng nó thay
             //   (HandoverLedgerService.EditOrigins: ảnh sổ theo thời gian [K5-VONG-SUA] dùng giờ lưu GỐC, không che phần OK có từ trước).
             DateTime? _editAt = null;
+            string? _cuReason = null;   // [N21-NGW rà độc lập G-D T4] chữ lý do của dòng RẤT CŨ bị sửa (NG không vụ) — đọc trước khi huỷ dòng cũ
             if (row.IsEditing)
             {
+                if (row.WtsLogId is long _oldW && row.QtyNg > 0)
+                    _cuReason = await _db.WtsProductionLogs.AsNoTracking()   // (rà lượt 2 M5) cùng điều kiện CuOf lúc thử lưu: dòng cũ cùng PO, có NG, không vụ, có chữ lý do
+                        .Where(l => l.WtsLogId == _oldW && l.NgCaseId == null && l.QtyNg > 0 && l.KhPlanDetailId == row.KhPlanDetailId).Select(l => l.NgReason).FirstOrDefaultAsync();
                 // [D8-WTS-VOID 2026-10-28] Chỉ huỷ dòng còn hiệu lực; không huỷ được (tab khác đã sửa / xoá dòng này) thì dừng, không ghi dòng mới
                 //   (trước: 2 tab cùng sửa 1 dòng → cả 2 bản mới cùng hiệu lực, số nhân đôi).
                 if (row.WtsLogId.HasValue)
@@ -1266,7 +1304,7 @@ namespace MES.Web.Services
                 if (row.QtyDone <= 0 && !IsQtyOptional(grp, row))   // [FLAT-QTY-ZERO] + [TRIAL-QTY-OPTIONAL]
                 { row.ErrorMsg = "SL (OK + NG) phải lớn hơn 0."; return; }
 
-                if (row.QtyNg > 0 && row.NgCategoryId == null)   // [VULOI][DS-LOI] trước: kiểm lý do NG gõ tay
+                if (row.QtyNg > 0 && GiuVu(row) && row.NgCategoryId == null)   // [VULOI][DS-LOI] trước: kiểm lý do NG gõ tay · [N21-NGW] chỉ dòng giữ vụ cũ
                 { row.ErrorMsg = "Chọn loại lỗi (DS Lỗi) khi có số lượng NG."; return; }
 
                 // [GN-WTS-CAP] Kiểm SL đã làm 1 lần trong SaveGroupAsync → CheckGroupQtyAsync, trước khi void / lưu bất kỳ dòng nào.
@@ -1315,7 +1353,9 @@ namespace MES.Web.Services
                     // [VULOI 2026-10-28] NG → vụ lỗi: dòng mới tạo vụ (nơi phát hiện = nơi gây lỗi = nhóm này);
                     //   sửa dòng (void + dòng mới) thì GIỮ vụ cũ (đổi loại lỗi chỉ khi vụ chưa đi phiếu — đã kiểm ở SaveGroupAsync).
                     string? _ngLabel = null; long? _ngCaseId = null;
-                    if (row.QtyNg > 0)
+                    // [N21-NGW 2026-11-25] Dòng mới / dòng sửa không có vụ: NG KHÔNG sinh vụ, không loại lỗi (NgReason, NgCaseId để trống) → sổ tính
+                    //   "NG ở WTS chưa báo lỗi", báo lỗi riêng ở form Giao / xử lý hàng. Chỉ dòng sửa của dòng đã có vụ (trước N21) mới giữ vụ + loại lỗi như cũ.
+                    if (row.QtyNg > 0 && GiuVu(row))
                     {
                         var _cat = await NgCaseService.GetCategoryForCaseAsync(_db, row.NgCategoryId, row.NgCaseId);
                         if (_cat == null) { row.ErrorMsg = NgCaseService.MsgPickCategory; return; }
@@ -1343,6 +1383,10 @@ namespace MES.Web.Services
                             _ngCaseId = _vu.NgCaseId;
                         }
                     }
+                    // [N21-NGW rà độc lập G-D T4] sửa dòng RẤT CŨ (trước vụ lỗi 28/10: NG không vụ, có chữ lý do — sổ giữ Tồn hàng lỗi, vụ khoá 0): giữ chữ lý do
+                    //   → dòng mới vẫn nghĩa cũ (InWts.CuNg). Trước: Sửa nhanh (Admin) đổi giờ làm là NG chuyển sang "NG ở WTS chưa báo lỗi". Nguồn: CLAUDE (rà độc lập G-D 25/11).
+                    else if (row.QtyNg > 0 && !string.IsNullOrWhiteSpace(_cuReason))
+                        _ngLabel = _cuReason;
 
                     await RefreshStdFromSnapshotAsync(grp, row, row.KhPlanDetailId.Value);   // [STD-SNAP] số chuẩn mới nhất trước khi tính IsActualManual + ghi số chuẩn
                     var log = new WtsProductionLog
@@ -1385,6 +1429,9 @@ namespace MES.Web.Services
                     await _db.SaveChangesAsync();
                     row.WtsLogId = log.WtsLogId;
                     row.NgCaseId = log.NgCaseId;   // [VULOI]
+                    // [N21-NGW 2026-11-25] nhắc người nhập: NG không tự sinh vụ — báo lỗi riêng ở Giao nhận (chỉ lời nhắc, không chặn)
+                    if (row.QtyNg > 0 && log.NgCaseId == null && string.IsNullOrWhiteSpace(log.NgReason))   // (rà lượt 2 M6) dòng rất cũ giữ chữ lý do: không nhắc
+                        warns.Add((row, $"NG {row.QtyNg:0.##} chưa báo lỗi — báo lỗi ở trang Giao nhận (Giao / xử lý hàng → Hàng lỗi → NG ở WTS chưa báo lỗi)."));
 
                     // [ML17-XN][CA-NGHI-HIST] Khoảng nghỉ dòng chạm (giờ nghỉ ca LÚC LƯU + phút làm thông) — cùng giao dịch nhóm
                     if (row.BreakRows is { Count: > 0 } _brk)
@@ -1850,7 +1897,7 @@ namespace MES.Web.Services
             if (row.WtsLogId.HasValue)
             {
                 var wl = await _db.WtsProductionLogs.AsNoTracking().Where(l => l.WtsLogId == row.WtsLogId.Value)
-                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup, l.NgCaseId }).FirstOrDefaultAsync();   // [GOI9-OFF-CANHBAO] + vụ
+                    .Select(l => new { l.KhPlanDetailId, l.IsVoided, l.WorkerId, l.StartTime, l.ProcessGroup, l.NgCaseId, l.QtyNg }).FirstOrDefaultAsync();   // [GOI9-OFF-CANHBAO] + vụ · [N21-NGW] + NG
                 if (wl == null || wl.IsVoided)
                 { result.ErrorMsg = "Dòng WTS này đã bị sửa / xoá ở nơi khác (tab khác) — tải lại trang."; return result; }
                 // [L7-WTS-CU 2026-11-19] dòng ngày cũ / của người khác: Admin / Sửa WTS_MASTER (đọc ma trận DB) + lý do ≥ 3 ký tự → xoá được, vẫn K5 + khoá PO bên dưới.
@@ -1920,6 +1967,23 @@ namespace MES.Web.Services
                             {
                                 var poOff = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == detId).Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
                                 offWarn = CaseNegWarn(poOff ?? $"KH#{detId}", wl.NgCaseId.Value, "xoá", badOff) + OffWarnTail.Replace("vẫn lưu", "vẫn xoá");
+                            }
+                        }
+                    }
+                    // [N21-NGW rà độc lập G-D lượt 2 M4] Workflow OFF: xoá dòng WTS N21 có NG đã được báo lỗi → phần báo thành dư; ô hàng đã làm xong âm → cảnh báo sau khi xoá
+                    //   (chỉ khi tổng phần dư tăng). ON: K5 bên dưới chặn. Nguồn: CLAUDE (rà độc lập G-D 25/11; luật N7 "OFF chỉ cảnh báo").
+                    else if (before != null && wl.NgCaseId == null && (wl.QtyNg ?? 0) > 0)
+                    {
+                        var offIn = await _ledger.GetInputForDetailAsync(detId);
+                        if (offIn != null)
+                        {
+                            offIn.Wts = offIn.Wts.Where(w => w.Id != row.WtsLogId.Value).ToList();
+                            var offRow = HandoverLedgerService.Compute(offIn);
+                            var badOff = HandoverLedgerService.NewNegatives(before, offRow);
+                            if (offRow.NgwDu > before.NgwDu && badOff.Count > 0)
+                            {
+                                var poOff = await _db.KhPlanDetails.AsNoTracking().Where(d => d.KhPlanDetailId == detId).Select(d => d.PurchaseOrder).FirstOrDefaultAsync();
+                                offWarn = $"PO {poOff ?? $"KH#{detId}"}: xoá xong, số đã báo lỗi từ NG ở WTS nhiều hơn NG ở WTS — phần báo dư làm âm {string.Join("; ", badOff)}." + OffWarnTail.Replace("vẫn lưu", "vẫn xoá");
                             }
                         }
                     }

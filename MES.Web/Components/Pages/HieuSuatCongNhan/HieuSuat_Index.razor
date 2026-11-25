@@ -127,7 +127,9 @@
                     </div>
                     <div class="col-4">
                         <label class="form-label small mb-0">Loại lỗi</label>
-                        <NgCategoryPicker Categories="_ngCats" @bind-Value="qf.Cat" Disabled="@(qf.Ng <= 0)" Required="@(qf.Ng > 0)" Style="font-size:12px" Placeholder="Loại lỗi…" />
+                        @* [N21-NGW] ô loại lỗi chỉ khi dòng đã có vụ (lưu trước luật N21); dòng khác: NG chưa báo lỗi, báo ở Giao nhận *@
+                        <div style="@NgwShow(qf.Row.NgCaseId.HasValue)"><NgCategoryPicker Categories="_ngCats" @bind-Value="qf.Cat" Disabled="@(qf.Ng <= 0)" Required="@(qf.Ng > 0)" Style="font-size:12px" Placeholder="Loại lỗi…" /></div>
+                        <div class="small text-muted" style="@NgwShow(!qf.Row.NgCaseId.HasValue)">@(qf.Ng > 0 && !string.IsNullOrWhiteSpace(qf.Row.NgReason) ? qf.Row.NgReason : NgwQuickText(qf.Ng))</div> @* (rà lượt 2 M6) dòng rất cũ: chữ lý do *@
                     </div>
                 </div>
                 @QuickTimeInputs(qf)
@@ -1651,8 +1653,10 @@ else
                                     <td>
 
                                         @* [VULOI][DS-LOI] chọn loại lỗi trong DS Lỗi (trước: gõ "Lý do NG...") *@
-                                        <NgCategoryPicker Categories="_ngCats" Value="sub.NgCategoryId" ValueChanged="v => OnSubNgCatChanged(sub, v)"
-                                                          Disabled="@(sub.QtyNg <= 0)" Required="@(sub.QtyNg > 0)" Style="font-size:11px" Placeholder="Loại lỗi…" />
+                                        @* [N21-NGW] ô loại lỗi chỉ khi sửa dòng đã có vụ (lưu trước luật N21); dòng khác: NG chưa báo lỗi, báo ở Giao nhận *@
+                                        <div style="@NgwShow(sub.NgCaseId != null)"><NgCategoryPicker Categories="_ngCats" Value="sub.NgCategoryId" ValueChanged="v => OnSubNgCatChanged(sub, v)"
+                                                          Disabled="@(sub.QtyNg <= 0)" Required="@(sub.QtyNg > 0)" Style="font-size:11px" Placeholder="Loại lỗi…" /></div>
+                                        <span class="text-muted" style="@NgwSubStyle(sub.NgCaseId == null && sub.QtyNg > 0)">@(string.IsNullOrWhiteSpace(sub.NgReason) ? NgChuaBaoText : sub.NgReason)</span> @* [N21-NGW rà độc lập T4] dòng rất cũ: giữ chữ lý do *@
 
                                     </td>
 
@@ -4038,7 +4042,15 @@ else
     private static string WtsNgText(WtsRow row)
         => row.ActivityLogId.HasValue && !row.WtsLogId.HasValue
             ? (row.NgCaseId != null ? "sửa " + NgCaseNo.Format(row.NgCaseId.Value) + (string.IsNullOrEmpty(row.NgReason) ? "" : " · " + row.NgReason) : "")   // [ML16-ACT] giờ sửa theo vụ lỗi
+            : row.NgCaseId == null && string.IsNullOrWhiteSpace(row.NgReason) && row.QtyNg > 0 ? NgChuaBaoText   /* (rà lượt 2 L7) chữ trống = không lý do */   // [N21-NGW] dòng theo luật N21: WTS không tự sinh vụ
             : (row.NgReason ?? "") + (row.NgCaseId != null && row.QtyNg > 0 ? " · " + NgCaseNo.Format(row.NgCaseId.Value) : "");
+    // [N21-NGW 2026-11-25] WTS có NG không tự sinh mã vụ (mọi bộ phận): không chọn loại lỗi ở đây — báo lỗi riêng ở trang Giao nhận (form Giao / xử lý hàng,
+    //   dòng "NG ở WTS chưa báo lỗi"). Dòng đã có vụ (lưu trước bản này) sửa lại vẫn giữ vụ + ô loại lỗi như cũ.
+    //   Nguồn: KHÁCH 23/11 (mockup TH10 bước 1 — WTS chỉ OK / NG); HÙNG 23/11 16:24 (N21) + 25/11 16:27.
+    private const string NgChuaBaoText = "NG — báo lỗi ở trang Giao nhận";   // [N21-NGW rà độc lập L5] chữ trung tính (dòng có thể đã được báo lỗi)
+    private static string NgwShow(bool on) => on ? "" : "display:none";
+    private static string NgwSubStyle(bool on) => on ? "font-size:10.5px" : "font-size:10.5px;display:none";
+    private static string NgwQuickText(decimal ng) => ng > 0 ? NgChuaBaoText : "—";
 
     // GroupCode handover tương ứng với quyền WTS của công nhân
 

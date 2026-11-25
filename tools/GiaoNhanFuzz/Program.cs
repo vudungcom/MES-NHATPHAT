@@ -13,6 +13,9 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 // [KIEM-NHAN 2026-11-01] cuối mỗi tiến trình in giây CPU đã dùng — lệnh nang so CPU / thời gian thực để biết máy có bận việc khác không
 AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Console.WriteLine($"CPU tiến trình: {System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}"); } catch { } };
 
+// [N21-NGW 2026-11-25] Kịch bản CŨ (trước luật N21) dựng dòng WTS có NG kiểu cũ (sinh vụ) bằng hàm thật — kiểm chứng từ cũ giữ nghĩa cũ;
+//   kịch bản n21 + lượt ngẫu nhiên chạy luật mới (lượt ngẫu nhiên trộn kiểu cũ theo NGWCU, mặc định 0.3 — đặt ở vòng thao tác WTS).
+WtsSaveService.SinhVuWts = !(args.Length > 0 && args[0] == "n21");
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
@@ -20,6 +23,7 @@ if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }
+if (args.Length > 0 && args[0] == "n21") { return await SuaScen.RunN21(); }   // [N21-SCEN 2026-11-25] WTS NG không tự sinh vụ, NG ở WTS chưa báo lỗi, báo lỗi riêng (G-D)
 if (args.Length > 0 && args[0] == "n18") { return await SuaScen.RunN18(); }   // [N18-SCEN 2026-11-25] Cách Y — hàng sửa trả về chưa đạt (G-E)   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
 if (args.Length > 0 && args[0] == "n17") { return await SuaScen.RunN17(); }   // [N17-KCS-BO 2026-11-23] sửa đạt không cần KCS xác nhận (chứng từ mới)
 if (args.Length > 0 && args[0] == "bu") { return await BuScen.Run(); }
@@ -46,6 +50,10 @@ if (args.Length > 0 && args[0] == "std") { return await StdScen.Run(); }   // [S
 if (args.Length > 0 && args[0] == "danhmuc") { return DanhMuc.Run(); }   // [KIEM-TONG] đối chiếu tools/DanhMucKiem.txt với tag trong code + ca kiểm
 if (args.Length > 2 && args[0] == "whyreplay") { return WhyReplay.Run(args[1], long.Parse(args[2])); }   // [H10-KET-WHY 07/11] tái hiện ca [H10 kẹt] từ JSON
 if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // [GN-NG-TRACE] chạy nặng: nhiều cấu hình song song
+// [N21-NGW 2026-11-25] lượt ngẫu nhiên: luật mới (WTS NG không sinh vụ) + trộn NGWCU (mặc định 0.3) phần dòng WTS kiểu cũ (sinh vụ — như dữ liệu trước N21).
+//   Rút bằng Random RIÊNG (seed + PO + op) → dãy thao tác các seed cũ không đổi.
+WtsSaveService.SinhVuWts = false;
+double ngwCu = double.TryParse(Environment.GetEnvironmentVariable("NGWCU"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ngwCuV) ? ngwCuV : 0.3;
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;
 var seed0 = args.Length > 2 ? int.Parse(args[2]) : 1;
@@ -58,15 +66,16 @@ int checks = 0;
 //   HTSP → NC sau đoạn R: ≤ (nhận − trả − NG) của R, R có Taro: ≤ OK bộ − đã trả; NC khác: ≤ hàng không thuộc đoạn nào
 static decimal ExpLamHoRet(LedgerRow row, string from, string? tnc)
 {
-    var good = row.G(from).LamHoGiu - row.Cases.Values.Sum(x => x.HeldAt(from, HandoverCell.LamHo));
+    var good = row.G(from).LamHoGiu - row.Cases.Values.Sum(x => x.HeldAt(from, HandoverCell.LamHo))
+             - row.LamHoNgPendOf(from);   // [N21-NGW] − NG ở WTS Taro làm hộ chưa báo lỗi (thay vụ LAMHO kiểu cũ: chiếc hỏng chưa trả về được — fuzz seed 2102 PO21)
     if (row.ApplyWorkflow && row.LamHoRuns.Any(x => x.HasTaro))
     {
         var lr = row.LamHoRuns.FirstOrDefault(x => tnc != null && string.Equals(x.NextNc, tnc, StringComparison.OrdinalIgnoreCase));
         if (from != "HTSP") return lr is { HasTaro: true } ? 0 : Math.Max(0, good);
-        var held = row.LamHoRuns.Sum(x => Math.Max(0, x.In - x.Ret - x.Ng - x.TraKho));   // [KTT-PHOILOI] − phôi lỗi Taro trả thẳng Kho
+        var held = row.LamHoRuns.Sum(x => Math.Max(0, x.In - x.Ret - x.Ng - x.TraKho - x.Bao));   // [KTT-PHOILOI] − phôi lỗi Taro trả thẳng Kho · [N21-NGW] − báo lỗi dư
         if (lr == null) return Math.Max(0, Math.Min(good, good - held));
-        var cap = Math.Min(good, lr.In - lr.Ret - lr.Ng - lr.TraKho);
-        if (lr.HasTaro) cap = Math.Min(cap, lr.Done - lr.Ret);
+        var cap = Math.Min(good, lr.In - lr.Ret - lr.Ng - lr.TraKho - lr.Bao);   // [N21-NGW] − báo lỗi dư (chiếc đã xong bộ Taro bị báo lỗi)
+        if (lr.HasTaro) cap = Math.Min(cap, lr.Done - lr.Ret - lr.Bao);
         return Math.Max(0, cap);
     }
     return Math.Max(0, good);
@@ -226,6 +235,7 @@ for (int po = startPo; po < startPo + poCount; po++)
     for (int op = 0; op < opsPerPo; op++)
     {
         var row = (await led.GetLedgerForDetailAsync(1))!;
+        WtsSaveService.SinhVuWts = false;   // [N21-NGW] mỗi thao tác bắt đầu ở luật mới (thao tác WTS tự bật kiểu cũ khi rút trúng)
         var kind = Pick(rnd, ("issue", 30), ("recv", 30), ("wts", 30), ("wtsvoid", 4), ("vrecv", 6), ("vissue", 6), ("close", 5), ("phoi", int.TryParse(Environment.GetEnvironmentVariable("PHOI"), out var pw) ? pw : smart ? 0 : 6),
             ("ngrep", int.TryParse(Environment.GetEnvironmentVariable("NGREP"), out var nw) ? nw : 10), ("vngrep", 4), ("wtsedit", int.TryParse(Environment.GetEnvironmentVariable("WTSEDIT"), out var we) ? we : 5),
             ("pmedit", chuoi ? 5 : 0),
@@ -558,7 +568,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (cap.Max == null || cap.Locked || cap.Max <= 0) { Inc("skip.wts"); continue; }
                     var q = rnd.Next(1, (int)cap.Max.Value + 1);
                     var ng = rnd.NextDouble() < (smart ? 0.4 : 0.2) ? rnd.Next(0, q + 1) : 0;
-                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, null, ng > 0 ? -1 : null, StepNC: tnc) };   // [VULOI] dòng mới: vụ mới · [TARO-NC-MA] + NC Taro
+                    bool cuW = new Random(seed0 * 104729 + po * 977 + op).NextDouble() < ngwCu;   // [N21-NGW] dòng kiểu cũ (sinh vụ) hay luật mới
+                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, null, ng > 0 && cuW ? -1 : null, StepNC: tnc) };   // [VULOI] dòng mới: vụ mới · [TARO-NC-MA] + NC Taro · [N21-NGW] luật mới: không vụ
                     var after = (await led.GetLedgerForDetailAsync(1, null, extra))!;
                     var bad = HandoverLedgerService.NewNegatives(row, after);
                     desc = $"wts {pg} {code}{(tnc == null ? "" : " NC " + tnc)} ok={q - ng} ng={ng} cap={cap.Max}";
@@ -573,7 +584,11 @@ for (int po = startPo; po < startPo + poCount; po++)
                         Inc("taro.nc.thieu");
                         if (bx.Ok || db.WtsProductionLogs.List.Count != nW0) fails.Add($"[TARO-NC-MA thiếu / sai NC không bị chặn] PO{po} op{op} {desc}");
                     }
-                    var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), catW, stepNc: tnc);
+                    WtsSaveService.SinhVuWts = cuW;
+                    var nVu0 = db.NgCases.List.Count;
+                    var sv = await WtsSvcHelp.SaveAsync(db, 1, pg, g == "GC" ? code : null, g == "GC" ? null : code, q - ng, ng, Uid(g), cuW || rnd.NextDouble() < 0.5 ? catW : null, stepNc: tnc);
+                    WtsSaveService.SinhVuWts = false;
+                    if (ng > 0) Inc(cuW ? "n21.wts.cu" : "n21.wts.moi");
                     if (!sv.Ok) { Inc("rej.wts.svc"); fails.Add($"[WtsSaveService chặn oan dù trong trần + qua K5] PO{po} op{op} {desc} → {sv.Err}"); continue; }
                     if (tnc != null) Inc("taro.nc.wts");
                     if (row.G("HTSP").Steps.Any(x => x.LamHoNc != null && x.Pg == pg && x.Code == CapKey(code, tnc))) Inc(ng > 0 ? "lamho.wts.ng" : "lamho.wts");   // [TARO-LAMHO-NC]   // [TARO-NC-MA] dòng WTS mã Taro dùng chung nhiều NC
@@ -581,7 +596,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         var wNew = db.WtsProductionLogs.List.First(w => w.WtsLogId == sv.LogId);
                         if (wNew.QtyOk != q - ng || wNew.QtyNg != ng || wNew.IsVoided) fails.Add($"[WtsSaveService ghi sai số] PO{po} op{op} {desc} → ok={wNew.QtyOk} ng={wNew.QtyNg}");
-                        if (ng > 0 && (wNew.NgCaseId == null || db.NgCases.List.First(x => x.NgCaseId == wNew.NgCaseId).NgCategoryId != catW)) fails.Add($"[WtsSaveService không tạo vụ / sai loại lỗi] PO{po} op{op} {desc}");
+                        if (cuW && ng > 0 && (wNew.NgCaseId == null || db.NgCases.List.First(x => x.NgCaseId == wNew.NgCaseId).NgCategoryId != catW)) fails.Add($"[WtsSaveService không tạo vụ / sai loại lỗi] PO{po} op{op} {desc}");
+                        if (!cuW && (wNew.NgCaseId != null || wNew.NgReason != null || db.NgCases.List.Count != nVu0)) fails.Add($"[N21-NGW WTS NG luật mới vẫn sinh vụ / ghi loại lỗi] PO{po} op{op} {desc}");
                         if (ng == 0 && wNew.NgCaseId != null) fails.Add($"[WtsSaveService gắn vụ cho dòng không NG] PO{po} op{op} {desc}");
                         var nStd = db.WtsProductionLogStds.List.Count(x => x.WtsLogId == wNew.WtsLogId);
                         if (nStd != (g == "GC" ? 5 : 1)) fails.Add($"[WtsSaveService số dòng chuẩn sai] PO{po} op{op} {desc} → {nStd}");
@@ -822,7 +838,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (rnd.NextDouble() < 0.3) tot = Math.Max(1, tot + rnd.Next(-1, 2));   // [WTS-SUA-PHAN 2026-11-05] 30%: sửa đổi cả tổng (tăng / giảm 1) — rà độc lập lần 2
                     var ng2 = (decimal)rnd.Next(0, (int)tot + 1);
                     var keep = ng2 > 0 ? w.NgCaseId : null;
-                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, null, ng2 > 0 ? (keep ?? -1) : null, StepNC: w.StepNC) };   // [TARO-NC-MA] giữ NC Taro
+                    bool cuE = new Random(seed0 * 104729 + po * 977 + op).NextDouble() < ngwCu;   // [N21-NGW] dòng sửa không vụ: kiểu cũ (thêm NG → vụ mới) hay luật mới (không vụ)
+                    var extra = new List<InWts> { new InWts(-1, DateTime.Now, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, null, ng2 > 0 ? (keep ?? (cuE ? -1 : null)) : null, StepNC: w.StepNC,
+                                                                    NgwAt: (await led.GetInputForDetailAsync(1))!.Wts.FirstOrDefault(x => x.Id == w.WtsLogId)?.Saved) };   // [TARO-NC-MA] giữ NC Taro · [N21-NGW rà độc lập C1] như máy chủ: giờ lưu gốc
                     var after = (await led.GetLedgerForDetailAsync(1, new List<long> { w.WtsLogId }, extra))!;
                     var bad = HandoverLedgerService.NewNegatives(row, after);
                     desc = $"wtsedit #{w.WtsLogId} {w.ProcessGroup} {w.NC ?? w.WtsCode} NG {w.QtyNg}->{ng2} vu={w.NgCaseId}";
@@ -832,7 +850,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var capE = HandoverLedgerService.WtsCap(basis, w.ProcessGroup, HandoverLedgerService.WtsKey(basis, w.ProcessGroup, w.NC ?? w.WtsCode, w.StepNC) ?? (w.NC ?? w.WtsCode));   // [TARO-NC-MA] khoá (mã, NC)
                         if (capE.Max != null && (capE.Locked || tot > capE.Max.Value))
                         {
+                            WtsSaveService.SinhVuWts = cuE;
                             var seB = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, w.NgCaseId != null ? db.NgCases.List.First(x => x.NgCaseId == w.NgCaseId).NgCategoryId : 1, keep, w.WtsLogId, stepNc: w.StepNC);
+                            WtsSaveService.SinhVuWts = false;
                             if (seB.Ok) fails.Add($"[WtsSaveService cho sửa vượt trần L3] PO{po} op{op} {desc} cap={capE.Max} locked={capE.Locked}");
                             else if (!seB.Err!.StartsWith("PO ")) fails.Add($"[WtsSaveService chặn sửa sai lời] PO{po} op{op} {desc} → {seB.Err}");
                             Inc("rej.wtsedit.cap"); continue;
@@ -852,7 +872,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (loopBad.Any())
                         {
                             var catL = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == keep)?.NgCategoryId ?? 1;
+                            WtsSaveService.SinhVuWts = cuE;
                             var seL = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catL, keep, w.WtsLogId, stepNc: w.StepNC);
+                            WtsSaveService.SinhVuWts = false;
                             if (seL.Ok) fails.Add($"[WtsSaveService cho sửa lọt vòng tròn theo thời gian] PO{po} op{op} {desc}");
                             else if (!(seL.Err ?? "").Contains("theo thứ tự thời gian")) fails.Add($"[WtsSaveService chặn sửa (vòng) sai lời] PO{po} op{op} {desc} → {seL.Err}");
                             if (db.WtsProductionLogs.List.First(x => x.WtsLogId == w.WtsLogId).IsVoided) fails.Add($"[Sửa bị chặn mà dòng cũ đã huỷ] PO{po} op{op} {desc}");
@@ -880,6 +902,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         double qp = double.TryParse(Environment.GetEnvironmentVariable("QUICK"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var qv) ? qv : 0.3;
                         bool quick = new Random(seed0 * 7919 + po * 131 + op).NextDouble() < qp;
                         (bool Ok, string? Err, long? LogId) se;
+                        WtsSaveService.SinhVuWts = cuE;   // [N21-NGW] (trả lại false ngay sau lần lưu)
                         if (quick)
                         {
                             long maxId = db.WtsProductionLogs.List.Max(x => x.WtsLogId);
@@ -899,6 +922,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                             if (qr.Ok) Inc("wtsedit.quick");
                         }
                         else se = await WtsSvcHelp.SaveAsync(db, 1, w.ProcessGroup, w.NC, w.WtsCode, tot - ng2, ng2, w.WorkerId, catE, keep, oldId, stepNc: w.StepNC);
+                        WtsSaveService.SinhVuWts = false;
                         if (!se.Ok) { Inc("rej.wtsedit.svc"); fails.Add($"[WtsSaveService chặn sửa oan dù qua K5{(quick ? " — sửa nhanh" : "")}] PO{po} op{op} {desc} → {se.Err}"); continue; }
                         var wOld = db.WtsProductionLogs.List.First(x => x.WtsLogId == oldId);
                         var wNew = db.WtsProductionLogs.List.First(x => x.WtsLogId == se.LogId);
@@ -906,7 +930,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                         if (!wOld.IsVoided || wOld.VoidReason != (cuQ ? "Sửa lại (quyền cao hơn): fuzz sửa nhanh" : "Sửa lại") || (quick && wOld.VoidedBy != 1)) fails.Add($"[WtsSaveService sửa không huỷ dòng cũ / sai lý do] PO{po} op{op} {desc} → '{wOld.VoidReason}' by {wOld.VoidedBy}");
                         if (wNew.QtyOk != tot - ng2 || wNew.QtyNg != ng2) fails.Add($"[WtsSaveService sửa ghi sai số] PO{po} op{op} {desc}");
                         if (ng2 > 0 && keep != null && wNew.NgCaseId != keep) fails.Add($"[WtsSaveService sửa không giữ vụ] PO{po} op{op} {desc} → {wNew.NgCaseId}");
-                        if (ng2 > 0 && keep == null && wNew.NgCaseId == null) fails.Add($"[WtsSaveService sửa thêm NG không tạo vụ] PO{po} op{op} {desc}");
+                        if (cuE && ng2 > 0 && keep == null && wNew.NgCaseId == null) fails.Add($"[WtsSaveService sửa thêm NG không tạo vụ] PO{po} op{op} {desc}");
+                        if (!cuE && ng2 > 0 && keep == null && (wNew.NgCaseId != null || wNew.NgReason != null)) fails.Add($"[N21-NGW sửa dòng không vụ (luật mới) vẫn sinh vụ / loại lỗi] PO{po} op{op} {desc}");
                         if (ng2 == 0 && wNew.NgCaseId != null) fails.Add($"[WtsSaveService sửa hết NG vẫn gắn vụ] PO{po} op{op} {desc}");
                         // [WTS-SUA-PHAN] sổ ghép dòng sửa (EditOrigins) phải khớp đúng chuỗi bộ kiểm tự ghi: giờ gốc + từng bản (giờ, OK, NG)
                         editPrev[se.LogId!.Value] = oldId;
@@ -925,6 +950,14 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var srcs = g == "KHO" ? new[] { HandoverNgSource.Phoi } : new[] { HandoverNgSource.Chua, HandoverNgSource.Da };
                     var src = srcs[rnd.Next(srcs.Length)];
                     string? nc = null;
+                    // [N21-NGW 2026-11-25] có NG ở WTS chưa báo lỗi → 50% báo lỗi từ đó (nguồn NGW; Gia công theo NC, HTSP làm hộ theo đoạn)
+                    var ngwKeys = row.NgPend.Where(x => x.Key.StartsWith(g + "|") && x.Value > 0).Select(x => x.Key[(g.Length + 1)..])
+                        .Concat(g == "HTSP" ? row.LamHoNgPend.Where(x => x.Value > 0).Select(x => x.Key) : Enumerable.Empty<string>()).ToList();
+                    if (g != "KHO" && ngwKeys.Count > 0 && new Random(seed0 * 7907 + po * 31 + op).NextDouble() < 0.5)
+                    {
+                        src = HandoverNgSource.NgW; var k0 = ngwKeys[rnd.Next(ngwKeys.Count)]; nc = k0 == "" ? null : k0;
+                        Inc("n21.ngrep");
+                    }
                     if (g == "GC" && src == HandoverNgSource.Chua)
                     {
                         var cand = G.Steps.Where(x => !x.IsExcluded && (x.Waiting ?? 0) > 0).ToList();
@@ -953,14 +986,15 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (ok)
                     {
                         var bb = db.HandoverNgReports.List.Last(); var vc = db.NgCases.List.FirstOrDefault(x => x.NgCaseId == bb.NgCaseId);
-                        if (vc == null || vc.NgCategoryId != bcat || vc.OriginKind != NgOrigin.BaoLoi || vc.DetectGroupCode != g || bb.NgReason != VuHelp.Label(db, bcat))
+                        if (vc == null || vc.NgCategoryId != bcat || vc.OriginKind != (src == HandoverNgSource.NgW ? NgOrigin.WtsBao : NgOrigin.BaoLoi) || vc.DetectGroupCode != g || bb.NgReason != VuHelp.Label(db, bcat)
+                            || bb.SourceCell != src || (src == HandoverNgSource.NgW && !string.Equals(bb.NC ?? "", nc ?? "", StringComparison.OrdinalIgnoreCase)))   // [N21-NGW]
                             fails.Add($"[Vụ báo lỗi sai nhãn] PO{po} op{op} {desc}");
                     }
                     if (over && ok) fails.Add($"[Báo lỗi vượt trần] PO{po} op{op} {desc}");
                     // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập (FormHelp.GcPrevNcs): Workflow ON, Gia công báo lỗi ĐẦU VÀO từ hàng đã gia công (NC khác NC đầu / sau máy loại trừ,
                     //   hoặc "đã làm") → phải chặn đúng lời; lộ ở fuzz sandbox 10/11 seed 1304 PO11 / 1305 PO6 (trước: thiếu đáp án)
                     bool gcPrevBad = row.ApplyWorkflow && g == "GC" && origin == HandoverNgSource.DauVao && G.Steps.Any(x => !x.IsExcluded)
-                                     && (src == HandoverNgSource.Da || nc == null || !FormHelp.GcPrevNcs(db, 1).Contains(nc));
+                                     && (src is HandoverNgSource.Da or HandoverNgSource.NgW || nc == null || !FormHelp.GcPrevNcs(db, 1).Contains(nc));   // [N21-NGW] NG ở WTS = đã gia công
                     if (gcPrevBad) { Inc(ok ? "g13.ngrep.LOT" : "g13.ngrep.chan"); if (ok) fails.Add($"[GC-LOI-TRUOC-NCDAU báo lỗi đầu vào ở hàng đã gia công lọt] PO{po} op{op} {desc}"); }
                     if (!over && !ok && !res.Error.StartsWith("Không lưu") && !(gcPrevBad && res.Error == HandoverForm.GcPrevMsg)) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
                     break;
@@ -1090,15 +1124,25 @@ for (int po = startPo; po < startPo + poCount; po++)
                 {
                     var g = groups[rnd.Next(groups.Length)];
                     bool tot = rnd.NextDouble() < 0.4;
+                    {   // [N21-NGW 2026-11-25] PO có NG ở WTS chưa báo lỗi → NGWF (mặc định 0.5) phần lượt form chọn nhóm đó, Hàng lỗi (Random riêng)
+                        double nwf = double.TryParse(Environment.GetEnvironmentVariable("NGWF"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nwfv) ? nwfv : 0.5;
+                        var gp = groups.Where(x => row.G(x).NgChuaBao > 0 || (x == "HTSP" && row.LamHoNgPendOf(x) > 0)).ToList();
+                        var rr = new Random(seed0 * 4421 + po * 13 + op);
+                        if (gp.Count > 0 && rr.NextDouble() < nwf) { g = gp[rr.Next(gp.Count)]; tot = false; }
+                    }
                     var poss = HandoverForm.FormPositions(row, g, tot).Where(p => p.Have > 0).ToList();
                     if (!poss.Any()) { Inc("skip.form"); continue; }
                     var pos = poss[rnd.Next(poss.Count)];
+                    {   // [N21-NGW 2026-11-25] có dòng "NG ở WTS chưa báo lỗi" → 50% chọn dòng đó (Random riêng — dãy thao tác seed cũ không đổi)
+                        var nwPos = poss.Where(p => p.NgSource == HandoverNgSource.NgW).ToList();
+                        if (nwPos.Count > 0 && new Random(seed0 * 6151 + po * 17 + op).NextDouble() < 0.5) { pos = nwPos[op % nwPos.Count]; Inc("n21.form.ngw"); }
+                    }
                     var G = row.G(g);
                     // [TARO-LAMHO-NC] LAMHO = Tồn hàng giao theo NC − chiếc làm hộ bị lỗi (Workflow ON, HTSP 1 đoạn Taro: ≤ OK bộ − đã trả); LAMHOLOI = chiếc làm hộ bị lỗi
                     var lhNgH = row.Cases.Values.Sum(x => x.HeldAt(g, HandoverCell.LamHo));
                     var lhRuns = row.LamHoRuns.Where(x => x.HasTaro).ToList();
                     decimal lhGood = row.ApplyWorkflow && lhRuns.Count > 0 ? row.G("GC").Steps.Where(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code)).Select(x => ExpLamHoRet(row, g, x.Code)).DefaultIfEmpty(0).Max()
-                                   : G.LamHoGiu - lhNgH;
+                                   : G.LamHoGiu - lhNgH - row.LamHoNgPendOf(g);   // [N21-NGW] − NG Taro làm hộ chưa báo lỗi
                     decimal? want = pos.Id switch { "PHOI" or "DA" => G.ConGiao, "CHUA" => G.ChuaLam, "TONLOI" => G.LoiGiu, "TONSUA" => G.SuaGiu, "LAMHO" => lhGood, "LAMHOLOI" => lhNgH, "TONXL" => G.XlGiu /* [SUA-XL-GIU] */,
                                                     "LHKHO" => HandoverLedgerService.KhoTaroRun(row) is { } kw ? Math.Min(KttChuaDoc(db) ?? kw.Chua ?? 0, kw.Held) : -1 /* [KTT-PHOILOI] Chưa làm: đáp án đọc bảng (Thấp 3) */, _ => null };
                     bool kttF = g == "KHO" && pos.Id == "PHOI" && FormHelp.KhoTaroPo(db, 1);   // [KHO-TARO-THANG] đáp án độc lập (snapshot)
@@ -1270,6 +1314,16 @@ for (int po = startPo; po < startPo + poCount; po++)
                             }
                         }
                     }
+                    else if (pos.LamHoNgW)
+                    {   // [N21-NGW 2026-11-25] NG ở WTS Taro làm hộ chưa báo lỗi: chỉ báo lỗi (Giữ) hoặc báo lỗi + trả Gia công ô Hàng lỗi; việc khác / nơi khác → chặn
+                        req.CatId = rnd.NextDouble() < 0.03 ? null : rnd.Next(1, 6);
+                        if (req.CatId == null) expErr ??= "";
+                        req.Action = Pick(rnd, (HandoverForm.AGiao, 4), (HandoverForm.AGiu, 2), (HandoverForm.AHuy, 1));
+                        if (req.Action == HandoverForm.AHuy) expErr ??= "chỉ trả về Gia công";
+                        req.Qty = Q(have);
+                        if (req.Action == HandoverForm.AGiao) { req.ToGroup = rnd.NextDouble() < 0.85 ? "GC" : "KCS"; if (req.ToGroup != "GC") expErr ??= "chỉ trả về Gia công"; }
+                        Inc("n21.form.lhngw");
+                    }
                     else
                     {
                         req.Prev = rnd.NextDouble() < 0.5;
@@ -1294,8 +1348,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                             req.Fail = rnd.Next(0, n + 1); req.Pass = n - req.Fail;
                             if (req.Pass <= 0 && req.CatId is null or 6) expErr = "";
                             var defF = FormHelp.ExpectFreshNc(db, 1, g, pos.Id);
-                            if (g == "GC" && HandoverForm.CaseNextNc(row, "GC", pos.NgNc, NgOrigin.BaoLoi) != defF)
-                                fails.Add($"[NC làm tiếp mặc định (lỗi mới) ≠ đáp án] PO{po} op{op} {pos.Id}: {HandoverForm.CaseNextNc(row, "GC", pos.NgNc, NgOrigin.BaoLoi)} ≠ {defF}");
+                            var oriF = pos.NgSource == HandoverNgSource.NgW ? NgOrigin.WtsBao : NgOrigin.BaoLoi;   // [N21-NGW] như trang
+                            if (g == "GC" && HandoverForm.CaseNextNc(row, "GC", pos.NgNc, oriF) != defF)
+                                fails.Add($"[NC làm tiếp mặc định (lỗi mới) ≠ đáp án] PO{po} op{op} {pos.Id}: {HandoverForm.CaseNextNc(row, "GC", pos.NgNc, oriF)} ≠ {defF}");
+                            if (pos.NgSource == HandoverNgSource.NgW) Inc("n21.form.sua");
                             PickNc(null, defF, pos.Id);
                         }
                         else
@@ -1920,6 +1976,37 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
             if (g.LoiGiu != heldLoi) F("N18 Tồn hàng lỗi ≠ Σ vụ giữ ô Hàng lỗi", $"{g.Code}: {g.LoiGiu} ≠ {heldLoi}");
         }
     }
+    {   // [N21-NGW 2026-11-25] đáp án độc lập đọc thẳng bảng: NG ở WTS chưa báo lỗi của Gia công (theo NC chính) / KCS / Đóng gói
+        //   = Σ_nơi max(0, Σ NG dòng WTS luật N21 (không vụ, không chữ lý do) − Σ phiếu báo lỗi nguồn NGW); mọi nhóm ≥ 0. HTSP (có Taro làm hộ theo đoạn) chỉ kiểm ≥ 0.
+        var bk = db.KhPlanRouteSnapshotMachining.List.Where(m => m.KhPlanDetailId == 1 && m.IsBackup && !string.IsNullOrWhiteSpace(m.ParentNC))
+                   .GroupBy(m => (m.NC ?? "").Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(x => x.Key, x => x.First().ParentNC!.Trim(), StringComparer.OrdinalIgnoreCase);
+        string KeyN(string g, string? nc) => g != "GC" ? "" : bk.TryGetValue((nc ?? "").Trim(), out var mp) ? mp.ToUpperInvariant() : (nc ?? "").Trim().ToUpperInvariant();
+        var gcHasNc = row.G("GC").Steps.Any(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code));
+        foreach (var g in new[] { "GC", "KCS", "PKG" })
+        {
+            // [N21-NGW rà độc lập G-D C1] đáp án theo THỜI GIAN: dòng WTS xếp theo giờ lưu của dòng GỐC chuỗi sửa (bộ kiểm tự ghi editPrev — không qua EditOrigins),
+            //   phiếu báo theo giờ lập; phiếu chỉ lấy từ NG ghi trước nó (cùng giờ: WTS trước). Trước: gộp cả kỳ (cùng giả định với code — không bắt được lỗi C1).
+            DateTime Goc(WtsProductionLog w) { var id = w.WtsLogId; var seen = 0; while (editPrevCur != null && editPrevCur.TryGetValue(id, out var o) && seen++ < 1000) id = o;
+                return db.WtsProductionLogs.List.FirstOrDefault(x => x.WtsLogId == id)?.CreatedAt ?? w.CreatedAt; }
+            var evs = db.WtsProductionLogs.List.Where(w => w.KhPlanDetailId == 1 && !w.IsVoided && (w.QtyNg ?? 0) > 0 && w.NgCaseId == null && w.NgReason == null
+                                                           && (g == "GC" ? w.ProcessGroup == "GC" : w.ProcessGroup == g))
+                         .Select(w => (K: KeyN(g, gcHasNc ? w.NC : null), T: Goc(w), O: 0, Q: w.QtyNg ?? 0))
+                      .Concat(db.HandoverNgReports.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided && b.GroupCode == g && b.SourceCell == HandoverNgSource.NgW)
+                         .Select(b => (K: KeyN(g, gcHasNc ? b.NC : null), T: b.CreatedAt, O: 1, Q: b.Qty))).ToList();
+            decimal exp = 0;
+            foreach (var kg in evs.GroupBy(x => x.K))
+            {
+                decimal pd = 0;
+                foreach (var e in kg.OrderBy(x => x.T).ThenBy(x => x.O)) { if (e.O == 0) pd += e.Q; else pd -= Math.Min(pd, e.Q); }
+                exp += pd;
+            }
+            checks++;
+            if (row.G(g).NgChuaBao != exp) F("N21 NG ở WTS chưa báo lỗi ≠ bảng", $"{g}: {row.G(g).NgChuaBao} ≠ {exp}");
+        }
+        foreach (var g in row.Groups.Values) { checks++; if (g.NgChuaBao < 0) F("N21 NG chưa báo lỗi âm", $"{g.Code}: {g.NgChuaBao}"); }
+        checks++;
+        if (row.LamHoNgPend.Values.Any(v => v < 0)) F("N21 NG làm hộ chưa báo lỗi âm", string.Join(",", row.LamHoNgPend));
+    }
     {   // [KHACH-GUI-LAI 2026-11-11] đáp án độc lập đọc thẳng bảng: phôi + bù = vế phải; sổ bù = bảng; mỗi vụ đã bù ≤ Σ phiếu Trả khách / Huỷ còn hiệu lực
         var buAct = db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided).ToList();
         var phoiDb = db.KhoVatLieus.List.Where(k => k.PlanDetailId == 1 && k.IsActive).Sum(k => (decimal)(k.SoLuongThucNhan ?? 0));
@@ -2193,7 +2280,9 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         foreach (var g in tr.Groups.Where(g => g.Code != "KHACH"))
             if (g.LoiGiu != row.G(g.Code).LoiGiu || g.SuaGiu != row.G(g.Code).SuaGiu) F("Hàng lỗi từng nơi ≠ sổ", $"{g.Code}: {g.LoiGiu}/{g.SuaGiu} ≠ {row.G(g.Code).LoiGiu}/{row.G(g.Code).SuaGiu}");
         checks++;
-        var ever = HandoverNgTrace.EverHadNg(row); var any = tr.Events.Any(e => e.PhatSinh > 0);
+        var ever = HandoverNgTrace.EverHadNg(row); var any = tr.Events.Any(e => e.PhatSinh > 0)
+            // [N21-NGW 2026-11-25] đáp án đổi: dòng WTS luật N21 có NG (chưa báo lỗi) chưa phải hàng lỗi ở khung lỗi (vụ sinh lúc báo lỗi) nhưng PO vẫn "có phát sinh lỗi" (NG ở WTS)
+            || db.WtsProductionLogs.List.Any(w => w.KhPlanDetailId == 1 && !w.IsVoided && (w.QtyNg ?? 0) > 0 && w.NgCaseId == null && w.NgReason == null);
         if (ever != any) F("Lọc 'có phát sinh lỗi' ≠ khung lỗi", $"sổ {ever} / khung {any}");
         checks++;
         if (tr.Groups.Where(g => g.Code != "KHACH").Sum(g => g.PhatHien) != tr.PhatSinh || tr.Groups.Sum(g => g.GayRa) != tr.PhatSinh)

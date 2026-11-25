@@ -161,7 +161,10 @@
     bool HelpFrom => Pos?.HelpFrom != null;
     bool LamHo => IsTot && Pos is { LamHo: true };
     /// <summary>[TARO-LAMHO-NC] Hàng làm hộ bị lỗi (vụ giữ ô LAMHO): chỉ trả Gia công vào ô Hàng lỗi, cùng vụ.</summary>
-    bool LamHoLoi => IsHeld && Pos!.HeldCell == HandoverCell.LamHo;
+    bool LamHoLoi => (IsHeld && Pos!.HeldCell == HandoverCell.LamHo) || (IsFresh && Pos is { LamHoNgW: true });   // [N21-NGW] + NG ở WTS Taro làm hộ chưa báo lỗi
+    /// <summary>[N21-NGW 2026-11-25] Dòng "NG ở WTS chưa báo lỗi" (báo lỗi riêng — WTS không tự sinh mã vụ). Nguồn: KHÁCH 23/11 (mockup TH10 bước 2); HÙNG 23/11 16:24 (N21).</summary>
+    bool IsNgW => IsFresh && Pos is { NgSource: HandoverNgSource.NgW };
+    string FreshOrigin => IsNgW ? NgOrigin.WtsBao : NgOrigin.BaoLoi;
     // [KHO-TARO-THANG 2026-11-12] NC đầu Gia công là Taro (máy loại trừ): Kho giao phôi thẳng Taro (nhóm nhận HTSP, chọn sẵn — khách 12/11 3.3 b = A).
     //   Workflow ON: không giao Gia công (máy chủ chặn — KTT-CHI-TARO); OFF: Gia công vẫn chọn được, có cảnh báo (HÙNG 12/11 14:00 câu B1).
     bool KhoTaroPo => _group == "KHO" && HandoverLedgerService.KhoTaroRun(Row) != null;
@@ -222,14 +225,14 @@
 
     /// <summary>[SUA-XL-GIU][SUA-OK-NC 2026-11-10] Đích hàng sửa đạt (cùng hàm máy chủ): dấu (không chọn NC) / NC / null. Chỉ khi sửa có số đạt.</summary>
     string? RepTarget => !(IsSua && _pass > 0) ? null
-        : IsFresh ? HandoverForm.RepairTarget(Row, _group, _group, Pos!.NgNc, NgOrigin.BaoLoi, PrevOn ? EffCause : _group, Pos!.NgSource == HandoverNgSource.Da)
+        : IsFresh ? HandoverForm.RepairTarget(Row, _group, _group, Pos!.NgNc, FreshOrigin, PrevOn ? EffCause : _group, Pos!.NgSource == HandoverNgSource.Da)   // [N21-NGW] FreshOrigin
         : HandoverForm.RepairTarget(Row, _caseId ?? 0, _group);
     bool RepMark => HandoverLedgerService.IsRepMark(RepTarget);
     string? RepDetect => IsFresh ? _group : Case?.DetectGroup;
 
     /// <summary>NC làm tiếp mặc định (Gia công: sửa đạt / hàng của vụ vào Gia công) — cùng hàm máy chủ kiểm.</summary>
     string? NcDefault => !(NcForSua || CaseToGc) ? null
-        : IsFresh ? HandoverForm.CaseNextNc(Row, _group, Pos!.NgNc, NgOrigin.BaoLoi)
+        : IsFresh ? HandoverForm.CaseNextNc(Row, _group, Pos!.NgNc, FreshOrigin)   // [N21-NGW]
         : HandoverForm.CaseNextNc(Row, _caseId ?? 0, _group);   // [GN-FORM1] vòng 2 C1
     List<HandoverForm.NcOpt> NcOpts => ((NcForSua && !RepMark) || CaseToGc) && GcHasNc   // [SUA-XL-GIU] đích là dấu: không chọn NC
         ? HandoverForm.NcOptions(Row, NcDefault, free: !IsFresh && (_caseId ?? 0) == 0, allowEarlier: !Row.ApplyWorkflow)   // [SUA-KHONG-LUI] ON: không làm lại NC trước
@@ -352,14 +355,14 @@
     // ── Bước 2 ──────────────────────────────────────────────────────────
     // [N23-FORM6] Bước 2: dòng đang giữ theo vụ (ô Hàng lỗi / Hàng sửa / hàng đã sửa / hàng làm hộ bị lỗi) — MỖI MÃ VỤ 1 DÒNG (mockup TH4 bước 3:
     //   "Đang giữ ở ô Hàng lỗi — VL000316 · Gia công trả"); không có vụ thì 1 dòng "có 0". Hàng lỗi: thêm dòng hàng đã sửa chờ trả (lấy từ danh sách Hàng tốt).
-    record ViewRow(string Key, FormPos P, bool FromTot, long? CaseId, string Label, string Sub, decimal Have);
+    record ViewRow(string Key, FormPos P, bool FromTot, long? CaseId, string Label, string Sub, decimal Have, decimal? Show = null);   // [N21-NGW] + số hiện (NG chưa báo) khác trần
 
     List<ViewRow> ViewRows()
     {
         var list = new List<ViewRow>();
         void AddPos(FormPos p, bool fromTot)
         {
-            if (p.HeldCell == null) { list.Add(new ViewRow(p.Id, p, fromTot, null, p.Label, p.Sub, p.Have)); return; }
+            if (p.HeldCell == null) { list.Add(new ViewRow(p.Id, p, fromTot, null, p.Label, p.Sub, p.Have, p.Show)); return; }   // [N21-NGW] + Show
             var cs = Row.CasesHeldAt(_group, p.HeldCell);
             if (cs.Count == 0) { list.Add(new ViewRow(p.Id, p, fromTot, null, HeldHead(p, fromTot), "", 0)); return; }
             foreach (var c in cs)
@@ -415,7 +418,7 @@
                     <button type="button" class="gn-cellbtn w-100 d-flex justify-content-between align-items-center @(RowOn(vr) ? "on" : "")"
                             disabled="@(vr.Have <= 0)" @onclick="() => PickRow(vr)">
                         @RowText(vr)
-                        <span class="small text-nowrap @(vr.Have > 0 ? "text-success" : "text-muted")">có @vr.Have.ToString("0.##")</span>
+                        <span class="small text-nowrap @(vr.Have > 0 ? "text-success" : "text-muted")">có @((vr.Show ?? vr.Have).ToString("0.##"))</span>
                     </button>
                 }
             </div>
@@ -523,7 +526,7 @@
             @if (!IsSua)
             {
                 <div class="mb-2">
-                    <label class="form-label form-label-sm mb-1">Số lượng <span class="text-muted">(tối đa @Have.ToString("0.##"))</span></label>
+                    <label class="form-label form-label-sm mb-1">Số lượng <span class="text-muted">@QtyHint</span></label>
                     <input type="number" class="form-control form-control-sm @(_qty > Have ? "border-danger" : "")" min="0" step="1" @bind="_qty" @bind:after="ClearError" />
                     @if (_qty > Have)
                     {
@@ -863,6 +866,8 @@
             return LamHo ? $"Sẽ ghi: phiếu trả hàng làm hộ về Gia công (chờ Gia công nhận)."
                  : HelpFrom ? $"Sẽ ghi: phiếu giao theo NC {G} → {D}{HelpNcWill} (chờ {D} nhận)."
                  : $"Sẽ ghi: phiếu Hàng mới {G} → {D} (chờ {D} nhận).";
+        if (LamHoLoi && IsFresh)   // [N21-NGW]
+            return $"Sẽ ghi: báo lỗi {_qty:0.##} chiếc NG ở WTS Taro làm hộ (mã vụ mới)" + (Act == HandoverForm.AGiu ? "" : " + phiếu trả về Gia công (ô Hàng lỗi, cùng vụ — chờ Gia công nhận)") + " — cùng 1 lần lưu.";
         if (LamHoLoi) return "Sẽ ghi: phiếu trả hàng làm hộ bị lỗi về Gia công (ô Hàng lỗi, cùng vụ — chờ Gia công nhận).";   // [TARO-LAMHO-NC]
         if (IsXl)   // [SUA-XL-GIU][XL-TRA-LAI]
             return IsTot ? $"Sẽ ghi: phiếu trả hàng đã sửa {G} → {D} (ô Hàng lỗi đã xử lý, cùng vụ — chờ {D} nhận)."
@@ -885,8 +890,21 @@
             HandoverForm.AKhach => " + phiếu Trả khách",
             _                   => (ToCellNow is HandoverCell.Xl or HandoverCell.Moi ? " + phiếu trả hàng đã sửa " : " + phiếu giao hàng lỗi ") + $"{G} → {D}"
         };
+        if (IsNgW)   // [N21-NGW] chữ theo mockup TH10 bước 2
+        {
+            var n = IsSua ? _pass + _fail : _qty;
+            var pend = Pos!.Show ?? 0;
+            var noi = PrevOn ? HandoverNgSource.CauseLabel(EffCause) : G;
+            return $"Sẽ ghi: báo lỗi {n:0.##} chiếc (mã vụ mới, nơi làm lỗi {noi})" + (tail == "" ? "" : " + " + tail.TrimStart(' ', '+')) + $" — cùng 1 lần lưu. NG chưa báo lỗi của {G}"
+                 + (n > pend ? $" về 0; báo dư {n - pend:0.##} trừ vào hàng đã làm xong chưa giao." : n == pend ? " về 0." : $" còn {pend - n:0.##}.");
+        }
         return "Sẽ ghi: báo hàng lỗi phát hiện sau khi nhận (sinh vụ mới)" + tail + " — cùng 1 lần lưu.";
     }
+
+    /// <summary>[N21-NGW] Chữ cạnh ô Số lượng: dòng NG ở WTS ghi NG chưa báo + báo thêm thì trừ hàng đã làm xong (mockup TH10 bước 2).</summary>
+    string QtyHint => IsNgW && Pos!.Show is decimal sh
+        ? $"({sh:0.##} NG chưa báo" + (Have > sh ? $"; báo thêm thì trừ vào hàng đã làm xong chưa giao — tối đa {Have:0.##})" : ")")
+        : $"(tối đa {Have:0.##})";
 
     /// <summary>[N23-SUA-GIAO][N23-SUA-CHUADAT] "Sẽ ghi" của Sửa tại bộ phận mình (vụ đang giữ).</summary>
     string SuaWill(string G)

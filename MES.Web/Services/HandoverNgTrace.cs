@@ -170,6 +170,9 @@ namespace MES.Web.Services
             //   bỏ sót PO trong khi khung hàng lỗi (PoLoi) đã hiện vụ. Bộ kiểm nặng bắt được (seed 84 LOI=1 PHOI=8, có từ trước bản này).
             //   Sổ vụ đã ghi số sinh ra → dùng làm dấu hiệu chung.
             if (r.Cases.Values.Any(c => c.SinhRa > 0)) return true;
+            // [N21-NGW 2026-11-25] NG ở WTS Taro làm hộ chưa báo lỗi (WTS không tự sinh vụ): không nằm trong NgCuoi nhóm nào (giữ ở số dư đoạn làm hộ)
+            //   → trước khi thêm, lọc "có phát sinh lỗi" bỏ sót PO chỉ có NG này. Bộ kiểm nặng bắt được (seed 2104 CHUOI LOI TARO LAMHO, PO22 op2).
+            if (r.LamHoNgPend.Values.Any(v => v > 0)) return true;
             foreach (var g in r.Groups.Values)
             {
                 if (g.NgCuoi > 0 || g.NgDau > 0 || g.NhanLoi > 0 || g.NhanSua > 0 || g.GiaoLoi > 0 || g.GiaoSua > 0 || g.LoiGiu > 0 || g.SuaGiu > 0) return true;
@@ -293,6 +296,9 @@ namespace MES.Web.Services
                     {
                         if (!wtsById.TryGetValue(st.RefId, out var w)) { tr.Problems.Add($"B{st.Index}: không thấy WTS #{st.RefId}"); break; }
                         if (w.Ng == 0) break;
+                        // [N21-NGW 2026-11-25] WTS theo luật N21 (NG không tự sinh vụ): NG chưa là hàng lỗi — chỉ thành hàng lỗi khi báo lỗi (phiếu báo lỗi nguồn
+                        //   "NG ở WTS chưa báo lỗi", phát sinh đủ số báo). Không tính phát sinh ở đây (tránh đếm 2 lần). Nguồn: KHÁCH 23/11 (mockup TH10); HÙNG 23/11 16:24 (N21).
+                        if (HandoverLedgerService.IsNgMoi(w)) break;
                         var g = st.Group;
                         var code = w.WtsCode ?? w.NC;
                         var e = New("WTS_NG", g, null, w.Ng, $"WTS #{w.Id}", w.Id,

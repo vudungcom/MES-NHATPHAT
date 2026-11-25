@@ -268,11 +268,17 @@ namespace MES.Web.Services
                     g == "GC" ? pos.NgNc : null, null, notes, null, HandoverCell.Loi, HandoverCell.Loi, r.CatId, null, ftx);
 
             if (act == HandoverForm.AGiao && to == null) return (false, "Chọn nhóm nhận.");   // kiểm trước khi ghi báo lỗi
+            // [N21-NGW 2026-11-25] NG ở WTS Taro làm hộ: chỉ báo lỗi (giữ) hoặc báo lỗi + trả Gia công ô Hàng lỗi (như hàng làm hộ bị lỗi — TARO-LAMHO-NC).
+            if (pos.LamHoNgW && (act is not (HandoverForm.AGiao or HandoverForm.AGiu) || (act == HandoverForm.AGiao && to != "GC")))
+                return (false, "Hàng làm hộ bị lỗi chỉ trả về Gia công (ô Hàng lỗi) — hoặc chỉ báo lỗi, giữ lại.");
             // Bước 1: báo hàng lỗi phát hiện sau khi nhận (sinh vụ, hàng sang Tồn hàng lỗi của nhóm)
             var (okB, errB) = await ReportNgAfterReceiveOnceAsync(id, g, pos.NgSource, pos.NgNc, n, origin, cause, "", notes, uid,
                 Array.Empty<string>(), r.CatId, ftx);
             if (!okB) return (false, errB);
             var vu = ftx.CaseId;
+            if (pos.LamHoNgW)   // [N21-NGW] vụ làm hộ vừa sinh giữ ô LAMHO → trả Gia công ô Hàng lỗi, cùng vụ
+                return act == HandoverForm.AGiu ? (true, string.Empty)
+                    : await IssueWithPurposeOnceAsync(id, g, "GC", n, uid, HandoverPurpose.HelpReturn, null, null, notes, null, HandoverCell.Loi, null, null, vu, ftx);
             // Bước 2: chứng từ kèm, lấy từ Tồn hàng lỗi đúng vụ vừa sinh
             switch (act)
             {

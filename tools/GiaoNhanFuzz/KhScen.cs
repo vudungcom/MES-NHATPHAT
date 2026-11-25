@@ -402,7 +402,8 @@ public static class KhScen
             decimal Q(string place, string label) => w.Items.Where(i => i.Place == place && i.Label == label).Sum(i => i.Qty);
             Ok(w.Balanced && w.Total == 40, $"Tổng = phôi 40: {w.Total}");
             Ok(Q("KHO", "phôi còn") == 8 && Q("KHO", "hàng lỗi") == 2, "Kho: phôi còn 8, hàng lỗi 2");
-            Ok(Q("GC", "chờ NC NC1") == 10 && Q("GC", "chờ NC NC2") == 18 && Q("GC", "hàng lỗi") == 2, "GC: chờ NC1 10, chờ NC2 18, hàng lỗi (NG WTS) 2");
+            // [N21-NGW 2026-11-25] đáp án đổi: dòng WTS dựng thẳng (không vụ, không chữ lý do) = luật N21 → NG nằm ở "NG ở WTS chưa báo lỗi" (vẫn tính "lỗi" ở tóm tắt)
+            Ok(Q("GC", "chờ NC NC1") == 10 && Q("GC", "chờ NC NC2") == 18 && Q("GC", "NG ở WTS chưa báo lỗi") == 2 && Q("GC", "hàng lỗi") == 0, "GC: chờ NC1 10, chờ NC2 18, NG ở WTS chưa báo lỗi 2 (N21)");
             Ok(w.Short() == "Kho 8 · Gia công 28 · lỗi 4" && w.Status == "DANG_SX" && w.Loi == 4, $"Tóm tắt dòng KH: «{w.Short()}» · {HandoverLedgerService.WhereSummary.StatusLabel(w.Status)}");
         }
 

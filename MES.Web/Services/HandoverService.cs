@@ -1529,8 +1529,8 @@ namespace MES.Web.Services
             if (denyRep != null) return (false, denyRep);
             if (qty <= 0) return (false, "Số lượng lỗi phải lớn hơn 0.");
             if (QtyRule.CheckWhole(qty) is string eWholeB) return (false, eWholeB);   // [B3-SO-NGUYEN 2026-11-06] chỉ nhận số nguyên (QtyRule)
-            if (groupCode == "KHO" ? sourceCell != HandoverNgSource.Phoi : sourceCell is not (HandoverNgSource.Chua or HandoverNgSource.Da))
-                return (false, groupCode == "KHO" ? "Kho báo lỗi từ phôi còn." : "Chọn hàng lỗi đang nằm ở: chưa làm, hay đã làm chưa giao.");
+            if (groupCode == "KHO" ? sourceCell != HandoverNgSource.Phoi : sourceCell is not (HandoverNgSource.Chua or HandoverNgSource.Da or HandoverNgSource.NgW))   // [N21-NGW] + NG ở WTS chưa báo lỗi
+                return (false, groupCode == "KHO" ? "Kho báo lỗi từ phôi còn." : "Chọn hàng lỗi đang nằm ở: chưa làm, đã làm chưa giao, hay NG ở WTS chưa báo lỗi.");
             if (origin is not (HandoverNgSource.DauVao or HandoverNgSource.DauRa))
                 return (false, "Chọn nguồn lỗi: đầu vào (lỗi có sẵn) hay đầu ra (nhóm mình làm hỏng).");
             if (origin == HandoverNgSource.DauVao && (string.IsNullOrEmpty(causeGroupCode) || !HandoverNgSource.Causes.Contains(causeGroupCode)))
@@ -1550,19 +1550,29 @@ namespace MES.Web.Services
             var row = await new HandoverLedgerService(_db).GetLedgerForDetailAsync(khPlanDetailId);
             if (row == null) return (false, "Không tìm thấy PO.");
 
-            bool gcPin = groupCode == "GC" && sourceCell == HandoverNgSource.Chua && row.G("GC").Steps.Any(s => !s.IsExcluded);
-            if (gcPin && string.IsNullOrEmpty(nc)) return (false, "Gia công: bắt buộc chọn NC đang chứa hàng lỗi.");
-            if (!gcPin) nc = null;
+            bool gcPin = groupCode == "GC" && (sourceCell == HandoverNgSource.Chua ? row.G("GC").Steps.Any(s => !s.IsExcluded)
+                         : sourceCell == HandoverNgSource.NgW && row.G("GC").Steps.Any(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)));   // [N21-NGW] + NG ở WTS theo NC
+            if (gcPin && string.IsNullOrEmpty(nc)) return (false, sourceCell == HandoverNgSource.NgW ? "Gia công: chọn NC có NG ở WTS chưa báo lỗi." : "Gia công: bắt buộc chọn NC đang chứa hàng lỗi.");
+            // [N21-NGW 2026-11-25] NG ở WTS: Gia công ghi NC CHÍNH (máy đồng dạng gộp — N2); HTSP hàng Taro làm hộ: nc = đoạn máy loại trừ (khoá đoạn); nơi khác: không NC.
+            bool lhPin = groupCode == "HTSP" && sourceCell == HandoverNgSource.NgW && !string.IsNullOrEmpty(nc)
+                         && row.LamHoRuns.Any(r => string.Equals(r.Key, nc, StringComparison.OrdinalIgnoreCase));
+            if (gcPin && sourceCell == HandoverNgSource.NgW) nc = HandoverLedgerService.MainGcNc(row, nc);
+            else if (lhPin) nc = row.LamHoRuns.First(r => string.Equals(r.Key, nc, StringComparison.OrdinalIgnoreCase)).Key;
+            else if (!gcPin) nc = null;
+            // [N21-NGW rà độc lập G-D L10] nguồn "NG ở WTS chưa báo lỗi" chỉ khi nơi đó còn NG chưa báo (form chỉ hiện dòng khi còn) — báo từ hàng đã làm xong dùng nguồn "đã làm".
+            if (sourceCell == HandoverNgSource.NgW && (lhPin ? (row.LamHoNgPend.TryGetValue(nc!, out var _lp) ? _lp : 0m) : row.NgPendAt(groupCode, nc)) <= 0)
+                return (false, "Không còn NG ở WTS chưa báo lỗi ở đây — báo lỗi hàng đã làm xong thì chọn dòng \"đã làm xong chưa giao\".");
             // [GC-LOI-TRUOC-NCDAU 2026-11-10] Workflow ON: lỗi đầu vào (công đoạn trước / phôi khách) ở Gia công chỉ báo được từ hàng chưa gia công
             if (row.ApplyWorkflow && groupCode == "GC" && origin == HandoverNgSource.DauVao && row.G("GC").Steps.Any(s => !s.IsExcluded)
-                && (sourceCell == HandoverNgSource.Da || !HandoverForm.GcPrevStageOk(row, nc)))
+                && (sourceCell is HandoverNgSource.Da or HandoverNgSource.NgW || !HandoverForm.GcPrevStageOk(row, nc)))   // [N21-NGW] NG ở WTS = chiếc đã gia công ở NC đó
                 return (false, HandoverForm.GcPrevMsg);
             var (max, ex) = HandoverLedgerService.NgReportCap(row, groupCode, sourceCell, nc);
             if (qty > max)
                 return (false, $"Báo lỗi tối đa {max:0.##} ({ex.Title}{(string.IsNullOrEmpty(ex.Arithmetic) ? "" : ": " + ex.Arithmetic)}). Không thể báo {qty:0.##}.");
 
             // [VULOI] vụ sinh ra: nơi phát hiện = nhóm báo; nơi gây lỗi = nhóm chọn (đầu vào) / chính nhóm (đầu ra)
-            var repCase = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, repCat, NgOrigin.BaoLoi, groupCode, nc,
+            var repCase = await NgCaseService.CreateCaseAsync(_db, khPlanDetailId, repCat,
+                sourceCell == HandoverNgSource.NgW ? NgOrigin.WtsBao : NgOrigin.BaoLoi, groupCode, nc,   // [N21-NGW] vụ báo lỗi từ NG ở WTS: đi như vụ WTS cũ
                 origin == HandoverNgSource.DauVao ? causeGroupCode : groupCode, userId);
             _db.HandoverNgReports.Add(new HandoverNgReport
             {

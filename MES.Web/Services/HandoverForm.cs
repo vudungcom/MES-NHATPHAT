@@ -44,6 +44,11 @@ namespace MES.Web.Services
         public bool    LamHo  { get; set; }
         /// <summary>[KTT-PHOILOI 2026-11-12] HTSP hàng lỗi: phôi lỗi Taro phát hiện khi đang làm hàng đoạn đầu chuỗi (Kho giao thẳng) → chỉ trả Kho.</summary>
         public bool    TaroPhoi { get; set; }
+        /// <summary>[N21-NGW 2026-11-25] Số HIỆN ở bước 2 ("có n") khi khác trần: dòng "NG ở WTS chưa báo lỗi" hiện NG chưa báo; Have = trần báo lỗi
+        ///   (NG chưa báo + hàng đã làm xong chưa giao — báo dư lấy từ đây). null = hiện Have.</summary>
+        public decimal? Show { get; set; }
+        /// <summary>[N21-NGW] Dòng NG ở WTS Taro làm hộ chưa báo lỗi (hàng Gia công giao theo NC): báo lỗi rồi chỉ trả Gia công ô Hàng lỗi.</summary>
+        public bool    LamHoNgW { get; set; }
     }
 
     public static class HandoverForm
@@ -149,6 +154,7 @@ namespace MES.Web.Services
         public const string LamHoLoiText = "Hàng làm hộ bị lỗi (Taro làm hộ NG, đã có vụ)";   // [TARO-LAMHO-NC]
         public const string TonXlText   = "Hàng đã sửa — chờ trả nơi phát hiện lỗi";          // [SUA-XL-GIU]
         public const string TonXlLoiText = "Hàng đã sửa bị hỏng lại (đang giữ chờ trả)";       // [XL-TRA-LAI]
+        public const string NgWText     = "NG ở WTS chưa báo lỗi";                             // [N21-NGW] chữ mockup TH10 bước 2
 
         static decimal Pos0(decimal v) => Math.Max(0, v);
 
@@ -221,6 +227,38 @@ namespace MES.Web.Services
                 list.Add(new FormPos { Id = "CHUA", Label = chua, Sub = group == "HTSP" ? HtspSub(G) : "", Have = Pos0(G.ChuaLam),
                                        Fresh = true, NgSource = HandoverNgSource.Chua, Unworked = true });
                 list.Add(new FormPos { Id = "DA", Label = da, Have = Pos0(G.ConGiao), Fresh = true, NgSource = HandoverNgSource.Da, IsLast = group == "GC" });
+            }
+            // [N21-NGW 2026-11-25] "NG ở WTS chưa báo lỗi" (WTS không tự sinh mã vụ): báo lỗi ở đây (chọn nơi làm lỗi + loại lỗi → mã vụ) rồi 6 nút như mọi hàng lỗi mới.
+            //   Gia công: mỗi NC có NG chưa báo 1 dòng (NC đã gia công → Workflow ON không tích "Lỗi công đoạn trước", như "đã làm xong"); nhóm khác 1 dòng;
+            //   HTSP hàng Taro làm hộ: mỗi đoạn 1 dòng. Số hiện = NG chưa báo; trần (Have) = + hàng đã làm xong chưa giao (báo dư). Chỉ hiện khi còn NG chưa báo.
+            //   Nguồn: KHÁCH 23/11 (mockup TH10 bước 2 "NG ở WTS chưa báo lỗi · có 5"; chat 16:19 câu 2); HÙNG 23/11 16:24 (N21) + 25/11 16:27.
+            if (group != "KHO")
+            {
+                var lastN = group == "GC" ? G.Steps.LastOrDefault(x => !x.IsExcluded && !HandoverLedgerService.IsVao(x.Code))?.Code : null;
+                foreach (var kv in row.NgPend.Where(x => x.Key.StartsWith(group + "|", StringComparison.OrdinalIgnoreCase) && x.Value > 0)
+                                             .OrderBy(x => group == "GC" ? G.Steps.FindIndex(st => string.Equals(st.Code, x.Key[(group.Length + 1)..], StringComparison.OrdinalIgnoreCase)) : 0))
+                {
+                    var nk = kv.Key[(group.Length + 1)..];
+                    var cap = HandoverLedgerService.NgWCap(row, group, nk == "" ? null : nk).Max;
+                    list.Add(new FormPos
+                    {
+                        Id = "NGW:" + nk, Label = NgWText + (nk == "" ? "" : " · " + Nc(nk)), Show = kv.Value, Have = Pos0(cap),
+                        Sub = cap > kv.Value ? $"báo thêm thì trừ vào hàng đã làm xong chưa giao (báo được tối đa {cap:0.##})" : "",
+                        Fresh = true, NgSource = HandoverNgSource.NgW, NgNc = nk == "" ? null : nk, Unworked = false,
+                        PrevOk = group != "GC" || !row.ApplyWorkflow, IsLast = group == "GC" && (nk == "" || string.Equals(nk, lastN, StringComparison.OrdinalIgnoreCase)),
+                    });
+                }
+                if (group == "HTSP")
+                    foreach (var r in row.LamHoRuns.Where(r => row.LamHoNgPend.TryGetValue(r.Key, out var v) && v > 0))
+                    {
+                        var cap = HandoverLedgerService.NgWCap(row, group, r.Key).Max;
+                        list.Add(new FormPos
+                        {
+                            Id = "NGWLH:" + r.Key, Label = $"NG ở WTS Taro làm hộ {string.Join(", ", r.Ncs.Select(Nc))} chưa báo lỗi", Show = row.LamHoNgPend[r.Key], Have = Pos0(cap),
+                            Sub = "hàng Gia công giao theo NC — báo lỗi rồi trả Gia công ô Hàng lỗi", Fresh = true, NgSource = HandoverNgSource.NgW, NgNc = r.Key,
+                            Unworked = false, PrevOk = true, LamHoNgW = true,
+                        });
+                    }
             }
             // [KTT-PHOILOI 2026-11-12] HTSP, PO có đoạn Taro đầu chuỗi (Kho giao thẳng Taro): phôi lỗi Taro phát hiện khi đang làm (chưa xong bộ Taro)
             //   → tích "Lỗi công đoạn trước" (nơi gây lỗi Khách hàng, tự điền) → 1 phiếu trả thẳng Kho ô Hàng lỗi. Chiếc Taro làm hỏng: ghi NG ở WTS Taro (như cũ).
@@ -471,7 +509,7 @@ namespace MES.Web.Services
                 if (NormalNcs(row).Count == 0) return null;
                 if (d > 1 || (d == 1 && string.IsNullOrWhiteSpace(detectNc) && (origin == NgOrigin.BaoLoi || cause is "HTSP" or "KCS" or "PKG")))
                     return HandoverLedgerService.RepXong;   // chiếc đã xong Gia công (phát hiện sau Gia công / ở "đã làm xong NC cuối")
-                if (d == 1 && origin == NgOrigin.Wts && !string.IsNullOrWhiteSpace(detectNc)
+                if (d == 1 && NgOrigin.IsWts(origin) && !string.IsNullOrWhiteSpace(detectNc)   // [N21-NGW] + vụ báo lỗi từ NG ở WTS
                     && NormalNcs(row).Any(c => string.Equals(c, MainNc(row, detectNc.Trim()), StringComparison.OrdinalIgnoreCase)))
                     return HandoverLedgerService.RepOk;     // [SUA-OK-NC] làm hỏng ở NC k: sửa đạt = xong NC k
                 return null;
@@ -704,6 +742,8 @@ namespace MES.Web.Services
                 Off("Phôi lỗi Taro phát hiện khi đang làm: chỉ trả về Kho (nơi gây lỗi Khách hàng)", ASua, BNho, AGiu, AHuy, AKhach);
             else if (pos.HeldCell == HandoverCell.LamHo)
                 Off("Hàng làm hộ bị lỗi: chỉ Gia công sửa — gửi trả Gia công (ô Hàng lỗi, cùng vụ)", ASua, BTra, AGiu, AHuy, AKhach);
+            else if (pos.LamHoNgW)   // [N21-NGW] NG ở WTS Taro làm hộ: báo lỗi (vụ làm hộ) rồi trả Gia công, hoặc chỉ báo lỗi giữ lại
+                Off("Hàng làm hộ bị lỗi: chỉ Gia công sửa — gửi trả Gia công (ô Hàng lỗi, cùng vụ)", ASua, BTra, AHuy, AKhach);
             else if (pos.HeldCell == HandoverCell.Xl)
             {
                 Off("Hàng đã sửa bị hỏng lại: trả lại bộ phận làm lỗi / bộ phận đã sửa (ô Hàng lỗi, cùng vụ)", ASua, BNho, AGiu, AHuy, AKhach);

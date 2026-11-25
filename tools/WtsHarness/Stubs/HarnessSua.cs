@@ -9,6 +9,10 @@ using System.Text.Json;
 
 public static class HarnessSua
 {
+    /// <summary>[N21-SCEN 2026-11-25] Seed g6 / g9 dựng dòng WTS có NG KIỂU CŨ (sinh vụ — như dữ liệu trước luật N21) để drive_g6 / drive_g9 giữ kiểm luật cũ
+    ///   (Taro làm hộ có vụ, sửa nhóm WTS có vụ đã đi phiếu). Đặt cờ bằng phản chiếu: bản trước N21 không có cờ → không làm gì.</summary>
+    static void KieuCuWts(bool on) => typeof(WtsSaveService).GetField("SinhVuWts")?.SetValue(null, on);
+
     public static async Task<object> SeedAsync(AppDbContext db)
     {
         if (!db.KhPlans.List.Any(p => p.PlanNo == "KH-SUA"))
@@ -319,7 +323,7 @@ public static class HarnessSua
                 var grp = new WtsSaveService.WtsSaveGroup { IsGc = false, IsHtsp = true, HandoverGroupCode = "HTSP", ProductionMode = "serial", HtspSubGroup = "Taro", UserId = admin.UserId, WorkDate = DateTime.Today };
                 grp.Rows.Add(new WtsSaveService.WtsSaveRow { KhPlanDetailId = d.KhPlanDetailId, PO = "PO-LAMHO", StartTime = end.AddMinutes(-4), EndTime = end, NC = code, WtsCode = code,
                     QtyDone = ok + ng, QtyOk = ok, QtyNg = ng, NgCategoryId = ng > 0 ? cat : null, ActualTimePerPc = 1, ProductionMode = "serial", StepNC = "3" });
-                var r = await wsvc.SaveGroupAsync(grp);
+                KieuCuWts(true); var r = await wsvc.SaveGroupAsync(grp); KieuCuWts(false);   // [N21-SCEN] dữ liệu kiểu cũ (WTS NG sinh vụ)
                 if (!r.Ok) throw new Exception("g6-seed WTS Taro " + code + ": " + r.ErrorMsg);
                 db.Fixup();
             }
@@ -385,7 +389,7 @@ public static class HarnessSua
                 var grp = new WtsSaveService.WtsSaveGroup { IsGc = true, HandoverGroupCode = "GC", NC = "NC01", MachineUsed = m, ProductionMode = "serial", UserId = gc.UserId, WorkDate = DateTime.Today };
                 grp.Rows.Add(new WtsSaveService.WtsSaveRow { KhPlanDetailId = d.KhPlanDetailId, PO = "PO-G9", StartTime = day.AddMinutes(k), EndTime = day.AddMinutes(k + 20), NC = "NC01",
                     QtyDone = 5, QtyOk = 3, QtyNg = 2, NgCategoryId = cat, SetupTime_Actual = 5, MachiningTime_Actual = 10, InspectionTime_Actual = 5, ProductionMode = "serial" });
-                var r = await wsvc.SaveGroupAsync(grp);
+                KieuCuWts(true); var r = await wsvc.SaveGroupAsync(grp); KieuCuWts(false);   // [N21-SCEN] dữ liệu kiểu cũ (WTS NG sinh vụ)
                 if (!r.Ok) throw new Exception("g9-seed WTS: " + r.ErrorMsg);
                 db.Fixup();
                 await Must(svc.IssueByCellAsync(d.KhPlanDetailId, "GC", "KHO", 2, admin.UserId, "LOI", false, "LOI", reason: "tra kho", ngCaseId: grp.Rows[0].NgCaseId), "giao lỗi");
