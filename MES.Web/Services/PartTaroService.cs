@@ -49,6 +49,8 @@ public class PartTaroService
         PartStepGuard.CheckLen("Taro", (newStep.NC, 20, "NC"), (newStep.WtsTaskCode, 20, "Mã CV"), (newStep.StepName, 500, "Tên bước"));   // [LEN-CHECK 2026-11-16] (BP1-03)
         PartStepGuard.CheckStdTimes("Taro", (newStep.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         PartStepGuard.CheckReservedCode("Taro", newStep.NC, newStep.WtsTaskCode);   // [PM-NC-AT 2026-11-05] NC / mã CV đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
+        // [WTS-1NGUON 2026-11-26] dòng lưu mới bắt buộc Mã CV có trong WTS tiêu chuẩn — bỏ đường lùi "trống mã thì lấy NC" (dòng cũ giữ)
+        if (!newStep.IsBackup) await PartStepGuard.CheckWtsCodeAsync(_db, "Taro", newStep.WtsTaskCode);
         // [TARO-DUPHONG 2026-11-07] Taro không dùng dòng dự phòng (trước: thêm được — dự phòng trỏ cha theo NC, NC nhiều mã → gộp nhầm mã đầu).
         //   Nguồn: HÙNG 07/11 09:11.
         if (newStep.IsBackup) throw new PartStepCodeException(PartStepGuard.TaroNoBackupMsg);
@@ -117,6 +119,9 @@ public class PartTaroService
         PartStepGuard.CheckStdTimes("Taro", (updated.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         if (!PartStepGuard.SameCode(dbCode.NC, updated.NC)) PartStepGuard.CheckReservedCode("Taro", updated.NC);
         if (!PartStepGuard.SameCode(dbCode.WtsTaskCode, updated.WtsTaskCode)) PartStepGuard.CheckReservedCode("Taro", updated.WtsTaskCode);
+        // [WTS-1NGUON 2026-11-26] mã sổ / WTS dùng (Mã CV, trống thì NC) đổi hoặc dự phòng thành chính → bắt buộc Mã CV có trong WTS tiêu chuẩn
+        if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(PartStepGuard.TaroCode(dbCode.WtsTaskCode, dbCode.NC), PartStepGuard.TaroCode(updated.WtsTaskCode, updated.NC))))
+            await PartStepGuard.CheckWtsCodeAsync(_db, "Taro", updated.WtsTaskCode);
         if (!updated.IsBackup && (dbCode.IsBackup || !PartStepGuard.SameCode(dbCode.NC, updated.NC)
                 || !PartStepGuard.SameCode(PartStepGuard.TaroCode(dbCode.WtsTaskCode, dbCode.NC), PartStepGuard.TaroCode(updated.WtsTaskCode, updated.NC))))
             PartStepGuard.CheckTaroMain("Taro", updated.WtsTaskCode, updated.NC, (await _db.PartTaroSteps.AsNoTracking()

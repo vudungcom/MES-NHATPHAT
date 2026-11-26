@@ -701,7 +701,7 @@ else
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                                 <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
                                                        value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)"
-                                                       @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
+                                                       readonly="@(!edit.IsBackup)" title="@McvTitle(edit)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
                                                        disabled="@(!_canEditC || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             </div>
                                         </td>
@@ -786,7 +786,7 @@ else
                                                 @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                                 <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-success")"
                                                        value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)"
-                                                       @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
+                                                       readonly="@(!edit.IsBackup)" title="@McvTitle(edit)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }"
                                                        disabled="@(!_canEditC || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                             </div>
                                         </td>
@@ -873,7 +873,7 @@ else
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                         <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-warning")" 
-                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly="@(!edit.IsBackup)" title="@McvTitle(edit)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditD || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                     </div>
                                 </td>
                                 <td>
@@ -957,7 +957,7 @@ else
                                     <div class="d-flex align-items-center justify-content-center">
                                         @if (edit.IsBackup) { <i class="bi bi-arrow-return-right text-warning me-1"></i> }
                                         <input class="form-control form-control-sm text-center fw-bold @(edit.IsBackup ? "text-dark" : "text-primary")" 
-                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
+                                               value="@(string.IsNullOrEmpty(edit.NC) ? "..." : edit.NC)" readonly="@(!edit.IsBackup)" title="@McvTitle(edit)" @oninput="e => { edit.NC = e.Value?.ToString() ?? string.Empty; MarkAsModified(edit); }" disabled="@(!_canEditE || RowLocked(edit) || (!edit.IsEditingWts && edit.StepId > 0))" />
                                     </div>
                                 </td>
                                 <td>
@@ -3450,6 +3450,11 @@ else
             _excludeSaving = false;
         }
     }
+
+    // [WTS-1NGUON 2026-11-26] Bavia / Rửa / KCS / Đóng gói: Mã CV dòng chính chỉ điền bằng ô chọn mã WTS tiêu chuẩn (không gõ tay — máy chủ
+    //   PartStepGuard.CheckWtsCodeAsync chặn mã ngoài danh mục khi lưu mới / đổi mã); dòng dự phòng vẫn gõ "<mã cha>-DP-01".
+    //   Nguồn: HÙNG 26/11 23:00 "chốt lại làm theo bạn" + 23:08 "Ok làm đi".
+    private static string McvTitle(StepEditBase edit) => edit.IsBackup ? "Mã dòng dự phòng (vd <mã cha>-DP-01)" : "Mã CV lấy từ ô chọn công đoạn chuẩn (WTS tiêu chuẩn) — không gõ tay";
 
     private void OnSelectWtsTask(SimpleStepEditBase edit, string? taskCode, List<StandardWtsTask> list)
     {

@@ -93,6 +93,7 @@ public static class LenScen
                 row.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = code, WtsName = "PS", Minutes = minutes, Notes = notes });
                 g.Rows.Add(row); gio++; return g;   // mỗi nhóm một giờ khác — tránh trùng giờ máy M1
             }
+            WtsScen.PsTask(db, "PS");   // [WTS-1NGUON] đáp án đổi: mã phát sinh phải có trong WTS tiêu chuẩn
             int n0 = db.WtsProductionLogs.List.Count, e0 = db.WtsExtraItems.List.Count;
             var g1 = G("PS", S(501)); var res1 = await s.SaveGroupAsync(g1);
             Ok(!res1.Ok && Viet(g1.Rows[0].ErrorMsg) && g1.Rows[0].ErrorMsg!.Contains("Nội dung PS") && Viet(res1.ErrorMsg), "Nội dung PS 501 ký tự: từ chối, lời Việt ở dòng + nhóm", g1.Rows[0].ErrorMsg + " | " + res1.ErrorMsg);

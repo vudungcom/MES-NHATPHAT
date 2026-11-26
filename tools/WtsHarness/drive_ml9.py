@@ -84,6 +84,9 @@ async def add_cde_row(pg, add_idx, nc):
     if nc is not None:
         # dòng mới = ô NC đang mở (không disabled) có giá trị "..." / trống, lấy ô cuối cùng như vậy trong bảng của mục
         inp = pg.locator(f"xpath=(//button[@title='Thêm dòng'])[{add_idx + 1}]/following::table[1]//tbody/tr[last()]//input").first
+        # [WTS-1NGUON 26/11] ĐÁP ÁN ĐỔI: ô Mã CV dòng chính nay chỉ đọc (điền bằng ô chọn công đoạn chuẩn) → gỡ readonly rồi gõ = như chọn mã;
+        #   pha B kiểm trùng / trống ở TRANG (không đổi); mã mới lưu được phải có trong WTS tiêu chuẩn (/harness/w1n-codes)
+        await inp.evaluate("e => e.removeAttribute('readonly')")
         await inp.fill(nc); await pg.wait_for_timeout(250)
 async def cde_row(pg, add_idx, nc, nth=0):
     trs = pg.locator(f"xpath=(//button[@title='Thêm dòng'])[{add_idx + 1}]/following::table[1]//tbody/tr")
@@ -268,6 +271,8 @@ async def main():
                and not any(s["nc"] in ("-", "") for s in steps(d)),
                "B7 [B6-NC-DUP] dòng mới để trống NC (GC, Bavia, KCS) → \"có dòng chưa nhập NC / mã CV\", không lưu thành \"-\"", lines(t, "chưa nhập", "⚠"))
             await open_part(pg)
+            try: urllib.request.urlopen(urllib.request.Request(BASE + "/harness/w1n-codes?c=K2", data=b"", method="POST")).read()   # [WTS-1NGUON] K2 có trong WTS tiêu chuẩn
+            except Exception: pass   # harness bản cũ không có endpoint (không cần)
             await add_cde_row(pg, 4, "K2")
             t = await save(pg)
             d = dump()

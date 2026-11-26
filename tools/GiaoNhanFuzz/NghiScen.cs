@@ -170,7 +170,8 @@ public static class NghiScen
     static async Task N2()
     {
         Console.WriteLine("[N2] Lưu WTS: dòng nghỉ đúng, máy chủ chặn bộ nghỉ sai, sửa dòng giữ dòng nghỉ cũ, sổ số lượng không đổi");
-        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+        var s = WtsScen.Svc(db);
         var ca = AddCa(db, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (9, 30, 9, 40, "Giải lao"), (12, 0, 13, 0, "Nghỉ trưa"));
         var st = D0.AddHours(9); var en = D0.AddHours(13).AddMinutes(30);   // chạm 9:30–9:40 (10) + trưa (60)
 
@@ -220,7 +221,7 @@ public static class NghiScen
         Say(r.Ok && w3.StartTime == D0.AddHours(15) && w3.EndTime == D0.AddHours(15).AddMinutes(21), "Giờ lẻ giây làm tròn phút (15:00:29 → 15:00, 15:20:31 → 15:21)", $"{r.ErrorMsg} {w3.StartTime:HH:mm:ss}–{w3.EndTime:HH:mm:ss}");
 
         // (h) dòng WTS / sổ số lượng giống hệt có hay không làm thông nghỉ
-        var dbA = await WtsScen.SeedAsync(); var dbB = await WtsScen.SeedAsync();
+        var dbA = await WtsScen.SeedAsync(); var dbB = await WtsScen.SeedAsync(); RptScen.GcTask(dbA); RptScen.GcTask(dbB);   // [WTS-1NGUON]
         foreach (var x in new[] { dbA, dbB }) AddCa(x, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (12, 0, 13, 0, "Trưa"));
         var caA = dbA.CaLamViecs.List[0];
         var ga = WtsScen.Gc(); ga.Rows.Add(WtsScen.Row(1, 3, 0, st, en)); ga.Rows[0].Breaks = Sent(caA, st, en, t => t.OverlapMin);
@@ -238,7 +239,8 @@ public static class NghiScen
     static async Task N3()
     {
         Console.WriteLine("[N3] Việc không ra sản phẩm: ca + giờ nghỉ lúc lưu");
-        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+        var s = WtsScen.Svc(db);
         var ca = AddCa(db, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (12, 0, 13, 0, "Nghỉ trưa"));
         db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", TaskCode = "HOP", TaskName = "Họp", IsActive = true, IsProductiveTask = false });
         var a0 = D0.AddHours(11).AddMinutes(30); var a1 = D0.AddHours(13).AddMinutes(30);
@@ -266,7 +268,8 @@ public static class NghiScen
     static async Task N4()
     {
         Console.WriteLine("[N4] Báo cáo = trang, hiệu suất máy, đổi giờ nghỉ ca SAU khi lưu không đổi số ngày cũ");
-        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+        var s = WtsScen.Svc(db);
         var ca = AddCa(db, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (12, 0, 13, 0, "Nghỉ trưa"));
         db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 1, CategoryCode = "CHUNG", TaskCode = "HOP", TaskName = "Họp", IsActive = true, IsProductiveTask = false });
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
@@ -323,7 +326,8 @@ public static class NghiScen
     static async Task N5()
     {
         Console.WriteLine("[N5] BackfillNghi + ca có 2 nghỉ chồng");
-        var db = await WtsScen.SeedAsync();
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+       
         var ca = AddCa(db, 1, new TimeOnly(7, 0), new TimeOnly(16, 0), (12, 0, 13, 0, "Trưa"));
         var caN = AddCa(db, 2, new TimeOnly(22, 0), new TimeOnly(6, 0), (2, 0, 2, 30, "Đêm"));
         var y = D0.AddDays(-1);
@@ -451,7 +455,8 @@ public static class NghiScen
     static async Task N7()
     {
         Console.WriteLine("[N7] Báo cáo WTS: quyền máy chủ (RPT-4), mã CV ngưng dùng giữ cờ có ích (RPT-ACTIVE), hiện mã CV HTSP / KCS (RS-E7)");
-        var db = await WtsScen.SeedAsync(); var s = WtsScen.Svc(db);
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+        var s = WtsScen.Svc(db);
         string PermsV(bool view, bool edit) => System.Text.Json.JsonSerializer.Serialize(new[] { new MES.Web.Constants.GroupPermissionSetting { SectionCode = MES.Web.Constants.SystemPermissions.WtsReport, CanView = view, CanEdit = edit } });
         var gV = new UserGroup { GroupId = 61, GroupCode = "RPTV", IsActive = true, Permissions = PermsV(true, false) };
         var gN = new UserGroup { GroupId = 62, GroupCode = "NORPT", IsActive = true, Permissions = FuzzPerm.Json(MES.Web.Constants.SystemPermissions.WtsGc) };
@@ -511,7 +516,8 @@ public static class NghiScen
     static async Task N8()
     {
         Console.WriteLine("[N8] RPT-3 — hiệu suất máy ca vắt đêm (20:00–05:00, WTS qua nửa đêm)");
-        var db = await WtsScen.SeedAsync();
+        var db = await WtsScen.SeedAsync(); RptScen.GcTask(db);   // [WTS-1NGUON] đáp án đổi: Gia công có mã chung có ích
+       
         var ca = AddCa(db, 2, new TimeOnly(20, 0), new TimeOnly(5, 0));   // không giờ nghỉ: ca này chỉ kiểm khung giờ vắt đêm (giờ nghỉ đã kiểm ở N4)
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "GC", IsActive = true });

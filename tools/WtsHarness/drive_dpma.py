@@ -29,6 +29,12 @@ async def login(b, user="admin", pw="admin123"):
     await pg.goto(BASE + "/login"); await pg.fill("#username", user); await pg.fill("#password", pw)
     await pg.click("button[type=submit]"); await pg.wait_for_load_state("networkidle")
     return pg
+async def fill_code(inp, to):
+    # [WTS-1NGUON 26/11] ĐÁP ÁN ĐỔI: ô Mã CV dòng chính Bavia / Rửa / KCS / Đóng gói nay chỉ đọc (mã chỉ đổi bằng ô chọn công đoạn chuẩn WTS);
+    #   pha R / R2 / R3 / R4 / P kiểm THỨ TỰ LƯU khi đổi mã (B6-DP-THAP) → gỡ readonly rồi gõ (tương đương chọn mã khác ở ô chọn);
+    #   mã đích khai trong WTS tiêu chuẩn ở /harness/b6-seed (máy chủ chặn mã ngoài danh mục). Dòng dự phòng vẫn gõ tay như cũ.
+    await inp.evaluate("e => e.removeAttribute('readonly')")
+    await inp.fill(to)
 async def open_part(pg):
     await pg.goto(BASE + PART); await pg.wait_for_timeout(2500)
 async def save(pg, reason="kiem dpma", wait=3000):
@@ -132,14 +138,14 @@ async def main():
                 r = (await cde_rows(frm))[0]
                 await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
                 r = (await cde_rows(frm))[0]; inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(200)
             r = (await cde_rows("Q1"))[0]   # còn lại đúng dòng dự phòng mã Q1
             await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
             r = (await cde_rows("Q1"))[0]; num = r.locator("input[type=number]").first
             await num.fill("7"); await num.press("Tab"); await pg.wait_for_timeout(200)
             for to in ("Q2", "Q3"):
                 r = (await cde_rows(to + "~"))[0]; inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(200)
             t = await save(pg)
             rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
             q = [(x["nc"], x["isBackup"], x["parentNC"], x["standardTime"]) for x in rows if x["nc"] in ("Q1", "Q2", "Q3")]
@@ -157,7 +163,7 @@ async def main():
                 r = (await cde_rows(frm))[0]
                 await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
                 r = (await cde_rows(frm))[0]; inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(250)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(250)
             t = await save(pg)
             rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
             q = [(x["nc"], x["isBackup"], x["parentNC"]) for x in rows if x["nc"] in ("S1", "S2", "SQ", "S1-DP-01")]
@@ -176,7 +182,7 @@ async def main():
                     await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
                     r = (await cde_rows(frm))[0]
                 inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(250)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(250)
             t = await save(pg)
             rows1 = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())
             q1 = sorted((x["nc"], x["isBackup"], x["parentNC"]) for x in rows1 if x["nc"] in ("S1", "S1-DP-01"))
@@ -192,7 +198,7 @@ async def main():
             r = (await cde_rows("Q2"))[0]
             await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
             r = (await cde_rows("Q2"))[0]; inp = r.locator("input").first
-            await inp.fill("Q2X"); await inp.press("Tab"); await pg.wait_for_timeout(250)
+            await fill_code(inp, "Q2X"); await inp.press("Tab"); await pg.wait_for_timeout(250)
             r = (await cde_rows("Q2X"))[0]
             await r.locator("button[title='Xóa']").click(); await pg.wait_for_timeout(400)
             t = await save(pg)
@@ -210,11 +216,11 @@ async def main():
             n0 = len(json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode()))
             await pg.locator("button[title='Thêm dòng']").nth(5).click(); await pg.wait_for_timeout(400)
             inp = pg.locator("xpath=(//button[@title='Thêm dòng'])[6]/following::table[1]//tbody/tr[last()]//input").first
-            await inp.fill("P77"); await inp.press("Tab"); await pg.wait_for_timeout(300)
+            await fill_code(inp, "P77"); await inp.press("Tab"); await pg.wait_for_timeout(300)
             r = (await cde_rows("P77"))[0]
             await r.locator("button[title='Tạo dự phòng']").click(); await pg.wait_for_timeout(400)
             r = (await cde_rows("P77"))[0]; inp = r.locator("input").first
-            await inp.fill("P78"); await inp.press("Tab"); await pg.wait_for_timeout(300)
+            await fill_code(inp, "P78"); await inp.press("Tab"); await pg.wait_for_timeout(300)
             t = await save(pg)
             body = await pg.inner_text("body")
             rows = json.loads(urllib.request.urlopen(BASE + "/harness/b6").read().decode())

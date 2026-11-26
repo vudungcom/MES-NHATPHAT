@@ -4,7 +4,7 @@
 #   - 1 người: xoá P9 + thêm P9 mới / đổi tên P9 → P10 + thêm P9 trong CÙNG 1 lần lưu → không báo trùng oan (trang ghi Xoá → Sửa → Thêm).
 #   KHÔNG kiểm Taro (khách chốt 02/11 Taro dùng chung mã CV giữa nhiều NC — gói TARO-NC-MA).
 # Chạy: python3 drive_pmdup.py <port> <nhãn>   (harness dựng bằng mk.sh, DB giả mới tinh — chạy 1 lần / 1 lần khởi động)
-import sys, asyncio, json, urllib.request
+import urllib.parse, sys, asyncio, json, urllib.request
 from playwright.async_api import async_playwright
 PORT = sys.argv[1]; OUT = sys.argv[2]
 BASE = f"http://127.0.0.1:{PORT}"
@@ -35,10 +35,18 @@ async def save(pg, reason="kiem pmdup", wait=3000):
     al = pg.locator(".alert pre")
     return (await al.last.inner_text()) if await al.count() else ""
 # nút "Thêm dòng" thứ add_idx: 0 GC, 1 Taro, 2 Bavia, 3 Rửa, 4 KCS, 5 Đóng gói → bảng ngay sau nút đó
+async def fill_code(inp, to):
+    # [WTS-1NGUON 26/11] ĐÁP ÁN ĐỔI: ô Mã CV dòng chính Bavia / Rửa / KCS / Đóng gói nay chỉ đọc (điền bằng ô chọn công đoạn chuẩn) →
+    #   gỡ readonly rồi gõ (= như chọn mã) để giữ phép thử trùng / đổi tên / đổi chéo; mã lưu được phải có trong WTS tiêu chuẩn (/harness/w1n-codes)
+    await inp.evaluate("e => e.removeAttribute('readonly')")
+    await inp.fill(to)
+def codes(cs):
+    try: urllib.request.urlopen(urllib.request.Request(BASE + "/harness/w1n-codes?c=" + urllib.parse.quote(cs), data=b"", method="POST")).read()
+    except Exception: pass   # harness bản cũ không có endpoint (không cần)
 async def add_cde_row(pg, add_idx, nc):
     await pg.locator("button[title='Thêm dòng']").nth(add_idx).click(); await pg.wait_for_timeout(400)
     inp = pg.locator(f"xpath=(//button[@title='Thêm dòng'])[{add_idx + 1}]/following::table[1]//tbody/tr[last()]//input").first
-    await inp.fill(nc); await inp.press("Tab"); await pg.wait_for_timeout(250)
+    await fill_code(inp, nc); await inp.press("Tab"); await pg.wait_for_timeout(250)
 async def cde_row(pg, add_idx, nc):
     trs = pg.locator(f"xpath=(//button[@title='Thêm dòng'])[{add_idx + 1}]/following::table[1]//tbody/tr")
     for i in range(await trs.count()):
@@ -51,11 +59,12 @@ async def add_gc_row(pg, nc):
     await pg.locator("button[title='Thêm dòng']").nth(0).click(); await pg.wait_for_timeout(400)
     r = (await pg.evaluate(JS_GC_MAIN))[-1]
     inp = pg.locator("tr").nth(r["i"]).locator("input").first
-    await inp.fill(nc); await inp.press("Tab"); await pg.wait_for_timeout(300)
+    await fill_code(inp, nc); await inp.press("Tab"); await pg.wait_for_timeout(300)
 
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch()
+        codes("P9,K9,P10,P12,P@1")   # [WTS-1NGUON] mã đích có trong WTS tiêu chuẩn
 
         print("[N] 2 người cùng mở Part, cùng thêm 1 mã chính → người lưu sau bị máy chủ chặn ([PM-NC-DUP-SVC])")
         try:
@@ -97,7 +106,7 @@ async def main():
             r = await cde_row(pg, 5, "P9")
             await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
             r = await cde_row(pg, 5, "P9"); inp = r.locator("input").first
-            await inp.fill("P10"); await inp.press("Tab"); await pg.wait_for_timeout(300)
+            await fill_code(inp, "P10"); await inp.press("Tab"); await pg.wait_for_timeout(300)
             await add_cde_row(pg, 5, "P9")
             t = await save(pg)
             d = dump(); ncs = sorted(x["nc"] for x in cde(d, "pkg"))
@@ -109,10 +118,10 @@ async def main():
                 r = await cde_row(pg, 5, frm)
                 await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
                 r = await cde_row(pg, 5, frm); inp = r.locator("input").first
-                await inp.fill(to + "~"); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to + "~"); await inp.press("Tab"); await pg.wait_for_timeout(200)
             for to in ("P10", "P12"):   # gõ tạm "~" để cde_row không nhầm dòng vừa đổi với dòng còn tên cũ, rồi gõ lại đúng mã
                 r = await cde_row(pg, 5, to + "~"); inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(200)
             t = await save(pg)
             d = dump(); ncs = sorted(x["nc"] for x in cde(d, "pkg"))
             ok("✗" not in t and ncs == ["P10", "P12", "P9"],
@@ -123,10 +132,10 @@ async def main():
                 r = await cde_row(pg, 5, frm)
                 await r.locator("button[title='Sửa dòng này']").click(); await pg.wait_for_timeout(300)
                 r = await cde_row(pg, 5, frm); inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(200)
             for to in ("P9", "P10"):
                 r = await cde_row(pg, 5, to + "~"); inp = r.locator("input").first
-                await inp.fill(to); await inp.press("Tab"); await pg.wait_for_timeout(200)
+                await fill_code(inp, to); await inp.press("Tab"); await pg.wait_for_timeout(200)
             t = await save(pg)
             d = dump(); ncs2 = sorted(x["nc"] for x in cde(d, "pkg"))
             ok("đổi chéo mã" in t and ncs2 == ncs, "O4 đổi chéo P10 ↔ P9 trong 1 lần lưu → trang chặn \"đổi chéo mã … đổi 1 dòng sang mã tạm\", DB không đổi", f"{lines(t, 'chéo', '✗', '⚠')} · {ncs2}")

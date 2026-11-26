@@ -99,6 +99,26 @@
         </div>
     </div>
 
+    @* [WTS-1NGUON 2026-11-26] "Mã dùng cho Gia công" — mọi dòng WTS Gia công lấy cờ Có ích / Vô ích của mã này trong WTS Report.
+       Nguồn: HÙNG 26/11 22:34 + 23:00 "chốt lại làm theo bạn" + 23:08 "Ok làm đi". *@
+    <div class="d-flex flex-wrap align-items-center gap-2 border rounded px-3 py-2 mb-3 small" style="background:#f5f3ff">
+        <i class="bi bi-gear-wide-connected text-primary"></i>
+        <span class="fw-semibold">@GcFieldLabel:</span>
+        @if (_gcTask != null)
+        {
+            <span><b class="font-monospace text-danger">@_gcTask.TaskCode</b> — @_gcTask.TaskName <span class="@GcFlagCls">@GcFlagText</span></span>
+        }
+        else
+        {
+            <span class="text-danger">Chưa chọn — giờ Gia công trong WTS Report đang hiện "Chưa có mã".</span>
+        }
+        <span class="text-muted">· mọi dòng WTS Gia công (mọi NC, Hàng loạt lẫn Chạy thử) tính Có ích / Vô ích theo mã này</span>
+        @if (_canEditMaster)
+        {
+            <button class="btn btn-sm btn-outline-primary py-0 ms-auto" @onclick="MoPopupGc"><i class="bi bi-pencil me-1"></i>Đổi mã</button>
+        }
+    </div>
+
     @if (!string.IsNullOrEmpty(thongBaoLoi))
     {
         <div class="alert alert-danger py-2 small mb-3">
@@ -166,7 +186,7 @@
                                     <td>
                                         <span class="@catBadgeCls">@item.CategoryName</span>
                                     </td>
-                                    <td class="text-center font-monospace fw-bold text-danger fs-6">@item.TaskCode</td>
+                                    <td class="text-center font-monospace fw-bold text-danger fs-6">@item.TaskCode@if (item.IsGcTask) { <span class="badge bg-primary d-block mx-auto mt-1" style="font-size:.65rem;width:fit-content" title="@GcFieldLabel">Gia công</span> }</td>
                                     <td class="fw-bold">@item.TaskName</td>
                                     <td class="text-center small text-muted">@item.DefaultUnit</td>
                                     <td class="text-center">
@@ -765,6 +785,47 @@
     </div>
 }
 
+@* ═══════════════════════════════════════════════════════════════
+   MODAL 5: [WTS-1NGUON] MÃ DÙNG CHO GIA CÔNG
+   ═══════════════════════════════════════════════════════════════ *@
+@if (isHienThiPopupGc)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-gear-wide-connected me-2 text-primary"></i>@GcFieldLabel</h5>
+                    <button type="button" class="btn-close" @onclick="DongPopupGc"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(loiGc))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3"><i class="bi bi-exclamation-triangle me-1"></i>@loiGc</div>
+                    }
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle me-1"></i>Mọi dòng WTS Gia công (mọi NC, Hàng loạt lẫn Chạy thử) tính <b>Có ích / Vô ích</b> theo cột Phân loại của mã này.
+                        Đổi mã hoặc đổi Phân loại của mã thì % các kỳ cũ trong WTS Report cũng đổi theo.
+                    </div>
+                    <label class="form-label fw-semibold">Mã công việc</label>
+                    <select class="form-select form-select-sm mb-3" @onchange="OnGcPick">
+                        <option value="" selected="@(gcPickId == "")">-- Chưa chọn (giờ Gia công = "Chưa có mã") --</option>
+                        @foreach (var t in DanhSachGoc)
+                        {
+                            <option value="@t.TaskId" selected="@(gcPickId == t.TaskId.ToString())">[@t.TaskCode] @t.TaskName — @(t.IsProductiveTask ? "Có ích" : "Vô ích")</option>
+                        }
+                    </select>
+                    <label class="form-label fw-semibold">PIN xác nhận <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control form-control-sm" style="max-width: 200px;" placeholder="Nhập mã PIN của bạn" autocomplete="off" @bind="pinGc" />
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="DongPopupGc" disabled="@isProcessing"><i class="bi bi-x-circle me-1"></i>Hủy</button>
+                    <button type="button" class="btn btn-primary btn-sm fw-bold" @onclick="XacNhanGcAsync" disabled="@isProcessing">@_GcLuuLabel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private bool isLoading = true;
     private bool isProcessing = false;
@@ -796,6 +857,40 @@
     private string pinXacNhan = "";
     private string pinLuuTong = "";
     private string loiLuuTong = "";
+
+    // [WTS-1NGUON 2026-11-26] Mã dùng cho Gia công
+    private StandardWtsTask? _gcTask;
+    private bool isHienThiPopupGc = false;
+    private string gcPickId = "";
+    private string pinGc = "";
+    private string loiGc = "";
+    private static string GcFieldLabel => MES.Web.Services.StandardWtsTaskService.GcFieldName;
+    private string GcFlagCls => _gcTask?.IsProductiveTask == true ? "badge bg-success" : "badge bg-secondary";
+    private string GcFlagText => _gcTask == null ? "" : (_gcTask.IsProductiveTask ? "Có ích" : "Vô ích") + (_gcTask.IsActive ? "" : " · đã xóa khỏi danh mục");
+    private string _GcLuuLabel => isProcessing ? "Đang lưu..." : "Lưu";
+    private void MoPopupGc()
+    {
+        if (!_canEditMaster) return;
+        gcPickId = _gcTask != null && _gcTask.IsActive ? _gcTask.TaskId.ToString() : "";
+        pinGc = ""; loiGc = "";
+        isHienThiPopupGc = true;
+    }
+    private void DongPopupGc() { isHienThiPopupGc = false; pinGc = ""; loiGc = ""; }
+    private void OnGcPick(ChangeEventArgs e) => gcPickId = e.Value?.ToString() ?? "";
+    private async Task XacNhanGcAsync()
+    {
+        if (isProcessing) return;
+        isProcessing = true; loiGc = "";
+        try
+        {
+            int? id = int.TryParse(gcPickId, out var v) ? v : null;
+            var r = await WtsSvc.SetGcTaskAsync(id, currentUserId, pinGc);
+            if (r.Success) { DongPopupGc(); await LoadDataAsync(); }
+            else loiGc = r.Error ?? "Lỗi lưu mã dùng cho Gia công.";
+        }
+        catch (Exception ex) { loiGc = UiSafe.Text(ex, Logger, "lưu mã dùng cho Gia công"); }
+        finally { isProcessing = false; }
+    }
 
     private Dictionary<int, bool> _localChanges = new();
 
@@ -941,6 +1036,7 @@
         isLoading = true;
         DanhSachGoc = await WtsSvc.GetAllActiveAsync();
         _gops = await WtsSvc.GetActiveGopsAsync();   // [TARO-3T-GOP]
+        _gcTask = await WtsSvc.GetGcTaskAsync();   // [WTS-1NGUON]
         DanhSachNhom = await WtsSvc.GetDistinctCategoriesAsync();
         isLoading = false;
     }

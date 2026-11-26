@@ -70,6 +70,14 @@ public static class WtsScen
     }
 
     internal static WtsSaveService Svc(AppDbContext db) => new(db, new HandoverLedgerService(db));
+    /// <summary>[WTS-1NGUON 2026-11-26] Mã phát sinh thử (đang dùng) + cấu hình nhóm cho cả GC / HTSP / KCS / PKG — máy chủ bắt mã phát sinh có trong WTS tiêu chuẩn.</summary>
+    public static void PsTask(AppDbContext db, string code, bool pro = false)
+    {
+        db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 900 + db.StandardWtsTasks.List.Count, CategoryCode = "PSTEST", CategoryName = "Phát sinh thử", TaskCode = code, TaskName = "Phát sinh " + code, IsActive = true, IsProductiveTask = pro });
+        if (!db.WtsCategoryGroupMappings.List.Any(x => x.CategoryCode == "PSTEST"))
+            foreach (var pg in new[] { "GC", "HTSP", "KCS", "PKG" })
+                db.WtsCategoryGroupMappings.List.Add(new WtsCategoryGroupMapping { MappingId = 900 + db.WtsCategoryGroupMappings.List.Count, CategoryCode = "PSTEST", CategoryName = "Phát sinh thử", ProcessGroup = pg });
+    }
 
     internal static WtsSaveService.WtsSaveGroup Gc(string? nc = "NC1", string? machine = "M1", string mode = "serial")
         => new() { IsGc = true, IsHtsp = false, HandoverGroupCode = "GC", NC = nc, MachineUsed = machine, ProductionMode = mode, UserId = 2, CaId = 1, WorkDate = DateTime.Today };
@@ -126,6 +134,7 @@ public static class WtsScen
             //   → ca dùng dòng NC1 M1 (SrcRowId 1) + dấu xác nhận Setup trên chính dòng đó (ý ca giữ nguyên: đọc trạng thái xác nhận từ DB).
             db.KhPlanRouteSnapshotStdConfirms.List.Add(new KhPlanRouteSnapshotStdConfirm { Id = 99, KhPlanDetailId = 1, SnapshotTable = StdTrack.Table.Machining, SnapshotRowId = 1, FieldName = StdTrack.Field.Setup, IsConfirmed = true, ConfirmedBy = 1, ConfirmedByName = "U1", ConfirmedAt = T });
             row.GcStd = new WtsSaveService.WtsSaveStd { SetupTime = 5, MachiningTime = 2, InspectionTime = 1, PreparationTime = 10, TrialRunTime = 3, SrcTable = StdTrack.Table.Machining, SrcRowId = 1 };   // trang tra sẵn (NC1 M1 PO1, đã xác nhận Setup)
+            PsTask(db, "PS1");   // [WTS-1NGUON] đáp án đổi: mã phát sinh phải có trong WTS tiêu chuẩn
             row.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS1", WtsName = "Phát sinh", Minutes = 5 });
             row.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS2", Minutes = 0 });
             g.Rows.Add(row); row.Notes = "ghi chú"; row.IsOvertime = true;
@@ -1210,6 +1219,7 @@ public static class WtsScen
             var Y = DateTime.Today.AddDays(-1);
             // (a) u3 lưu KCS K1 PO2 OK 5 hôm nay (có 1 phát sinh)
             var gk = NonGc("KCS"); var rk = Row(2, 5, 0, T.AddHours(1), T.AddHours(2), code: "K1", setup: null, mach: null, insp: null, actualPc: 1.2m, cat: null);
+            PsTask(db, "PS1");   // [WTS-1NGUON] đáp án đổi: mã phát sinh phải có trong WTS tiêu chuẩn, thuộc nhóm của người nhập (u3 KCS)
             rk.ExtraItems.Add(new WtsSaveService.WtsSaveExtra { WtsCode = "PS1", WtsName = "Lau bàn", Minutes = 5, Notes = "x" });
             gk.Rows.Add(rk); var r = await s.SaveGroupAsync(gk); Ok(r.Ok, "u3 lưu KCS K1 PO2 OK 5", r.ErrorMsg);
             long kId = rk.WtsLogId!.Value;

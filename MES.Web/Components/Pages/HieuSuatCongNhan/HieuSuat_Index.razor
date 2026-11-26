@@ -2335,6 +2335,10 @@ else
 
                                         }
 
+                                        @* [WTS-1NGUON 2026-11-26] phát sinh bắt buộc mã trong danh sách (máy chủ chặn khi lưu) *@
+
+                                        <div class="text-danger" style="font-size:10px;@PsWarnVis(sub.ExtraItems.Count > 0 ? sub.ExtraItems[0] : null)">@PsWarn(sub.ExtraItems.Count > 0 ? sub.ExtraItems[0] : null)</div>
+
                                     </td>
 
                                     @* T.PS — input cho ExtraItem[0] *@
@@ -2458,6 +2462,8 @@ else
                                                 <div style="font-size:10px;color:#6c757d;margin-top:1px">@ei.WtsName</div>
 
                                             }
+
+                                            <div class="text-danger" style="font-size:10px;@PsWarnVis(ei)">@PsWarn(ei)</div>
 
                                         </td>
 
@@ -4925,6 +4931,8 @@ else
 
                 Notes   = e.Notes,
 
+                OldKey  = (e.WtsCode ?? "").Trim().ToUpperInvariant() + "|" + e.Minutes,   // [WTS-1NGUON] mục đã lưu — giữ y thì máy chủ cho qua
+
             }).ToList();
 
         }
@@ -6852,6 +6860,18 @@ else
     }
 
     // OnSubExtraMinInput — replaced by OnExtraItemMinutes (ExtraMinutes now computed)
+
+    // [WTS-1NGUON 2026-11-26] cảnh báo mã phát sinh ngay trên trang (máy chủ WtsSaveService.ExtraCodeErrorAsync mới là chặn thật):
+    //   có T.PS mà trống mã / mã không có trong danh sách mã của nhóm. Dòng sửa giữ phát sinh cũ không mã vẫn lưu được (máy chủ cho qua).
+    private string? PsWarn(WtsExtraItem? ei)
+    {
+        if (ei == null || ei.Minutes <= 0) return null;
+        var c = (ei.WtsCode ?? "").Trim();
+        if (ei.OldKey != null && ei.OldKey == c.ToUpperInvariant() + "|" + ei.Minutes) return null;   // rà độc lập 26/11 L2: mục cũ giữ y — máy chủ cho lưu
+        if (c.Length == 0) return "Chưa có mã PS";
+        return WtsTasksForGroup.Any(t => string.Equals((t.TaskCode ?? "").Trim(), c, StringComparison.OrdinalIgnoreCase)) ? null : "Mã không có trong danh sách";
+    }
+    private string PsWarnVis(WtsExtraItem? ei) => PsWarn(ei) == null ? "display:none" : "";
 
     // Hàng gốc: Mã WTS PS → ExtraItem[0] (tạo nếu chưa có)
 
@@ -8796,6 +8816,10 @@ else
         public int     Minutes { get; set; }
 
         public string? Notes   { get; set; }
+
+        /// <summary>[WTS-1NGUON] Mục nạp từ DB (dòng đang sửa): "MÃ|phút" lúc nạp; null = mục mới.</summary>
+
+        public string? OldKey  { get; set; }
 
     }
 

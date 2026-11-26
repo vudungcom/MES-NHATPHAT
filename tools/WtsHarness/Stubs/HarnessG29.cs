@@ -34,6 +34,8 @@ public static class HarnessG29
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "HOP29", TaskName = "Họp đầu ca", IsActive = true, IsProductiveTask = false, CreatedBy = admin.UserId });
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "VS29", TaskName = "Vệ sinh máy", IsActive = true, IsProductiveTask = false, CreatedBy = admin.UserId });
             db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "CHUNG", CategoryName = "Chung", TaskCode = "SUA29", TaskName = "Sửa hàng lỗi", IsActive = true, IsProductiveTask = true, CreatedBy = admin.UserId });
+            // [WTS-1NGUON 26/11] mã dùng cho Gia công (có ích) — giữ đáp án cũ "Gia công = có ích"; bản trước gói không có cột IsGcTask → mk.sh bỏ dòng này
+            db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "GIA_CONG", CategoryName = "Gia công", TaskCode = "GC29", TaskName = "Gia công (mã chung)", IsActive = true, IsProductiveTask = true, IsGcTask = true, CreatedBy = admin.UserId });   // [W1N-GC29]
             var plan = new KhPlan { PlanNo = "KH-G29", PlanDate = t0, CustomerId = cust.CustomerId, ApplyWorkflow = false, CreatedBy = admin.UserId, CreatedAt = t0 };
             db.KhPlans.Add(plan); await db.SaveChangesAsync();
             var det = new KhPlanDetail { KhPlanId = plan.KhPlanId, LineNo = 1, PartNo = "PART-G29", PurchaseOrder = "PO-G29", Quantity = 500, Unit = "EA", STD = t0.AddDays(20), CreatedAt = t0 };

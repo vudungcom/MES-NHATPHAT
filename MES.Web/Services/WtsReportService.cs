@@ -78,6 +78,36 @@ public class WtsReportService
             .GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First(), StringComparer.OrdinalIgnoreCase);
 
+        // [WTS-1NGUON 2026-11-26] Có ích / vô ích CHỈ từ cờ mã WTS tiêu chuẩn (code không tự gán ở đâu cả); không mã / mã không có trong
+        //   danh mục / Gia công chưa chọn "Mã dùng cho Gia công" → "Chưa có mã" (phần riêng trong %, không có ích, không vô ích). Cờ đọc LÚC XEM
+        //   (khách đổi cờ → % kỳ cũ đổi theo). Phút phát sinh (WtsExtraItems) nằm TRONG giờ dòng → tách theo mã phát sinh, trừ khỏi phần của dòng.
+        //   Nguồn: HÙNG 26/11 22:09 ("ép dùng chỉ 1 nơi WTS tiêu chuẩn… khách tự đặt ra ntn thì ra như thế") + 22:21 + 22:34 + 23:00 + 23:08 "Ok làm đi".
+        var gcTask = allWtsTasks.Where(t => t.IsGcTask).OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).FirstOrDefault();
+        var prodIds = prodLogs.Select(x => x.WtsLogId).ToList();
+        var actIds  = actLogs.Select(x => x.ActivityLogId).ToList();
+        var extras = new List<WtsExtraItemLog>();
+        foreach (var ch in prodIds.Chunk(1000)) { var c = ch.ToList(); extras.AddRange(await _db.WtsExtraItems.AsNoTracking().Where(e => e.WtsLogId != null && c.Contains(e.WtsLogId.Value) && e.Minutes > 0).ToListAsync()); }
+        foreach (var ch in actIds.Chunk(1000)) { var c = ch.ToList(); extras.AddRange(await _db.WtsExtraItems.AsNoTracking().Where(e => e.ActivityLogId != null && c.Contains(e.ActivityLogId.Value) && e.Minutes > 0).ToListAsync()); }
+        var exW = extras.Where(e => e.WtsLogId != null).GroupBy(e => e.WtsLogId!.Value).ToDictionary(g => g.Key, g => g.OrderBy(e => e.Id).ToList());
+        var exA = extras.Where(e => e.ActivityLogId != null).GroupBy(e => e.ActivityLogId!.Value).ToDictionary(g => g.Key, g => g.OrderBy(e => e.Id).ToList());
+        var bkParent = await BackupParentsAsync(prodLogs);
+        WtsTaskKind KindOfCode(string? code)
+        {
+            var c = (code ?? "").Trim();
+            return c.Length > 0 && wtsLookup.TryGetValue(c, out var t) ? (t.IsProductiveTask ? WtsTaskKind.CoIch : WtsTaskKind.VoIch) : WtsTaskKind.ChuaMa;
+        }
+        WtsTaskKind KindOfProd(WtsProductionLog p)
+        {
+            var pg = (p.ProcessGroup ?? "").ToUpperInvariant();
+            if (pg == "GC") return gcTask == null ? WtsTaskKind.ChuaMa : (gcTask.IsProductiveTask ? WtsTaskKind.CoIch : WtsTaskKind.VoIch);
+            var c = (p.WtsCode ?? "").Trim();
+            if (c.Length == 0) c = (p.NC ?? "").Trim();   // dòng HTSP / KCS / Đóng gói cũ chở mã CV ở cột NC (như SetTask)
+            var k = KindOfCode(c);
+            // mã dòng dự phòng (vd 3V1-DP-01 — không có trong WTS tiêu chuẩn) → cờ của mã cha theo quy trình PO đã chụp
+            if (k == WtsTaskKind.ChuaMa && c.Length > 0 && bkParent.TryGetValue((p.KhPlanDetailId, pg, c.ToUpperInvariant()), out var par)) k = KindOfCode(par);
+            return k;
+        }
+
         // [ML16-ACT 2026-10-30] Dòng "Việc không ra sản phẩm" có PO tham chiếu (giờ sửa hàng) + vụ lỗi → hiện PO / Part / loại lỗi của vụ
         var actRefIds = actLogs.Where(a => a.RefKhPlanDetailId != null).Select(a => a.RefKhPlanDetailId!.Value).Distinct().ToList();
         var actRefPo  = actRefIds.Count == 0 ? new Dictionary<int, (string Po, string Part)>()
@@ -125,8 +155,9 @@ public class WtsReportService
                 Notes           = p.Notes ?? "",
                 ExtraMinutes    = p.ExtraMinutes,
                 IsOvertime      = p.IsOvertime,
-                IsProductiveTask = true, // production logs luôn là có ích
+                Kind            = KindOfProd(p),   // [WTS-1NGUON] trước: production logs luôn có ích
                 RowType         = WtsRowType.Production,
+                Extras          = exW.GetValueOrDefault(p.WtsLogId) ?? new(),   // [WTS-1NGUON]
                 WtsLogId        = p.WtsLogId, ProcessGroup = p.ProcessGroup ?? "", ProductionMode = p.ProductionMode, CaId = p.CaId,   // [G29-RPT]
             });
         }
@@ -135,9 +166,7 @@ public class WtsReportService
         {
             var aBrk = WorkMinutesStore.Get(brkA, a.ActivityLogId);
             var am = WorkMinutes.Line(a.StartTime, a.EndTime, aBrk);   // [ML17-XN]
-            var isProductive = true;
-            if (a.WtsCode != null && wtsLookup.TryGetValue(a.WtsCode, out var task))
-                isProductive = task.IsProductiveTask;
+            var kindA = KindOfCode(a.WtsCode);   // [WTS-1NGUON] mã trống / không tra được → Chưa có mã (trước: có ích)
 
             var refPo = a.RefKhPlanDetailId != null && actRefPo.TryGetValue(a.RefKhPlanDetailId.Value, out var rp) ? rp : ("", "");
             rows.Add(new WtsReportRow
@@ -165,8 +194,9 @@ public class WtsReportService
                 MachineUsed     = "",
                 QtyDone         = 0,
                 Notes           = a.Notes ?? "",
-                IsProductiveTask = isProductive,
+                Kind            = kindA,
                 RowType         = WtsRowType.Activity,
+                Extras          = exA.GetValueOrDefault(a.ActivityLogId) ?? new(),   // [WTS-1NGUON] dòng việc cũ (Loại 2) có phát sinh
                 ActivityLogId   = a.ActivityLogId,   // [G29-RPT]
             });
         }
@@ -177,15 +207,13 @@ public class WtsReportService
         // [ML17-XN 2026-11-01] Câu (b) Hùng chốt: % hiệu suất theo PHÚT LÀM (trước: phút thô, khác cột Phút trang WTS).
         //   Gộp theo người-ngày như "Tổng hôm nay" của trang WTS (WorkMinutes.Day): giờ chồng nhau (GC đứng 2 máy) chỉ tính 1 lần
         //   (trước: cộng 2 lần). Phút có ích = phút làm phủ bởi dòng có ích (phút có cả dòng có ích lẫn vô ích phủ → có ích).
-        int totalMin = 0, productiveMin = 0, rawMin = 0, workedMin = 0;
+        int totalMin = 0, rawMin = 0, workedMin = 0;
         foreach (var g in rows.GroupBy(r => (r.WorkerId, r.WorkDate)))
         {
             var all = WorkMinutes.Day(g.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
-            var pro = WorkMinutes.Day(g.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
             totalMin += all.Work; rawMin += all.Raw; workedMin += all.Worked;
-            productiveMin += Math.Min(pro.Work, all.Work);
         }
-        var wasteMin      = totalMin - productiveMin;
+        // [WTS-1NGUON] có ích / vô ích / chưa có mã tổng = Σ người-ngày (sau khi tách phát sinh) — xem BuildDaysAsync
 
         // [G29-RPT 2026-11-21] Báo cáo theo kỳ (mockup https://claude.ai/artifact/HH5sobEdA8pFNjGCaDGJKR, Hùng 21/11 09:46 "ok làm"):
         //   mỗi dòng mang Việc (nhóm + mã) + phút CHIA (AllocMin) để bảng theo việc / theo người / theo ngày cộng ĐÚNG bằng tổng trên;
@@ -197,6 +225,7 @@ public class WtsReportService
         var taskNames = allWtsTasks.GroupBy(t => t.TaskCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).First().TaskName ?? "", StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows) SetTask(r, taskNames);
+        foreach (var r in rows) SetExtraParts(r, taskNames, KindOfCode);   // [WTS-1NGUON]
         // [G31-LOC-NHOM 2026-11-22] nhóm của công nhân (Users.GroupId → UserGroups) — ô Nhóm WTS Report lọc theo NGƯỜI, giữ giờ chuẩn.
         //   Nguồn: HÙNG 22/11 08:29 ("hiệu suất công nhân có tìm theo nhóm được ko") + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm.
         var wIds = rows.Select(r => r.WorkerId).Distinct().ToList();
@@ -216,8 +245,9 @@ public class WtsReportService
         {
             Rows          = rows,
             TotalMinutes  = totalMin,
-            ProductiveMin = productiveMin,
-            WasteMin      = wasteMin,
+            ProductiveMin = days.Sum(d => d.ProductiveMin),   // [WTS-1NGUON] = Σ phần có ích (dòng + phát sinh)
+            WasteMin      = days.Sum(d => d.WasteMin),
+            NoCodeMin     = days.Sum(d => d.NoCodeMin),
             RawMinutes    = rawMin,
             BreakWorkedMinutes = workedMin,
             Days          = days,   // [G29-RPT]
@@ -305,13 +335,16 @@ public class WtsReportService
         {
             var list = g.ToList();
             var ivs = list.Select(r => ivByRow[r]).ToList();
-            Allocate(list, ivs);
+            AllocateParts(list, ivs);   // [WTS-1NGUON] chia phút theo PHẦN (phần dòng + từng mục phát sinh), ưu tiên có ích > vô ích > chưa có mã
             var all = WorkMinutes.Day(list.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
-            var pro = WorkMinutes.Day(list.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
+            var parts = list.SelectMany(r => r.Parts).ToList();
             var d = new WtsReportDay
             {
                 WorkerId = g.Key.WorkerId, WorkerName = list[0].WorkerName, Day = g.Key.WorkDate,
-                WorkMin = all.Work, ProductiveMin = Math.Min(pro.Work, all.Work), WasteMin = all.Work - Math.Min(pro.Work, all.Work),
+                WorkMin = all.Work,
+                ProductiveMin = parts.Where(x => x.Kind == WtsTaskKind.CoIch).Sum(x => x.Min),   // [WTS-1NGUON]
+                WasteMin      = parts.Where(x => x.Kind == WtsTaskKind.VoIch).Sum(x => x.Min),
+                NoCodeMin     = parts.Where(x => x.Kind == WtsTaskKind.ChuaMa).Sum(x => x.Min),
                 BreakWorkedMin = all.Worked,
             };
             var caId = list.Where(r => r.CaId != null).GroupBy(r => r.CaId!.Value)
@@ -372,45 +405,191 @@ public class WtsReportService
         return Union(iv);
     }
 
-    static void Allocate(List<WtsReportRow> list, List<List<(DateTime S, DateTime E)>> ivs)
+    // ── [WTS-1NGUON 2026-11-26] Chia phút người-ngày theo PHẦN ─────────────────────────────────────────────────
+    //   Mỗi dòng = phần việc của dòng + từng mục phát sinh (phút phát sinh nằm TRONG giờ dòng, không biết vị trí). Sức chứa: phát sinh lấy dần theo
+    //   thứ tự mục (không vượt phút làm của dòng), phần dòng = phút làm của dòng − phát sinh. Mỗi khoảng giờ (giữa 2 mốc) giao cho các phần của
+    //   các dòng phủ khoảng đó; ưu tiên có ích > vô ích > chưa có mã: lượt k chỉ thêm phút cho phần loại k, không bớt phút loại trước (luồng cực đại
+    //   từng lượt: rải đều cho các phần cùng loại — đứng 2 máy chia đều như cũ — rồi tìm đường tăng luồng). Σ phần dòng = AllocMin, Σ ngày = phút làm.
+    //   Rà độc lập 26/11 (T1): bản đầu chia theo loại CẢ DÒNG rồi mới tách phát sinh → phát sinh có ích trên dòng chưa có mã bị dòng vô ích chồng
+    //   giờ "ăn mất", phát sinh vô ích trên dòng đứng 2 máy lấn phút máy kia vẫn có ích.
+    //   Nguồn: CLAUDE (chi tiết số bên trong, không đổi giao diện / in-out — preferences Hùng 23/11 19:05); HÙNG 26/11 23:08 "Ok làm đi" (luật giờ trùng).
+    const double Eps = 1e-7;
+    static void AllocateParts(List<WtsReportRow> list, List<List<(DateTime S, DateTime E)>> ivs)
     {
-        var share = new double[list.Count];
+        // phần + sức chứa
+        var parts = new List<(WtsReportRow R, WtsReportPart P, double Cap)>();
+        var rowParts = new List<List<int>>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            var r = list[i];
+            var own = (int)Math.Round(Measure(ivs[i]));
+            var mine = new List<int>();
+            int left = own;
+            var ex = new List<(WtsReportPart P, int Cap)>();
+            foreach (var x in r.ExtraParts) { var c = Math.Max(0, Math.Min(x.ReqMin, left)); left -= c; ex.Add((x, c)); }
+            var main = new WtsReportPart { Kind = r.Kind, IsExtra = false, GroupLabel = r.GroupLabel, TaskKey = r.TaskKey, TaskCode = r.TaskCode, TaskLabel = r.TaskLabel };
+            mine.Add(parts.Count); parts.Add((r, main, left));
+            foreach (var e in ex) { mine.Add(parts.Count); parts.Add((r, e.P, e.Cap)); }
+            rowParts.Add(mine);
+        }
+        // khoảng giờ + dòng phủ
         var cuts = ivs.SelectMany(x => x).SelectMany(x => new[] { x.S, x.E }).Distinct().OrderBy(x => x).ToList();
+        var segLen = new List<double>(); var segParts = new List<List<int>>();
         for (int k = 0; k + 1 < cuts.Count; k++)
         {
             var a = cuts[k]; var b = cuts[k + 1];
             var len = (b - a).TotalMinutes;
             if (len <= 0) continue;
-            var cov = new List<int>();
+            var ps = new List<int>();
             for (int i = 0; i < list.Count; i++)
-                if (ivs[i].Any(x => x.S <= a && x.E >= b)) cov.Add(i);
-            if (cov.Count == 0) continue;
-            var pro = cov.Where(i => list[i].IsProductiveTask).ToList();
-            var who = pro.Count > 0 ? pro : cov;
-            foreach (var i in who) share[i] += len / who.Count;
+                if (ivs[i].Any(x => x.S <= a && x.E >= b)) ps.AddRange(rowParts[i]);
+            if (ps.Count == 0) continue;
+            segLen.Add(len); segParts.Add(ps);
         }
-        var all = WorkMinutes.Day(list.Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
-        var proDay = WorkMinutes.Day(list.Where(r => r.IsProductiveTask).Select(r => new DayLine(r.StartTime, r.EndTime, r.Breaks)));
-        var pT = Math.Min(proDay.Work, all.Work);
-        RoundTo(list, share, i => list[i].IsProductiveTask, pT);
-        RoundTo(list, share, i => !list[i].IsProductiveTask, all.Work - pT);
+        int nS = segLen.Count, nP = parts.Count;
+        var f = new Dictionary<(int S, int P), double>();
+        var rem = segLen.ToArray();
+        var capLeft = parts.Select(x => x.Cap).ToArray();
+        double F(int sI, int pI) => f.TryGetValue((sI, pI), out var v) ? v : 0;
+        void Add(int sI, int pI, double v) { f[(sI, pI)] = F(sI, pI) + v; rem[sI] -= v; capLeft[pI] -= v; }
+        for (int kind = 0; kind <= 2; kind++)
+        {
+            bool Elig(int pI) => (int)parts[pI].P.Kind <= kind;
+            // (1) rải đều từng khoảng cho các phần loại này còn chỗ (đứng 2 máy chia đều)
+            for (int sI = 0; sI < nS; sI++)
+            {
+                var ps = segParts[sI].Where(pI => (int)parts[pI].P.Kind == kind && capLeft[pI] > Eps).ToList();
+                while (rem[sI] > Eps && ps.Count > 0)
+                {
+                    var share = rem[sI] / ps.Count;
+                    var give = Math.Min(share, ps.Min(pI => capLeft[pI]));
+                    foreach (var pI in ps) Add(sI, pI, give);
+                    ps = ps.Where(pI => capLeft[pI] > Eps).ToList();
+                }
+            }
+            // (2) đường tăng luồng: khoảng còn phút → phần → (đẩy phần đó sang khoảng khác) → … → phần loại ≤ k còn chỗ
+            while (true)
+            {
+                var prevS = new int[nS]; var prevP = new int[nP]; Array.Fill(prevS, -2); Array.Fill(prevP, -2);
+                var q = new Queue<(bool IsSeg, int I)>();
+                for (int sI = 0; sI < nS; sI++) if (rem[sI] > Eps) { prevS[sI] = -1; q.Enqueue((true, sI)); }
+                int end = -1;
+                while (q.Count > 0 && end < 0)
+                {
+                    var (isSeg, idx) = q.Dequeue();
+                    if (isSeg)
+                    {
+                        foreach (var pI in segParts[idx])
+                        {
+                            if (prevP[pI] != -2 || !Elig(pI)) continue;
+                            prevP[pI] = idx;
+                            if (capLeft[pI] > Eps) { end = pI; break; }
+                            q.Enqueue((false, pI));
+                        }
+                    }
+                    else
+                    {
+                        for (int sI = 0; sI < nS; sI++)
+                            if (prevS[sI] == -2 && F(sI, idx) > Eps && segParts[sI].Contains(idx)) { prevS[sI] = idx; q.Enqueue((true, sI)); }
+                    }
+                }
+                if (end < 0) break;
+                // nút cổ chai
+                double bott = capLeft[end]; int pp = end;
+                while (true) { int sI = prevP[pp]; if (prevS[sI] == -1) { bott = Math.Min(bott, rem[sI]); break; } int pPrev = prevS[sI]; bott = Math.Min(bott, F(sI, pPrev)); pp = pPrev; }
+                pp = end;
+                while (true)
+                {
+                    int sI = prevP[pp]; f[(sI, pp)] = F(sI, pp) + bott;
+                    if (prevS[sI] == -1) { rem[sI] -= bott; break; }
+                    int pPrev = prevS[sI]; f[(sI, pPrev)] = F(sI, pPrev) - bott; pp = pPrev;
+                }
+                capLeft[end] -= bott;
+                if (bott <= Eps) break;
+            }
+        }
+        // làm tròn theo loại (phần dư lớn nhất) → Σ đúng phút làm người-ngày
+        var share0 = new double[nP];
+        foreach (var kv in f) share0[kv.Key.P] += kv.Value;
+        double T(int k) => Enumerable.Range(0, nP).Where(pI => (int)parts[pI].P.Kind == k).Sum(pI => share0[pI]);
+        DayLine Ln(WtsReportRow r) => new(r.StartTime, r.EndTime, r.Breaks);
+        var allWork = WorkMinutes.Day(list.Select(Ln)).Work;
+        var pT = Math.Min(allWork, (int)Math.Round(T(0), MidpointRounding.AwayFromZero));
+        var cT = Math.Min(allWork, Math.Max(pT, (int)Math.Round(T(0) + T(1), MidpointRounding.AwayFromZero)));
+        var mins = new int[nP];
+        RoundIdx(share0, mins, Enumerable.Range(0, nP).Where(pI => parts[pI].P.Kind == WtsTaskKind.CoIch).ToList(), pT);
+        RoundIdx(share0, mins, Enumerable.Range(0, nP).Where(pI => parts[pI].P.Kind == WtsTaskKind.VoIch).ToList(), cT - pT);
+        RoundIdx(share0, mins, Enumerable.Range(0, nP).Where(pI => parts[pI].P.Kind == WtsTaskKind.ChuaMa).ToList(), allWork - cT);
+        for (int i = 0; i < list.Count; i++)
+        {
+            var r = list[i];
+            foreach (var pI in rowParts[i]) { parts[pI].P.Min = mins[pI]; if (!parts[pI].P.IsExtra) parts[pI].P.ReqMin = mins[pI]; }
+            r.Parts = rowParts[i].Where(pI => !parts[pI].P.IsExtra || mins[pI] > 0).Select(pI => parts[pI].P).ToList();
+            r.AllocMin = rowParts[i].Sum(pI => mins[pI]);
+        }
     }
 
-    /// <summary>Làm tròn phần dư lớn nhất: Σ AllocMin các dòng chọn = đúng target (không lệch 1 phút khi cộng bảng).</summary>
-    static void RoundTo(List<WtsReportRow> list, double[] share, Func<int, bool> pick, int target)
+    /// <summary>Làm tròn phần dư lớn nhất: Σ phút các phần chọn = đúng target.</summary>
+    static void RoundIdx(double[] share, int[] outMin, List<int> idx, int target)
     {
-        var idx = Enumerable.Range(0, list.Count).Where(pick).ToList();
         if (idx.Count == 0) return;
-        foreach (var i in idx) list[i].AllocMin = (int)Math.Floor(share[i] + 1e-9);
-        var left = target - idx.Sum(i => list[i].AllocMin);
-        var order = idx.OrderByDescending(i => share[i] - Math.Floor(share[i] + 1e-9)).ThenByDescending(i => share[i]).ThenBy(i => i).ToList();
-        for (int k = 0; left > 0 && order.Count > 0; k++, left--) list[order[k % order.Count]].AllocMin++;
+        foreach (var i in idx) outMin[i] = (int)Math.Floor(share[i] + 1e-6);
+        var left = target - idx.Sum(i => outMin[i]);
+        var order = idx.OrderByDescending(i => share[i] - Math.Floor(share[i] + 1e-6)).ThenByDescending(i => share[i]).ThenBy(i => i).ToList();
+        for (int k = 0; left > 0 && order.Count > 0; k++, left--) outMin[order[k % order.Count]]++;
         for (int k = 0; left < 0 && order.Count > 0; k++)
         {
             var i = order[order.Count - 1 - (k % order.Count)];
-            if (list[i].AllocMin > 0) { list[i].AllocMin--; left++; }
+            if (outMin[i] > 0) { outMin[i]--; left++; }
             if (k > 10 * order.Count) break;
         }
+    }
+
+    // ── [WTS-1NGUON 2026-11-26] Phát sinh tách theo mã ────────────────────────────────────────────────────────
+    //   Mục phát sinh của dòng (WtsExtraItems, phút > 0); dòng cũ có T.PS mà không có mục chi tiết → 1 mục "phát sinh không mã" (rà độc lập L4).
+    static void SetExtraParts(WtsReportRow r, Dictionary<string, string> taskNames, Func<string?, WtsTaskKind> kindOf)
+    {
+        r.ExtraParts = r.Extras.Select(e =>
+        {
+            var c = (e.WtsCode ?? "").Trim();
+            var lbl = c.Length > 0 && taskNames.TryGetValue(c, out var tn) ? tn : (e.WtsName ?? "").Trim();
+            return new WtsReportPart
+            {
+                Kind = kindOf(c), IsExtra = true, ReqMin = e.Minutes, GroupLabel = "Phát sinh",
+                TaskKey = c.Length > 0 ? "ACT|" + c.ToUpperInvariant() : "PS|#", TaskCode = c, TaskLabel = c.Length > 0 ? lbl : "(phát sinh không mã)",
+            };
+        }).ToList();
+        if (r.ExtraParts.Count == 0 && (r.ExtraMinutes ?? 0) > 0)
+            r.ExtraParts.Add(new WtsReportPart { Kind = WtsTaskKind.ChuaMa, IsExtra = true, ReqMin = r.ExtraMinutes!.Value, GroupLabel = "Phát sinh", TaskKey = "PS|#", TaskCode = "", TaskLabel = "(phát sinh không mã)" });
+    }
+
+    /// <summary>[WTS-1NGUON] Mã dòng dự phòng → mã cha theo quy trình PO đã chụp (HTSP / KCS / Đóng gói). Khoá (PO, nhóm WTS, MÃ HOA).</summary>
+    async Task<Dictionary<(int, string, string), string>> BackupParentsAsync(List<WtsProductionLog> prod)
+    {
+        var res = new Dictionary<(int, string, string), string>();
+        var need = prod.Where(p => !string.Equals(p.ProcessGroup, "GC", StringComparison.OrdinalIgnoreCase)).Select(p => p.KhPlanDetailId).Distinct().ToList();
+        if (need.Count == 0) return res;
+        void Add(IEnumerable<(int Det, string Nc, string? Par)> src, params string[] groups)
+        {
+            foreach (var x in src)
+                if (!string.IsNullOrWhiteSpace(x.Par) && !string.IsNullOrWhiteSpace(x.Nc))
+                    foreach (var g in groups) res.TryAdd((x.Det, g, x.Nc.Trim().ToUpperInvariant()), x.Par.Trim());
+        }
+        foreach (var ch in need.Chunk(1000))
+        {
+            var c = ch.ToList();
+            Add((await _db.KhPlanRouteSnapshotBavia.AsNoTracking().Where(s => c.Contains(s.KhPlanDetailId) && s.IsBackup).Select(s => new { s.KhPlanDetailId, s.NC, s.ParentNC }).ToListAsync()).Select(s => (s.KhPlanDetailId, s.NC, s.ParentNC)), "BAVIA");
+            Add((await _db.KhPlanRouteSnapshotWashing.AsNoTracking().Where(s => c.Contains(s.KhPlanDetailId) && s.IsBackup).Select(s => new { s.KhPlanDetailId, s.NC, s.ParentNC }).ToListAsync()).Select(s => (s.KhPlanDetailId, s.NC, s.ParentNC)), "WASHING");
+            Add((await _db.KhPlanRouteSnapshotInspection.AsNoTracking().Where(s => c.Contains(s.KhPlanDetailId) && s.IsBackup).Select(s => new { s.KhPlanDetailId, s.NC, s.ParentNC }).ToListAsync()).Select(s => (s.KhPlanDetailId, s.NC, s.ParentNC)), "KCS");
+            Add((await _db.KhPlanRouteSnapshotPackaging.AsNoTracking().Where(s => c.Contains(s.KhPlanDetailId) && s.IsBackup).Select(s => new { s.KhPlanDetailId, s.NC, s.ParentNC }).ToListAsync()).Select(s => (s.KhPlanDetailId, s.NC, s.ParentNC)), "PKG");
+            // rà độc lập 26/11 L3: dòng dự phòng Taro CŨ (Taro không còn thêm dự phòng) — mã sổ = Mã CV (trống thì NC); cha trỏ theo NC dòng chính → mã của dòng chính đó
+            var tr = await _db.KhPlanRouteSnapshotTaro.AsNoTracking().Where(s => c.Contains(s.KhPlanDetailId)).Select(s => new { s.KhPlanDetailId, s.NC, s.WtsTaskCode, s.IsBackup, s.ParentNC }).ToListAsync();
+            string TCode(string? w, string? nc) => string.IsNullOrWhiteSpace(w) ? (nc ?? "") : w;
+            Add(tr.Where(s => s.IsBackup).Select(s => (s.KhPlanDetailId, TCode(s.WtsTaskCode, s.NC),
+                (string?)tr.Where(m => !m.IsBackup && m.KhPlanDetailId == s.KhPlanDetailId && string.Equals((m.NC ?? "").Trim(), (s.ParentNC ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Select(m => TCode(m.WtsTaskCode, m.NC)).FirstOrDefault())), "TARO");
+        }
+        return res;
     }
 
     static int RoundMin(double m) => (int)Math.Round(m, MidpointRounding.AwayFromZero);
@@ -481,6 +660,23 @@ public class WtsReportService
 
 public enum WtsRowType { Production, Activity }
 
+/// <summary>[WTS-1NGUON 2026-11-26] Thứ tự = ưu tiên khi giờ trùng (số nhỏ tính trước).</summary>
+public enum WtsTaskKind { CoIch = 0, VoIch = 1, ChuaMa = 2 }
+
+/// <summary>[WTS-1NGUON] 1 phần phút của dòng: phần việc của dòng, hoặc 1 mục phát sinh. Σ Min các phần = AllocMin của dòng.</summary>
+public class WtsReportPart
+{
+    public WtsTaskKind Kind     { get; set; }
+    public bool      IsExtra    { get; set; }
+    public int       Min        { get; set; }
+    /// <summary>Phút phát sinh đã khai (mục phát sinh); phần dòng = Min.</summary>
+    public int       ReqMin     { get; set; }
+    public string    GroupLabel { get; set; } = "";
+    public string    TaskKey    { get; set; } = "";
+    public string    TaskCode   { get; set; } = "";
+    public string    TaskLabel  { get; set; } = "";
+}
+
 public class WtsReportRow
 {
     public DateOnly  WorkDate         { get; set; }
@@ -509,7 +705,13 @@ public class WtsReportRow
     public List<LineBreak> Breaks     { get; set; } = new();   // giờ nghỉ chép lúc lưu
     public int?      ExtraMinutes     { get; set; }  // T.Phát sinh (phút)
     public bool      IsOvertime       { get; set; }  // Tăng ca
-    public bool      IsProductiveTask { get; set; }
+    /// <summary>[WTS-1NGUON] Loại của dòng theo cờ mã WTS tiêu chuẩn (Gia công: "Mã dùng cho Gia công"). Phần phát sinh có loại riêng (Parts).</summary>
+    public WtsTaskKind Kind           { get; set; } = WtsTaskKind.ChuaMa;
+    public bool      IsProductiveTask => Kind == WtsTaskKind.CoIch;
+    /// <summary>[WTS-1NGUON] Mục phát sinh của dòng (WtsExtraItems, phút > 0) + phần đã tách (ExtraParts) + mọi phần sau chia (Parts: phần dòng đầu tiên).</summary>
+    public List<WtsExtraItemLog> Extras { get; set; } = new();
+    public List<WtsReportPart> ExtraParts { get; set; } = new();
+    public List<WtsReportPart> Parts  { get; set; } = new();
     public WtsRowType RowType         { get; set; }
     public int?      RefKhPlanDetailId { get; set; }   // [ML16-ACT] dòng việc không ra SP: PO tham chiếu (giờ sửa)
     public long?     NgCaseId          { get; set; }   // [ML16-ACT] vụ lỗi đang sửa
@@ -536,6 +738,8 @@ public class WtsReportDay
     public int       WorkMin        { get; set; }
     public int       ProductiveMin  { get; set; }
     public int       WasteMin       { get; set; }
+    /// <summary>[WTS-1NGUON] Phút "Chưa có mã" (dòng / phát sinh không mã, mã không có trong danh mục, Gia công chưa chọn mã). WorkMin = có ích + vô ích + chưa có mã.</summary>
+    public int       NoCodeMin      { get; set; }
     public int?      CaId           { get; set; }
     public string?   CaName         { get; set; }
     public string?   CaLabel        { get; set; }
@@ -561,6 +765,8 @@ public class WtsReportResult
     public int                TotalMinutes  { get; set; }
     public int                ProductiveMin { get; set; }
     public int                WasteMin      { get; set; }
+    /// <summary>[WTS-1NGUON] Phút chưa có mã — TotalMinutes = có ích + vô ích + chưa có mã.</summary>
+    public int                NoCodeMin     { get; set; }
     /// <summary>[ML17-XN] Giờ thô gộp người-ngày + phút làm thông nghỉ gộp (TotalMinutes = phút làm).</summary>
     public int                RawMinutes    { get; set; }
     public int                BreakWorkedMinutes { get; set; }

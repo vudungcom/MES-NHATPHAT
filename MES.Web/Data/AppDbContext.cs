@@ -226,6 +226,8 @@ public DbSet<KhPlanRouteSnapshotMachiningTiming> KhPlanRouteSnapshotMachiningTim
         // ==== Standard WTS Tasks & Logs ====
         mb.Entity<StandardWtsTask>().HasIndex(x => x.TaskCode).IsUnique();
         mb.Entity<StandardWtsTask>().HasIndex(x => x.CategoryCode);
+        // [WTS-1NGUON 2026-11-26] tối đa 1 "Mã dùng cho Gia công" — khớp tools/sql/21_WTS_1NGUON.sql
+        mb.Entity<StandardWtsTask>().HasIndex(x => x.IsGcTask).IsUnique().HasFilter("[IsGcTask] = 1").HasDatabaseName("UX_StandardWtsTasks_IsGcTask");
         mb.Entity<StandardWtsTaskChangeLog>().HasIndex(x => new { x.TaskId, x.ChangedAt });
         mb.Entity<StandardWtsTaskChangeLog>()
             .HasOne(x => x.ChangedByUser)

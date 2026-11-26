@@ -483,6 +483,10 @@ public static class HarnessSeed
         db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 5, NC = "S1", StepName = "S1 chinh", StandardTime = 1, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
         db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 6, NC = "SQ", StepName = "S1 du phong", StandardTime = 2, IsBackup = true, ParentNC = "S1", IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
         db.PartPackagingSteps.Add(new PartPackagingStep { PartId = part.PartId, StepOrder = ord + 4, NC = "S2", StepName = "S2 chinh", StandardTime = 3, IsActive = true, CreatedBy = admin.UserId, CreatedAt = T0 });
+        // [WTS-1NGUON 26/11] Part Master chỉ nhận mã CV dòng chính có trong WTS tiêu chuẩn khi đổi mã → khai các mã đích drive_dpma dùng (Q2 Q3 SQ S1-DP-01 Q2X P77 P78)
+        foreach (var c in new[] { "Q2", "Q3", "SQ", "S1-DP-01", "Q2X", "P77", "P78" })
+            if (!db.StandardWtsTasks.List.Any(t => t.TaskCode == c))
+                db.StandardWtsTasks.Add(new StandardWtsTask { CategoryCode = "DONG_GOI", CategoryName = "Đóng gói", TaskCode = c, TaskName = "Đóng gói " + c, IsActive = true, CreatedBy = admin.UserId });
         await db.SaveChangesAsync();
         return DumpB6(db);
     }

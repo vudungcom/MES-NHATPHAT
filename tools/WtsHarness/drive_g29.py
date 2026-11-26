@@ -32,6 +32,8 @@
 #     M5: thêm máy M29T bộ phận TARO (HarnessG29) để ô Bộ phận GC phải loại nó.
 #     STEP M5 [G31-LOC-NHOM] ô Bộ phận GC · M6 nút Năm (bảng Máy × tháng) · R7 [G31-LOC-NHOM] ô Nhóm WTS Report (thêm người KCS qua
 #     /harness/g31-seed, K31 việc 11–13 qua nghỉ trưa đã lưu: Gia công giữ 1.440 / 990 / 60 / 390, KCS = 480 / 0 / 60 / 420). Bản Gói 30 (6dc3153): M1 / M3 / M4 / M5 / M6 / R7 SAI. Nguồn: HÙNG 22/11 08:58 + 09:03 + 11:58.
+#   [WTS-1NGUON 26/11] ĐÁP ÁN ĐỔI: ô số thêm "Chưa có mã" (ô thứ 4, ở đây 0 vì HarnessG29 khai mã Gia công GC29 có ích — Gia công giữ có ích như đáp án cũ).
+#     Bản trước gói (7bf0cf5): mọi bước R SAI ở ô số (5 ô). Nguồn: HÙNG 26/11 23:00 + 23:08.
 # Chạy trên harness VỪA khởi động: python3 drive_g29.py <port> <nhãn>
 import sys, asyncio, json, re, urllib.request, datetime
 from playwright.async_api import async_playwright
@@ -59,7 +61,7 @@ def pct_set(num, mon):
     return out
 
 async def kpis(pg):
-    return [x.strip() for x in await pg.locator("div.row-cols-md-5 .fs-4").all_inner_texts()]
+    return [x.strip() for x in await pg.locator("div.row-cols-md-6 .fs-4").all_inner_texts()]   # [WTS-1NGUON 26/11] 6 ô: + "Chưa có mã" (ô thứ 4)
 
 async def main():
     st = post("/harness/g29-seed")
@@ -75,7 +77,7 @@ async def main():
             print("STEP R1 G29-RPT — tất cả công nhân, tuần này")
             await pg.click("button:has-text('WTS Report')"); await pg.wait_for_timeout(2500)
             k = await kpis(pg)
-            ok(k == ["1.440", "990", "60", "390", "251 / 1"], "R1 ô số tuần: giờ chuẩn 1.440 (1.050 + 390) / 990 / 60 / 390 / 251 / 1", k)
+            ok(k == ["1.440", "990", "60", "0", "390", "251 / 1"], "R1 ô số tuần: giờ chuẩn 1.440 (1.050 + 390) / 990 / 60 / 390 / 251 / 1", k)
             body = await pg.locator("body").inner_text()
             ia = body.find("Công nhân A29"); ib = body.find("Công nhân B29")
             ok(0 <= ib < ia, "R1 bảng người: B29 (thấp hơn) đứng trước A29", (ia, ib))
@@ -86,11 +88,11 @@ async def main():
             print("STEP R2 G29-RPT — chọn Công nhân A29")
             await pg.fill("#rptWorker", "Công nhân A29"); await pg.locator("#rptWorker").dispatch_event("change"); await pg.wait_for_timeout(1500)
             k = await kpis(pg)
-            ok(k[:4] == ["960", "780", "30", "150"], "R2 ô số A29: giờ chuẩn 960 (810 + 150) / 780 / 30 / 150", k)
+            ok(k[:5] == ["960", "780", "30", "0", "150"], "R2 ô số A29: giờ chuẩn 960 (810 + 150) / 780 / 30 / 150", k)
             b2 = await pg.locator("body").inner_text()
             ok("81,3%" in b2 and "Tổng = giờ chuẩn" in b2 and "Giờ ca không có dòng WTS" in b2, "R2 [G30] A 81,3%; bảng theo việc có dòng Chưa KB + Tổng = giờ chuẩn", b2[b2.find("Theo việc"):b2.find("Theo việc") + 700])
             bars = await pg.locator("button:has-text('/ 480')").all_inner_texts()
-            b1 = [x for x in bars if "300 · 30 · 150 / 480" in x]
+            b1 = [x for x in bars if "300 · 30 · 0 · 150 / 480" in x]   # [WTS-1NGUON 26/11] đáp án đổi: thêm số chưa có mã (0)
             ok(len(b1) == 1 and "62,5%" in b1[0], "R2 [G30] thanh từng ngày: ngày 1 300 · 30 · 150 / 480 → 62,5% (trước 90,9% trên khai báo)", bars)
             hd = [x for x in await pg.locator("div.rounded.border.small").all_inner_texts() if "khai báo 330" in x]
             ok(len(hd) == 1 and "chuẩn 480" in hd[0] and "chưa KB 150" in hd[0] and "62,5%" in hd[0], "R2 [G30] đầu nhóm ngày 1 chi tiết: chuẩn 480, chưa KB 150, 62,5%", hd)
@@ -107,7 +109,7 @@ async def main():
             print("STEP R3 G29-TIMNHANH — A + tìm M29B")
             await pg.fill("#rptSearch", "M29B"); await pg.wait_for_timeout(1200)
             k = await kpis(pg)
-            ok(k[0] == "330" and k[3] == "—", "R3 tìm M29B: làm 330 (90 + 240), chưa khai báo —", k)
+            ok(k[0] == "330" and k[4] == "—", "R3 tìm M29B: làm 330 (90 + 240), chưa khai báo —", k)
             await pg.fill("#rptSearch", ""); await pg.wait_for_timeout(1000)
 
             print("STEP R4 G29-RPT — bấm ngày 1 → xem Ngày")
@@ -115,7 +117,7 @@ async def main():
             await pg.locator("button", has_text=lbl).first.click(); await pg.wait_for_timeout(2500)
             k = await kpis(pg)
             body = await pg.locator("body").inner_text()
-            ok(k[:4] == ["480", "300", "30", "150"] and "Dòng thời gian trong ngày" in body, "R4 ngày 1: giờ chuẩn 480 / 300 / 30 / 150 + dòng thời gian", (k, body[:300]))
+            ok(k[:5] == ["480", "300", "30", "0", "150"] and "Dòng thời gian trong ngày" in body, "R4 ngày 1: giờ chuẩn 480 / 300 / 30 / 150 + dòng thời gian", (k, body[:300]))
             ok("62,5%" in body, "R4 [G30] ngày 1 có ích 300 / 480 = 62,5%", body[:800])
             ok(await pg.locator("div.position-absolute[title*='Hàng loạt']").count() >= 2, "R4 dòng thời gian có khối Hàng loạt")
             await pg.screenshot(path=f"{OUT}_g29_r4.png", full_page=True)
@@ -204,11 +206,11 @@ async def main():
             ok("Công nhân K31" in body, "R7 tất cả nhóm: có Công nhân K31 (KCS)", body[:400])
             await pg.select_option("#rptGroup", label="Gia công"); await pg.wait_for_timeout(1500)
             k = await kpis(pg); body = await pg.locator("body").inner_text()
-            ok(k[:4] == ["1.440", "990", "60", "390"] and "Công nhân K31" not in body and "Nhóm: Gia công" in body,
+            ok(k[:5] == ["1.440", "990", "60", "0", "390"] and "Công nhân K31" not in body and "Nhóm: Gia công" in body,
                "R7 [G31] Nhóm Gia công: chỉ A29 + B29, giờ chuẩn giữ 1.440 / 990 / 60 / 390 (lọc theo người, không mất chưa khai báo)", (k, body[:300]))
             await pg.select_option("#rptGroup", label="KCS"); await pg.wait_for_timeout(1500)
             k = await kpis(pg); body = await pg.locator("body").inner_text()
-            ok(k[:4] == ["480", "0", "60", "420"] and "Công nhân K31" in body and "Công nhân A29" not in body,
+            ok(k[:5] == ["480", "0", "60", "0", "420"] and "Công nhân K31" in body and "Công nhân A29" not in body,
                "R7 [G31] Nhóm KCS: chỉ K31 — giờ chuẩn 480 (làm 60 + chưa khai báo 420, ca lấy từ nghỉ đã lưu), vô ích 60", (k, body[:300]))
         except Exception as e:
             ok(False, "M! lỗi khi bấm", repr(e)); await pg.screenshot(path=f"{OUT}_g29_merr.png", full_page=True)

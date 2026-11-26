@@ -10,7 +10,10 @@
    chỉ ngày có dòng WTS. Đang tìm nhanh: không còn giờ ca → % trên phút của dòng khớp. Thêm nút Năm.
    Nguồn: HÙNG 21/11 16:03 + 16:10 + 16:19 "ok làm đi" (mockup HH5sobEdA8pFNjGCaDGJKR bản G30).
    [G31-LOC-NHOM 2026-11-22] Ô "Nhóm" (nhóm của công nhân ở Cài đặt phân quyền): lọc theo NGƯỜI nên giữ giờ chuẩn (khác Tìm nhanh lọc theo dòng).
-   Nguồn: HÙNG 22/11 08:29 + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm 22/11. *@
+   Nguồn: HÙNG 22/11 08:29 + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm 22/11.
+   [WTS-1NGUON 2026-11-26] Phút chia theo PHẦN (WtsReportRow.Parts: phần việc của dòng + từng mục phát sinh theo mã) và 3 loại theo cờ mã WTS
+   tiêu chuẩn: Có ích / Vô ích / Chưa có mã (+ Chưa khai báo) = giờ chuẩn. Gia công theo "Mã dùng cho Gia công".
+   Nguồn: HÙNG 26/11 22:09 + 23:00 "chốt lại làm theo bạn" + 23:08 "Ok làm đi". *@
 @using System.Globalization
 @using MES.Web.Services
 @inject WtsReportService ReportSvc
@@ -55,6 +58,7 @@
     const string CG = "#198754";    // có ích
     const string CO = "#e8890c";    // vô ích
     const string COT = "#9a4a00";   // chữ vô ích (đủ tương phản)
+    const string CN = "#64748b";    // [WTS-1NGUON] chưa có mã
     const string Hatch = "repeating-linear-gradient(45deg,#dee2e6 0 4px,#f8f9fa 4px 8px)";
     const int LowPct = 85;          // mức tô đỏ (câu B4 — cố định, chưa làm cài đặt)
 
@@ -159,7 +163,7 @@
     static bool NoCa(WtsReportDay d) => d.UnaccountedMin == null && !d.IsTail;   // không rõ ca (đuôi ca đêm hôm trước thì đã biết ca)
 
     static string Hay(WtsReportRow r) => string.Join(" ", r.WorkerName, r.PurchaseOrder, r.PartNo, r.NC, r.MachineUsed, r.WtsCode, r.WtsName,
-        r.TaskLabel, r.GroupLabel, r.NgReason ?? "", r.Notes, r.IsProductiveTask ? "có ích" : "vô ích").ToLowerInvariant();
+        r.TaskLabel, r.GroupLabel, r.NgReason ?? "", r.Notes, KindWord(r.Kind), string.Join(" ", r.ExtraParts.Select(x => x.TaskCode + " " + x.TaskLabel))).ToLowerInvariant();
 
     void OnSearch(ChangeEventArgs e) { _search = e.Value?.ToString() ?? ""; Recompute(); }
     void ClearSearch() { _search = ""; Recompute(); }
@@ -244,9 +248,12 @@
     async Task SetCustom() => await SetPeriod("custom");
 
     int SumAlloc(IEnumerable<WtsReportRow> rs) => rs.Sum(r => r.AllocMin);
-    int ProMin => SumAlloc(_rows.Where(r => r.IsProductiveTask));
-    int WasteMin => SumAlloc(_rows.Where(r => !r.IsProductiveTask));
-    int TotMin => ProMin + WasteMin;
+    // [WTS-1NGUON] cộng theo PHẦN (phần dòng + phát sinh), 3 loại
+    static int SumKind(IEnumerable<WtsReportRow> rs, WtsTaskKind k) => rs.SelectMany(r => r.Parts).Where(x => x.Kind == k).Sum(x => x.Min);
+    int ProMin => SumKind(_rows, WtsTaskKind.CoIch);
+    int WasteMin => SumKind(_rows, WtsTaskKind.VoIch);
+    int NoCodeMin => SumKind(_rows, WtsTaskKind.ChuaMa);
+    int TotMin => ProMin + WasteMin + NoCodeMin;
     /// <summary>Chưa khai báo: chỉ khi không tìm nhanh (tìm theo chữ thì không còn nghĩa giờ ca). null = không có ca nào.</summary>
     int? Unacc => _unacc;
     /// <summary>[G30-RPT-MAUSO] Mẫu số của mọi %: giờ chuẩn theo ca = phút khai báo + chưa khai báo (đang tìm nhanh: chỉ phút dòng khớp).</summary>
@@ -259,32 +266,41 @@
     decimal NgSum => _rows.Where(r => r.RowType == WtsRowType.Production).Sum(r => r.QtyNg ?? 0);
     string TopWasteName(IEnumerable<WtsReportRow> rs)
     {
-        var t = rs.Where(r => !r.IsProductiveTask).GroupBy(r => r.TaskKey).Select(g => (Lbl: TaskText(g.First()), Min: g.Sum(x => x.AllocMin))).OrderByDescending(x => x.Min).FirstOrDefault();
+        var t = rs.SelectMany(r => r.Parts.Select(x => (R: r, P: x))).Where(x => x.P.Kind == WtsTaskKind.VoIch).GroupBy(x => x.P.TaskKey)
+            .Select(g => (Lbl: PartText(g.First().R, g.First().P), Min: g.Sum(x => x.P.Min))).OrderByDescending(x => x.Min).FirstOrDefault();
         return t.Min <= 0 ? "—" : $"{t.Lbl} {t.Min}";
     }
+    /// <summary>[WTS-1NGUON] Chữ của 1 phần: phần dòng = TaskText; phát sinh = mã + tên.</summary>
+    static string PartText(WtsReportRow r, WtsReportPart p) => !p.IsExtra ? TaskText(r)
+        : string.Join(" ", new[] { p.TaskCode, p.TaskLabel }.Where(x => !string.IsNullOrWhiteSpace(x))).Trim();
     static string TaskText(WtsReportRow r) => r.RowType == WtsRowType.Production && (r.ProcessGroup ?? "").ToUpperInvariant() == "GC"
         ? r.TaskLabel
         : string.Join(" ", new[] { r.TaskCode, r.TaskLabel }.Where(x => !string.IsNullOrWhiteSpace(x))).Trim() is var s && s.Length > 0 ? s : "(không mã)";
     static string RowTip(WtsReportRow r)
         => (r.Breaks.Count == 0 ? $"{r.Minutes} phút làm" : $"Thô {r.RawMinutes} − nghỉ {r.BreakDeductMin} = {r.Minutes} phút làm" + (r.BreakWorkedMin > 0 ? $" (làm thông nghỉ {r.BreakWorkedMin})" : ""))
-           + (r.AllocMin != r.Minutes ? $" · tính {r.AllocMin} phút vào báo cáo: giờ trùng với dòng khác — việc có ích được tính trước, các dòng cùng loại chia đều" : "");
-    static string TagCls(bool ok) => ok ? "badge bg-success" : "badge text-dark";
-    static string TagStyle(bool ok) => ok ? "font-size:.7rem" : "font-size:.7rem;background:#f6b26b";
-    static string TagText(bool ok) => ok ? "Có ích" : "Vô ích";
-    static string RowBg(bool ok) => ok ? "" : "background:#fff7ed";
+           + (r.AllocMin != r.Minutes ? $" · tính {r.AllocMin} phút vào báo cáo: giờ trùng với dòng khác — có ích tính trước, rồi vô ích, rồi chưa có mã; cùng loại chia đều" : "")
+           + (r.Parts.Any(x => x.IsExtra) ? " · phát sinh tách riêng: " + string.Join(", ", r.Parts.Where(x => x.IsExtra).Select(x => $"{PartText(r, x)} {x.Min} ph ({KindWord(x.Kind)})")) : "");
+    // [WTS-1NGUON] 3 loại
+    static string KindWord(WtsTaskKind k) => k == WtsTaskKind.CoIch ? "có ích" : k == WtsTaskKind.VoIch ? "vô ích" : "chưa có mã";
+    static string KindColor(WtsTaskKind k) => k == WtsTaskKind.CoIch ? CG : k == WtsTaskKind.VoIch ? CO : CN;
+    static string TagCls(WtsTaskKind k) => k == WtsTaskKind.CoIch ? "badge bg-success" : k == WtsTaskKind.VoIch ? "badge text-dark" : "badge text-white";
+    static string TagStyle(WtsTaskKind k) => k == WtsTaskKind.CoIch ? "font-size:.7rem" : k == WtsTaskKind.VoIch ? "font-size:.7rem;background:#f6b26b" : "font-size:.7rem;background:" + CN;
+    static string TagText(WtsTaskKind k) => k == WtsTaskKind.CoIch ? "Có ích" : k == WtsTaskKind.VoIch ? "Vô ích" : "Chưa có mã";
+    static string RowBg(WtsTaskKind k) => k == WtsTaskKind.CoIch ? "" : k == WtsTaskKind.VoIch ? "background:#fff7ed" : "background:#f1f5f9";
 
     // ── donut ───────────────────────────────────────────────────────────────────────────────────────────────
     const double R = 62;
     static readonly double Circ = 2 * Math.PI * R;
     static string Dash(double part, double whole) => (whole <= 0 ? 0 : Circ * part / whole).ToString("0.##", CultureInfo.InvariantCulture) + " " + Circ.ToString("0.##", CultureInfo.InvariantCulture);
-    static string DonutAria(int pro, int waste, int un) => $"Có ích {Pct(pro, pro + waste + un)}, vô ích đã khai báo {Pct(waste, pro + waste + un)}, chưa khai báo {Pct(un, pro + waste + un)}";
-    /// <summary>[G30-RPT-MAUSO] 3 phần trên giờ chuẩn: có ích (xanh) · vô ích đã khai báo (cam) · chưa khai báo (xám sọc = nền).</summary>
-    RenderFragment Donut(int pro, int waste, int un, string sub) => __builder =>
+    static string DonutAria(int pro, int waste, int nc, int un) => $"Có ích {Pct(pro, pro + waste + nc + un)}, vô ích đã khai báo {Pct(waste, pro + waste + nc + un)}, chưa có mã {Pct(nc, pro + waste + nc + un)}, chưa khai báo {Pct(un, pro + waste + nc + un)}";
+    /// <summary>[G30-RPT-MAUSO] phần trên giờ chuẩn: có ích (xanh) · vô ích đã khai báo (cam) · [WTS-1NGUON] chưa có mã (xám đậm) · chưa khai báo (xám sọc = nền).</summary>
+    RenderFragment Donut(int pro, int waste, int nc, int un, string sub) => __builder =>
     {
-        var tot = pro + waste + un;
-        <svg width="150" height="150" viewBox="0 0 160 160" role="img" aria-label="@DonutAria(pro, waste, un)">
+        var tot = pro + waste + nc + un;
+        <svg width="150" height="150" viewBox="0 0 160 160" role="img" aria-label="@DonutAria(pro, waste, nc, un)">
             <defs><pattern id="rptHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#f1f3f5"></rect><rect width="3" height="6" fill="#adb5bd"></rect></pattern></defs>
             <circle cx="80" cy="80" r="62" fill="none" stroke="@RingStroke(un)" stroke-width="22"></circle>
+            <circle cx="80" cy="80" r="62" fill="none" stroke="@CN" stroke-width="22" stroke-dasharray="@Dash(pro + waste + nc, tot)" transform="rotate(-90 80 80)"></circle>
             <circle cx="80" cy="80" r="62" fill="none" stroke="@CO" stroke-width="22" stroke-dasharray="@Dash(pro + waste, tot)" transform="rotate(-90 80 80)"></circle>
             <circle cx="80" cy="80" r="62" fill="none" stroke="@CG" stroke-width="22" stroke-dasharray="@Dash(pro, tot)" transform="rotate(-90 80 80)"></circle>
             <text x="80" y="80" text-anchor="middle" font-size="22" font-weight="700" fill="#212529">@Pct(pro, tot)</text>
@@ -292,12 +308,13 @@
         </svg>
     };
     static string RingStroke(int un) => un > 0 ? "url(#rptHatch)" : "#e9ecef";
-    RenderFragment Legend3(int pro, int waste, int? un) => __builder =>
+    RenderFragment Legend3(int pro, int waste, int nc, int? un) => __builder =>
     {
-        var tot = pro + waste + (un ?? 0);
+        var tot = pro + waste + nc + (un ?? 0);
         <div class="d-flex flex-column gap-2 small flex-grow-1" style="min-width:0">
             <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@CG;flex:none"></span><span class="flex-grow-1">Có ích</span><b>@N(pro) ph</b><span class="text-muted text-end" style="width:48px">@Pct(pro, tot)</span></div>
             <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@CO;flex:none"></span><span class="flex-grow-1">Vô ích đã khai báo</span><b>@N(waste) ph</b><span class="text-muted text-end" style="width:48px">@Pct(waste, tot)</span></div>
+            <div class="d-flex align-items-center gap-2" title="Dòng / phát sinh không mã, mã không có trong WTS tiêu chuẩn, Gia công khi chưa chọn Mã dùng cho Gia công"><span style="width:12px;height:12px;border-radius:3px;background:@CN;flex:none"></span><span class="flex-grow-1">Chưa có mã</span><b>@N(nc) ph</b><span class="text-muted text-end" style="width:48px">@Pct(nc, tot)</span></div>
             @if (un != null)
             {
                 <div class="d-flex align-items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:@Hatch;flex:none"></span><span class="flex-grow-1">Chưa khai báo</span><b>@N(un.Value) ph</b><span class="text-muted text-end" style="width:48px">@Pct(un.Value, tot)</span></div>
@@ -424,10 +441,11 @@
         var un = Unacc;
         var ng = NgSum; var ok = OkSum;
         var bs = BaseMin;
-        <div class="row row-cols-2 row-cols-md-5 g-2 mb-3">
+        <div class="row row-cols-2 row-cols-md-6 g-2 mb-3">
             @(Kpi(Searching ? "Phút dòng khớp tìm nhanh" : "Giờ chuẩn (theo ca)", N(bs), BaseSub, "#212529", "#fff"))
             @(Kpi("Có ích", N(ProMin), $"{Pct(ProMin, bs)} {BaseWord}", CG, "#f0fdf4"))
             @(Kpi("Vô ích đã khai báo", N(WasteMin), $"{Pct(WasteMin, bs)} · lớn nhất: {TopWasteName(_rows)}", COT, "#fff7ed"))
+            @(Kpi("Chưa có mã", N(NoCodeMin), $"{Pct(NoCodeMin, bs)} · dòng / phát sinh chưa có mã WTS tiêu chuẩn", CN, "#f1f5f9"))
             @(Kpi("Chưa khai báo", un == null ? "—" : N(un.Value), un == null ? (Searching ? "không tính khi đang tìm nhanh" : "không rõ ca trên dòng WTS") : $"{Pct(un.Value, bs)} · giờ ca không có dòng WTS", "#5c636a", "#f8f9fa"))
             @(Kpi("Sản lượng OK / NG", $"{N(ok)} / {N(ng)}", ok + ng > 0 ? $"tỉ lệ NG {Pct((double)ng, (double)(ok + ng))}" : "không có dòng sản xuất", "#212529", "#fff"))
         </div>
@@ -453,7 +471,7 @@
     }
 
     // ── TẤT CẢ CÔNG NHÂN ───────────────────────────────────────────────────────────────────────────────────
-    sealed record TeamRow(int Id, string Name, string Main, int Tot, int Pro, int Waste, int? Unacc, string TopWaste, int Days, bool HasNoCa)
+    sealed record TeamRow(int Id, string Name, string Main, int Tot, int Pro, int Waste, int NoCode, int? Unacc, string TopWaste, int Days, bool HasNoCa)
     {
         public int Base => Tot + (Unacc ?? 0);   // [G30-RPT-MAUSO] giờ chuẩn của người (tìm nhanh: Unacc null → phút dòng khớp)
     }
@@ -463,10 +481,10 @@
         var noSearch = _search.Trim().Length == 0;
         return _rows.GroupBy(r => r.WorkerId).Select(g =>
         {
-            var pro = SumAlloc(g.Where(r => r.IsProductiveTask)); var waste = SumAlloc(g.Where(r => !r.IsProductiveTask));
+            var pro = SumKind(g, WtsTaskKind.CoIch); var waste = SumKind(g, WtsTaskKind.VoIch); var nc = SumKind(g, WtsTaskKind.ChuaMa);   // [WTS-1NGUON]
             var main = g.Where(r => r.RowType == WtsRowType.Production).GroupBy(r => r.GroupLabel).OrderByDescending(x => x.Sum(r => r.AllocMin)).Select(x => x.Key).FirstOrDefault() ?? "Việc không ra SP";
             var ud = days.Where(d => d.WorkerId == g.Key && d.UnaccountedMin != null).ToList();
-            return new TeamRow(g.Key, g.First().WorkerName, main, pro + waste, pro, waste, noSearch && ud.Count > 0 ? ud.Sum(d => d.UnaccountedMin!.Value) : null, TopWasteName(g), g.Select(r => r.WorkDate).Distinct().Count(), days.Any(d => d.WorkerId == g.Key && NoCa(d)));
+            return new TeamRow(g.Key, g.First().WorkerName, main, pro + waste + nc, pro, waste, nc, noSearch && ud.Count > 0 ? ud.Sum(d => d.UnaccountedMin!.Value) : null, TopWasteName(g), g.Select(r => r.WorkDate).Distinct().Count(), days.Any(d => d.WorkerId == g.Key && NoCa(d)));
         }).OrderBy(t => t.Base == 0 ? 101 : PctVal(t.Pro, t.Base)).ThenBy(t => t.Name).ToList();
     }
     RenderFragment TeamView() => __builder =>
@@ -480,7 +498,7 @@
                     <div class="fw-semibold mb-2">Từng công nhân <span class="small text-muted fw-normal">— xếp % có ích thấp → cao; bấm tên để xem riêng; % = có ích ÷ @BaseWord; chỉ tính ngày có WTS</span></div>
                     <div class="table-responsive">
                         <table class="table table-sm align-middle mb-0" style="font-size:.85rem">
-                            <thead class="table-light"><tr><th>Công nhân</th><th>Làm chủ yếu</th><th class="text-end">Ngày có WTS</th><th class="text-end">@(Searching ? "Phút khớp" : "Giờ chuẩn (ph)")</th><th style="width:220px">Có ích / vô ích / chưa KB</th><th class="text-end">% có ích</th><th>Vô ích lớn nhất</th><th class="text-end">Chưa khai báo</th></tr></thead>
+                            <thead class="table-light"><tr><th>Công nhân</th><th>Làm chủ yếu</th><th class="text-end">Ngày có WTS</th><th class="text-end">@(Searching ? "Phút khớp" : "Giờ chuẩn (ph)")</th><th style="width:220px">Có ích / vô ích / chưa có mã / chưa KB</th><th class="text-end">% có ích</th><th>Vô ích lớn nhất</th><th class="text-end">Chưa khai báo</th></tr></thead>
                             <tbody>
                                 @foreach (var t in team)
                                 {
@@ -490,7 +508,7 @@
                                         <td>@t.Main</td>
                                         <td class="text-end">@t.Days</td>
                                         <td class="text-end">@N(t.Base)</td>
-                                        <td><div class="d-flex rounded overflow-hidden" style="height:14px;background:#f1f3f5;width:@W(t.Base, maxTot)"><div style="width:@W(t.Pro, t.Base);background:@CG"></div><div style="width:@W(t.Waste, t.Base);background:@CO"></div><div style="width:@W(t.Unacc ?? 0, t.Base);background:@Hatch"></div></div></td>
+                                        <td><div class="d-flex rounded overflow-hidden" style="height:14px;background:#f1f3f5;width:@W(t.Base, maxTot)"><div style="width:@W(t.Pro, t.Base);background:@CG"></div><div style="width:@W(t.Waste, t.Base);background:@CO"></div><div style="width:@W(t.NoCode, t.Base);background:@CN"></div><div style="width:@W(t.Unacc ?? 0, t.Base);background:@Hatch"></div></div></td>
                                         <td class="text-end fw-bold" style="@LowStyle(t.Pro, t.Base)">@Pct(t.Pro, t.Base)</td>
                                         <td class="small">@t.TopWaste</td>
                                         <td class="text-end text-muted">
@@ -521,7 +539,7 @@
             <div class="col-lg-4 d-flex flex-column gap-3">
                 <div class="border rounded p-3 bg-white">
                     <div class="fw-semibold mb-2">Cả đội <span class="small text-muted fw-normal">trên @BaseWord</span></div>
-                    <div class="d-flex align-items-center gap-3">@Donut(ProMin, WasteMin, Unacc ?? 0, "có ích")@Legend3(ProMin, WasteMin, Unacc)</div>
+                    <div class="d-flex align-items-center gap-3">@Donut(ProMin, WasteMin, NoCodeMin, Unacc ?? 0, "có ích")@Legend3(ProMin, WasteMin, NoCodeMin, Unacc)</div>
                 </div>
                 @Pareto()
             </div>
@@ -538,8 +556,8 @@
 
     RenderFragment Pareto() => __builder =>
     {
-        var waste = _rows.Where(r => !r.IsProductiveTask).GroupBy(r => r.TaskKey)
-            .Select(g => (Lbl: TaskText(g.First()), Min: g.Sum(x => x.AllocMin), Lines: g.Count())).Where(x => x.Min > 0).OrderByDescending(x => x.Min).ToList();
+        var waste = _rows.SelectMany(r => r.Parts.Select(x => (R: r, P: x))).Where(x => x.P.Kind == WtsTaskKind.VoIch).GroupBy(x => x.P.TaskKey)   // [WTS-1NGUON] cả phát sinh
+            .Select(g => (Lbl: PartText(g.First().R, g.First().P), Min: g.Sum(x => x.P.Min), Lines: g.Count())).Where(x => x.Min > 0).OrderByDescending(x => x.Min).ToList();
         var tot = waste.Sum(x => x.Min);
         var max = waste.Count == 0 ? 1 : waste[0].Min;
         <div class="border rounded p-3 bg-white">
@@ -560,17 +578,17 @@
             {
                 <div class="small text-muted">+ @(waste.Count - 10) việc khác: @N(waste.Skip(10).Sum(x => x.Min)) ph</div>
             }
-            @if ((Unacc ?? 0) > 0)
+            @if ((Unacc ?? 0) > 0 || NoCodeMin > 0)
             {
-                <div class="small text-muted mt-1">Chưa khai báo (@N(Unacc!.Value) ph) không có mã nên không nằm trong bảng này.</div>
+                <div class="small text-muted mt-1">Chưa có mã (@N(NoCodeMin) ph) và chưa khai báo (@N(Unacc ?? 0) ph) không nằm trong bảng này.</div>
             }
         </div>
     };
 
     // ── 1 CÔNG NHÂN ────────────────────────────────────────────────────────────────────────────────────────
-    sealed record DayBar(DateOnly Day, int Pro, int Waste, int? Unacc, int? Plan, int Thong)
+    sealed record DayBar(DateOnly Day, int Pro, int Waste, int NoCode, int? Unacc, int? Plan, int Thong)
     {
-        public int Base => Pro + Waste + (Unacc ?? 0);   // [G30-RPT-MAUSO] giờ chuẩn ngày
+        public int Base => Pro + Waste + NoCode + (Unacc ?? 0);   // [G30-RPT-MAUSO] giờ chuẩn ngày · [WTS-1NGUON] + chưa có mã
     }
     List<DayBar> DayBars()
     {
@@ -579,7 +597,7 @@
         return _rows.GroupBy(r => r.WorkDate).OrderBy(g => g.Key).Select(g =>
         {
             days.TryGetValue(g.Key, out var d);
-            return new DayBar(g.Key, SumAlloc(g.Where(r => r.IsProductiveTask)), SumAlloc(g.Where(r => !r.IsProductiveTask)), noSearch ? d?.UnaccountedMin : null, d?.PlanMin, noSearch ? d?.BreakWorkedMin ?? 0 : 0);
+            return new DayBar(g.Key, SumKind(g, WtsTaskKind.CoIch), SumKind(g, WtsTaskKind.VoIch), SumKind(g, WtsTaskKind.ChuaMa), noSearch ? d?.UnaccountedMin : null, d?.PlanMin, noSearch ? d?.BreakWorkedMin ?? 0 : 0);
         }).ToList();
     }
     RenderFragment WorkerView() => __builder =>
@@ -589,8 +607,8 @@
             <div class="col-lg-4">
                 <div class="border rounded p-3 h-100 bg-white">
                     <div class="fw-semibold mb-2">Tỉ lệ có ích / vô ích <span class="small text-muted fw-normal">trên @BaseWord</span></div>
-                    <div class="d-flex align-items-center gap-3">@Donut(ProMin, WasteMin, Unacc ?? 0, "có ích")@Legend3(ProMin, WasteMin, Unacc)</div>
-                    <div class="small text-muted mt-2">Giờ chuẩn = giờ ca − giờ nghỉ + làm thông nghỉ + làm ngoài giờ ca; chỉ tính ngày có dòng WTS. Có ích = dòng sản xuất + việc không ra SP có mã đánh dấu "Có ích" ở WTS tiêu chuẩn.</div>
+                    <div class="d-flex align-items-center gap-3">@Donut(ProMin, WasteMin, NoCodeMin, Unacc ?? 0, "có ích")@Legend3(ProMin, WasteMin, NoCodeMin, Unacc)</div>
+                    <div class="small text-muted mt-2">Giờ chuẩn = giờ ca − giờ nghỉ + làm thông nghỉ + làm ngoài giờ ca; chỉ tính ngày có dòng WTS. Có ích / vô ích theo cột Phân loại của mã ở WTS tiêu chuẩn (Gia công theo "Mã dùng cho Gia công"; phút phát sinh theo mã phát sinh). Chưa có mã = dòng / phát sinh không mã hoặc mã không có trong danh mục.</div>
                 </div>
             </div>
             <div class="col-lg-8">
@@ -620,8 +638,9 @@
             <div class="d-flex flex-wrap gap-3 small text-muted mb-2">
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CG"></span>có ích</span>
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CO"></span>vô ích đã khai báo</span>
+                <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CN"></span>chưa có mã</span>
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@Hatch"></span>chưa khai báo</span>
-                <span class="ms-auto">phút: có ích · vô ích · chưa KB / chuẩn — % có ích</span>
+                <span class="ms-auto">phút: có ích · vô ích · chưa có mã · chưa KB / chuẩn — % có ích</span>
             </div>
             @foreach (var b in bars)
             {
@@ -630,14 +649,14 @@
                     <span style="width:70px" class="small">@DayLabel(b.Day)</span>
                     <span class="flex-grow-1 d-flex align-items-center gap-1">
                         <span class="d-flex rounded overflow-hidden" style="height:20px;width:@W(b.Base, scale)">
-                            <span style="width:@W(b.Pro, b.Base);background:@CG"></span><span style="width:@W(b.Waste, b.Base);background:@CO"></span><span style="width:@W(b.Unacc ?? 0, b.Base);background:@Hatch"></span>
+                            <span style="width:@W(b.Pro, b.Base);background:@CG"></span><span style="width:@W(b.Waste, b.Base);background:@CO"></span><span style="width:@W(b.NoCode, b.Base);background:@CN"></span><span style="width:@W(b.Unacc ?? 0, b.Base);background:@Hatch"></span>
                         </span>
                         @if (b.Thong > 0)
                         {
                             <span class="text-primary" style="font-size:.7rem;white-space:nowrap">+@b.Thong thông nghỉ</span>
                         }
                     </span>
-                    <span style="width:150px" class="small text-muted text-end">@b.Pro · @b.Waste · @(b.Unacc?.ToString() ?? "—") / @b.Base</span>
+                    <span style="width:180px" class="small text-muted text-end">@b.Pro · @b.Waste · @b.NoCode · @(b.Unacc?.ToString() ?? "—") / @b.Base</span>
                     <span style="width:56px;@LowStyle(b.Pro, b.Base)" class="small fw-bold text-end">@Pct(b.Pro, b.Base)</span>
                 </button>
             }
@@ -690,6 +709,7 @@
             <div class="d-flex flex-wrap gap-3 small text-muted mt-2">
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CG"></span>có ích</span>
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CO"></span>vô ích</span>
+                <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@CN"></span>chưa có mã</span>
                 <span><span class="d-inline-block me-1" style="width:10px;height:10px;background:@Hatch"></span>nghỉ ca</span>
                 <span>khoảng trắng trong khung nét đứt = chưa khai báo</span>
                 <span class="ms-auto">Rê chuột vào khối để xem giờ, việc, PO</span>
@@ -699,20 +719,22 @@
     static string BrkTitle((DateTime S, DateTime E) b) => $"Nghỉ ca {b.S:HH:mm}–{b.E:HH:mm}";
     static string BrkStyle((DateTime S, DateTime E) b, DateTime s0, double span) => $"top:0;bottom:0;left:{W((b.S - s0).TotalMinutes, span)};width:{W((b.E - b.S).TotalMinutes, span)};background:{Hatch}";
     static string PlanStyle(WtsReportDay dd, DateTime s0, double span) => $"top:0;bottom:0;left:{W((dd.PlanStart!.Value - s0).TotalMinutes, span)};width:{W((dd.PlanEnd!.Value - dd.PlanStart.Value).TotalMinutes, span)};border-left:1px dashed #adb5bd;border-right:1px dashed #adb5bd";
-    static string TlTitle(WtsReportRow r) => $"{r.StartTime:HH:mm}–{r.EndTime:HH:mm} · {TaskText(r)} {r.PurchaseOrder} {r.NC} {r.MachineUsed}".Trim();
+    static string TlTitle(WtsReportRow r) => $"{r.StartTime:HH:mm}–{r.EndTime:HH:mm} · {TaskText(r)} ({KindWord(r.Kind)}) {r.PurchaseOrder} {r.NC} {r.MachineUsed}".Trim()
+        + (r.ExtraParts.Count > 0 ? " · phát sinh: " + string.Join(", ", r.ExtraParts.Select(x => $"{PartText(r, x)} {x.ReqMin} ph ({KindWord(x.Kind)})")) : "");
     static string TlStyle(WtsReportRow r, DateTime s0, double span, int lane, int nLane)
-        => $"top:{4 + 30 * lane}px;height:28px;left:{W((r.StartTime - s0).TotalMinutes, span)};width:{W((r.EndTime - r.StartTime).TotalMinutes, span)};background:{(r.IsProductiveTask ? CG : CO)};color:{(r.IsProductiveTask ? "#fff" : "#1f1300")};font-size:11px;border-right:1px solid #fff";
+        => $"top:{4 + 30 * lane}px;height:28px;left:{W((r.StartTime - s0).TotalMinutes, span)};width:{W((r.EndTime - r.StartTime).TotalMinutes, span)};background:{KindColor(r.Kind)};color:{(r.Kind == WtsTaskKind.VoIch ? "#1f1300" : "#fff")};font-size:11px;border-right:1px solid #fff";
     static string ShortLbl(WtsReportRow r) => r.RowType == WtsRowType.Production && (r.ProcessGroup ?? "").ToUpperInvariant() == "GC"
         ? string.Join(" · ", new[] { r.NC, r.MachineUsed }.Where(x => !string.IsNullOrWhiteSpace(x)))
         : (string.IsNullOrWhiteSpace(r.TaskCode) ? r.TaskLabel : r.TaskCode);
 
     RenderFragment TaskTable() => __builder =>
     {
-        var groups = _rows.GroupBy(r => (r.IsProductiveTask, r.TaskKey)).Select(g => (
-            Ok: g.Key.IsProductiveTask, Lbl: TaskText(g.First()), Grp: g.First().GroupLabel, Lines: g.Count(), Min: g.Sum(x => x.AllocMin),
-            QOk: g.Where(r => r.RowType == WtsRowType.Production).Sum(r => r.QtyOk ?? 0), QNg: g.Where(r => r.RowType == WtsRowType.Production).Sum(r => r.QtyNg ?? 0),
-            Prod: g.Any(r => r.RowType == WtsRowType.Production)))
-            .OrderByDescending(x => x.Ok).ThenByDescending(x => x.Min).ToList();
+        // [WTS-1NGUON] gom theo PHẦN (phần dòng + phát sinh theo mã); OK / NG chỉ đếm ở phần dòng sản xuất
+        var groups = _rows.SelectMany(r => r.Parts.Select(x => (R: r, P: x))).Where(x => x.P.Min > 0 || !x.P.IsExtra).GroupBy(x => (x.P.Kind, x.P.TaskKey)).Select(g => (
+            Ok: g.Key.Kind, Lbl: PartText(g.First().R, g.First().P), Grp: string.Join(" · ", g.Select(x => x.P.GroupLabel).Distinct()), Lines: g.Select(x => x.R).Distinct().Count(), Min: g.Sum(x => x.P.Min),
+            QOk: g.Where(x => !x.P.IsExtra && x.R.RowType == WtsRowType.Production).Sum(x => x.R.QtyOk ?? 0), QNg: g.Where(x => !x.P.IsExtra && x.R.RowType == WtsRowType.Production).Sum(x => x.R.QtyNg ?? 0),
+            Prod: g.Any(x => !x.P.IsExtra && x.R.RowType == WtsRowType.Production)))
+            .OrderBy(x => x.Ok).ThenByDescending(x => x.Min).ToList();
         var tot = BaseMin;
         var un = Unacc ?? 0;
         <div class="border rounded p-3 h-100 bg-white">
@@ -742,7 +764,7 @@
                     </tbody>
                 </table>
             </div>
-            <div class="small text-muted mt-1">Gia công gom theo Hàng loạt / Chạy thử (NC từng PO xem ở chi tiết). Phút = phút làm; giờ trùng: có ích tính trước vô ích, cùng loại (đứng 2 máy) chia đều.</div>
+            <div class="small text-muted mt-1">Gia công gom theo Hàng loạt / Chạy thử (NC từng PO xem ở chi tiết). Loại Gia công theo "Mã dùng cho Gia công". Phút = phút làm; phút phát sinh tách theo mã phát sinh; giờ trùng: có ích tính trước, rồi vô ích, rồi chưa có mã; cùng loại (đứng 2 máy) chia đều.</div>
         </div>
     };
 
@@ -750,14 +772,14 @@
     {
         var isDay = _period == "day";
         <div class="border rounded p-3 bg-white mb-3">
-            <div class="fw-semibold mb-2">Chi tiết dòng WTS <span class="small text-muted fw-normal">— gom theo ngày; dòng vô ích tô cam</span></div>
+            <div class="fw-semibold mb-2">Chi tiết dòng WTS <span class="small text-muted fw-normal">— gom theo ngày; dòng vô ích tô cam, chưa có mã tô xám</span></div>
             @foreach (var g in _rows.GroupBy(r => r.WorkDate).OrderBy(g => g.Key))
             {
                 var d = g.Key;
-                var pro = SumAlloc(g.Where(r => r.IsProductiveTask)); var waste = SumAlloc(g.Where(r => !r.IsProductiveTask));
+                var pro = SumKind(g, WtsTaskKind.CoIch); var waste = SumKind(g, WtsTaskKind.VoIch); var nc = SumKind(g, WtsTaskKind.ChuaMa);   // [WTS-1NGUON]
                 var dd = Searching ? null : _dayOf.GetValueOrDefault(d);
                 var dun = dd?.UnaccountedMin;
-                var dbase = pro + waste + (dun ?? 0);
+                var dbase = pro + waste + nc + (dun ?? 0);
                 var open = isDay || _openDays.Contains(d);
                 <div class="d-flex align-items-center gap-3 px-2 py-2 mt-2 rounded border small" style="background:#f8fafc" @key="d">
                     <button type="button" class="btn btn-sm btn-link p-0" @onclick="() => ToggleDay(d)" aria-label="Mở / đóng ngày">@(open ? "▾" : "▸")</button>
@@ -766,9 +788,10 @@
                     {
                         <span>chuẩn @N(dbase)</span>
                     }
-                    <span>khai báo @N(pro + waste)</span>
+                    <span>khai báo @N(pro + waste + nc)</span>
                     <span style="color:@CG">có ích @N(pro)</span>
                     <span style="color:@COT">vô ích @N(waste)</span>
+                    <span style="color:@CN;@NcVis(nc)">chưa có mã @N(nc)</span>
                     @if (dun != null)
                     {
                         <span class="text-muted">chưa KB @N(dun.Value)</span>
@@ -816,7 +839,7 @@
                 <tbody>
                     @foreach (var r in rs)
                     {
-                        <tr style="@RowBg(r.IsProductiveTask)">
+                        <tr style="@RowBg(r.Kind)">
                             @if (withWorker)
                             {
                                 <td>@r.WorkDate.ToString("dd/MM")</td><td class="fw-semibold">@r.WorkerName</td>
@@ -825,7 +848,7 @@
                             <td class="text-center fw-bold" title="@RowTip(r)">@r.Minutes@(r.AllocMin != r.Minutes ? $" ({r.AllocMin})" : "")</td>
                             <td class="text-center text-muted">@r.RawMinutes</td>
                             <td class="text-center text-warning">@(r.BreakWorkedMin > 0 ? r.BreakWorkedMin.ToString() : "—")</td>
-                            <td><span class="@TagCls(r.IsProductiveTask)" style="@TagStyle(r.IsProductiveTask)">@TagText(r.IsProductiveTask)</span>@if (r.IsOvertime) {<span class="badge bg-warning text-dark ms-1" style="font-size:.65rem">OT</span>}</td>
+                            <td><span class="@TagCls(r.Kind)" style="@TagStyle(r.Kind)">@TagText(r.Kind)</span>@if (r.IsOvertime) {<span class="badge bg-warning text-dark ms-1" style="font-size:.65rem">OT</span>}</td>
                             <td>@TaskText(r)</td>
                             <td><code>@(string.IsNullOrEmpty(r.PurchaseOrder) ? "—" : r.PurchaseOrder)</code></td>
                             <td>@(string.IsNullOrEmpty(r.PartNo) ? "—" : r.PartNo)</td>
@@ -833,7 +856,7 @@
                             <td class="text-center text-success">@(r.QtyOk > 0 ? r.QtyOk.Value.ToString("0.##") : "—")</td>
                             <td class="text-center text-danger">@(r.QtyNg > 0 ? r.QtyNg.Value.ToString("0.##") : "—")</td>
                             <td class="text-muted">@(string.IsNullOrEmpty(r.NgReason) ? "—" : r.NgReason)</td>
-                            <td class="text-center">@(r.ExtraMinutes > 0 ? r.ExtraMinutes.ToString() : "—")</td>
+                            <td class="text-center" title="@PsTip(r)">@PsText(r)</td>
                             <td class="text-muted">@r.Notes</td>
                         </tr>
                     }
@@ -845,6 +868,12 @@
             <div class="small text-muted mt-1">Số trong ngoặc ở cột Phút = phút tính vào báo cáo khi trùng giờ với dòng khác: việc có ích được tính trước việc vô ích, các dòng cùng loại (vd đứng 2 máy) chia đều.</div>
         }
     };
+    // [WTS-1NGUON] cột T.PS: phút + mã phát sinh (loại theo mã)
+    static string PsText(WtsReportRow r) => r.ExtraParts.Count > 0
+        ? string.Join(", ", r.ExtraParts.Select(x => $"{x.ReqMin} {(x.TaskCode.Length > 0 ? x.TaskCode : "(không mã)")}"))
+        : (r.ExtraMinutes is int em && em > 0 ? em.ToString() : "—");   // [WTS-1NGUON] em: tránh cảnh báo CS8603 (int?.ToString)
+    static string PsTip(WtsReportRow r) => r.ExtraParts.Count == 0 ? "" : string.Join("; ", r.ExtraParts.Select(x => $"{PartText(r, x)}: khai {x.ReqMin} ph, tính {x.Min} ph — {KindWord(x.Kind)}"));
+    static string NcVis(int nc) => nc > 0 ? "" : "display:none";
     static string NcMay(WtsReportRow r)
     {
         var s = string.Join(" · ", new[] { r.NC, r.MachineUsed }.Where(x => !string.IsNullOrWhiteSpace(x)));

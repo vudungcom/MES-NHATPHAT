@@ -16,6 +16,9 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Console.WriteLine($"CPU
 // [N21-NGW 2026-11-25] Kịch bản CŨ (trước luật N21) dựng dòng WTS có NG kiểu cũ (sinh vụ) bằng hàm thật — kiểm chứng từ cũ giữ nghĩa cũ;
 //   kịch bản n21 + lượt ngẫu nhiên chạy luật mới (lượt ngẫu nhiên trộn kiểu cũ theo NGWCU, mặc định 0.3 — đặt ở vòng thao tác WTS).
 WtsSaveService.SinhVuWts = !(args.Length > 0 && args[0] == "n21");
+// [WTS-1NGUON 2026-11-26] kịch bản CŨ dựng Part Master bằng mã tự đặt (K1, B1, 3T…) chưa khai ở WTS tiêu chuẩn → tắt kiểm mã CV Part Master;
+//   kịch bản w1n + lượt ngẫu nhiên (ChuoiHelp tự khai mã) chạy luật mới.
+PartStepGuard.KiemMaWts = args.Length > 0 && args[0] == "w1n";
 if (args.Length > 0 && args[0] == "scen") { await Scen.Run(); return 0; }
 if (args.Length > 0 && args[0] == "kh") { return await KhScen.Run(); }
 if (args.Length > 0 && args[0] == "a1") { return await A1Scen.Run(); }
@@ -39,6 +42,7 @@ if (args.Length > 0 && args[0] == "chuoi") { return await ChuoiScen.Run(); }   /
 if (args.Length > 0 && args[0] == "wts") { return await WtsScen.Run(); }   // [WTS-SVC] kịch bản lưu / sửa / xoá WTS bằng service thật, chữ báo y cũ
 if (args.Length > 0 && args[0] == "g26") { return await G26Scen.Run(); }
 if (args.Length > 0 && args[0] == "saoluu") { return await SaoLuuScen.Run(args); }   // [G32-SCEN 2026-11-22] Gói 32a: sao lưu trong phần mềm (luật dọn, trọn bộ, lỗi, lịch, cài đặt, băng đỏ)
+if (args.Length > 0 && args[0] == "w1n") { return await W1NScen.Run(); }   // [W1N-SCEN 2026-11-26] Gói WTS-1NGUON: có ích / vô ích chỉ từ cờ mã WTS tiêu chuẩn
 if (args.Length > 0 && args[0] == "rpt") { return await RptScen.Run(); }   // [G29-SCEN 2026-11-21] Gói 29: báo cáo WTS theo kỳ + hiệu suất máy theo kỳ (đếm từng phút)
 if (args.Length > 0 && args[0] == "g28") { return await G28Scen.Run(); }   // [G28-SCEN 2026-11-20] Gói 28: sửa lỗi ngầm (Workflow báo Giao nhận, chữ Taro, đăng nhập, độ dài, đổi loại dừng, log, bản quyền)   // [G26-SCEN 2026-11-20] Gói 26: seed mẫu / bản quyền mất mạng / log ra file
 if (args.Length > 0 && args[0] == "len") { return await LenScen.Run(); }   // [LEN-SCEN 2026-11-16] độ dài chữ theo cột DB ở service (LenCheck) + UiSafe
@@ -55,6 +59,7 @@ if (args.Length > 0 && args[0] == "nang") { return await Nang.Run(args); }   // 
 // [N21-NGW 2026-11-25] lượt ngẫu nhiên: luật mới (WTS NG không sinh vụ) + trộn NGWCU (mặc định 0.3) phần dòng WTS kiểu cũ (sinh vụ — như dữ liệu trước N21).
 //   Rút bằng Random RIÊNG (seed + PO + op) → dãy thao tác các seed cũ không đổi.
 WtsSaveService.SinhVuWts = false;
+PartStepGuard.KiemMaWts = true;   // [WTS-1NGUON] lượt ngẫu nhiên: luật mới (ChuoiHelp.WtsCodes khai mã trước khi dựng Part)
 double ngwCu = double.TryParse(Environment.GetEnvironmentVariable("NGWCU"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ngwCuV) ? ngwCuV : 0.3;
 var poCount = args.Length > 0 ? int.Parse(args[0]) : 200;
 var opsPerPo = args.Length > 1 ? int.Parse(args[1]) : 120;

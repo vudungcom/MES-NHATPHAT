@@ -51,6 +51,7 @@ public class PartBaviaService
         PartStepGuard.CheckLen(Label, (newStep.NC, 20, "NC / mã CV"));   // [LEN-CHECK 2026-11-16] (BP1-03)
         PartStepGuard.CheckStdTimes(Label, (newStep.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         PartStepGuard.CheckReservedCode(Label, newStep.NC);   // [PM-NC-AT 2026-11-05] mã đầu "@" dành cho hệ thống (mọi dòng, cả dự phòng)
+        if (!newStep.IsBackup) await PartStepGuard.CheckWtsCodeAsync(_db, Label, newStep.NC);   // [WTS-1NGUON 2026-11-26] dòng chính: mã CV có trong WTS tiêu chuẩn
         // [PM-NC-DUP-SVC 2026-11-02] Thêm dòng = giao dịch + khoá MES_PM_STEPS_<PartId>; dòng chính: mã không trống / '-', không trùng dòng chính khác (đọc DB dưới khoá)
         return await PartStepGuard.RunLockedAsync(_db, partId, async () =>
         {
@@ -112,6 +113,7 @@ public class PartBaviaService
         PartStepGuard.CheckLen(Label, (updated.NC, 20, "NC / mã CV"));   // [LEN-CHECK 2026-11-16] (BP1-03)
         PartStepGuard.CheckStdTimes(Label, (updated.StandardTime, "T.Chuẩn"));   // [PM-TG-AM 2026-11-16]
         if (!PartStepGuard.SameCode(dbNow.NC, updated.NC)) PartStepGuard.CheckReservedCode(Label, updated.NC);   // [PM-NC-AT 2026-11-05] chỉ kiểm khi đổi mã
+        if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup)) await PartStepGuard.CheckWtsCodeAsync(_db, Label, updated.NC);   // [WTS-1NGUON] đổi mã / dự phòng thành chính
         if (PartStepGuard.NeedCheckOnUpdate(dbNow.NC, dbNow.IsBackup, updated.NC, updated.IsBackup))
             PartStepGuard.CheckMainCode(Label, updated.NC, await _db.PartBaviaSteps
                 .Where(s => s.PartId == existing.PartId && s.IsActive && !s.IsBackup && s.StepId != stepId).Select(s => s.NC).ToListAsync());

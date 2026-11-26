@@ -85,6 +85,23 @@ public static class PartStepGuard
     public static (decimal?, string)[] MachiningTimeItems(decimal? setup, decimal? mach, decimal? insp, decimal? prep, decimal? trial, string suffix = "")
         => new[] { (setup, "T.Gá" + suffix), (mach, "T.Gia công" + suffix), (insp, "T.Kiểm tra" + suffix), (prep, "T.Chuẩn bị" + suffix), (trial, "T.Chạy thử" + suffix) };
 
+    // [WTS-1NGUON 2026-11-26] Part Master C–E (Bavia / Rửa / KCS / Đóng gói: NC = mã CV; Taro: WtsTaskCode): mã CV dòng chính chỉ lấy từ WTS tiêu chuẩn
+    //   (đang dùng) — trước: ô mã gõ tay được, máy chủ không kiểm → báo cáo hiệu suất không tra được cờ có ích / vô ích. Chỉ kiểm khi LƯU MỚI / ĐỔI MÃ
+    //   (dòng cũ giữ nguyên sửa ô khác được); dòng dự phòng vẫn gõ "<mã cha>-DP-01" (báo cáo lấy cờ mã cha theo quy trình PO đã chụp).
+    //   Nguồn: HÙNG 26/11 22:09 ("ép dùng chỉ 1 nơi WTS tiêu chuẩn") + 23:00 "chốt lại làm theo bạn" (Part Master C–E bỏ gõ tay, máy chủ kiểm mã) + 23:08.
+    public static string WtsCodeBlankMsg(string label) => $"{label}: dòng chưa có Mã CV — chọn mã trong danh sách WTS tiêu chuẩn.";
+    public static string WtsCodeBadMsg(string label, string code) => $"{label}: Mã CV {code} không có trong WTS tiêu chuẩn (hoặc đã ngưng dùng) — chọn mã trong danh sách.";
+    /// <summary>[WTS-1NGUON] CHỈ để bộ kiểm cũ (kịch bản dựng Part bằng mã tự đặt, viết trước luật này) tắt kiểm mã. Phần mềm thật luôn true.</summary>
+    public static bool KiemMaWts = true;
+    public static async Task CheckWtsCodeAsync(AppDbContext db, string label, string? code)
+    {
+        if (!KiemMaWts) return;
+        var c = Norm(code);
+        if (c.Length == 0) throw new PartStepCodeException(WtsCodeBlankMsg(label));
+        var codes = await db.StandardWtsTasks.AsNoTracking().Where(t => t.IsActive).Select(t => t.TaskCode).ToListAsync();
+        if (!codes.Any(x => SameCode(x, c))) throw new PartStepCodeException(WtsCodeBadMsg(label, c));
+    }
+
     public static void CheckReservedCode(string label, params string?[] codes)
     {
         foreach (var c in codes)

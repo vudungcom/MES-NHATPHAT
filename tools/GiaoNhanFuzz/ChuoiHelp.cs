@@ -88,9 +88,20 @@ public static class ChuoiHelp
         }
     }
 
+    /// <summary>[WTS-1NGUON 2026-11-26] Part Master chỉ nhận mã CV có trong WTS tiêu chuẩn (máy chủ) → bộ kiểm khai mã trước khi thêm dòng.</summary>
+    public static void WtsCodes(AppDbContext db, params string?[] codes)
+    {
+        foreach (var c in codes.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c!.Trim()))
+            if (!db.StandardWtsTasks.List.Any(t => t.IsActive && string.Equals(t.TaskCode, c, StringComparison.OrdinalIgnoreCase)))
+                db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = 5000 + db.StandardWtsTasks.List.Count, CategoryCode = "CHUOI", CategoryName = "Chuỗi thử", TaskCode = c, TaskName = "Việc " + c, IsActive = true });
+    }
+    static readonly string[] ChuoiCodes = new[] { "1T", "1V", "1R", "8G", "8G1", "8G2", "9X", "9X2", "K9", "P9" }
+        .Concat(Enumerable.Range(1, 30).SelectMany(i => new[] { $"{3 + i - 1}T", $"B{i}", $"R{i}", $"K{i}", $"P{i}" })).ToArray();
+
     /// <summary>Tạo Part Master bằng hàm thật theo hình dáng; trả về PartId.</summary>
     public static async Task<int> BuildPartAsync(AppDbContext db, string partNo, Shape s)
     {
+        WtsCodes(db, ChuoiCodes);   // [WTS-1NGUON]
         var pm = await new PartMasterService(db).CreatePartMasterAsync(partNo, 1, new Dictionary<string, string>(), Admin, "Part " + partNo);
         var gc = new PartMachiningService(db);
         for (int i = 0; i < s.Gc; i++)
@@ -106,7 +117,15 @@ public static class ChuoiHelp
         var taro = new PartTaroService(db);
         var t1 = s.TaroLamHo && s.ExclAt > 0 && s.ExclAt < s.Gc - 1 ? $"{s.ExclAt + 1}" : "T1";   // [TARO-LAMHO-NC] NC Taro = NC máy loại trừ giữa chuỗi
         for (int i = 0; i < s.Taro; i++)
-            await taro.AddAsync(pm.PartId, new PartTaroStep { NC = i == 0 ? t1 : $"T{i + 1}", WtsTaskCode = s.TaroTaskCode ? $"{3 + i}T" : null, StepName = "Taro " + (i + 1), StandardTime = 1.5m }, Admin, Reason);
+        {
+            var tst = new PartTaroStep { NC = i == 0 ? t1 : $"T{i + 1}", WtsTaskCode = s.TaroTaskCode ? $"{3 + i}T" : null, StepName = "Taro " + (i + 1), StandardTime = 1.5m };
+            if (s.TaroTaskCode || !PartStepGuard.KiemMaWts) { await taro.AddAsync(pm.PartId, tst, Admin, Reason); continue; }   // rà độc lập L6: kịch bản cũ (tắt kiểm mã) giữ đường service
+            // [WTS-1NGUON 2026-11-26] dòng Taro trống mã CV (mã = NC) nay máy chủ chặn khi lưu mới → chỉ còn là DỮ LIỆU CŨ: ghi thẳng bảng (như dòng dự phòng
+            //   Taro cũ) để sổ / snapshot / WTS vẫn được kiểm với dữ liệu cũ trống mã.
+            tst.PartId = pm.PartId; tst.StepOrder = (db.PartTaroSteps.List.Where(x => x.PartId == pm.PartId).Max(x => (int?)x.StepOrder) ?? 0) + 1;
+            tst.IsActive = true; tst.CreatedBy = Admin; tst.CreatedAt = DateTime.Now;
+            db.PartTaroSteps.Add(tst); await db.SaveChangesAsync();
+        }
         // [TARO-DUPHONG 2026-11-07] Taro không cho thêm dòng dự phòng nữa (máy chủ chặn) → dòng dự phòng Taro chỉ còn là DỮ LIỆU CŨ: ghi thẳng vào
         //   bảng như dữ liệu có sẵn (bỏ qua service) để sổ / snapshot / xoá kèm vẫn được kiểm với dữ liệu cũ. Trước: thêm qua PartTaroService.AddAsync.
         if (s.HtspDuPhong && s.Taro > 0)
@@ -349,6 +368,7 @@ public static class ChuoiHelp
                 var ts = db.PartTaroSteps.List.Where(s => s.PartId == partId && s.IsActive).ToList();
                 if (!ts.Any()) return "bỏ qua";
                 var s = ts[rnd.Next(ts.Count)];
+                WtsCodes(db, (s.WtsTaskCode ?? s.NC) + "X");   // [WTS-1NGUON] mã mới phải có trong WTS tiêu chuẩn
                 await new PartTaroService(db).UpdateAsync(s.StepId, new PartTaroStep { NC = s.NC, WtsTaskCode = (s.WtsTaskCode ?? s.NC) + "X", StepName = s.StepName, StandardTime = (s.StandardTime ?? 0) + 1, IsBackup = s.IsBackup, ParentNC = s.ParentNC }, Admin, Reason);
                 return $"PM Taro đổi mã {s.NC}";
             }

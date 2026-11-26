@@ -37,6 +37,13 @@ public class StandardWtsTask
     /// </summary>
     public bool IsProductiveTask { get; set; } = true;
 
+    /// <summary>
+    /// [WTS-1NGUON 2026-11-26] true = "Mã dùng cho Gia công": mọi dòng WTS Gia công (mọi NC, Hàng loạt lẫn Chạy thử) lấy cờ
+    /// có ích / vô ích của mã này trong báo cáo hiệu suất. Cả bảng tối đa 1 mã (chỉ mục lọc duy nhất UX_StandardWtsTasks_IsGcTask, SQL 21).
+    /// Nguồn: HÙNG 26/11 22:34 (Gia công dùng CHUNG 1 mã) + 23:00 "chốt lại làm theo bạn" (ô chọn ở trang WTS tiêu chuẩn).
+    /// </summary>
+    public bool IsGcTask { get; set; } = false;
+
     public bool IsActive { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;

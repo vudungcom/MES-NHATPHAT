@@ -55,6 +55,47 @@ namespace MES.Web.Services
         /// <summary>[N21-NGW] Vụ của dòng khi tính thử sổ (K5): giữ vụ cũ; dòng mới = không vụ (N21) — kiểu cũ: vụ mới (Id âm).</summary>
         static long? SimCase(WtsSaveRow s) => s.QtyNg > 0 ? (s.IsEditing ? s.NgCaseId : null) ?? (SinhVuWts ? -1L : (long?)null) : null;
 
+        // =====================================================================
+        // [WTS-1NGUON 2026-11-26] Mã phát sinh bắt buộc: báo cáo hiệu suất tách phút phát sinh theo cờ có ích / vô ích của mã phát sinh → phút
+        //   phát sinh không mã thành "Chưa có mã". Mục phát sinh (phút > 0) phải có mã đang dùng trong WTS tiêu chuẩn, thuộc nhóm WTS của người nhập
+        //   (cùng luật danh sách mã trang WtsTasksForGroup / Việc không ra SP); Admin / dòng sửa quyền cao hơn → mọi mã đang dùng. Dòng đang sửa: mục
+        //   giữ y như dòng cũ (cùng mã + cùng phút, kể cả không mã / mã đã ngưng) không chặn — Sửa nhanh chép lại phát sinh cũ (6 dòng / 74 phút
+        //   cũ không mã, SQL Hùng 26/11 22:57). Lưu mã đúng chữ danh mục + tên lúc lưu.
+        //   Nguồn: HÙNG 26/11 22:09 + 23:00 "chốt lại làm theo bạn" (phát sinh bắt buộc mã) + 23:08 "Ok làm đi" (chi tiết giữ mục cũ: bản em hiểu).
+        // =====================================================================
+        public static string PsNoCodeMsg(int min) => $"Phát sinh {min} phút chưa có Mã WTS — chọn mã trong danh sách (WTS tiêu chuẩn).";
+        public static string PsBadCodeMsg(string code) => $"Mã phát sinh {code} không có trong WTS tiêu chuẩn hoặc đã ngưng dùng — chọn mã trong danh sách.";
+        public static string PsNotGroupMsg(string code) => $"Mã phát sinh {code} không thuộc nhóm WTS của bạn (WTS tiêu chuẩn → Cấu hình nhóm) — nhờ Admin thêm.";
+        static string PsKey(string? code, int min) => (code ?? "").Trim().ToUpperInvariant() + "|" + min;
+        private async Task<string?> ExtraCodeErrorAsync(WtsSaveRow sub, bool anyCode, HashSet<string> groups)
+        {
+            var items = sub.ExtraItems.Where(e => e.Minutes > 0).ToList();
+            if (items.Count == 0) return null;
+            var keep = new List<string>();
+            if (sub.IsEditing && sub.WtsLogId != null)
+                keep = (await _db.WtsExtraItems.AsNoTracking().Where(x => x.WtsLogId == sub.WtsLogId.Value && x.Minutes > 0).Select(x => new { x.WtsCode, x.Minutes }).ToListAsync())
+                    .Select(x => PsKey(x.WtsCode, x.Minutes)).ToList();
+            var tasks = await _db.StandardWtsTasks.AsNoTracking().Where(t => t.IsActive).ToListAsync();
+            HashSet<string>? okCats = null;
+            foreach (var e in items)
+            {
+                var code = (e.WtsCode ?? "").Trim();
+                var task = code.Length == 0 ? null : tasks.FirstOrDefault(t => string.Equals((t.TaskCode ?? "").Trim(), code, StringComparison.OrdinalIgnoreCase));
+                bool inGroup = task != null && (anyCode || (okCats ??= (await _db.WtsCategoryGroupMappings.AsNoTracking().Where(m => groups.Contains(m.ProcessGroup))
+                                   .Select(m => m.CategoryCode).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase)).Contains(task.CategoryCode));
+                if (task != null && inGroup)
+                {
+                    e.WtsCode = task.TaskCode.Trim();   // đúng chữ danh mục
+                    if (string.IsNullOrWhiteSpace(e.WtsName)) e.WtsName = task.TaskName.Length > 250 ? task.TaskName[..250] : task.TaskName;
+                    continue;
+                }
+                var k = keep.IndexOf(PsKey(e.WtsCode, e.Minutes));
+                if (k >= 0) { keep.RemoveAt(k); continue; }   // mục giữ y dòng cũ
+                return code.Length == 0 ? PsNoCodeMsg(e.Minutes) : task == null ? PsBadCodeMsg(code) : PsNotGroupMsg(code);
+            }
+            return null;
+        }
+
         public sealed class WtsSaveExtra
         {
             public string? WtsCode { get; set; }
@@ -660,6 +701,10 @@ namespace MES.Web.Services
                     var _eLen = LenCheck.FirstOver((_ei.WtsCode, 50, "Mã WTS phát sinh"), (_ei.WtsName, 250, "Tên việc phát sinh"), (_ei.Notes, 500, "Nội dung PS"));
                     if (_eLen != null) { sub.ErrorMsg = _eLen; grp.ErrorMsg = "Có hàng phát sinh ghi chữ dài quá cột — " + _eLen; return Fail(); }
                 }
+                // [WTS-1NGUON 2026-11-26] phát sinh T.PS > 0 bắt buộc mã có trong WTS tiêu chuẩn (đang dùng, thuộc nhóm WTS của người nhập — Admin / sửa
+                //   quyền cao hơn mọi mã, như Việc không ra SP); mục giữ y dòng cũ khi sửa (cùng mã + phút) thì không chặn (dữ liệu cũ không mã).
+                if (await ExtraCodeErrorAsync(sub, _wgPerm.Value.IsAdmin || sub.Cu, _wgPerm.Value.Groups) is string _ePs)
+                { sub.ErrorMsg = _ePs; grp.ErrorMsg = "Có hàng phát sinh chưa đúng mã — " + _ePs; return Fail(); }
 
                 // [SERIAL-TIME-REQUIRED] GC Hàng loạt: bắt buộc đủ T.Gá / T.GC / T.Ktra | [ACTUAL-REQUIRED-NONGC] Non-GC: bắt buộc T.Thực tế
                 var _missSerial = GetMissingSerialTimesMsg(grp, sub);

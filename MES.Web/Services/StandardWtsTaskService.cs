@@ -432,6 +432,73 @@ public class StandardWtsTaskService
         return (true, null);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // [WTS-1NGUON 2026-11-26] "Mã dùng cho Gia công": ĐÚNG 1 mã WTS tiêu chuẩn cho mọi dòng WTS Gia công (mọi NC, Hàng loạt lẫn Chạy thử).
+    //   Báo cáo hiệu suất công nhân lấy cờ có ích / vô ích của dòng Gia công từ mã này (đọc lúc xem báo cáo — không ghi mã vào dòng GC,
+    //   sổ giao nhận nhận diện GC theo NC). Chưa chọn → giờ Gia công hiện "Chưa có mã".
+    //   Quyền Sửa WTS_MASTER + PIN (như sửa cờ có ích), khoá chung MES_WTS_GOP, ChangeLog cả mã bỏ lẫn mã mới.
+    //   Nguồn: HÙNG 26/11 22:34 (Gia công dùng CHUNG 1 mã) + 22:54 (8 NC dùng chung 1 mã OK) + 23:00 "chốt lại làm theo bạn" (ô chọn ở trang
+    //   WTS tiêu chuẩn, cần SQL 21) + 23:08 "Ok làm đi".
+    // ─────────────────────────────────────────────────────────────────────
+    public const string GcFieldName = "Mã dùng cho Gia công";
+    public static string GcDeleteMsg(string code) => $"Mã '{code}' đang là \"{GcFieldName}\" — chọn mã khác ở ô \"{GcFieldName}\" trước khi xóa.";
+
+    /// <summary>[WTS-1NGUON] Mã đang dùng cho Gia công (đọc cả mã đã xoá — phòng dữ liệu sửa tay; xoá đã bị chặn). null = chưa chọn.</summary>
+    public async Task<StandardWtsTask?> GetGcTaskAsync()
+        => await _db.StandardWtsTasks.AsNoTracking().Where(t => t.IsGcTask).OrderByDescending(t => t.IsActive).ThenByDescending(t => t.TaskId).FirstOrDefaultAsync();
+
+    /// <summary>[WTS-1NGUON] Đặt "Mã dùng cho Gia công" (taskId null = bỏ chọn). Mã phải đang dùng trong danh mục.</summary>
+    public async Task<(bool Success, string? Error)> SetGcTaskAsync(int? taskId, int currentUserId, string pin)
+    {
+        if (!await PermCheck.CanEditAsync(_db, currentUserId, MES.Web.Constants.SystemPermissions.WtsMaster)) return (false, PermCheck.NoEdit("WTS tiêu chuẩn"));
+        if (string.IsNullOrWhiteSpace(pin)) return (false, "Vui lòng nhập mã PIN xác nhận.");
+        bool isPinValid = await _authSvc.VerifyPinAsync(currentUserId, pin);
+        if (!isPinValid) return (false, _authSvc.PinErrorText("Mã PIN xác nhận không chính xác."));
+
+        await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        if (!await PoGuard.TryLockInTransactionAsync(_db, GopLock))
+            return (false, "Đang có người khác lưu danh mục WTS tiêu chuẩn — chờ vài giây rồi bấm lưu lại.");
+        StandardWtsTask? pick = null;
+        if (taskId != null)
+        {
+            pick = await _db.StandardWtsTasks.FirstOrDefaultAsync(t => t.TaskId == taskId.Value && t.IsActive);
+            if (pick == null) return (false, "Mã đã chọn không còn trong danh mục (có thể vừa bị xóa) — tải lại trang rồi chọn lại.");
+            await _db.Entry(pick).ReloadAsync();   // bản EF trang đang giữ có thể cũ
+            if (!pick.IsActive) return (false, "Mã đã chọn không còn trong danh mục (có thể vừa bị xóa) — tải lại trang rồi chọn lại.");
+        }
+        var olds = await _db.StandardWtsTasks.Where(t => t.IsGcTask).ToListAsync();
+        foreach (var o in olds) await _db.Entry(o).ReloadAsync();
+        olds = olds.Where(o => o.IsGcTask && (pick == null || o.TaskId != pick.TaskId)).ToList();
+        if (olds.Count == 0 && (pick == null || pick.IsGcTask)) { if (tx != null) await tx.CommitAsync(); return (true, null); }   // không đổi gì
+
+        var now = DateTime.Now;
+        try
+        {
+        // Bỏ mã cũ TRƯỚC (lần lưu riêng) rồi mới đặt mã mới — chỉ mục lọc duy nhất không cho 2 dòng = 1 cùng lúc.
+        foreach (var o in olds)
+        {
+            o.IsGcTask = false; o.UpdatedAt = now; o.UpdatedBy = currentUserId;
+            _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog { TaskId = o.TaskId, FieldName = GcFieldName, OldValue = "Có", NewValue = "Không",
+                Reason = pick == null ? "Bỏ chọn mã dùng cho Gia công" : $"Đổi mã dùng cho Gia công sang {pick.TaskCode}", ChangedAt = now, ChangedBy = currentUserId });
+        }
+        if (olds.Count > 0) await _db.SaveChangesAsync();
+        if (pick != null && !pick.IsGcTask)
+        {
+            pick.IsGcTask = true; pick.UpdatedAt = now; pick.UpdatedBy = currentUserId;
+            _db.StandardWtsTaskChangeLogs.Add(new StandardWtsTaskChangeLog { TaskId = pick.TaskId, FieldName = GcFieldName, OldValue = "Không", NewValue = "Có",
+                Reason = olds.Count > 0 ? $"Đổi mã dùng cho Gia công từ {string.Join(", ", olds.Select(o => o.TaskCode))}" : "Chọn mã dùng cho Gia công", ChangedAt = now, ChangedBy = currentUserId });
+            await _db.SaveChangesAsync();
+        }
+        if (tx != null) await tx.CommitAsync();
+        }
+        catch
+        {   // rà độc lập 26/11 L1: lỗi giữa 2 lần lưu → giao dịch huỷ; dọn bản EF đang giữ thay đổi dở (không để lần lưu sau của trang ghi lén)
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+        return (true, null);
+    }
+
     public async Task<(bool Success, string? Error)> SoftDeleteAsync(int taskId, int currentUserId, string pin)
     {
         // [RS-C1 2026-10-29] Máy chủ kiểm quyền Sửa WTS_MASTER (trước: chỉ cần đăng nhập)
@@ -449,6 +516,12 @@ public class StandardWtsTaskService
             return (false, "Đang có người khác lưu danh mục WTS tiêu chuẩn / khai báo mã gộp — chờ vài giây rồi bấm lưu lại.");
         var task = await _db.StandardWtsTasks.FirstOrDefaultAsync(x => x.TaskId == taskId && x.IsActive);
         if (task == null) return (false, "Không tìm thấy công việc cần xóa.");
+        // [WTS-1NGUON] rà độc lập 26/11 T2: đọc lại dưới khoá — DbContext dùng chung cả phiên trang giữ bản cũ (người khác vừa chọn mã này làm mã Gia công)
+        await _db.Entry(task).ReloadAsync();
+        if (!task.IsActive) return (false, "Không tìm thấy công việc cần xóa.");
+        // [WTS-1NGUON 2026-11-26] mã đang là "Mã dùng cho Gia công" → không xoá (xoá thì giờ Gia công trong báo cáo thành "Chưa có mã" mà không ai biết).
+        //   Nguồn: CLAUDE bản em hiểu 26/11 23:0x (chi tiết tự chốt), HÙNG 23:08 "Ok làm đi".
+        if (task.IsGcTask) return (false, GcDeleteMsg(task.TaskCode));
 
         // [RS-E8 2026-10-29] Mã đang dùng trong quy trình Part Master (bước đang dùng, Part chưa ngưng) → không xoá:
         //   xoá thì Part Master không chọn lại được mã, PO mới chụp quy trình có mã không còn trong danh mục.

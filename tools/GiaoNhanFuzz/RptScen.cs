@@ -76,6 +76,11 @@ public static class RptScen
             foreach (var x in WorkMinutes.ToEntities(new[] { b }, w, a)) { x.Id = ++bid; db.WtsBreakWorkLogs.List.Add(x); }
         }
     }
+    // [WTS-1NGUON 2026-11-26] ĐÁP ÁN ĐỔI: dòng Gia công lấy cờ từ "Mã dùng cho Gia công" — bộ số cũ (P1–P7) coi Gia công là có ích nên mỗi bộ
+    //   dựng thêm 1 mã Gia công có ích (GCC29, IsGcTask). Chưa chọn mã → "Chưa có mã": kịch bản riêng `w1n` (W1NScen.cs).
+    public static void GcTask(AppDbContext db, bool pro = true)
+        => db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = db.StandardWtsTasks.List.Count + 1, CategoryCode = "GIA_CONG", TaskCode = "GCC29", TaskName = "Gia công (mã chung)", IsActive = true, IsProductiveTask = pro, IsGcTask = true });
+    static async Task<AppDbContext> SeedGc() { var db = await WtsScen.SeedAsync(); GcTask(db); return db; }
     static void Task(AppDbContext db, string code, bool pro)
         => db.StandardWtsTasks.List.Add(new StandardWtsTask { TaskId = db.StandardWtsTasks.List.Count + 1, CategoryCode = "CHUNG", TaskCode = code, TaskName = "Việc " + code, IsActive = true, IsProductiveTask = pro });
 
@@ -91,7 +96,7 @@ public static class RptScen
     static async Task P1()
     {
         Console.WriteLine("[P1] G29-RPT — bộ số cố định (như HarnessG29), đáp án tính tay");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         Task(db, "HOP29", false); Task(db, "VS29", false); Task(db, "SUA29", true);
         // A = u2, B = u3
@@ -134,7 +139,7 @@ public static class RptScen
     static async Task P1c()
     {
         Console.WriteLine("[P1c] G30-RPT-MAUSO — giờ chuẩn theo ca (đáp án tính tay)");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         Task(db, "SUA30", true); Task(db, "HOP30", false);
         A(db, 4, "SUA30", D1.AddHours(8), D1.AddHours(13), 9);              // chỉ việc không ra SP, chạm nghỉ trưa (đã lưu ca 9) → làm 08–12 = 240
@@ -170,7 +175,7 @@ public static class RptScen
     static async Task P1d()
     {
         Console.WriteLine("[P1d] G30-RPT-MAUSO — ca đêm 22:00–06:00 ở ngày cuối kỳ; ngày đuôi ca đêm");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 6, new TimeOnly(22, 0), new TimeOnly(6, 0));
         P(db, 2, "M31", "serial", D1.AddHours(22), D2.AddHours(2), 10, 0, "NC01", 6);   // ngày 1 22:00 → 02:00 (240)
         P(db, 2, "M31", "serial", D2.AddHours(2), D2.AddHours(6), 10, 0, "NC01", 6);    // bắt đầu ngày 2 02:00 → 06:00 (240)
@@ -196,7 +201,7 @@ public static class RptScen
     static async Task P5()
     {
         Console.WriteLine("[P5] G31-HSM-24H — máy 24h / ngày, không ca (đáp án tính tay)");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true, TenMay = "Máy 1" });
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "TARO", IsActive = true, TenMay = "Máy 2" });
@@ -240,7 +245,7 @@ public static class RptScen
     static async Task P5b()
     {
         Console.WriteLine("[P5b] G31-HSM-24H — giờ hiện tại cắt ngày; hỏng chưa đóng; OK / NG ở kỳ chứa ngày bắt đầu dòng");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true, TenMay = "Máy 1" });
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 2, SoMay = "M2", BoPhan = "GC", IsActive = true, TenMay = "Máy 2" });
         P(db, 2, "M1", "serial", D1.AddHours(8), D1.AddHours(12), 10, 0, "NC01", null);       // 08–12
@@ -274,7 +279,7 @@ public static class RptScen
         int bad0 = fails;
         for (int round = 0; round < 3; round++)
         {
-            var db = await WtsScen.SeedAsync();
+            var db = await SeedGc();
             AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
             for (int m = 1; m <= 3; m++) db.ThietBis.List.Add(new ThietBi { ThietBiId = m, SoMay = "M" + m, BoPhan = m == 3 ? "TARO" : "GC", IsActive = true, TenMay = "Máy " + m });
             for (int k = 0; k < 35; k++)
@@ -340,7 +345,7 @@ public static class RptScen
     static async Task P7()
     {
         Console.WriteLine("[P7] G31-LOC-NHOM — nhóm của công nhân trên dòng WTS Report");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         var g1 = new UserGroup { GroupId = 901, GroupCode = "G901", GroupName = "Nhóm thử 1", IsActive = true }; db.UserGroups.List.Add(g1);
         var u2 = db.Users.List.First(u => u.UserId == 2); var u3 = db.Users.List.First(u => u.UserId == 3);
@@ -358,7 +363,7 @@ public static class RptScen
     static async Task P1b()
     {
         Console.WriteLine("[P1b] G29-RPT — ca đêm 20:00–05:00 khai đủ → chưa khai báo 0; ca đổi giờ nghỉ sau khi lưu → không sinh chưa khai báo giả");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         AddCa(db, 8, new TimeOnly(20, 0), new TimeOnly(5, 0), (0, 0, 0, 30));
         var ca9 = AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         // đêm: 20:00–24:00 (D1) + 00:30–05:00 (giờ bắt đầu D2) — đủ ca
@@ -379,7 +384,7 @@ public static class RptScen
         var b1 = res.Days.First(d => d.WorkerId == 3);
         Say(b1.UnaccountedMin == 0 && b1.WorkMin == 480, "P1b ca đổi giờ nghỉ sau khi lưu: chưa khai báo 0 (trừ cả nghỉ đã lưu), làm 480", $"{b1.PlanMin}/{b1.UnaccountedMin} làm {b1.WorkMin}");
         // máy: đêm thứ Bảy tràn sang Chủ nhật — xem ca ngày 08–17 thì Chủ nhật không thành ngày kế hoạch
-        var db2 = await WtsScen.SeedAsync();
+        var db2 = await SeedGc();
         db2.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
         var ca = AddCa(db2, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         P(db2, 2, "M1", "serial", D1.AddHours(9), D1.AddHours(10), 5, 0, "NC1", 9);
@@ -402,11 +407,15 @@ public static class RptScen
         int bad0 = fails;
         for (int round = 0; round < 6; round++)
         {
-            var db = await WtsScen.SeedAsync();
+            var db = await SeedGc();
             AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0), (15, 0, 15, 10));
             AddCa(db, 8, new TimeOnly(20, 0), new TimeOnly(5, 0), (0, 0, 0, 30));   // ca qua đêm
+            // [WTS-1NGUON] vòng 4: chưa chọn mã Gia công (Gia công = chưa có mã); vòng 5: mã Gia công là vô ích
+            if (round == 4) db.StandardWtsTasks.List.First(x => x.IsGcTask).IsGcTask = false;
+            if (round == 5) db.StandardWtsTasks.List.First(x => x.IsGcTask).IsProductiveTask = false;
             Task(db, "V1", false); Task(db, "V2", false); Task(db, "C1", true);
-            var codes = new[] { "V1", "V2", "C1", "LA" };   // LA: mã không có trong danh mục → có ích (luật cũ)
+            var codes = new[] { "V1", "V2", "C1", "LA" };   // LA: mã không có trong danh mục → [WTS-1NGUON] "Chưa có mã" (luật cũ: có ích)
+            long exId = 95000;
             for (int k = 0; k < 50; k++)
             {
                 int w = 2 + rnd.Next(4); var day = D1.AddDays(rnd.Next(5));
@@ -417,16 +426,24 @@ public static class RptScen
                 {
                     var s = baseT.AddMinutes(rnd.Next(0, 600)); var e = s.AddMinutes(5 + rnd.Next(0, 240));
                     int worked = rnd.Next(3) == 0 ? rnd.Next(0, 61) : 0;
-                    if (rnd.Next(3) == 0) A(db, w, codes[rnd.Next(codes.Length)], s, e, rnd.Next(2) == 0 ? ca : null, worked);
-                    else P(db, w, "M" + rnd.Next(1, 4), rnd.Next(4) == 0 ? "trial" : "serial", s, e, rnd.Next(0, 20), rnd.Next(0, 2), "NC" + rnd.Next(1, 3), ca, worked);
+                    long? xw = null, xa = null;
+                    if (rnd.Next(3) == 0) xa = A(db, w, codes[rnd.Next(codes.Length)], s, e, rnd.Next(2) == 0 ? ca : null, worked).ActivityLogId;
+                    else xw = P(db, w, "M" + rnd.Next(1, 4), rnd.Next(4) == 0 ? "trial" : "serial", s, e, rnd.Next(0, 20), rnd.Next(0, 2), "NC" + rnd.Next(1, 3), ca, worked).WtsLogId;
+                    // [WTS-1NGUON] phát sinh ngẫu nhiên (0–2 mục, mã có ích / vô ích / lạ / trống, phút 0–90 — có khi vượt phút dòng)
+                    for (int x = rnd.Next(4) == 0 ? 1 + rnd.Next(2) : 0; x > 0; x--)
+                        db.WtsExtraItems.List.Add(new WtsExtraItemLog { Id = ++exId, WtsLogId = xw, ActivityLogId = xa, WtsCode = rnd.Next(5) == 0 ? null : codes[rnd.Next(codes.Length)], Minutes = rnd.Next(0, 91) });
                 }
             }
             db.Fixup();
             var f = DateOnly.FromDateTime(D1); var t = f.AddDays(5);
             var res = await new WtsReportService(db).GetReportAsync(f, t, null, 1);
             // ── đếm từng phút độc lập ──
-            var proCodes = db.StandardWtsTasks.List.Where(x => !x.IsProductiveTask).Select(x => x.TaskCode.ToUpperInvariant()).ToHashSet();
-            int totAll = 0, totPro = 0;
+            int totAll = 0, totPro = 0, totWas = 0, totNc = 0;
+            var gcT = db.StandardWtsTasks.List.FirstOrDefault(x => x.IsGcTask);
+            // [WTS-1NGUON] đáp án độc lập: loại theo cờ mã (so tay, không gọi hàm của service)
+            int CodeKind(string? c) { var t0 = db.StandardWtsTasks.List.FirstOrDefault(x => string.Equals(x.TaskCode, (c ?? "").Trim(), StringComparison.OrdinalIgnoreCase)); return t0 == null || string.IsNullOrWhiteSpace(c) ? 2 : t0.IsProductiveTask ? 0 : 1; }
+            int OracleKind(WtsReportRow r) => r.RowType == WtsRowType.Activity ? CodeKind(db.WorkerActivityLogs.List.First(a => a.ActivityLogId == r.ActivityLogId).WtsCode)
+                : gcT == null ? 2 : gcT.IsProductiveTask ? 0 : 1;
             // phút làm của từng người trên MỌI dòng (phủ "chưa khai báo" xét mọi dòng chạm khung ca — rà độc lập 21/11 Cao 1)
             var wMins = new Dictionary<int, HashSet<DateTime>>();
             foreach (var r in res.Rows)
@@ -446,12 +463,15 @@ public static class RptScen
             }
             foreach (var g in res.Rows.GroupBy(r => (r.WorkerId, r.WorkDate)))
             {
-                var mins = new Dictionary<DateTime, (bool any, bool pro)>();
+                // [WTS-1NGUON] đáp án ĐỘC LẬP (thuật toán khác service): ghép TỪNG PHÚT với PHẦN (phần dòng + mục phát sinh, sức chứa phút), ưu tiên
+                //   có ích > vô ích > chưa có mã — từng lượt tìm đường tăng ghép theo đơn vị phút (service dùng khoảng giờ + luồng thực).
+                var mins = new HashSet<DateTime>();
                 var normal = new HashSet<DateTime>();   // [G30] phút ngoài nghỉ của ít nhất 1 dòng → làm thông nghỉ = phút làm − phút ngoài nghỉ
                 var own = new Dictionary<WtsReportRow, int>();
+                var slotsOf = new Dictionary<WtsReportRow, List<DateTime>>();
                 foreach (var r in g)
                 {
-                    int c = 0;
+                    var sl = new List<DateTime>();
                     for (var m = r.StartTime; m < r.EndTime; m = m.AddMinutes(1))
                     {
                         bool inBrk = false, inChunk = false;
@@ -463,19 +483,62 @@ public static class RptScen
                         }
                         if (inBrk && !inChunk) continue;
                         if (!inBrk) normal.Add(m);
-                        c++;
-                        mins.TryGetValue(m, out var v);
-                        mins[m] = (true, v.pro || r.IsProductiveTask);
+                        sl.Add(m); mins.Add(m);
                     }
-                    own[r] = c;
+                    own[r] = sl.Count; slotsOf[r] = sl;
                 }
-                int dAll = mins.Count, dPro = mins.Values.Count(v => v.pro);
-                totAll += dAll; totPro += dPro;
+                int dAll = mins.Count;
+                // phần: (dòng, loại, sức chứa, là phát sinh)
+                var pts = new List<(WtsReportRow R, int K, int Cap, bool Ex)>();
+                foreach (var r in g)
+                {
+                    int left = own[r];
+                    var exs = db.WtsExtraItems.List.Where(x => x.Minutes > 0 && ((r.WtsLogId != null && x.WtsLogId == r.WtsLogId) || (r.ActivityLogId != null && x.ActivityLogId == r.ActivityLogId))).OrderBy(x => x.Id).ToList();
+                    var ex = new List<(WtsReportRow, int, int, bool)>();
+                    foreach (var x in exs) { int c = Math.Min(x.Minutes, left); left -= c; ex.Add((r, CodeKind(x.WtsCode), c, true)); }
+                    pts.Add((r, OracleKind(r), left, false)); pts.AddRange(ex);
+                }
+                var slotPart = new Dictionary<DateTime, int>(); var load = new int[pts.Count];
+                var cover = mins.ToDictionary(m => m, m => Enumerable.Range(0, pts.Count).Where(pi => slotsOf[pts[pi].R].Contains(m)).ToList());
+                for (int kk = 0; kk <= 2; kk++)
+                    foreach (var m0 in mins.OrderBy(x => x).Where(x => !slotPart.ContainsKey(x)).ToList())
+                    {
+                        var prevP = new Dictionary<int, DateTime>(); var prevS = new Dictionary<DateTime, int>(); var q = new Queue<DateTime>(); q.Enqueue(m0); prevS[m0] = -1; int end = -1;
+                        while (q.Count > 0 && end < 0)
+                        {
+                            var m = q.Dequeue();
+                            foreach (var pi in cover[m])
+                            {
+                                if (pts[pi].K > kk || prevP.ContainsKey(pi)) continue;
+                                prevP[pi] = m;
+                                if (load[pi] < pts[pi].Cap) { end = pi; break; }
+                                foreach (var m2 in slotPart.Where(x => x.Value == pi).Select(x => x.Key)) if (!prevS.ContainsKey(m2)) { prevS[m2] = pi; q.Enqueue(m2); }
+                            }
+                        }
+                        if (end < 0) continue;
+                        load[end]++;
+                        for (int pp = end; ; ) { var m = prevP[pp]; var pOld = prevS[m]; slotPart[m] = pp; if (pOld == -1) break; pp = pOld; }
+                    }
+                int ePro = 0, eWas = 0, eNc = 0;
+                foreach (var kv in slotPart) { var k0 = pts[kv.Value].K; if (k0 == 0) ePro++; else if (k0 == 1) eWas++; else eNc++; }
+                Ok(slotPart.Count == dAll, $"P2 r{round} đáp án: mọi phút làm ghép được 1 phần", $"{slotPart.Count}/{dAll}");
                 Ok(g.Sum(r => r.AllocMin) == dAll, $"P2 r{round} người {g.Key.WorkerId} {g.Key.WorkDate}: Σ chia = phút làm {dAll}", $"{g.Sum(r => r.AllocMin)}");
-                Ok(g.Where(r => r.IsProductiveTask).Sum(r => r.AllocMin) == dPro, $"P2 r{round} Σ chia dòng có ích = phút có ích {dPro}", $"{g.Where(r => r.IsProductiveTask).Sum(r => r.AllocMin)}");
+                var gotK = new int[3]; foreach (var r in g) foreach (var pp in r.Parts) gotK[(int)pp.Kind] += pp.Min;
+                Ok(gotK[0] == ePro && gotK[1] == eWas && gotK[2] == eNc, $"P2 r{round} [WTS-1NGUON] Σ phần theo loại = đếm phút ghép ưu tiên {ePro}/{eWas}/{eNc}", $"{gotK[0]}/{gotK[1]}/{gotK[2]}");
+                foreach (var r in g)
+                {
+                    var capEx = pts.Where(x => x.R == r && x.Ex).Select(x => x.Cap).ToList();
+                    var gotEx = r.Parts.Where(pp => pp.IsExtra).ToList();
+                    bool exOk = gotEx.All(pp => pp.Min <= pp.ReqMin) && gotEx.Sum(pp => pp.Min) <= capEx.Sum() && r.Parts.Count > 0 && !r.Parts[0].IsExtra && (int)r.Parts[0].Kind == OracleKind(r)
+                        && r.Parts[0].Min <= pts.First(x => x.R == r && !x.Ex).Cap;
+                    Ok(r.Parts.Sum(pp => pp.Min) == r.AllocMin && exOk, $"P2 r{round} [WTS-1NGUON] dòng {r.WtsLogId}{r.ActivityLogId}: Σ phần = chia {r.AllocMin}, mỗi phần ≤ sức chứa",
+                        string.Join(",", r.Parts.Select(pp => $"{pp.Kind}:{pp.Min}/{pp.ReqMin}")) + " cap " + string.Join(",", pts.Where(x => x.R == r).Select(x => x.Cap)));
+                }
+                totAll += dAll; totPro += ePro; totWas += eWas; totNc += eNc;
                 Ok(g.All(r => r.AllocMin >= 0 && r.AllocMin <= own[r]), $"P2 r{round} mỗi dòng 0 ≤ chia ≤ phút làm của dòng", string.Join(",", g.Select(r => $"{r.AllocMin}/{own[r]}")));
                 var d = res.Days.FirstOrDefault(x => x.WorkerId == g.Key.WorkerId && x.Day == g.Key.WorkDate);
-                Ok(d != null && d.WorkMin == dAll && d.ProductiveMin == dPro && d.WasteMin == dAll - dPro, $"P2 r{round} người-ngày {g.Key.WorkerId} {g.Key.WorkDate}: số ngày = đếm phút");
+                Ok(d != null && d.WorkMin == dAll && d.ProductiveMin == ePro && d.WasteMin == eWas && d.NoCodeMin == eNc && ePro + eWas + eNc == dAll,
+                    $"P2 r{round} người-ngày {g.Key.WorkerId} {g.Key.WorkDate}: số ngày = đếm phút (ghép ưu tiên theo phần) {ePro}/{eWas}/{eNc}", $"{d?.ProductiveMin}/{d?.WasteMin}/{d?.NoCodeMin}");
                 Ok(d != null && d.BreakWorkedMin == dAll - normal.Count, $"P2 r{round} [G30] làm thông nghỉ người-ngày = đếm phút {dAll - normal.Count}", $"{d?.BreakWorkedMin}");
                 // kế hoạch / chưa khai báo: ca = ca nhiều phút nhất trên dòng sản xuất; [G30] không có → ca khoảng nghỉ đã lưu nhiều dòng nhất
                 var caId = g.Where(r => r.CaId != null).GroupBy(r => r.CaId!.Value).Select(x => (x.Key, x.Sum(r => r.Minutes))).OrderByDescending(x => x.Item2).ThenBy(x => x.Key).Select(x => (int?)x.Key).FirstOrDefault();
@@ -498,7 +561,8 @@ public static class RptScen
                 Ok(d!.PlanMin == plan && d.UnaccountedMin == gap, $"P2 r{round} ca {caId}: kế hoạch {plan}, chưa khai báo {gap}", $"{d.PlanMin}/{d.UnaccountedMin}");
                 Ok(d.BaseMin == dAll + gap && d.ProductiveMin <= d.BaseMin, $"P2 r{round} [G30] giờ chuẩn = làm {dAll} + chưa khai báo {gap}", $"{d.BaseMin}");
             }
-            Ok(res.TotalMinutes == totAll && res.ProductiveMin == totPro, $"P2 r{round} tổng cũ (TotalMinutes / ProductiveMin) = đếm phút", $"{res.TotalMinutes}/{totAll} {res.ProductiveMin}/{totPro}");
+            Ok(res.TotalMinutes == totAll && res.ProductiveMin == totPro && res.WasteMin == totWas && res.NoCodeMin == totNc, $"P2 r{round} tổng (TotalMinutes / có ích / vô ích / chưa có mã) = đếm phút",
+                $"{res.TotalMinutes}/{totAll} {res.ProductiveMin}/{totPro} {res.WasteMin}/{totWas} {res.NoCodeMin}/{totNc}");
         }
         Say(fails == bad0, $"P2 6 vòng × 50 người-ngày ngẫu nhiên (seed {seed}): chia phút / có ích / kế hoạch / chưa khai báo khớp đếm từng phút");
     }
@@ -512,7 +576,7 @@ public static class RptScen
         int bad0 = fails;
         for (int round = 0; round < 4; round++)
         {
-            var db = await WtsScen.SeedAsync();
+            var db = await SeedGc();
             var ca = AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
             for (int m = 1; m <= 3; m++) db.ThietBis.List.Add(new ThietBi { ThietBiId = m, SoMay = "M" + m, BoPhan = "GC", IsActive = true, TenMay = "Máy " + m });
             var used = new HashSet<DateOnly>();
@@ -587,7 +651,7 @@ public static class RptScen
     static async Task P4()
     {
         Console.WriteLine("[P4] HSM-QUYEN / RPT-4 — không quyền → rỗng; khoảng sai → lời báo");
-        var db = await WtsScen.SeedAsync();
+        var db = await SeedGc();
         var ca = AddCa(db, 9, new TimeOnly(8, 0), new TimeOnly(17, 0), (12, 0, 13, 0));
         db.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
         P(db, 2, "M1", "serial", D1.AddHours(8), D1.AddHours(9), 5, 0, "NC1", 9);
@@ -606,7 +670,7 @@ public static class RptScen
         Say(rN.Rows.Count == 0 && rN.Days.Count == 0, "P4 WTS Report: không quyền → không dòng, không người-ngày");
 
         // P4b dòng vắt qua nửa đêm (24h): dòng chạm 2 ngày → OK / NG chỉ tính 1 lần (ngày bắt đầu); phút chạy chia đúng 2 ngày
-        var db2 = await WtsScen.SeedAsync();
+        var db2 = await SeedGc();
         db2.ThietBis.List.Add(new ThietBi { ThietBiId = 1, SoMay = "M1", BoPhan = "GC", IsActive = true });
         P(db2, 2, "M1", "serial", D1.AddHours(23), D2.AddHours(1), 7, 1, "NC1", null);
         P(db2, 3, "M1", "serial", D2.AddHours(8), D2.AddHours(9), 3, 0, "NC1", null);
