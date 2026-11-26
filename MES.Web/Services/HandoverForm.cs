@@ -729,6 +729,37 @@ namespace MES.Web.Services
         public const string LblSua = "Sửa tại bộ phận mình / XXN KH", LblNho = "Gửi bộ phận khác sửa", LblTra = "Trả nơi làm lỗi",
                             LblGiu = "Giữ lại, xử lý sau", LblHuy = "Huỷ", LblKhach = "Trả khách";
 
+        // ── [D6-LS-VIEC 2026-11-26] Lịch sử phiếu: chữ "việc" theo tên nút mới (mockup dòng 6 — khách tích Đúng 23/11: "Ô vàng: chữ đổi theo nút mới").
+        //   Chỉ hiển thị (không đổi sổ / số / luật). Phiếu không thuộc 6 nút (Hàng mới, giao / trả theo NC, Kho giao thẳng Taro, phôi bù theo mã vụ…) → null = giữ chữ cũ.
+        //   Nguồn: KHÁCH 23/11 (mockup D6); HÙNG 26/11 13:20 "sửa nốt phần việc khách chốt" + 13:23 OK bản em hiểu G-G.
+        public const string LblSuaDat = "Sửa đạt — trả nơi báo lỗi", LblSuaChuaDat = "Sửa chưa đạt — trả nơi làm lỗi";
+
+        /// <summary>[D6-LS-VIEC] Chữ "việc" của 1 phiếu ở Lịch sử theo tên nút mới; null = giữ chữ cũ.
+        /// <paramref name="fromCell"/> = ô bên giao (đã suy cho phiếu cũ), <paramref name="toCell"/> = ô bên giao chỉ định (ô ghi thô — LOIV / XLBU giữ nguyên; null = theo loại phiếu).</summary>
+        public static string? LogViec(string? purpose, string? fromCell, string? toCell, bool autoNg = false)
+        {
+            // [D6-LS-VIEC rà độc lập T1 T2 L1 L2] chỉ đổi chữ khi chắc nghĩa theo nút; phiếu kiểu cũ (trả nơi gửi) / phiếu tự lập NG lúc nhận giữ chữ cũ
+            if (HandoverCell.IsTraVe(toCell)) return LblSuaChuaDat;                       // phần mềm tự trả chiếc "Sửa chưa đạt" (N18)
+            if (HandoverCell.IsBuVu(toCell)) return null;                                  // phôi khách gửi bù theo mã vụ (N19) — giữ chữ
+            var tc = toCell ?? HandoverCell.ReceiveCellOf(purpose ?? "");
+            switch (purpose)
+            {
+                case HandoverPurpose.NgReturn: return autoNg ? null : LblTra;              // Hàng lỗi công đoạn trước; phiếu tự lập NG lúc nhận (có thể trả nơi gửi) — giữ chữ + nhãn "tự lập"
+                case HandoverPurpose.RepairSend:
+                    return tc == HandoverCell.Sua ? LblNho                                 // gửi nhờ sửa: ô Hàng lỗi → ô Hàng sửa
+                         : tc == HandoverCell.Loi ? LblTra                                 // Trả nơi làm lỗi từ Tồn hàng lỗi (ô Hàng lỗi → ô Hàng lỗi)
+                         : null;
+                case HandoverPurpose.RepairReturn:
+                    if (fromCell == HandoverCell.Sua && tc == HandoverCell.Sua) return LblNho;   // chuyển tiếp nhờ bộ phận khác sửa (ô Hàng sửa → ô Hàng sửa)
+                    if (fromCell == HandoverCell.Xl && tc == HandoverCell.Xl) return LblSuaDat;  // "Sửa đạt → giao đến" / giao tiếp hàng đã sửa về nơi báo lỗi
+                    if (fromCell == HandoverCell.Xl && tc == HandoverCell.Loi) return LblTra;    // hàng đã sửa hỏng lại: nút "Trả nơi làm lỗi"
+                    return null;                                                           // kiểu cũ: "Sửa xong, trả nơi gửi" / "chưa sửa được, trả nơi gửi" / tự sửa xong — giữ chữ
+                case HandoverPurpose.Scrap:      return LblHuy;
+                case HandoverPurpose.CustReturn: return LblKhach;
+                default: return null;
+            }
+        }
+
         public record FormBtn(string Code, string Label, bool On, string Why);
 
         /// <summary>[XL-TRA-NOILOI] Mặc định trả lại hàng đã sửa bị hỏng lại = bộ phận làm lỗi (không trả được thì nhóm đầu trong danh sách được trả). Chuyển từ GiaoXuLyModal (N23).</summary>

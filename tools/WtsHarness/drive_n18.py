@@ -9,6 +9,7 @@
 #   STEP D Lịch sử phiếu: phiếu tự trả ghi "Giao · Hàng Sửa (sửa chưa đạt — phần mềm tự trả nơi làm lỗi)", nhận vào ô Hàng lỗi, không báo đổi ô (rà độc lập T1)
 #   Bản cũ (97aa1bb, trước G-E) phải SAI từ STEP A (không có cột).
 # Chạy trên harness VỪA khởi động: python3 drive_n18.py <port> <old|new>
+# [D6-LS-VIEC 2026-11-26] đáp án đổi theo khách (mockup dòng 6, tích Đúng 23/11): Lịch sử phiếu ghi việc theo tên nút mới — chữ ô cũ chuyển vào chú thích rê chuột.
 import sys, asyncio, json, re, urllib.request
 from playwright.async_api import async_playwright
 PORT = sys.argv[1]; OUT = sys.argv[2]
@@ -102,13 +103,14 @@ async def main():
         await row(pg).locator("button[title='Lịch sử phiếu']").first.click(); await pg.wait_for_timeout(2500)
         t = await modal(pg).inner_text()
         # chỉ xét khối của phiếu tự trả (từ dòng '#NN' trước nhãn tới dòng '#NN' kế) — phiếu Kho gửi sửa cũng nằm trong modal, nhận vào ô Hàng sửa là đúng
-        lines = t.split("\n"); lab = "Giao · Hàng Sửa (sửa chưa đạt — phần mềm tự trả nơi làm lỗi)"
+        lines = t.split("\n"); lab = "Sửa chưa đạt — trả nơi làm lỗi"   # [D6-LS-VIEC] đáp án đổi theo khách (Lịch sử: chữ theo nút)
         idx = next((i for i, x in enumerate(lines) if lab in x), -1)
-        st = max((i for i in range(0, idx + 1) if re.match(r"^#\d+$", lines[i].strip())), default=idx) if idx >= 0 else 0
-        en = next((i for i in range(idx + 1, len(lines)) if re.match(r"^#\d+$", lines[i].strip())), len(lines)) if idx >= 0 else 0
+        # [D6-LS-VIEC 26/11] số phiếu '#NN' có thể nằm cùng dòng với nhãn (inner_text gộp các nhãn trên 1 dòng) → khối = từ dòng nhãn tới dòng kế bắt đầu bằng '#số'
+        st = max((i for i in range(0, idx + 1) if re.match(r"^#\d+", lines[i].strip())), default=idx) if idx >= 0 else 0
+        en = next((i for i in range(idx + 1, len(lines)) if re.match(r"^#\d+", lines[i].strip())), len(lines)) if idx >= 0 else 0
         blk = "\n".join(lines[st:en])
         ok(idx >= 0 and "nhận vào ô Hàng lỗi" in blk and "nhận thật" not in blk and "nhận vào ô Hàng sửa" not in blk,
-           "D1 Lịch sử phiếu: nhãn 'Giao · Hàng Sửa (sửa chưa đạt — phần mềm tự trả nơi làm lỗi)', ô nhận Hàng lỗi, không có '(nhận thật: …)' / 'nhận vào ô Hàng sửa' (khối phiếu tự trả)", blk[:800] or t[:800])
+           "D1 Lịch sử phiếu: nhãn 'Sửa chưa đạt — trả nơi làm lỗi' [D6-LS-VIEC], ô nhận Hàng lỗi, không có '(nhận thật: …)' / 'nhận vào ô Hàng sửa' (khối phiếu tự trả)", blk[:800] or t[:800])
         ok("nhận thật" not in t, "D2 cả modal không có '(nhận thật: …)' (không báo nhầm đổi ô)", t[:800])
         await b.close()
     print(f"KẾT QUẢ drive_n18 ({OUT}): " + ("ĐẠT hết" if fails == 0 else f"{fails} SAI"))

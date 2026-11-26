@@ -442,6 +442,45 @@ public static partial class SuaScen
                "KCS đếm NG lúc nhận phôi Kho giao thẳng: vụ CHƯA QUA Gia công (phôi bù đi như phôi thường)", $"{g2.Error}|{n2.Error} vụ {v2}");
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        Console.WriteLine("[G11] [D6-LS-VIEC] Lịch sử phiếu: chữ việc theo tên nút mới (mockup dòng 6) — bảng đáp án độc lập mọi loại phiếu");
+        {
+            const string Tra = "Trả nơi làm lỗi", Nho = "Gửi bộ phận khác sửa", Dat = "Sửa đạt — trả nơi báo lỗi", Chua = "Sửa chưa đạt — trả nơi làm lỗi";
+            var P = HandoverPurpose.New;   // tránh cảnh báo
+            var cases = new (string Ten, string? Pur, string? From, string? To, string? Exp)[]
+            {
+                ("Hàng lỗi công đoạn trước (Gia công → Kho)",        HandoverPurpose.NgReturn,    HandoverCell.Loi, HandoverCell.Loi, Tra),
+                ("phiếu tự lập NG lúc nhận — giữ chữ cũ (rà T2)",     HandoverPurpose.NgReturn,    HandoverCell.Loi, null,             null),
+                ("gửi nhờ sửa ô Hàng lỗi → Hàng sửa",                HandoverPurpose.RepairSend,  HandoverCell.Loi, HandoverCell.Sua, Nho),
+                ("gửi sửa phiếu cũ (ô không ghi → Hàng sửa)",        HandoverPurpose.RepairSend,  HandoverCell.Loi, null,             Nho),
+                ("Trả nơi làm lỗi từ Tồn hàng lỗi (Loi → Loi)",      HandoverPurpose.RepairSend,  HandoverCell.Loi, HandoverCell.Loi, Tra),
+                ("phần mềm tự trả chiếc Sửa chưa đạt (LOIV)",        HandoverPurpose.RepairSend,  HandoverCell.Loi, HandoverCell.LoiVe, Chua),
+                ("tự sửa xong ô Hàng lỗi → Hàng lỗi đã xử lý (cũ)",   HandoverPurpose.RepairReturn, HandoverCell.Loi, HandoverCell.Xl, null),
+                ("chuyển tiếp nhờ sửa ô Hàng sửa → Hàng sửa",        HandoverPurpose.RepairReturn, HandoverCell.Sua, HandoverCell.Sua, Nho),
+                ("Sửa xong, trả nơi gửi Sua → Xl (cũ, rà T1)",        HandoverPurpose.RepairReturn, HandoverCell.Sua, HandoverCell.Xl, null),
+                ("phiếu cũ trả hàng đã sửa (ô không ghi)",           HandoverPurpose.RepairReturn, HandoverCell.Sua, null,             null),
+                ("chưa sửa được, trả nơi gửi Sua → Loi (cũ, rà L2)",  HandoverPurpose.RepairReturn, HandoverCell.Sua, HandoverCell.Loi, null),
+                ("hàng đã sửa giao tiếp nơi báo lỗi (Xl → Xl)",      HandoverPurpose.RepairReturn, HandoverCell.Xl,  HandoverCell.Xl, Dat),
+                ("hàng đã sửa hỏng lại: nút Trả nơi làm lỗi (Xl → Loi)", HandoverPurpose.RepairReturn, HandoverCell.Xl, HandoverCell.Loi, Tra),
+                ("Huỷ",                                              HandoverPurpose.Scrap,       HandoverCell.Loi, null,             "Huỷ"),
+                ("Trả khách",                                        HandoverPurpose.CustReturn,  HandoverCell.Loi, null,             "Trả khách"),
+                ("Hàng mới — giữ chữ cũ",                            HandoverPurpose.New,         HandoverCell.Moi, HandoverCell.Moi, null),
+                ("Kho sửa → Hàng mới (New) — giữ chữ cũ",            HandoverPurpose.New,         HandoverCell.Moi, null,             null),
+                ("phôi khách gửi bù theo mã vụ (XLBU) — giữ chữ cũ", HandoverPurpose.New,         HandoverCell.Moi, HandoverCell.BuVu, null),
+                ("giao theo NC — giữ chữ cũ",                        HandoverPurpose.HelpSend,    HandoverCell.Moi, null,             null),
+                ("trả về Gia công theo NC — giữ chữ cũ",             HandoverPurpose.HelpReturn,  HandoverCell.Moi, null,             null),
+                ("trả lỗi hàng làm hộ — giữ chữ cũ",                 HandoverPurpose.HelpReturn,  HandoverCell.Loi, HandoverCell.Loi, null),
+                ("phiếu cũ không loại (purpose null) — giữ chữ cũ",  null,                        null,             null,             null),
+            };
+            Ok(HandoverForm.LogViec(HandoverPurpose.NgReturn, HandoverCell.Loi, HandoverCell.Loi) == Tra, "G11 Hàng lỗi công đoạn trước người lập (autoNg mặc định false): Trả nơi làm lỗi");
+            foreach (var c in cases)
+            {
+                var got = HandoverForm.LogViec(c.Pur, c.From, c.To, c.Ten.StartsWith("phiếu tự lập"));
+                Ok(got == c.Exp, $"G11 {c.Ten}: \"{c.Exp ?? "(giữ chữ cũ)"}\"", $"được \"{got ?? "(null)"}\"");
+            }
+            _ = P;
+        }
+
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }

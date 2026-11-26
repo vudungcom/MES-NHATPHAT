@@ -866,16 +866,20 @@ else
                     var lp = LogPurpose(tx);
                     var sc = HandoverCell.IssueCellOf(lp, tx.FromCell);
                     var rcl = tx.ToCell ?? HandoverCell.ReceiveCellOf(lp);   // [LS-THOIGIAN] ô bên giao chỉ định (phiếu trả lại chưa sửa được: Hàng lỗi — trước luôn ghi Hàng lỗi đã xử lý)
+                    var rawTo = tx.TraVe ? HandoverCell.LoiVe : tx.BuVu ? HandoverCell.BuVu : tx.ToCell;   // [D6-LS-VIEC] ô chỉ định thô (LOIV / XLBU)
+                    var cfl = CellFlow(lp, sc, rawTo);
+                    var viec = HandoverForm.LogViec(lp, sc, rawTo, tx.SourceReceiveId != null);
                     <div class="border-bottom p-3 @(tx.IsVoided ? "bg-light" : "")" style="order:@OrdTx(tx.HandoverTxId)">
                         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                             <span class="small text-muted">#@tx.HandoverTxId</span>
                             <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
                                 @HandoverLedgerService.GroupLabel(tx.FromGroupCode) → @HandoverLedgerService.GroupLabel(tx.ToGroupCode)
                             </span>
-                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.TraVe ? HandoverCell.LoiVe : tx.BuVu ? HandoverCell.BuVu : tx.ToCell)</span>   @* [N18-TRAVE rà độc lập T1] *@
+                            @* [D6-LS-VIEC 2026-11-26] chữ việc theo tên nút mới (mockup dòng 6); chữ ô cũ để ở chú thích khi rê chuột. Nguồn: KHÁCH 23/11 (D6); HÙNG 26/11 13:23 *@
+                            <span class="badge @PurposeBadge(lp)" title="@cfl">@(viec ?? cfl)</span>   @* [N18-TRAVE rà độc lập T1] *@
                             @if (rcl != null && !HandoverPurpose.IsOut(lp))
                             {
-                                <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
+                                <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong>@(LogNcLoi(tx, lp))</span>
                                 @* [G19-HUYHIEU-NHAN 2026-11-12] (ghi nhớ rà độc lập Gói 19 Thấp 3) bên nhận đổi ô → huy hiệu ghi thêm ô nhận thật (bảng lần nhận bên dưới vẫn như cũ). Nguồn: CLAUDE rà độc lập Gói 19 12/11; HÙNG 12/11 20:02 *@
                                 var realCells = RealRecvCellsText(tx, rcl);
                                 if (realCells != "")
@@ -2379,6 +2383,11 @@ else
     static string OkHint(bool loi, decimal max) => loi ? "Nhận vào ô Hàng lỗi — không có hàng đạt" : $"Tối đa: {max:0.##} chiếc";
     static string NgLabel(bool loi) => loi ? "Hàng lỗi nhận" : "NG đếm thấy";
     static string NgSub(bool loi, decimal max) => loi ? $"(tối đa {max:0.##})" : "(tự lập phiếu trả bên giao)";
+
+    /// <summary>[D6-LS-VIEC 2026-11-26] Lịch sử: phiếu "Trả nơi làm lỗi" của Gia công ghi NC phát hiện (mockup D6 "— lỗi công đoạn trước ở NC 1"). Chỉ hiển thị.</summary>
+    static string LogNcLoi(HandoverLogItem tx, string lp)
+        => lp == HandoverPurpose.NgReturn && tx.SourceReceiveId == null && tx.FromGroupCode == "GC" && !string.IsNullOrWhiteSpace(tx.FromNC) && !HandoverLedgerService.IsVao(tx.FromNC)
+            ? $" — lỗi công đoạn trước ở {HandoverLedgerService.NcText(tx.FromNC)}" : "";   // [D6-LS-VIEC rà độc lập L6] NcText như dòng "từ NC …"
 
     static string LogPurpose(HandoverLogItem t)
         => t.Purpose ?? (t.IsReturnNg ? HandoverPurpose.NgReturn : HandoverPurpose.New);

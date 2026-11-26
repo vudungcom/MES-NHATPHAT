@@ -14,6 +14,7 @@
 #     V1 PO-G20F (Workflow OFF, có ô âm) → khung ghi "PO tắt Workflow — ô âm có thể do nhập / giao vượt (chỉ cảnh báo, không chặn)" (trước: không nói, chỉ "có ô âm")
 #     V3 PO-G20G (Workflow OFF nhưng cân, không ô âm) → không có chữ đó · V5 PO-G20L (OFF, khung lệch, không ô âm — ghi thẳng DB) → đỏ "lệch", không chữ đó · V4 PO-G20H (ô âm từ lúc OFF, nay ON) → "có ô âm", không chữ đó · V2 PO-G20 (Workflow ON) → không có chữ đó
 # Chạy trên harness VỪA khởi động: python3 drive_g20.py <port> <nhãn>   (bản Gói 19 486fa57 phải SAI ở L11 / V1; L8–L10, L12, L13 = ca kiểm mới, bản cũ cũng ĐẠT)
+# [D6-LS-VIEC 2026-11-26] đáp án đổi theo khách (mockup dòng 6, tích Đúng 23/11): Lịch sử phiếu ghi việc theo tên nút mới — chữ ô cũ chuyển vào chú thích rê chuột.
 import sys, asyncio, json, re, urllib.request
 from playwright.async_api import async_playwright
 PORT = sys.argv[1]; OUT = sys.argv[2]
@@ -83,7 +84,7 @@ async def main():
                f"L10 lọc {sd['v1']} → {sd['nV1']} mục gồm 2 phiếu bù, mục nào cũng có mã vụ đó", it1)
             ok(it2 is not None and len(it2) == sd["nV2"] and not any(x.startswith("Phiếu bù") for x in it2),
                f"L10b lọc vụ khác → {sd['nV2']} mục, không phiếu bù nào", it2)
-            doi = [x for x in items if "gửi nhờ sửa" in x and "giữ ô hàng lỗi chờ xem" in x]
+            doi = [x for x in items if "Gửi bộ phận khác sửa" in x and "giữ ô hàng lỗi chờ xem" in x]
             huy = [x for x in items if "phieu-huy-nhan" in x]
             lan = [x for x in items if "phieu-nhan-lan" in x]
             hdo = [x for x in items if "phieu-huy-dung-o" in x]
@@ -97,12 +98,12 @@ async def main():
                "L11c nhận lẫn ô (1 đúng ô Hàng sửa + 1 đổi ô Hàng lỗi) → \"(có lần nhận vào ô Hàng lỗi)\", không ghi \"nhận thật\"", lan)
             ok(len(hdo) == 1 and "(nhận thật: ô Hàng lỗi)" in hdo[0] and "có lần nhận vào" not in hdo[0],
                "L11d lần nhận đúng ô đã HUỶ, lần còn hiệu lực đổi ô Hàng lỗi → \"(nhận thật: ô Hàng lỗi)\" (không \"có lần nhận vào\")", hdo)
-            dat = [x for x in items if "Giao · Hàng lỗi đã xử lý (đã sửa đạt)" in x]
+            dat = [x for x in items if "Sửa đạt — trả nơi báo lỗi" in x and "nhận vào ô Hàng lỗi đã xử lý" in x and ("Gia công → HTSP" in x or "HTSP → KCS" in x)]
             ok(len(dat) == 2 and any("Gia công → HTSP" in x for x in dat) and any("HTSP → KCS" in x for x in dat) and all("nhận vào ô Hàng lỗi đã xử lý" in x for x in dat),
-               "L12 Gia công → HTSP và HTSP → KCS từ ô Hàng lỗi đã xử lý: nhãn \"Hàng lỗi đã xử lý (đã sửa đạt)\", nhận vào ô Hàng lỗi đã xử lý", [x for x in items if "đã xử lý" in x][:4])
-            tl = [x for x in items if "Giao · Hàng lỗi đã xử lý (trả lại — chưa đạt)" in x]
+               "L12 Gia công → HTSP và HTSP → KCS từ ô Hàng lỗi đã xử lý: nhãn \"Sửa đạt — trả nơi báo lỗi\" [D6-LS-VIEC], nhận vào ô Hàng lỗi đã xử lý", [x for x in items if "đã xử lý" in x][:4])
+            tl = [x for x in items if "Trả nơi làm lỗi" in x and "HTSP → Gia công" in x]   # [D6-LS-VIEC rà L1] hàng đã sửa hỏng lại: nút "Trả nơi làm lỗi"
             ok(len(tl) == 1 and "HTSP → Gia công" in tl[0] and re.search(r"nhận vào ô Hàng lỗi(?! đã xử lý)", tl[0]) is not None and "nhận vào ô Hàng lỗi đã xử lý" not in tl[0],
-               "L13 HTSP trả lại Gia công từ ô Hàng lỗi đã xử lý: nhãn \"Hàng lỗi đã xử lý (trả lại — chưa đạt)\", nhận vào ô Hàng lỗi", [x for x in items if "trả lại" in x][:3])
+               "L13 HTSP trả lại Gia công từ ô Hàng lỗi đã xử lý: nhãn \"Trả nơi làm lỗi\" [D6-LS-VIEC], nhận vào ô Hàng lỗi", [x for x in items if "trả lại" in x][:3])
         except Exception as e:
             ok(False, "L! pha [L] dừng giữa chừng — lỗi bấm trang", repr(e)[:400])
 
