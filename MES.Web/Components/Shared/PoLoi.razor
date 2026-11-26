@@ -179,6 +179,8 @@
             "PS"    => $"{g} phát hiện {h.Qty:0.##}" + (string.IsNullOrEmpty(h.Other) || h.Other == h.Group ? "" : " · do " + HandoverNgSource.CauseLabel(h.Other)) + cell,
             "GIAO" when h.TraVe => $"{g} sửa chưa đạt {h.Qty:0.##} — phần mềm tự trả {o}",   // [N18-TRAVE] Cách Y
             "NHAN" when h.TraVe => $"{g} nhận lại {h.Qty:0.##} từ {o} (hàng sửa trả về chưa đạt — chiếc lỗi cũ, không tính lỗi mới)" + cell,   // [N18-TRAVE]
+            "BUGIAO" => $"{g} giao {o} {h.Qty:0.##} phôi khách gửi bù theo mã vụ (ô Hàng lỗi đã xử lý, làm từ NC đầu)",   // [N19-BU-VU 2026-11-26] rà độc lập L2
+            "BUNHAN" => $"{g} nhận {h.Qty:0.##} phôi khách gửi bù từ {o}" + cell + " — vụ đã bù xong phần này",   // [N19-BU-VU]
             "GIAO"  => $"{g} giao {h.Qty:0.##} → {o}" + cell,
             "NHAN"  => $"{g} nhận {h.Qty:0.##} từ {o}" + cell,
             "TRA"   => $"{g} nhận lại {h.Qty:0.##} (NG lúc {o} nhận)",

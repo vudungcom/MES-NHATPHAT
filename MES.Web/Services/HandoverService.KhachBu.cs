@@ -114,6 +114,15 @@ namespace MES.Web.Services
             var before = beforeIn == null ? null : HandoverLedgerService.Compute(beforeIn);
             var bu = await _db.HandoverReplacements.FirstOrDefaultAsync(x => x.ReplacementId == replacementId && !x.IsVoided);
             if (bu == null) return (false, "Phiếu khách gửi bù không tồn tại hoặc đã huỷ.");
+            // [N19-BU-VU 2026-11-26] Phôi bù đã giao Gia công theo mã vụ: không huỷ phiếu bù làm "đã giao theo vụ" vượt "đã bù" — Workflow OFF cũng chặn (như trần bù,
+            //   Hùng 11/11 14:39); ON: K5 khoá "BUV|<vụ>" chặn kèm gợi ý gỡ (bên dưới). Nguồn: CLAUDE (G-F); HÙNG 26/11 03:49 OK.
+            if (before != null && !before.ApplyWorkflow && bu.ReceivedAt >= HandoverLedgerService.BuVuFrom
+                && before.Cases.TryGetValue(bu.NgCaseId, out var bvc) && bvc.BuVao > bvc.DaBuMoi - bu.Qty)
+            {
+                _db.ChangeTracker.Clear();
+                return (false, $"Không huỷ được phiếu khách gửi bù #{replacementId}: {bvc.No} đã giao Gia công theo mã vụ {bvc.BuVao:0.##}, huỷ phiếu này thì phôi bù còn {bvc.DaBuMoi - bu.Qty:0.##}. "
+                             + "Huỷ phiếu Kho → Gia công bù theo mã vụ trước (Lịch sử phiếu) rồi thử lại.");
+            }
             bu.IsVoided   = true;
             bu.VoidReason = voidReason.Trim().Length > 200 ? voidReason.Trim()[..200] : voidReason.Trim();
             bu.VoidedBy   = userId;

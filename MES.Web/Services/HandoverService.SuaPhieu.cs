@@ -165,7 +165,10 @@ namespace MES.Web.Services
             var ftx = new FormTx();
             var newNotes = Cut((notes == null ? "" : notes + " · ") + $"sửa từ phiếu #{tx.HandoverTxId}", 500);
             var (ok, err) = await IssueWithPurposeOnceAsync(tx.KhPlanDetailId, tx.FromGroupCode, toGroupCode, qty, userId, tx.Purpose!,
-                tx.FromNC, toNC, newNotes, tx.NgReason, tx.FromCell, tx.ToCell,
+                tx.FromNC, toNC, newNotes, tx.NgReason, tx.FromCell,
+                // [N22-SUA 2026-11-26] phiếu "Trả lỗi hàng làm hộ" (Trả về theo NC từ ô Hàng lỗi): ô nhận do máy chủ tự đặt (TARO-LAMHO-NC) — không truyền lại
+                //   (hàm lập phiếu chỉ nhận ô chỉ định ở phiếu Hàng mới / hàng lỗi / sửa → "Ô nhận không hợp lệ" oan). Nguồn: CLAUDE (trạm kiem 26/11 08:39 chuoi_ktt seed 28794 PO8).
+                HandoverCell.IsLamHoLoi(tx.Purpose, tx.FromCell) ? null : tx.ToCell,
                 ngRet ? (ngCategoryId ?? cs?.NgCategoryId) : null,
                 ngRet ? null : tx.NgCaseId, ftx, reuseCaseId: ngRet ? cs?.NgCaseId : null);
             if (!ok) { _db.ChangeTracker.Clear(); return (false, err); }
@@ -188,6 +191,7 @@ namespace MES.Web.Services
         {
             if (sourceReceiveId != null) return "Phiếu trả hàng lỗi do phần mềm tự lập (NG lúc nhận): sửa ở lần nhận gốc (Sửa lần nhận).";
             if (HandoverCell.IsTraVe(toCell)) return "Phiếu phần mềm tự trả chiếc sửa chưa đạt: sửa / huỷ Kết quả sửa gốc.";
+            if (HandoverCell.IsBuVu(toCell)) return "Phiếu phôi khách gửi bù theo mã vụ: huỷ phiếu rồi lập lại (form Giao / xử lý hàng của Kho).";   // [N19-BU-VU 2026-11-26] Claude tự chốt (G-F)
             if (HandoverPurpose.IsOut(purpose)) return "Phiếu Huỷ / Trả khách không có bên nhận — huỷ phiếu rồi lập lại.";
             if (string.IsNullOrEmpty(purpose)) return "Phiếu cũ (chưa có phân loại hàng) — huỷ phiếu rồi lập lại.";
             if (hasReceive || status != "PENDING" || (qtyClosed ?? 0) > 0)

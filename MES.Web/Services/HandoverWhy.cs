@@ -553,6 +553,13 @@ namespace MES.Web.Services
                     { c.Add(StepBu(b)); units?.Add("U:" + b.Id); }
                     continue;
                 }
+                // [N19-BU-VU 2026-11-26] "BUV|<vụ>" âm = đã giao Gia công theo mã vụ nhiều hơn phôi khách gửi bù của vụ (vd huỷ phiếu bù khi phôi bù đã giao theo vụ):
+                //   gỡ phiếu Kho → Gia công bù theo vụ của vụ đó (mới nhất trước — lần nhận trước rồi phiếu). Nguồn: CLAUDE (G-F); HÙNG 26/11 03:49 OK.
+                if (g == "BUV" && p.Length == 2 && long.TryParse(p[1], out var bvCase))
+                {
+                    AddTx(t => t.From == "KHO" && HandoverCell.IsBuVu(t.ToCell) && t.NgCaseId == bvCase);
+                    continue;
+                }
                 // [VULOI 2026-10-28] Ô vụ lỗi âm ("VU|<id>|<nhóm>|<ô>"): phiếu đang lấy hàng của vụ đó từ nhóm đó (mới nhất gỡ trước)
                 if (g == "VU")
                 {

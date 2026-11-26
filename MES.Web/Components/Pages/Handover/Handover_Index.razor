@@ -549,7 +549,7 @@ else
                                     <div style="flex:1">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <span class="badge bg-primary" style="font-size:10px">Từ @HandoverLedgerService.GroupLabel(p.FromGroupCode)</span>
-                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell, p.TraVe ? HandoverCell.LoiVe : p.ToCell)</span>
+                                            <span class="badge @PurposeBadge(pp)" style="font-size:10px">@CellFlow(pp, sendCell, p.TraVe ? HandoverCell.LoiVe : p.BuVu ? HandoverCell.BuVu : p.ToCell)</span>
                                             @if (p.IsAutoReturn)
                                             {
                                                 @* [GN-RECV-NG] mục 38: phiếu trả tự lập khi bên kia đếm NG lúc nhận *@
@@ -559,6 +559,11 @@ else
                                             {
                                                 @* [N18-TRAVE 2026-11-25] phiếu phần mềm tự trả chiếc sửa chưa đạt về nơi làm lỗi (Cách Y — mockup TH6 bước 3) *@
                                                 <span class="badge bg-warning text-dark" style="font-size:10px" title="@TraVeTip">Sửa chưa đạt trả về</span>
+                                            }
+                                            @if (p.BuVu)
+                                            {
+                                                @* [N19-BU-VU 2026-11-26] phôi khách gửi bù theo mã vụ (mockup TH1b bước 4) *@
+                                                <span class="badge bg-info text-dark" style="font-size:10px" title="@BuVuTip">Phôi khách gửi bù (bù theo mã vụ)</span>
                                             }
                                             @if (p.NgQty > 0)
                                             {
@@ -603,7 +608,12 @@ else
                                             @* [N18-TRAVE] mockup TH6 bước 3: "Chiếc này là chiếc lỗi cũ quay về — không tính là lỗi mới" *@
                                             <div class="alert alert-warning py-1 px-2 small mb-2">Vào ô <strong>Hàng lỗi@(p.NgCaseId != null ? " · " + NgCaseNo.Format(p.NgCaseId.Value) : "")</strong>. Chiếc này là chiếc lỗi cũ quay về (@HandoverLedgerService.GroupLabel(p.FromGroupCode) ghi Sửa chưa đạt) — <strong>không tính là lỗi mới</strong>: đếm ở cột "Hàng sửa trả về chưa đạt", nằm ở Tồn hàng lỗi để xử lý tiếp.</div>
                                         }
-                                        @if (p.ToCell != null && !p.IsAutoReturn && !HandoverCell.IsLamHoLoi(p.Purpose, p.FromCell) && !TraVeFixed(p))   @* [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ ô Hàng lỗi (máy chủ chặn đổi ô) · [N18-TRAVE] ON: chỉ ô Hàng lỗi *@
+                                        @if (p.BuVu && RecvCellOf(p) == HandoverCell.Xl)
+                                        {
+                                            @* [N19-BU-VU 2026-11-26] mockup TH1b bước 4: "Vào ô (cách A): Hàng lỗi đã xử lý — VL… (bù)" · "Làm từ NC 1" *@
+                                            <div class="alert alert-info py-1 px-2 small mb-2">Vào ô <strong>Hàng lỗi đã xử lý@(p.NgCaseId != null ? " — " + NgCaseNo.Format(p.NgCaseId.Value) + " (bù)" : "")</strong> · làm từ <strong>@(string.IsNullOrEmpty(p.ToNC) ? HandoverLedgerService.VaoLabel : HandoverLedgerService.NcName(p.ToNC))</strong>. Phôi khách gửi bù cho chiếc lỗi đã trả khách — làm như phôi thường.</div>
+                                        }
+                                        @if (p.ToCell != null && !p.IsAutoReturn && !HandoverCell.IsLamHoLoi(p.Purpose, p.FromCell) && !TraVeFixed(p) && !BuVuFixed(p))   @* [N19-BU-VU] ON: ô cố định *@   @* [TARO-LAMHO-NC] trả lỗi hàng làm hộ: chỉ ô Hàng lỗi (máy chủ chặn đổi ô) · [N18-TRAVE] ON: chỉ ô Hàng lỗi *@
                                         {
                                             @* [GN-CELL2] Bên nhận duyệt lại phân loại: mặc định ô bên giao chỉ định, đổi thì bắt buộc lý do *@
                                             <label class="form-label form-label-sm fw-semibold mb-1">Nhận vào ô</label>
@@ -728,6 +738,33 @@ else
     </div>
 }
 
+@* ── [N19-BU-NUT 2026-11-26] MODAL "NHẬN PHÔI KHÁCH GỬI BÙ" (mockup TH1 / TH1b bước 2) — nút ở ô Kho · Nhận · Hàng lỗi đã xử lý.
+      Máy chủ: HandoverService.ReceiveReplacementAsync (không đổi — quyền Kho, trần bù, khoá PO). Nguồn: KHÁCH 23/11 (TH1 "Đúng — nút Nhận phôi bù đặt ở cột Nhận của Kho"); HÙNG 26/11 03:49. ── *@
+@if (_showBuModal && _selectedRow != null)
+{
+    <div class="mes-modal-backdrop">
+        <div class="mes-modal" @onclick:stopPropagation style="width:480px;max-height:85vh;display:flex;flex-direction:column">
+            <div class="mes-modal-header">
+                <div>
+                    <h6 class="mb-0"><i class="bi bi-box-arrow-in-down me-2"></i>Nhận phôi khách gửi bù</h6>
+                    <div style="font-size:12px;color:#888;margin-top:2px">
+                        <strong>@_selectedRow.PartNo</strong>
+                        <span class="ms-2">@_selectedRow.PlanNo / @_selectedRow.PurchaseOrder</span>
+                    </div>
+                </div>
+                <button class="btn-close btn-sm" @onclick="CloseModals"></button>
+            </div>
+            <div class="mes-modal-body" style="overflow-y:auto;flex:1">
+                @BuModalBody()
+            </div>
+            <div class="mes-modal-footer">
+                <button class="btn btn-sm btn-secondary" @onclick="CloseModals">Đóng</button>
+                <button class="btn btn-sm btn-primary" disabled="@(!BuCanSave || _buSaving)" @onclick="SaveBuAsync">@(_buSaving ? "Đang xử lý..." : "Nhận")</button>
+            </div>
+        </div>
+    </div>
+}
+
 @* ── MODAL LỊCH SỬ ── *@
 @if (_showLogModal)
 {
@@ -835,7 +872,7 @@ else
                             <span class="badge @(tx.IsVoided ? "bg-secondary" : "bg-primary")">
                                 @HandoverLedgerService.GroupLabel(tx.FromGroupCode) → @HandoverLedgerService.GroupLabel(tx.ToGroupCode)
                             </span>
-                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.TraVe ? HandoverCell.LoiVe : tx.ToCell)</span>   @* [N18-TRAVE rà độc lập T1] *@
+                            <span class="badge @PurposeBadge(lp)">@CellFlow(lp, sc, tx.TraVe ? HandoverCell.LoiVe : tx.BuVu ? HandoverCell.BuVu : tx.ToCell)</span>   @* [N18-TRAVE rà độc lập T1] *@
                             @if (rcl != null && !HandoverPurpose.IsOut(lp))
                             {
                                 <span class="small text-success">→ nhận vào ô <strong>@HandoverCell.Label(rcl)</strong></span>
@@ -1225,6 +1262,12 @@ else
         var cls = $"gn-num {(first ? "gn-gl" : "")} {c.Css} {(isNeg ? "gn-neg" : "")} {(changed ? "gn-chg" : "")} {(dead ? "gn-dead" : "")} {(_showFormula && prev == null ? "gn-click" : "")} {(isActive ? "gn-active" : "")}";
         <td class="@cls" title="@(dead ? DeadCellTip(g.Code, c.Key) : null)" @onclick:stopPropagation @onclick="() => { if (prev == null) OpenExplain(row, g, c.Key); }">
             @(v == 0 ? (c.Band == "" ? "0" : "") : v.ToString("0.##"))
+            @if (prev == null && g.IsKho && c.Key == "NhanLoiXl" && _myEditGroups.Contains(HandoverService.BuGroup) && HandoverLedgerService.BuCases(row).Count > 0)
+            {
+                @* [N19-BU-NUT 2026-11-26] mockup TH1 bước 2: nút "Nhận phôi bù" ở cột Nhận của Kho (trước: mục "Khách gửi bù" trong form Giao) *@
+                <button type="button" class="btn btn-primary d-block mx-auto mt-1 text-nowrap" style="font-size:10px;padding:0 4px;line-height:1.5" title="Khách gửi bù phôi cho hàng lỗi đã trả khách / huỷ"
+                        @onclick:stopPropagation @onclick="() => OpenBuModal(row)">Nhận phôi bù</button>
+            }
             @* [GN-RECV-NG] mục 37: phần Tồn là hàng đã giao tới nhưng nhóm chưa bấm Nhận *@
             @if (c.Key == "Ton" && g.ChoNhan > 0)
             {
@@ -2279,8 +2322,12 @@ else
 
     /// <summary>[N18-TRAVE 2026-11-25] Workflow ON: phiếu tự trả chiếc sửa chưa đạt chỉ nhận vào ô Hàng lỗi (máy chủ chặn đổi ô — HandoverService TraVeOnlyLoiMsg). OFF đổi được.</summary>
     bool TraVeFixed(HandoverTxPending p) => p.TraVe && _selectedRow?.ApplyWorkflow == true;
+    /// <summary>[N19-BU-VU 2026-11-26] Workflow ON: phiếu phôi bù theo mã vụ chỉ nhận vào ô Hàng lỗi đã xử lý (máy chủ chặn đổi ô — BuVuOnlyXlMsg). OFF đổi được.</summary>
+    bool BuVuFixed(HandoverTxPending p) => p.BuVu && _selectedRow?.ApplyWorkflow == true;
+    const string BuVuTip = "Kho giao phôi khách gửi bù cho chiếc lỗi đã qua Gia công (đã trả khách), mang mã vụ: nhận vào ô Hàng lỗi đã xử lý, làm từ NC đầu như phôi thường.";
     const string TraVeTip = "Bên sửa ghi Sửa chưa đạt: phần mềm tự trả chiếc lỗi cũ về nơi làm lỗi (cùng mã vụ). Nhận vào ô Hàng lỗi, đếm ở cột Hàng sửa trả về chưa đạt — không tính là lỗi mới.";
     string? RecvCellOf(HandoverTxPending p) => p.ToCell == null ? null : p.IsAutoReturn || TraVeFixed(p) ? HandoverCell.Loi   // [N18-TRAVE]
+        : BuVuFixed(p) ? HandoverCell.Xl   // [N19-BU-VU]
         : !string.IsNullOrEmpty(_receiveCell) ? _receiveCell : RecvMustLoi(p) ? HandoverCell.Loi : p.ToCell;   // [G16-NHAN-CHONSAN]
     bool RecvLoi(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Loi;
     bool RecvSua(HandoverTxPending p) => RecvCellOf(p) == HandoverCell.Sua;   // [GN-RECV-SUA] nhận hàng gửi sửa: chỉ 1 ô số lượng
@@ -2341,6 +2388,7 @@ else
     {
         var c = sendCell ?? HandoverCell.IssueCellOf(purpose, null);
         if (HandoverCell.IsTraVe(toCell)) return "Giao · Hàng Sửa (sửa chưa đạt — phần mềm tự trả nơi làm lỗi)";   // [N18-TRAVE] mockup TH6 / TH7: bên sửa Giao · Hàng sửa
+        if (HandoverCell.IsBuVu(toCell)) return "Giao · Hàng Mới (phôi khách gửi bù theo mã vụ → ô Hàng lỗi đã xử lý)";   // [N19-BU-VU] mockup TH1b bước 3
         return purpose switch
         {
             HandoverPurpose.NgReturn     => "Giao · Hàng lỗi ☑ công đoạn trước",
@@ -2483,8 +2531,113 @@ else
         finally { _saving = false; }
     }
 
+    // ── [N19-BU-NUT 2026-11-26] Nhận phôi khách gửi bù (nút ở cột Nhận của Kho — mockup TH1 bước 2) ──
+    bool    _showBuModal;
+    long?   _buCase;
+    decimal _buQty;
+    string  _buNotes = "";
+    string  _buErr = "";
+    bool    _buSaving;
+
+    void OpenBuModal(LedgerRow row)
+    {
+        _selectedRow = row;
+        var l = HandoverLedgerService.BuCases(row);
+        _buCase = l.Count == 1 ? l[0].Id : null;
+        _buQty = _buCase is long c ? HandoverLedgerService.BuCap(row, c).Max : 0;
+        _buNotes = ""; _buErr = ""; _buSaving = false;
+        _showBuModal = true;
+    }
+
+    void PickBuCase(long id) { _buCase = id; _buQty = _selectedRow == null ? 0 : HandoverLedgerService.BuCap(_selectedRow, id).Max; _buErr = ""; }
+
+    decimal BuMaxNow => _selectedRow != null && _buCase is long c ? HandoverLedgerService.BuCap(_selectedRow, c).Max : 0;
+    bool BuCanSave => _buCase != null && _buQty > 0 && _buQty <= BuMaxNow;
+
+    /// <summary>"VL000341 · BM-XUOC · Xước — đã trả khách 1 (từ Gia công), còn bù 1" (mockup TH1b bước 2).</summary>
+    static string BuCaseLine(LedgerRow row, LedgerCase c)
+    {
+        string From(Dictionary<string, decimal> d) => d.Count == 0 ? "" : " (từ " + string.Join(", ", d.Where(x => x.Value > 0).Select(x => HandoverLedgerService.GroupLabel(x.Key))) + ")";
+        var parts = new List<string>();
+        if (c.TraKhach > 0) parts.Add($"đã trả khách {c.TraKhach:0.##}{From(c.KhachBy)}");
+        if (c.Huy > 0) parts.Add($"đã huỷ {c.Huy:0.##}{From(c.HuyBy)}");
+        if (c.DaBu > 0) parts.Add($"đã bù {c.DaBu:0.##}");
+        return $"{c.No} · {c.CatLabel} — {string.Join(", ", parts)}, còn bù {HandoverLedgerService.BuCap(row, c.Id).Max:0.##}";
+    }
+
+    string BuWill => _selectedRow == null || _buCase is not long c ? ""
+        : $"Sẽ ghi: Kho Nhận · Hàng lỗi đã xử lý +{_buQty:0.##} (phôi dùng được)"
+          + (_selectedRow.Cases.TryGetValue(c, out var cs) && HandoverLedgerService.BuQuaGc(_selectedRow, cs)
+              ? $", gắn vụ {cs.No} — chiếc lỗi đã qua Gia công: Kho giao Gia công phải chọn mã vụ này."
+              : HandoverLedgerService.KhoTaroRun(_selectedRow) != null ? " — giao như phôi thường (Kho giao thẳng Taro, không chọn mã vụ)."   // [N19-BU-VU] rà độc lập L3: PO Kho giao thẳng Taro
+              : " — giao Gia công như phôi thường (không chọn mã vụ).");
+
+    RenderFragment BuModalBody() => __builder =>
+    {
+        var list = HandoverLedgerService.BuCases(_selectedRow!);
+        <div class="fw-semibold small mb-1">Bù cho lần trả khách nào</div>
+        @if (list.Count == 0)
+        {
+            <div class="small text-muted mb-2">PO không còn @NgCaseNo.Term nào đã trả khách / huỷ mà còn thiếu bù. Khách gửi dư thì sửa Số lượng thực nhận của phôi ở trang Kho.</div>
+        }
+        <div class="d-flex flex-column gap-1 mb-2">
+            @foreach (var c in list)
+            {
+                var cid = c.Id;
+                <button type="button" class="gn-cellbtn w-100 text-start @(_buCase == cid ? "on" : "")" @onclick="() => PickBuCase(cid)">@BuCaseLine(_selectedRow!, c)</button>
+            }
+        </div>
+        @if (_buCase != null)
+        {
+            <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">Số thực nhận <span class="text-muted">(tối đa @BuMaxNow.ToString("0.##"))</span></label>
+                <input type="number" class="form-control form-control-sm @(_buQty > BuMaxNow ? "border-danger" : "")" min="0" step="1" @bind="_buQty" />
+                @if (_buQty > BuMaxNow)
+                {
+                    <div class="small text-danger">Vượt tối đa @BuMaxNow.ToString("0.##") — khách gửi dư thì sửa Số lượng thực nhận của phôi ở trang Kho.</div>
+                }
+            </div>
+            <div class="mb-2">
+                <label class="form-label form-label-sm mb-1">Ghi chú <span class="text-muted">(số phiếu của khách, tuỳ chọn)</span></label>
+                <input type="text" class="form-control form-control-sm" maxlength="500" @bind="_buNotes" />
+            </div>
+            <div class="small text-muted border-top pt-1">@BuWill</div>
+        }
+        @if (!string.IsNullOrEmpty(_buErr))
+        {
+            <div class="alert alert-danger py-1 px-2 small mt-2 mb-0" style="white-space:pre-line">@_buErr</div>
+        }
+    };
+
+    async Task SaveBuAsync()
+    {
+        if (_buSaving || _selectedRow == null || _buCase is not long c || !BuCanSave) return;   // [D10-DBLCLICK]
+        _buSaving = true;
+        var id = _selectedRow.KhPlanDetailId;
+        try
+        {
+            var (ok, err) = await HandoverSvc.ReceiveReplacementAsync(id, c, _buQty, _buNotes, _currentUserId);
+            _buSaving = false;
+            if (!ok)
+            {
+                _buErr = err;
+                try { await ReloadRowAsync(id); } catch (Exception ex2) { _buErr += "\n" + ServerErr(ex2); }
+                return;
+            }
+            CloseModals();
+            await ReloadAfterSaveAsync(() => ReloadRowAsync(id));
+        }
+        catch (Exception ex)   // [PAGE-ERR] lỗi máy chủ lạ
+        {
+            _buSaving = false;
+            Db.ChangeTracker.Clear();
+            _buErr = ServerErr(ex);
+        }
+    }
+
     void CloseModals()
     {
+        _showBuModal    = false;   // [N19-BU-NUT]
         _showFormModal  = false; _showReceiveModal = false;   // [GN-FORM1]
         _showLogModal   = false; _showVoidConfirm  = false;
         _kcsRepairs = new(); _expandedRepairId = 0;   // [GC-SUA-TAI-CHO]
@@ -2734,7 +2887,7 @@ else
     }
     bool ShowEditIssueBtn(HandoverLogItem tx)
         => !tx.IsVoided && CanIssueSide(tx)
-           && HandoverService.EditIssueBlock(tx.Purpose, tx.SourceReceiveId, tx.TraVe ? HandoverCell.LoiVe : tx.ToCell, tx.Status, ActiveRecv(tx) > 0, tx.QtyClosed) == null;
+           && HandoverService.EditIssueBlock(tx.Purpose, tx.SourceReceiveId, tx.TraVe ? HandoverCell.LoiVe : tx.BuVu ? HandoverCell.BuVu : tx.ToCell, tx.Status, ActiveRecv(tx) > 0, tx.QtyClosed) == null;
     string VoidIssueBtnClass(HandoverLogItem tx) => ShowEditIssueBtn(tx) ? "btn btn-xs btn-outline-danger" : "btn btn-xs btn-outline-danger ms-auto";
     bool ShowEditRecvBtn(HandoverLogItem tx, HandoverReceiveItem r)
         => !tx.IsVoided && !r.IsVoided && !HandoverPurpose.IsOut(tx.Purpose) && HandoverService.CanVoidReceive(r.ReceivedBy, tx.ToGroupCode, _currentUserId, _myEditGroups);

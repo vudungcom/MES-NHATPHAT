@@ -158,6 +158,14 @@ namespace MES.Web.Services
                     if (toCellOpt != null) return (false, "Kho giao thẳng Taro: không chọn ô nhận (Taro nhận theo NC).");
                     return await IssueWithPurposeOnceAsync(id, g, to, r.Qty, uid, HandoverPurpose.HelpSend, HandoverLedgerService.VaoCode, null, notes, null, ftx: ftx);
                 }
+                // [N19-BU-VU 2026-11-26] Kho, phôi còn → Gia công, chọn "Bù cho mã vụ" (CaseId): phiếu phôi khách gửi bù theo mã vụ (Cách A) — Gia công nhận ô
+                //   Hàng lỗi đã xử lý, làm từ NC đầu (máy chủ tự điền NC, kiểm trần bù chờ giao của vụ). Nguồn: KHÁCH 23/11 (mockup TH1b bước 3–4); HÙNG 26/11 03:49 OK.
+                if (g == "KHO" && pos.Id == "PHOI" && r.CaseId is long bvc && bvc > 0)
+                {
+                    if (to != "GC") return (false, "Bù cho mã vụ: phôi bù của chiếc lỗi đã qua Gia công giao Gia công (làm từ NC đầu).");
+                    if (toCellOpt != null && toCellOpt != HandoverCell.Xl) return (false, "Bù cho mã vụ: Gia công nhận vào ô Hàng lỗi đã xử lý.");
+                    return await IssueWithPurposeOnceAsync(id, g, "GC", r.Qty, uid, HandoverPurpose.New, null, null, notes, null, HandoverCell.Moi, HandoverCell.BuVu, null, bvc, ftx);
+                }
                 var tcN = toCellOpt ?? HandoverCell.Moi;
                 var (pN, eN) = HandoverCell.ResolveCells(HandoverCell.Moi, false, tcN);
                 if (pN == null) return (false, eN ?? "Ô nhận không hợp lệ.");
@@ -255,6 +263,7 @@ namespace MES.Web.Services
             if (n <= 0) return (false, act == HandoverForm.ASua ? "Nhập số sửa đạt hoặc không đạt." : "Số lượng phải lớn hơn 0.");
             // [GC-LOI-TRUOC-NCDAU 2026-11-10] dòng không cho tích "Lỗi công đoạn trước" (Gia công, Workflow ON: hàng đã gia công) → chặn trước khi ghi
             if (r.Prev && !pos.PrevOk) return (false, HandoverForm.GcPrevMsg);
+            if (r.Prev && pos.PrevKhach && (r.Cause ?? "").Trim() != "KHACH") return (false, HandoverForm.GcPrevKhachMsg);   // [N19-KHACH-SAUGC 2026-11-26] mockup TH1b bước 1
             string origin = r.Prev ? HandoverNgSource.DauVao : HandoverNgSource.DauRa;
             // [CAUSE-BAT-BUOC 2026-11-10] "Lỗi công đoạn trước": bắt buộc chọn nơi gây lỗi, không điền sẵn (trước: trống = nhóm trước).
             //   Nguồn: HÙNG 10/11 16:52 "họ bắt buộc phải chọn mà, mình cũng ko cần gợi ý sẵn đâu, kệ họ". Kho: phôi khách (KHACH) như cũ.
@@ -374,6 +383,10 @@ namespace MES.Web.Services
                 {   // [N23-KHO-SUA] Kho: phần đạt thành phôi còn (chiếc bên kia chưa từng nhận — NG lúc nhận) → phiếu Hàng mới (mockup TH3 bước 3); NC nhận theo luật Kho → Gia công
                     var (okN, errN) = await IssueWithPurposeOnceAsync(r.KhPlanDetailId, g, suaTo, pass, r.UserId, HandoverPurpose.New, null, null, notes, null,
                         HandoverCell.Moi, HandoverCell.Moi, ftx: ftx);
+                    // [N19-BU-VU 2026-11-26] Workflow ON còn phôi khách gửi bù chờ giao theo mã vụ (phôi bù lẫn với phôi thường — giữ chỗ): lời chỉ đường cho form sửa
+                    //   (form này không chọn được "Bù cho mã vụ"). Nguồn: CLAUDE (G-F, trạm kiem 26/11 07:37 loi_baoloi seed 6734).
+                    if (!okN && errN.Contains(HandoverForm.BuVuHoldKey))
+                        return (false, errN + " Ở đây chọn \"Sửa đạt → giao đến\" = Chưa giao (hàng đạt về Phôi còn), rồi giao ở Hàng tốt → Phôi còn.");
                     if (!okN) return (false, errN);
                 }
                 else return (false, SuaToNoGiuMsg);

@@ -178,8 +178,10 @@ public static class FormScen
             // [GC-LOI-TRUOC-NCDAU 2026-11-10] đổi theo khách (vòng 1 hỏi tiếp câu 5a): Workflow ON chỉ hàng chưa gia công (chờ NC đầu) được tích
             //   "Lỗi công đoạn trước" — chờ NC2 / NC3 / đã xong NC cuối bị chặn, không ghi gì. Bản 9bd3973 cho lưu → SAI đúng ở đây.
             var r2a = await Row(db);
-            Ok(Pos(r2a, "GC", false, "NC:NC1")!.PrevOk && !Pos(r2a, "GC", false, "NC:NC2")!.PrevOk && !Pos(r2a, "GC", false, "NC:NC3")!.PrevOk && !Pos(r2a, "GC", false, "DA")!.PrevOk,
-               "[GC-LOI-TRUOC-NCDAU] form: chỉ dòng \"Vừa nhận, chưa làm NC1\" cho tích Lỗi công đoạn trước (NC2 / NC3 / đã xong NC cuối không)");
+            // [N19-KHACH-SAUGC 2026-11-26] đáp án đổi theo khách (mockup TH1b bước 1, HÙNG 26/11 04:03): hàng đã gia công vẫn tích được nhưng CHỈ nơi làm lỗi Khách hàng (PrevKhach)
+            Ok(Pos(r2a, "GC", false, "NC:NC1")!.PrevOk && !Pos(r2a, "GC", false, "NC:NC1")!.PrevKhach
+               && Pos(r2a, "GC", false, "NC:NC2")!.PrevKhach && Pos(r2a, "GC", false, "NC:NC3")!.PrevKhach && Pos(r2a, "GC", false, "DA")!.PrevKhach,
+               "[GC-LOI-TRUOC-NCDAU][N19-KHACH-SAUGC] form: dòng \"Vừa nhận, chưa làm NC1\" tích tự do; NC2 / NC3 / đã xong NC cuối chỉ tích với nơi làm lỗi Khách hàng");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "NC:NC2", HandoverForm.AGiao, 2, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
                        "[GC-LOI-TRUOC-NCDAU] GC: chờ NC2 (đã gia công NC1) tích lỗi do Kho → trả Kho", false, "chưa gia công");
             await Save(db, Req("GC", Gc, HandoverForm.Loi, "DA", HandoverForm.AGiao, 1, "KHO", HandoverForm.PTra, prev: true, cause: "KHO", cat: 2),
@@ -188,7 +190,7 @@ public static class FormScen
             var dNg = await svc.IssueByCellAsync(1, "GC", "KHO", 1, Gc, HandoverCell.Loi, true, HandoverCell.Loi, "NC2", null, null, null, 2);
             var dBl = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC3", 1, HandoverNgSource.DauVao, "KHO", "", null, Gc, Array.Empty<string>(), 2);
             var dBl2 = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Da, null, 1, HandoverNgSource.DauVao, "KHO", "", null, Gc, Array.Empty<string>(), 2);
-            Ok(!dNg.Ok && dNg.Error == HandoverForm.GcPrevMsg && !dBl.Ok && dBl.Error == HandoverForm.GcPrevMsg && !dBl2.Ok && dBl2.Error == HandoverForm.GcPrevMsg && FormHelp.Docs(db, 1) == bD,
+            Ok(!dNg.Ok && dNg.Error == HandoverForm.GcPrevMsg && !dBl.Ok && dBl.Error == HandoverForm.GcPrevKhachMsg && !dBl2.Ok && dBl2.Error == HandoverForm.GcPrevKhachMsg && FormHelp.Docs(db, 1) == bD,   // [N19-KHACH-SAUGC] lời mới khi nơi gây lỗi là bộ phận
                "[GC-LOI-TRUOC-NCDAU] máy chủ (ngoài form): phiếu Hàng lỗi công đoạn trước từ NC2 / báo lỗi đầu vào ở NC3 / đã xong NC cuối → chặn, không ghi", $"{dNg.Error} | {dBl.Error} | {dBl2.Error}");
             var dOk = await svc.ReportNgAfterReceiveAsync(1, "GC", HandoverNgSource.Chua, "NC3", 1, HandoverNgSource.DauRa, null, "", null, Gc, Array.Empty<string>(), 2);
             Ok(dOk.Ok, "[GC-LOI-TRUOC-NCDAU] bỏ tích (lỗi của Gia công) ở NC3: báo lỗi được", dOk.Error);
@@ -695,8 +697,8 @@ public static class FormScen
             await Save(d2, Req("HTSP", Htsp, HandoverForm.Tot, "LAMHO", HandoverForm.AGiao, 4, "GC", toNc: "NC3"), "HTSP trả 4 về Gia công vào NC3");
             await s2.ReceiveAsync(LastTx(d2), 4, 0, null, Gc);
             var r = await Check(d2, "F20 nhận về NC3");
-            Ok(Pos(r, "GC", false, "NC:NC1")!.PrevOk && Pos(r, "GC", false, "NC:NC3")!.PrevOk && !Pos(r, "GC", false, "DA")!.PrevOk,
-               "Dòng chờ NC1 (đầu) và chờ NC3 (ngay sau máy loại trừ NC2) cho tích; đã xong NC cuối không");
+            Ok(Pos(r, "GC", false, "NC:NC1")!.PrevOk && !Pos(r, "GC", false, "NC:NC1")!.PrevKhach && Pos(r, "GC", false, "NC:NC3")!.PrevOk && !Pos(r, "GC", false, "NC:NC3")!.PrevKhach && Pos(r, "GC", false, "DA")!.PrevKhach,
+               "Dòng chờ NC1 (đầu) và chờ NC3 (ngay sau máy loại trừ NC2) cho tích tự do; đã xong NC cuối chỉ nơi làm lỗi Khách hàng [N19-KHACH-SAUGC]");
             // [CAUSE-BAT-BUOC 2026-11-10] Hùng 10/11 16:52: tích "Lỗi công đoạn trước" bắt buộc chọn nơi gây lỗi, không điền sẵn → bỏ trống bị chặn, không ghi
             await Save(d2, Req("GC", Gc, HandoverForm.Loi, "NC:NC3", HandoverForm.AGiao, 1, "HTSP", HandoverForm.PTra, prev: true, cat: 2),
                        "[CAUSE-BAT-BUOC] GC tích Lỗi công đoạn trước, bỏ trống nơi gây lỗi", false, "nơi gây lỗi");

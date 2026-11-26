@@ -32,6 +32,10 @@ namespace MES.Web.Services
         public bool    Unworked { get; set; }
         /// <summary>[GC-LOI-TRUOC-NCDAU 2026-11-10] Dòng này được tích "Lỗi công đoạn trước" (Gia công, Workflow ON: chỉ hàng chưa gia công — xem GcPrevStageOk).</summary>
         public bool    PrevOk { get; set; } = true;
+        /// <summary>[N19-KHACH-SAUGC 2026-11-26] Gia công (Workflow ON), hàng ĐÃ gia công: tích "Lỗi công đoạn trước" được nhưng chỉ nơi làm lỗi Khách hàng (phôi khách lỗi
+        ///   lộ ra sau gia công — mockup TH1b bước 1). Lỗi do bộ phận trước vẫn chỉ tích ở hàng chưa gia công (GC-LOI-TRUOC-NCDAU). Nguồn: KHÁCH 23/11 (mockup TH1b
+        ///   "Đã làm xong NC 1 · chưa làm NC 2" + "☑ Lỗi công đoạn trước · Nơi làm lỗi: Khách hàng", tích Đúng); HÙNG 26/11 04:03 OK.</summary>
+        public bool    PrevKhach { get; set; }
         /// <summary>Đã làm xong NC cuối của Gia công (sửa đạt: làm lại NC cuối — câu chờ khách).</summary>
         public bool    IsLast { get; set; }
         /// <summary>Ô đang giữ theo vụ: LOI | SUA | XL ([SUA-XL-GIU] hàng đã sửa chờ trả nơi phát hiện).</summary>
@@ -216,10 +220,10 @@ namespace MES.Web.Services
                     var cap = HandoverLedgerService.NgReportCap(row, "GC", HandoverNgSource.Chua, s.Code).Max;
                     var unw = !row.ApplyWorkflow || GcPrevStageOk(row, s.Code);   // [GC-LOI-TRUOC-NCDAU] Workflow ON: chỉ hàng chưa gia công
                     list.Add(new FormPos { Id = "NC:" + s.Code, Label = GcStageText(chain, s.Code), Have = Pos0(cap),
-                                           Fresh = true, NgSource = HandoverNgSource.Chua, NgNc = s.Code, Unworked = unw, PrevOk = unw });
+                                           Fresh = true, NgSource = HandoverNgSource.Chua, NgNc = s.Code, Unworked = unw, PrevOk = true, PrevKhach = !unw });   // [N19-KHACH-SAUGC] trước: PrevOk = unw
                 }
                 list.Add(new FormPos { Id = "DA", Label = GcDoneText(chain), Have = Pos0(G.ConGiao), Fresh = true, NgSource = HandoverNgSource.Da, IsLast = true,
-                                       PrevOk = !row.ApplyWorkflow });   // [GC-LOI-TRUOC-NCDAU] đã làm xong NC cuối: lỗi là của Gia công
+                                       PrevOk = true, PrevKhach = row.ApplyWorkflow });   // [GC-LOI-TRUOC-NCDAU] đã làm xong NC cuối: lỗi là của Gia công · [N19-KHACH-SAUGC] trừ phôi khách lỗi (nơi làm lỗi Khách hàng) — trước: PrevOk = !row.ApplyWorkflow
             }
             else
             {
@@ -296,10 +300,10 @@ namespace MES.Web.Services
         public record NcOpt(string? Code, string Label, bool Default, bool Earlier);
 
         /// <summary>Các NC thường (không máy loại trừ, không @VAO) của Gia công theo thứ tự.</summary>
-        static List<string> NormalNcs(LedgerRow row)
+        internal static List<string> NormalNcs(LedgerRow row)   // [N19-BU-VU] internal: sổ dùng (BuQuaGc / KhoBuNc)
             => row.G("GC").Steps.Where(s => !s.IsExcluded && !HandoverLedgerService.IsVao(s.Code)).Select(s => s.Code).ToList();
 
-        static bool HasVao(LedgerRow row) => row.G("GC").Steps.Any(s => HandoverLedgerService.IsVao(s.Code));
+        internal static bool HasVao(LedgerRow row) => row.G("GC").Steps.Any(s => HandoverLedgerService.IsVao(s.Code));
 
         // ================================================================
         // [GC-LOI-TRUOC-NCDAU 2026-11-10] "Lỗi công đoạn trước" ở Gia công chỉ cho hàng CHƯA gia công.
@@ -309,6 +313,9 @@ namespace MES.Web.Services
         //   (hàng làm hộ vừa trả về, Gia công chưa động vào — cùng nguyên tắc "chưa thực hiện cv"). Các NC khác / "đã làm xong NC cuối":
         //   lỗi là của Gia công (đầu ra, ghi NG ở NC phát sinh). Chỉ Workflow ON (OFF họ tự kiểm soát — N7). Không đổi phép tính số.
         // ================================================================
+        /// <summary>[N19-KHACH-SAUGC] Lời chặn: hàng đã gia công tích "Lỗi công đoạn trước" mà nơi làm lỗi không phải Khách hàng (Workflow ON).</summary>
+        public const string GcPrevKhachMsg = "Gia công, hàng đã gia công: \"Lỗi công đoạn trước\" chỉ chọn nơi làm lỗi Khách hàng (phôi khách lỗi lộ ra sau khi gia công). "
+            + "Lỗi do bộ phận trước chỉ tích được ở hàng chưa gia công (chờ NC đầu); không thì để trống (lỗi Gia công).";
         public const string GcPrevMsg = "Gia công: \"Lỗi công đoạn trước\" chỉ dùng cho hàng chưa gia công (chờ NC đầu, hoặc hàng làm hộ trả về chưa làm NC đó). "
                                       + "Hàng đã qua NC mà lỗi là lỗi của Gia công — bỏ tích, báo lỗi ở NC phát sinh.";
 
@@ -349,6 +356,22 @@ namespace MES.Web.Services
         //   Áp cho hàng "như hàng mới" (phôi, vụ của phôi / Kho / không rõ — CaseNextNc = null); hàng của vụ đã qua Gia công (CaseNextNc có NC)
         //   giữ luật NC làm tiếp K2. Chỉ Workflow ON (N7). Không đổi phép tính số.
         // ================================================================
+        /// <summary>[N19-BU-VU 2026-11-26] NC nhận của phiếu Kho → Gia công phôi bù theo mã vụ: như phôi (KHO-NC-DAU) — NC đầu; NC đầu là máy loại trừ → không NC
+        ///   (hàng nằm ở dòng "Nhận vào"); PO không có NC → không NC. Mockup TH1b bước 4 "Làm từ NC 1". Nguồn: KHÁCH 23/11 (TH1b Cách A); HÙNG 26/11 03:49 OK.</summary>
+        public static string? KhoBuNc(LedgerRow row) => HasVao(row) ? null : NormalNcs(row).FirstOrDefault();
+
+        /// <summary>[N19-BU-VU] Lời chặn phiếu Hàng mới thường của Kho lấy vào phần phôi bù chờ giao theo mã vụ (Workflow ON). Dùng chung máy chủ + form.</summary>
+        /// <summary>[N19-BU-VU] Chữ chung của BuVuHoldMsg (form sửa Kho nhận ra lời giữ chỗ).</summary>
+        public const string BuVuHoldKey = "phải giao Gia công theo mã vụ";
+
+        public static string BuVuHoldMsg(LedgerRow row)
+        {
+            var cs = HandoverLedgerService.BuVuCases(row);
+            var hold = cs.Sum(c => HandoverLedgerService.BuVuCho(row, c));
+            return $"Kho còn {hold:0.##} phôi khách gửi bù cho chiếc lỗi đã qua Gia công ({string.Join(", ", cs.Select(c => $"{c.No} {HandoverLedgerService.BuVuCho(row, c):0.##}"))}) — "
+                 + $"{BuVuHoldKey} (chọn ô \"Bù cho mã vụ\"). Phôi thường còn giao tối đa {HandoverLedgerService.KhoMoiThuongCap(row):0.##}.";
+        }
+
         public static bool KhoNcOk(LedgerRow row, string? toNc)
         {
             if (string.IsNullOrWhiteSpace(toNc)) return true;

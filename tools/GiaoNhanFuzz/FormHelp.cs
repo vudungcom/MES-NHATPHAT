@@ -49,6 +49,52 @@ public static class FormHelp
             && leadKeys.Contains(Key(t.NC)));
     }
 
+    /// <summary>[N19-BU-VU 2026-11-26] Đáp án ĐỘC LẬP (đọc thẳng bảng NgCases / HandoverNgReports / HandoverReplacements / HandoverTransactions + snapshot, không qua sổ
+    ///   hay HandoverLedgerService.BuQuaGc): phôi khách gửi bù còn chờ giao Gia công theo mã vụ, mỗi vụ (chỉ vụ ĐÃ QUA Gia công, phiếu bù nhận từ G-F).
+    ///   Luật (Claude tự chốt, HÙNG 26/11 03:49 OK): PO Kho giao thẳng Taro → không; Kho phát hiện → không; bộ phận sau Gia công phát hiện → có; Gia công phát hiện:
+    ///   NG lúc nhận (nơi gây lỗi Kho) → không, báo lỗi / hàng lỗi công đoạn trước ở hàng chưa làm NC đầu (dòng Nhận vào khi NC đầu máy loại trừ) → không, còn lại → có.</summary>
+    /// <summary>[N19-BU-VU] đáp án độc lập "vụ đã qua Gia công" (đọc bảng NgCases / HandoverNgReports + chuỗi NC).</summary>
+    public static bool QuaGcDb(AppDbContext db, NgCase c, bool ktt, List<string> ncs, bool vao)
+    {
+        bool qua;
+        if (ktt || string.IsNullOrEmpty(c.DetectGroupCode)) qua = false;
+        else if (c.OriginKind is NgOrigin.Nhan or NgOrigin.NhanLoi) qua = new[] { "GC", "HTSP", "KCS", "PKG" }.Contains(c.CauseGroupCode);   // [N19 rà T1] NG lúc nhận: hàng bộ phận sản xuất giao
+        else if (c.DetectGroupCode == "KHO") qua = false;
+        else if (c.DetectGroupCode != "GC") qua = true;
+        else if (c.OriginKind is NgOrigin.BaoLoi or NgOrigin.TraLoi
+                 && !db.HandoverNgReports.List.Any(b => !b.IsVoided && b.NgCaseId == c.NgCaseId && b.SourceCell == HandoverNgSource.Da))
+        {
+            var dn = c.DetectNC?.Trim();
+            qua = !(string.Equals(dn, "@VAO", IC) || (!vao && ncs.Count > 0 && string.Equals(ncs[0].Trim(), dn, IC)) || (string.IsNullOrEmpty(dn) && ncs.Count == 0));
+        }
+        else qua = true;
+        return qua;
+    }
+    public static bool QuaGcDb(AppDbContext db, int id, long caseId)
+    {
+        var c = db.NgCases.List.FirstOrDefault(v => v.NgCaseId == caseId && v.KhPlanDetailId == id);
+        if (c == null) return false;
+        var (ncs, vao) = Chain(db, id);
+        return QuaGcDb(db, c, KhoTaroPo(db, id), ncs, vao);
+    }
+
+    public static Dictionary<long, (decimal Moi, decimal Giao)> BuVuDb(AppDbContext db, int id)
+    {
+        var res = new Dictionary<long, (decimal, decimal)>();
+        bool ktt = KhoTaroPo(db, id);
+        var (ncs, vao) = Chain(db, id);
+        var cut = HandoverLedgerService.BuVuFrom;
+        foreach (var c in db.NgCases.List.Where(v => v.KhPlanDetailId == id))
+        {
+            var moi = db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == id && !b.IsVoided && b.NgCaseId == c.NgCaseId && b.ReceivedAt >= cut).Sum(b => b.Qty);
+            var giao = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == id && !t.IsVoided && t.NgCaseId == c.NgCaseId && t.ToCell == HandoverCell.BuVu).Sum(t => t.QtyIssued);
+            if (moi == 0 && giao == 0) continue;
+            bool qua = QuaGcDb(db, c, ktt, ncs, vao);
+            if (qua) res[c.NgCaseId] = (moi, giao);
+        }
+        return res;
+    }
+
     /// <summary>[GÓI 13 2026-11-10] Đáp án độc lập (đọc snapshot, không dùng HandoverForm): NC Gia công được tích "Lỗi công đoạn trước"
     ///   = NC thường đầu (có @VAO thì chỉ "@VAO") + NC thường đứng ngay sau 1 NC máy loại trừ. Khách 10/11 câu 5a.</summary>
     public static HashSet<string> GcPrevNcs(AppDbContext db, int id)
@@ -424,6 +470,13 @@ public static class FormHelp
                 if (HandoverLedgerService.IsVao(nc)) e.Add("GC.w." + nc, -n);
                 else if (i >= 0 && i + 1 < steps.Count && !steps[i + 1].IsExcluded) e.Add("GC.w." + steps[i + 1].Code, -n);
                 ToRecv(""); return e;
+            }
+            if (g == "KHO" && pos == "PHOI" && r.CaseId is long bvc && bvc > 0)
+            {   // [N19-BU-VU 2026-11-26] Kho giao phôi bù theo mã vụ: phiếu Hàng mới ô chỉ định XLBU, NC nhận = NC đầu (không NC khi NC đầu là máy loại trừ — dòng "Nhận vào")
+                e.Purpose = HandoverPurpose.New; e.FromCell = HandoverCell.Moi; e.ToCell = HandoverCell.BuVu;
+                var st0 = pre.G("GC").Steps;
+                e.TxToNc = st0.Any(x => HandoverLedgerService.IsVao(x.Code)) ? null : st0.FirstOrDefault(x => !x.IsExcluded && !x.IsPrep)?.Code;
+                e.Add("KHO.Da", -n); ToRecv(HandoverCell.Xl); return e;
             }
             var tc = r.ToCell ?? HandoverCell.Moi;
             e.Purpose = HandoverPurpose.New; e.FromCell = HandoverCell.Moi; e.ToCell = tc;

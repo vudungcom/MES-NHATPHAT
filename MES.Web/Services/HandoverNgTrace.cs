@@ -123,6 +123,8 @@ namespace MES.Web.Services
         /// <summary>[KHACH-GUI-LAI 2026-11-11] Phôi khách đã gửi bù cho vụ (LedgerCase.DaBu) — chỉ hiện, không vào cân vụ.</summary>
         public decimal  DaBu      { get; set; }
         public string   DaBuText  { get; set; } = "";
+        /// <summary>[N19-BU-VU 2026-11-26] Phôi bù Kho đã giao Gia công theo mã vụ (LedgerCase.BuVao) — vào cân vụ: Sinh ra + Bù vào = đã xử lý + huỷ + trả khách + giữ + chuyển.</summary>
+        public decimal  BuVao     { get; set; }
         public string   DangGiu   { get; set; } = "";   // "Gia công 1" / "HTSP 2 (hàng sửa)"
         public decimal  DangGiuQty { get; set; }
         public decimal  DangChuyen { get; set; }
@@ -195,6 +197,8 @@ namespace MES.Web.Services
             "KHACH" => "Trả khách",
             "SUA"   => "Kết quả sửa",     // [GC-SUA-TAI-CHO] nhóm sửa tại chỗ ghi đạt (chờ KCS) / không đạt
             "XN"    => h.Other == null ? "Sửa đạt (không cần KCS)" : "KCS xác nhận",    // [GC-SUA-TAI-CHO] · [N17-KCS-BO] dòng tự xác nhận không có nơi "KCS"
+            "BUGIAO" => "Kho giao phôi khách gửi bù theo mã vụ",   // [N19-BU-VU 2026-11-26]
+            "BUNHAN" => "Nhận phôi bù theo mã vụ (làm từ NC đầu)",   // [N19-BU-VU]
             _ => h.Kind
         };
 
@@ -228,7 +232,9 @@ namespace MES.Web.Services
                     DaXuLy = Join(cs.DaXuLy), DaXuLyQty = cs.DaXuLyTotal,
                     Huy = cs.Huy, HuyText = Join(cs.HuyBy),
                     TraKhach = cs.TraKhach, KhachText = Join(cs.KhachBy),
-                    DaBu = cs.DaBu, DaBuText = string.Join(", ", cs.BuDocs.Select(b => $"phiếu bù #{b.Id}: {b.Qty:0.##}")),   // [KHACH-GUI-LAI]
+                    DaBu = cs.DaBu, DaBuText = string.Join(", ", cs.BuDocs.Select(b => $"phiếu bù #{b.Id}: {b.Qty:0.##}"))   // [KHACH-GUI-LAI]
+                        + (cs.BuVao != 0 ? $" · giao Gia công theo mã vụ {cs.BuVao:0.##}" : ""),   // [N19-BU-VU] (mockup TH1b — phần này vào cân vụ: Bù vào → Đã xử lý ở Gia công)
+                    BuVao = cs.BuVao,   // [N19-BU-VU]
                     DangGiu = string.Join(" · ", held), DangGiuQty = cs.HeldTotal, DangChuyen = cs.Transit,
                     Balanced = cs.Lech == 0,
                     Hops = cs.Hops.ToList(),

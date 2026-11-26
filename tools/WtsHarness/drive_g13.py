@@ -49,15 +49,24 @@ async def main():
         await pg.click("button[type=submit]"); await pg.wait_for_load_state("networkidle")
         await pg.goto(BASE + "/handover"); await pg.wait_for_timeout(5000)
 
-        print("[G1] [GC-LOI-TRUOC-NCDAU] hàng đã gia công: không tích Lỗi công đoạn trước")
+        # [N19-KHACH-SAUGC 2026-11-26] đáp án đổi theo khách (mockup TH1b bước 1 tích Đúng 23/11): hàng đã gia công vẫn tích "Lỗi công đoạn trước"
+        #   nhưng nơi gây lỗi chỉ Khách hàng (chữ ô chọn "phôi khách") — trước: không có ô tích. Bản 45a1f0b (trước G-F) SAI ở G11.
+        print("[G1] [GC-LOI-TRUOC-NCDAU][N19-KHACH-SAUGC] hàng đã gia công: Lỗi công đoạn trước chỉ nơi gây lỗi Khách hàng")
         try:
             m = await open_form(pg, "Gia công")
-            await click(m, pg, "Hàng lỗi"); await click(m, pg, "Đã làm xong NC01 · chưa làm NC02")
-            t = await m.inner_text()
-            ok(await m.locator("input#gxlPrev").count() == 0 and "Hàng đã qua NC" in t, "G11 chờ NC02 (đã gia công NC01): không có ô tích, có dòng giải thích", t[-400:])
-            await click(m, pg, "Đã làm xong NC02 (NC cuối)")
-            t = await m.inner_text()
-            ok(await m.locator("input#gxlPrev").count() == 0 and "Hàng đã qua NC" in t, "G12 đã xong NC cuối: không có ô tích", t[-400:])
+            await click(m, pg, "Hàng lỗi")
+            for lab, code in (("Đã làm xong NC01 · chưa làm NC02", "G11 chờ NC02 (đã gia công NC01)"), ("Đã làm xong NC02 (NC cuối)", "G12 đã xong NC cuối")):
+                await click(m, pg, lab)
+                cb = m.locator("input#gxlPrev")
+                n = await cb.count()
+                opts = []
+                if n == 1:
+                    await cb.check(); await pg.wait_for_timeout(700)
+                    opts = [x.strip() for x in await m.locator("select").nth(1).locator("option").all_inner_texts()]
+                t = await m.inner_text()
+                ok(n == 1 and opts == ["-- Chọn nơi gây lỗi --", "phôi khách"] and "chỉ chọn được Khách hàng" in t,
+                   f"{code}: có ô tích, nơi gây lỗi chỉ 'phôi khách' (Khách hàng) + dòng giải thích", {"n": n, "opts": opts, "t": t[-300:]})
+                if n == 1: await cb.uncheck(); await pg.wait_for_timeout(400)
             await close_modal(pg)
         except Exception as e:
             ok(False, "G1! lỗi bấm", e); await close_modal(pg)

@@ -7,6 +7,7 @@
 #   Z2 mở lại: chỉ còn vụ B. Z3 dòng B "Khách gửi bù 2 cho VL…", khung Đang ở đâu "Khách gửi bù 2", bảng hàng lỗi cột "Đã bù".
 #   Z4 Lịch sử phiếu: phiếu bù + nút "Huỷ phiếu bù" → huỷ (lý do) → DB đã huỷ, Kho phôi còn 0. Z5 form Gia công: không có nút "Khách gửi bù".
 #   Bản cd105df (trước Gói 14): không có nút "Khách gửi bù" → Z1 SAI là đúng.
+#   [N19-BU-NUT 26/11] Z1 / Z2 / Z5 theo giao diện G-F (nút "Nhận phôi bù" ở ô Kho · Nhận · Hàng lỗi đã xử lý); bản 45a1f0b (trước G-F) SAI ở Z11.
 # Chạy trên harness VỪA khởi động: python3 drive_g14.py <port> <nhãn>
 import sys, asyncio, json, urllib.request
 from playwright.async_api import async_playwright
@@ -46,26 +47,28 @@ async def main():
         await pg.click("button[type=submit]"); await pg.wait_for_load_state("networkidle")
         await pg.goto(BASE + "/handover"); await pg.wait_for_timeout(5000)
 
-        print("[Z1] [KHACH-GUI-LAI] Kho: Khách gửi bù — chọn lần lỗi, trần, lưu")
+        # [N19-BU-NUT 2026-11-26] đáp án đổi theo khách (mockup TH1 bước 2 "Nút Nhận phôi bù ở cột Nhận của Kho — không nằm trong form Giao nữa", tích Đúng 23/11):
+        #   Z1 / Z2 bấm nút "Nhận phôi bù" ở ô Kho · Nhận · Hàng lỗi đã xử lý → cửa sổ "Nhận phôi khách gửi bù" (trước: form Kho → nút "Khách gửi bù").
+        print("[Z1] [KHACH-GUI-LAI][N19-BU-NUT] Kho: nút Nhận phôi bù (cột Nhận của Kho) — chọn lần lỗi, trần, lưu")
         try:
-            m = await open_form(pg, "PO-G14", "Kho")
-            kb = m.locator("button.gn-cellbtn", has_text="Khách gửi bù")
-            ok(await kb.count() == 1, "Z11 form Kho có nút 'Khách gửi bù'", await btn_texts(m))
-            await kb.first.click(); await pg.wait_for_timeout(900)
+            nb = row(pg, "PO-G14").locator("button:has-text('Nhận phôi bù')")
+            ok(await nb.count() == 1, "Z11 ô Kho · Nhận · Hàng lỗi đã xử lý có nút 'Nhận phôi bù'", "")
+            await nb.first.click(); await pg.wait_for_timeout(1200)
+            m = modal(pg)
             cs = [x for x in await btn_texts(m) if x.startswith("VL")]
-            ok(len(cs) == 2 and "còn bù 2" in cs[0] and "trả khách 2 + huỷ 0 − đã bù 0" in cs[0] and "còn bù 1" in cs[1] and "trả khách 0 + huỷ 1 − đã bù 0" in cs[1],
-               "Z12 2 lần lỗi: A (trả khách 2) còn bù 2, B (huỷ 1) còn bù 1", cs)
+            ok(len(cs) == 2 and "đã trả khách 2 (từ Kho), còn bù 2" in cs[0] and "đã huỷ 1 (từ Gia công), còn bù 1" in cs[1],
+               "Z12 2 lần lỗi: A (đã trả khách 2 từ Kho) còn bù 2, B (đã huỷ 1 từ Gia công) còn bù 1", cs)
             await m.locator("button.gn-cellbtn", has_text="còn bù 2").first.click(); await pg.wait_for_timeout(800)
             v = await m.locator("input[type=number]").first.input_value()
             ok(v == "2", "Z13 số điền sẵn = còn bù 2", v)
             await qty(m, pg, 3)
             t = await m.inner_text()
-            b = m.locator(".mes-modal-footer button.btn-primary:has-text('Xác nhận')")
-            ok("Vượt tối đa 2" in t and await b.is_disabled(), "Z14 nhập 3 > 2: báo vượt + nút Xác nhận khoá", t[-400:])
+            b = m.locator(".mes-modal-footer button.btn-primary:has-text('Nhận')")
+            ok("Vượt tối đa 2" in t and await b.is_disabled(), "Z14 nhập 3 > 2: báo vượt + nút Nhận khoá", t[-400:])
             await qty(m, pg, 2)
             note = m.locator("input[type=text]").last; await note.fill("PX-G14"); await note.dispatch_event("change"); await pg.wait_for_timeout(400)
             t = await m.inner_text()
-            ok("Sẽ ghi: phiếu khách gửi bù 2" in t and "Hàng lỗi đã xử lý (phôi còn)" in t, "Z15 chữ 'Sẽ ghi' đúng", t[-400:])
+            ok("Sẽ ghi: Kho Nhận · Hàng lỗi đã xử lý +2 (phôi dùng được)" in t, "Z15 chữ 'Sẽ ghi' đúng", t[-400:])
             dis = await b.is_disabled()
             if not dis: await b.click(); await pg.wait_for_timeout(2500)
             d1 = get("/harness/g14")
@@ -81,8 +84,8 @@ async def main():
         print("[Z2] Mở lại: chỉ còn vụ B được bù")
         try:
             await pg.reload(); await pg.wait_for_timeout(4000)
-            m = await open_form(pg, "PO-G14", "Kho")
-            await m.locator("button.gn-cellbtn", has_text="Khách gửi bù").first.click(); await pg.wait_for_timeout(900)
+            await row(pg, "PO-G14").locator("button:has-text('Nhận phôi bù')").first.click(); await pg.wait_for_timeout(1200)
+            m = modal(pg)
             cs = [x for x in await btn_texts(m) if x.startswith("VL")]
             ok(len(cs) == 1 and "còn bù 1" in cs[0], "Z21 chỉ còn vụ B (còn bù 1) — tự chọn sẵn khi chỉ 1 vụ", cs)
             v = await m.locator("input[type=number]").first.input_value()
@@ -123,12 +126,13 @@ async def main():
         except Exception as e:
             ok(False, "Z4! lỗi bấm", e); await close_modal(pg)
 
-        print("[Z5] Form Gia công: không có 'Khách gửi bù'")
+        print("[Z5] Form Giao (Kho, Gia công): không còn nút 'Khách gửi bù' [N19-BU-NUT]")
         try:
             await pg.reload(); await pg.wait_for_timeout(4000)
-            m = await open_form(pg, "PO-G14", "Gia công")
-            ok(await m.locator("button.gn-cellbtn", has_text="Khách gửi bù").count() == 0, "Z51 chỉ Kho có nút 'Khách gửi bù'", await btn_texts(m))
-            await close_modal(pg)
+            for gname in ("Kho", "Gia công"):
+                m = await open_form(pg, "PO-G14", gname)
+                ok(await m.locator("button.gn-cellbtn", has_text="Khách gửi bù").count() == 0, f"Z51 form {gname} không có nút 'Khách gửi bù' (nút ở cột Nhận của Kho)", await btn_texts(m))
+                await close_modal(pg)
         except Exception as e:
             ok(False, "Z5! lỗi bấm", e); await close_modal(pg)
 

@@ -233,7 +233,7 @@ public static class QuetCore
         foreach (var r in rows)
         {
             foreach (var cs in r.Cases.Values.Where(x => x.Lech != 0))
-                Add(r, VuLech, $"vụ {cs.No}: sinh {cs.SinhRa:0.##} ≠ giữ {cs.HeldTotal:0.##} + chuyển {cs.Transit:0.##} + xử lý {cs.DaXuLyTotal:0.##} + huỷ {cs.Huy:0.##} + trả khách {cs.TraKhach:0.##} (lệch {cs.Lech:0.##})");
+                Add(r, VuLech, $"vụ {cs.No}: sinh {cs.SinhRa:0.##}{(cs.BuVao != 0 ? $" + phôi bù giao theo vụ {cs.BuVao:0.##}" : "")} ≠ giữ {cs.HeldTotal:0.##} + chuyển {cs.Transit:0.##} + xử lý {cs.DaXuLyTotal:0.##} + huỷ {cs.Huy:0.##} + trả khách {cs.TraKhach:0.##} (lệch {cs.Lech:0.##})");   // [N19-BU-VU 2026-11-26] + Bù vào
             foreach (var G in r.Groups.Values)
             {
                 var vl = r.Cases.Values.Sum(x => x.HeldAt(G.Code, HandoverCell.Loi));

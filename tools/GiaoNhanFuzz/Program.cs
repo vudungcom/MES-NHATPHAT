@@ -23,6 +23,7 @@ if (args.Length > 0 && args[0] == "a2") { return await A2Scen.Run(); }   // [A2-
 if (args.Length > 0 && args[0] == "bench") { await Bench.Run(); return 0; }
 if (args.Length > 0 && args[0] == "sua") { return await SuaScen.Run(); }   // [GC-SUA-TAI-CHO] Kết quả sửa + KCS xác nhận
 if (args.Length > 0 && args[0] == "n23") { return await SuaScen.RunN23(); }
+if (args.Length > 0 && args[0] == "n19") { return await SuaScen.RunN19(); }   // [N19-SCEN 2026-11-26] phôi khách gửi bù theo mã vụ Cách A (G-F)
 if (args.Length > 0 && args[0] == "n22") { return await SuaScen.RunN22(); }   // [N22-SCEN 2026-11-25] Sửa phiếu / Sửa lần nhận / Đổi loại lỗi (G-B)
 if (args.Length > 0 && args[0] == "n21") { return await SuaScen.RunN21(); }   // [N21-SCEN 2026-11-25] WTS NG không tự sinh vụ, NG ở WTS chưa báo lỗi, báo lỗi riêng (G-D)
 if (args.Length > 0 && args[0] == "n18") { return await SuaScen.RunN18(); }   // [N18-SCEN 2026-11-25] Cách Y — hàng sửa trả về chưa đạt (G-E)   // [N23-SCEN 2026-11-25] form 6 nút (G-A2)
@@ -259,6 +260,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                        ? (int.TryParse(Environment.GetEnvironmentVariable("FORM23"), out var f23) ? f23 : 14) : 0),
             // [KHACH-GUI-LAI 2026-11-11] Gói 14: Kho nhận phôi khách gửi bù / huỷ phiếu bù (hàm thật). Trọng số 0 khi chưa có vụ trả khách / huỷ (bù) → dãy thao tác seed cũ không đổi tới lúc đó.
             ("bu", row.Cases.Values.Any(c => c.Id > 0 && c.TraKhach + c.Huy > 0) ? buW : 0), ("vbu", row.Bu > 0 ? Math.Max(1, buW / 2) : 0),
+            // [N19-BU-VU 2026-11-26] Kho giao Gia công phôi bù theo mã vụ (form thật SaveFormAsync, CaseId). Trọng số 0 khi không có phôi bù chờ giao theo vụ (đáp án đọc bảng)
+            //   → dãy thao tác seed cũ không đổi tới lúc đó. N19W=<trọng số> (mặc định 20).
+            ("bvgiao", FormHelp.BuVuDb(db, 1).Any(x => x.Value.Moi - x.Value.Giao > 0) ? (int.TryParse(Environment.GetEnvironmentVariable("N19W"), out var n19w) ? n19w : 20) : 0),
             // [KTT-PHOILOI 2026-11-12] Taro trả phôi lỗi (hàng đoạn đầu chuỗi chưa xong bộ Taro) về Kho. Trọng số 0 khi PO không đi đường Kho giao thẳng Taro
             //   hoặc chưa có hàng → dãy thao tác các PO khác không đổi. KTT=<trọng số> tăng phủ.
             ("kttloi", HandoverLedgerService.KhoTaroRun(row) is { } ktr0 && ktr0.Held > 0 && (ktr0.Chua ?? 0) > 0 ? (int.TryParse(Environment.GetEnvironmentVariable("KTT"), out var kw0) ? kw0 : 10) : 0));   // BU=<trọng số> tăng phủ   // [GN-FORM1] form Giao / xử lý hàng (FORM=0 tắt)   // [CHUOI] sửa Part Master giữa chừng (chỉ khi CHUOI=1; trọng số 0 thì không bao giờ rút trúng)   // [VULOI] + sửa dòng WTS (giữ vụ)   // [GN-NG-AFTER] [GN-NG-TRACE] LOI=1: mặc định không sửa phôi
@@ -515,7 +519,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         var rr0 = db.HandoverReceives.List.Last();
                         if (needCat && (rr0.NgCaseId == null || db.NgCases.List.First(x => x.NgCaseId == rr0.NgCaseId).NgCategoryId != rcat)) fails.Add($"[Lần nhận sinh vụ sai] PO{po} op{op} {desc}");
-                        if (!needCat && rr0.NgCaseId != t.NgCaseId) fails.Add($"[Lần nhận không theo vụ phiếu] PO{po} op{op} {desc}");
+                        if (!needCat && rr0.NgCaseId != (HandoverCell.IsBuVu(t.ToCell) ? null : t.NgCaseId)) fails.Add($"[Lần nhận không theo vụ phiếu] PO{po} op{op} {desc}");   // [N19-BU-VU] phiếu bù theo vụ: lần nhận không mang vụ (vụ đã bù xong tính theo phiếu; NG lúc nhận = vụ mới)
                         if (ok && pickCell != null) Inc("vu.recv.doio");
                         // [NHAN-DOI-O-NC] NC lưu trên lần nhận = NC chọn / mặc định theo vụ; không bao giờ sau công đoạn vụ đã tới; lý do lùi vào Ghi chú
                         var wantNc = ncApp ? (pickNc ?? defR) : null;
@@ -1003,9 +1007,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                     // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập (FormHelp.GcPrevNcs): Workflow ON, Gia công báo lỗi ĐẦU VÀO từ hàng đã gia công (NC khác NC đầu / sau máy loại trừ,
                     //   hoặc "đã làm") → phải chặn đúng lời; lộ ở fuzz sandbox 10/11 seed 1304 PO11 / 1305 PO6 (trước: thiếu đáp án)
                     bool gcPrevBad = row.ApplyWorkflow && g == "GC" && origin == HandoverNgSource.DauVao && G.Steps.Any(x => !x.IsExcluded)
-                                     && (src is HandoverNgSource.Da or HandoverNgSource.NgW || nc == null || !FormHelp.GcPrevNcs(db, 1).Contains(nc));   // [N21-NGW] NG ở WTS = đã gia công
+                                     && (src is HandoverNgSource.Da or HandoverNgSource.NgW || nc == null || !FormHelp.GcPrevNcs(db, 1).Contains(nc))   // [N21-NGW] NG ở WTS = đã gia công
+                                     && (src == HandoverNgSource.NgW || cause != "KHACH");   // [N19-KHACH-SAUGC 2026-11-26] phôi khách lỗi lộ ra sau gia công: báo được (mockup TH1b bước 1)
                     if (gcPrevBad) { Inc(ok ? "g13.ngrep.LOT" : "g13.ngrep.chan"); if (ok) fails.Add($"[GC-LOI-TRUOC-NCDAU báo lỗi đầu vào ở hàng đã gia công lọt] PO{po} op{op} {desc}"); }
-                    if (!over && !ok && !res.Error.StartsWith("Không lưu") && !(gcPrevBad && res.Error == HandoverForm.GcPrevMsg)) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
+                    if (!over && !ok && !res.Error.StartsWith("Không lưu") && !(gcPrevBad && (res.Error == HandoverForm.GcPrevMsg || res.Error == HandoverForm.GcPrevKhachMsg))) fails.Add($"[Báo lỗi trong trần bị từ chối] PO{po} op{op} {desc}: {res.Error}");
                     break;
                 }
                 case "kqsua":   // [GC-SUA-TAI-CHO] ghi Kết quả sửa (hàm thật CreateRepairResultAsync)
@@ -1139,6 +1144,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var rr = new Random(seed0 * 4421 + po * 13 + op);
                         if (gp.Count > 0 && rr.NextDouble() < nwf) { g = gp[rr.Next(gp.Count)]; tot = false; }
                     }
+                    {   // [N19-BU-VU 2026-11-26] PO còn phôi bù chờ giao theo mã vụ → BUVUF (mặc định 0.35) phần lượt form chọn Kho · Hàng tốt (Random riêng — dãy thao tác seed cũ không đổi khi chưa có)
+                        double bvf = double.TryParse(Environment.GetEnvironmentVariable("BUVUF"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var bvfv) ? bvfv : 0.35;
+                        if (FormHelp.BuVuDb(db, 1).Any(x => x.Value.Moi - x.Value.Giao > 0) && row.G("KHO").ConGiao > 0 && new Random(seed0 * 3571 + po * 7 + op).NextDouble() < bvf) { g = "KHO"; tot = true; Inc("n19.form.kho"); }
+                    }
                     var poss = HandoverForm.FormPositions(row, g, tot).Where(p => p.Have > 0).ToList();
                     if (!poss.Any()) { Inc("skip.form"); continue; }
                     var pos = poss[rnd.Next(poss.Count)];
@@ -1254,6 +1263,34 @@ for (int po = startPo; po < startPo + poCount; po++)
                         }
                         req.Qty = Q(have);
                         if (req.Qty > have) over = true;   // trần đổi theo NC nhận (trả hàng làm hộ) — rà vòng 2 L6
+                        if (g == "KHO" && pos.Id == "PHOI" && !kttF && !pos.LamHo)
+                        {   // [N19-BU-VU 2026-11-26] đáp án độc lập (FormHelp.BuVuDb đọc bảng): còn phôi bù chờ giao theo mã vụ → 60% chọn "Bù cho mã vụ" (Random riêng — dãy
+                            //   thao tác seed cũ không đổi tới khi có vụ chờ bù); phiếu thường Workflow ON không lấy phần phôi bù chờ theo vụ. Nguồn: KHÁCH 23/11 (TH1b); HÙNG 26/11 03:49.
+                            var bvF = FormHelp.BuVuDb(db, 1).Where(x => x.Value.Moi - x.Value.Giao > 0).ToList();
+                            var hold = bvF.Sum(x => x.Value.Moi - x.Value.Giao);
+                            var bvR = new Random(seed0 * 7919 + po * 31 + op);
+                            var con0 = G.ConGiao;
+                            if (bvF.Count > 0 && bvR.NextDouble() < 0.6)
+                            {
+                                bool sai = bvR.NextDouble() < 0.08;
+                                var pk = bvF[bvR.Next(bvF.Count)];
+                                req.CaseId = sai ? db.NgCases.List.Where(v => v.KhPlanDetailId == 1 && !bvF.Any(b => b.Key == v.NgCaseId)).Select(v => (long?)v.NgCaseId).FirstOrDefault() ?? 99999 : pk.Key;
+                                req.ToGroup = bvR.NextDouble() < 0.9 ? "GC" : others[bvR.Next(others.Length)];
+                                req.ToCell = bvR.NextDouble() < 0.08 ? HandoverCell.Moi : bvR.NextDouble() < 0.1 ? HandoverCell.Xl : null;
+                                req.ToNC = null; expErr = null;
+                                have = sai ? 0 : Math.Max(0, Math.Min(pk.Value.Moi - pk.Value.Giao, con0));
+                                over = bvR.NextDouble() < 0.1;
+                                req.Qty = over ? (int)have + 1 : bvR.Next(1, (int)Math.Max(1, have) + 1);
+                                over = req.Qty > have;
+                                if (req.ToGroup != "GC") expErr = "giao Gia công";
+                                else if (req.ToCell == HandoverCell.Moi) expErr = "Hàng lỗi đã xử lý";
+                                else if (sai) { expErr = "không có phôi khách gửi bù chờ giao"; over = false; }
+                                Inc(sai ? "n19.form.bvu.sai" : "n19.form.bvu");
+                            }
+                            else if (row.ApplyWorkflow && hold > 0 && req.Qty > Math.Max(0, con0 - hold) && !over)
+                            { expErr ??= "phải giao Gia công theo mã vụ"; Inc("n19.form.giuCho"); }
+                            else if (row.ApplyWorkflow && hold > 0 && over) { expErr ??= "phải giao Gia công theo mã vụ"; over = false; Inc("n19.form.giuCho.over"); }
+                        }
                     }
                     else if (pos.TaroPhoi)
                     {   // [KTT-PHOILOI 2026-11-12] phôi lỗi Taro phát hiện khi đang làm: chỉ "Giao" về Kho, tích Lỗi công đoạn trước, nơi gây lỗi Khách hàng
@@ -1337,16 +1374,23 @@ for (int po = startPo; po < startPo + poCount; po++)
                     {
                         req.Prev = rnd.NextDouble() < 0.5;
                         // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập: Workflow ON, Gia công tích ở dòng hàng đã gia công (NC khác NC đầu / sau máy loại trừ, hoặc đã xong NC cuối) → chặn
-                        if (req.Prev && g == "GC" && row.ApplyWorkflow && fncs.Count > 0 && !(pos.Id.StartsWith("NC:") && FormHelp.GcPrevNcs(db, 1).Contains(pos.Id[3..])))
-                        { expErr ??= "chưa gia công"; Inc("g13.form.gcprev"); }
+                        bool gcWorked = req.Prev && g == "GC" && row.ApplyWorkflow && fncs.Count > 0 && !(pos.Id.StartsWith("NC:") && FormHelp.GcPrevNcs(db, 1).Contains(pos.Id[3..]));
+                        bool gcNgw = gcWorked && pos.NgSource == HandoverNgSource.NgW;   // [N21-NGW] NG ở WTS = chiếc Gia công làm: không tích (kể cả Khách hàng)
+                        bool causeNull = false;
                         if (req.Prev && g != "KHO")
                         {
                             var pg0 = HandoverForm.PrevGroup(g);
                             var causes = new[] { "KHACH" }.Concat(others).ToArray();
                             req.Cause = rnd.NextDouble() < 0.7 && pg0 != "" ? pg0 : causes[rnd.Next(causes.Length)];
+                            if (gcWorked && rnd.NextDouble() < 0.45) req.Cause = "KHACH";   // [N19-KHACH-SAUGC] thử nhiều đường phôi khách lỗi lộ ra sau gia công
                             // [CAUSE-BAT-BUOC 2026-11-10] bỏ trống nơi gây lỗi → máy chủ chặn (trước [T4]: lấy nhóm trước). Nguồn: HÙNG 10/11 16:52
-                            if (rnd.NextDouble() < 0.15) { req.Cause = rnd.NextDouble() < 0.3 ? " " : null; expErr ??= "nơi gây lỗi"; Inc("g13.form.causenull"); }   // (rà Thấp 4) có cả chuỗi trắng
+                            if (rnd.NextDouble() < 0.15) { req.Cause = rnd.NextDouble() < 0.3 ? " " : null; causeNull = true; Inc("g13.form.causenull"); }   // (rà Thấp 4) có cả chuỗi trắng
                         }
+                        // [GC-LOI-TRUOC-NCDAU 2026-11-10] đáp án độc lập: Workflow ON, Gia công tích ở dòng hàng đã gia công (NC khác NC đầu / sau máy loại trừ, hoặc đã xong NC cuối) → chặn
+                        //   [N19-KHACH-SAUGC 2026-11-26] trừ nơi làm lỗi Khách hàng (mockup TH1b bước 1; HÙNG 26/11 04:03) — máy chủ kiểm trước "nơi gây lỗi bắt buộc"
+                        if (gcWorked && (gcNgw || (req.Cause ?? "").Trim() != "KHACH")) { expErr ??= "chưa gia công"; Inc("g13.form.gcprev"); }
+                        else if (gcWorked) Inc("n19.form.khachsaugc");
+                        if (causeNull) expErr ??= "nơi gây lỗi";
                         var cx = rnd.NextDouble();
                         req.CatId = cx < 0.02 ? null : cx < 0.04 ? 6 : rnd.Next(1, 6);
                         if (req.CatId == null || req.CatId == 6) expErr ??= "";
@@ -1497,6 +1541,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                     else if (suaTo != null && giu && row.ApplyWorkflow && !FormHelp.XlDung(db, cs.Id, g, suaTo, HandoverLedgerService.HtspOnlyLamHo(row))) expErr = "";   // [XL-VUOT-CHAN]
                     else if (suaTo != null && khoMoi && row.ApplyWorkflow && (FormHelp.KhoTaroPo(db, 1) && suaTo is "GC" or "HTSP" || FormHelp.Nguoc("KHO", suaTo))) expErr = "";
                     else if (suaTo != null && khoMoi && row.ApplyWorkflow && suaTo == "HTSP" && HandoverLedgerService.HtspOnlyLamHo(row)) expErr = "";
+                    else if (suaTo != null && khoMoi && row.ApplyWorkflow && FormHelp.BuVuDb(db, 1).Sum(x => Math.Max(0, x.Value.Moi - x.Value.Giao)) is decimal bvh && bvh > 0
+                             && row.G("KHO").ConGiao + pass - bvh < pass) { expErr = "Chưa giao"; Inc("n19.form23.giuCho"); }   // [N19-BU-VU] Kho sửa → phôi còn → Hàng mới: giữ chỗ phôi bù theo vụ (đáp án đọc bảng)
                     var req = new FormGiaoRequest { KhPlanDetailId = 1, Group = g, UserId = Uid(g), Kind = HandoverForm.Loi, Pos = cell == HandoverCell.Loi ? "TONLOI" : "TONSUA",
                                                     CaseId = cs.Id, Action = HandoverForm.ASua, Pass = pass, Fail = fail, SuaTo = suaTo, SuaFailTra = failTra };
                     desc = $"form23 {g} {cell} vu={cs.Id} p={pass}/{fail} to={suaTo} failTra={failTra}→{failTo} giu={giu} khoMoi={khoMoi} tgt={tgt} held={held} over={over} exp={expErr}";
@@ -1616,6 +1662,12 @@ for (int po = startPo; po < startPo + poCount; po++)
                     bool zero = rnd.NextDouble() < 0.08 || !cands.Any();
                     var zeros = caseIds.Where(c => BuOutOf(db, c) - BuOf(db, c) <= 0).ToList();
                     long cid = !zero ? cands[rnd.Next(cands.Count)] : zeros.Count > 0 && rnd.NextDouble() < 0.7 ? zeros[rnd.Next(zeros.Count)] : 99999;
+                    {   // [N19-BU-VU 2026-11-26] N19BU (mặc định 0.6) phần lượt bù đổi sang vụ đã qua Gia công nếu có (Random riêng — dãy rnd không đổi)
+                        double nb = double.TryParse(Environment.GetEnvironmentVariable("N19BU"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nbv) ? nbv : 0.6;
+                        var quaC = !zero ? cands.Where(c => FormHelp.QuaGcDb(db, 1, c)).ToList() : new List<long>();
+                        var rq = new Random(seed0 * 4231 + po * 13 + op);
+                        if (quaC.Count > 0 && rq.NextDouble() < nb) { cid = quaC[rq.Next(quaC.Count)]; Inc("n19.bu.qua"); }
+                    }
                     var cap = BuOutOf(db, cid) - BuOf(db, cid);
                     bool over = !zero && rnd.NextDouble() < 0.1;
                     var n = zero ? rnd.Next(1, 3) : over ? cap + rnd.Next(1, 3) : rnd.Next(1, (int)cap + 1);
@@ -1680,6 +1732,32 @@ for (int po = startPo; po < startPo + poCount; po++)
                     }
                     break;
                 }
+                case "bvgiao":   // [N19-BU-VU 2026-11-26] Kho → Gia công phôi bù theo mã vụ: đáp án độc lập trần = min(phôi bù vụ chờ giao (bảng), Kho phôi còn)
+                {
+                    var bv = FormHelp.BuVuDb(db, 1).Where(x => x.Value.Moi - x.Value.Giao > 0).ToList();
+                    var (cid, mg) = bv[rnd.Next(bv.Count)];
+                    var cho = mg.Moi - mg.Giao; var con = row.G("KHO").ConGiao;
+                    var cap = Math.Min(cho, con);
+                    bool over = rnd.NextDouble() < 0.15;
+                    decimal q = over ? cap + rnd.Next(1, 3) : cap <= 0 ? 1 : rnd.Next(1, (int)cap + 1);
+                    string? toCellB = rnd.NextDouble() < 0.1 ? HandoverCell.Moi : null;
+                    desc = $"bvgiao vu={cid} q={q} cho={cho} con={con} cell={toCellB}";
+                    var nTx = db.HandoverTransactions.List.Count;
+                    var f = await svc.SaveFormAsync(new FormGiaoRequest { KhPlanDetailId = 1, Group = "KHO", UserId = Uid("KHO"), Kind = HandoverForm.Tot, Pos = "PHOI",
+                        Action = HandoverForm.AGiao, ToGroup = "GC", Qty = q, CaseId = cid, ToCell = toCellB });
+                    ok = f.Ok; checks++;
+                    bool exp = q <= cap && q > 0 && toCellB == null;
+                    if (ok != exp) fails.Add($"[N19-BU-VU giao bù theo vụ {(ok ? "lọt" : "bị chặn sai")}] PO{po} op{op} {desc}: {f.Error}");
+                    if (ok)
+                    {
+                        var t = db.HandoverTransactions.List.Last(); checks++;
+                        if (db.HandoverTransactions.List.Count != nTx + 1 || t.ToCell != HandoverCell.BuVu || t.NgCaseId != cid || t.QtyIssued != q || t.FromGroupCode != "KHO" || t.ToGroupCode != "GC")
+                            fails.Add($"[N19-BU-VU phiếu bù theo vụ sai] PO{po} op{op} {desc}: #{t.HandoverTxId} {t.FromGroupCode}→{t.ToGroupCode} {t.ToCell} vụ {t.NgCaseId} {t.QtyIssued}");
+                    }
+                    else if (db.HandoverTransactions.List.Count != nTx) fails.Add($"[N19-BU-VU bị chặn mà vẫn ghi] PO{po} op{op} {desc}");
+                    Inc(ok ? "n19.bvgiao.ok" : "n19.bvgiao.chan" + (toCellB != null ? ".o" : over ? ".vuot" : ".khac"));
+                    break;
+                }
                 case "vbu":   // [KHACH-GUI-LAI 2026-11-11] huỷ phiếu khách gửi bù (hàm thật VoidReplacementAsync)
                 {
                     var bs = db.HandoverReplacements.List.Where(b => b.KhPlanDetailId == 1 && !b.IsVoided).ToList();
@@ -1694,6 +1772,10 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (conTb != null) { checks++; if (conTb.Value != con) fails.Add($"[G14-KIEM-THEM Kho phôi còn sổ ≠ bảng] PO{po} op{op}: sổ {con} ≠ bảng {conTb}"); con = conTb.Value; }
                     Inc(conTb != null ? "g14.vbu.dapan.bang" : "g14.vbu.dapan.so");
                     bool must = row.ApplyWorkflow && con - bq < 0;   // đáp án: phôi bù đã giao đi (Kho phôi còn không đủ) → K5 phải chặn
+                    // [N19-BU-VU 2026-11-26] đáp án độc lập: phôi bù đã giao Gia công theo mã vụ nhiều hơn phần còn lại sau huỷ → chặn (ON: K5 "Không lưu" + gợi ý gỡ; OFF: lời riêng)
+                    var bvMap = FormHelp.BuVuDb(db, 1);
+                    bool mustBv = b.ReceivedAt >= HandoverLedgerService.BuVuFrom && bvMap.TryGetValue(b.NgCaseId, out var bvv) && bvv.Giao > bvv.Moi - bq;
+                    if (mustBv) { must = row.ApplyWorkflow; Inc("n19.vbu.chan"); }
                     desc = $"vbu #{bid} vu={b.NgCaseId} q={bq} phoicon={con} phaichan={must}";
                     var deny = await svc.VoidReplacementAsync(bid, "huy thu", FuzzPerm.GcOnlyUser(db));   // chỉ Sửa Gia công, không phải người nhập (L5)
                     checks++;
@@ -1701,7 +1783,9 @@ for (int po = startPo; po < startPo + poCount; po++)
                     var res = await svc.VoidReplacementAsync(bid, "huy thu", by);
                     ok = res.Ok; checks++;
                     if (must && ok) fails.Add($"[KHACH-GUI-LAI huỷ bù đã giao đi lọt K5] PO{po} op{op} {desc}");
-                    if (!ok && !res.Error.StartsWith("Không lưu")) fails.Add($"[KHACH-GUI-LAI huỷ bù bị từ chối lạ] PO{po} op{op} {desc}: {res.Error}");
+                    if (mustBv && ok) fails.Add($"[N19-BU-VU huỷ phiếu bù khi phôi bù đã giao theo vụ lọt] PO{po} op{op} {desc}");
+                    bool offBv = !row.ApplyWorkflow && mustBv && res.Error.Contains("Huỷ phiếu Kho → Gia công bù theo mã vụ trước");
+                    if (!ok && !res.Error.StartsWith("Không lưu") && !offBv) fails.Add($"[KHACH-GUI-LAI huỷ bù bị từ chối lạ] PO{po} op{op} {desc}: {res.Error}");
                     if (ok) { var r2 = (await led.GetLedgerForDetailAsync(1))!; checks++; if (r2.G("KHO").ConGiao != con - bq) fails.Add($"[KHACH-GUI-LAI huỷ bù không trừ Kho phôi còn] PO{po} op{op} {desc}"); }
                     Inc(ok ? "g14.vbu.ok" : "g14.vbu.chan" + (must ? "" : ".tl"));
                     if (!ok && res.Error.StartsWith("Không lưu"))
@@ -2190,6 +2274,28 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
             if (!row.Cases.TryGetValue(g.Key, out var cB) || cB.DaBu != g.Sum(b => b.Qty)) F("KHACH-GUI-LAI sổ đã bù vụ ≠ bảng", NgCaseNo.Format(g.Key));
         }
     }
+    {   // [N19-BU-VU 2026-11-26] đáp án độc lập (FormHelp.BuVuDb đọc thẳng bảng): phôi bù chờ giao theo mã vụ mỗi vụ = sổ (BuVuCho); đã giao theo vụ ≤ đã bù (cả OFF);
+        //   sổ "Bù vào" = Σ phiếu XLBU; phiếu XLBU đúng dạng (Kho → Gia công, ô Hàng mới, mang vụ đã qua Gia công, NC nhận = NC đầu / không NC khi có dòng Nhận vào)
+        var bvDb = FormHelp.BuVuDb(db, 1);
+        foreach (var c in row.Cases.Values.Where(c => c.Id > 0))
+        {
+            checks++;
+            var exp = bvDb.TryGetValue(c.Id, out var e) ? Math.Max(0, e.Moi - e.Giao) : 0m;
+            if (HandoverLedgerService.BuVuCho(row, c) != exp) F("N19-BU-VU phôi bù chờ giao theo vụ sổ ≠ bảng", $"{c.No}: sổ {HandoverLedgerService.BuVuCho(row, c)} · bảng {exp}");
+            var giaoDb = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.NgCaseId == c.Id && t.ToCell == HandoverCell.BuVu).Sum(t => t.QtyIssued);
+            if (c.BuVao != giaoDb) F("N19-BU-VU sổ Bù vào ≠ phiếu", $"{c.No}: sổ {c.BuVao} · bảng {giaoDb}");
+            if (c.BuVao > c.DaBuMoi) F("N19-BU-VU đã giao theo vụ vượt phôi bù", $"{c.No}: giao {c.BuVao} > bù {c.DaBuMoi}");
+        }
+        var (bvNcs, bvVao) = FormHelp.Chain(db, 1);
+        foreach (var t in db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.ToCell == HandoverCell.BuVu))
+        {
+            checks++;
+            var expNc = bvVao || bvNcs.Count == 0 ? null : bvNcs[0];
+            if (t.FromGroupCode != "KHO" || t.ToGroupCode != "GC" || t.FromCell != HandoverCell.Moi || t.Purpose != HandoverPurpose.New || t.NgCaseId is not long tcv
+                || !bvDb.ContainsKey(tcv) || !string.Equals(t.ToNC, expNc, StringComparison.OrdinalIgnoreCase))
+                F("N19-BU-VU phiếu bù theo vụ sai dạng", $"#{t.HandoverTxId} {t.FromGroupCode}→{t.ToGroupCode} {t.FromCell} {t.Purpose} vụ {t.NgCaseId} NC {t.ToNC} (cần {expNc})");
+        }
+    }
     {   // [KHO-TARO-THANG][KTT-PHOILOI 2026-11-12] đáp án độc lập đọc thẳng bảng (không dùng công thức sổ):
         //   đoạn Taro đầu chuỗi: vào = Σ phần tốt lần nhận phiếu theo NC từ "@VAO" (Kho giao thẳng + Gia công giao từ Nhận vào) tới HTSP;
         //   phôi lỗi trả Kho = Σ phiếu Hàng lỗi công đoạn trước HTSP → Kho có NC nguồn @VAO (số tính giao); dòng "Nhận vào" Gia công: đã giao theo NC
@@ -2519,6 +2625,11 @@ async Task CheckAll(AppDbContext db, HandoverLedgerService led, int po, int op, 
         checks++;
         var sSinh = row.Cases.Values.Sum(x => x.SinhRa); var sChuyen = row.Cases.Values.Sum(x => x.Transit);
         var sXl = row.Cases.Values.Sum(x => x.DaXuLyTotal);
+        {   // [N19-BU-VU 2026-11-26] phôi bù giao theo mã vụ vào cân vụ (Bù vào) nhưng không phải hàng lỗi (đường đi hàng lỗi không có): trừ phần đó — đọc thẳng bảng
+            var bvIds = db.HandoverTransactions.List.Where(t => t.KhPlanDetailId == 1 && !t.IsVoided && t.ToCell == HandoverCell.BuVu).ToList();
+            var bvNhan = bvIds.Sum(t => db.HandoverReceives.List.Where(r => r.HandoverTxId == t.HandoverTxId && !r.IsVoided).Sum(r => r.QtyOk + r.QtyNg));
+            sXl -= bvNhan; sChuyen -= bvIds.Sum(t => t.QtyIssued) - bvNhan;
+        }
         if (sSinh != trv.PhatSinh || sChuyen != trv.DangChuyen || sXl != trv.VeSx
             || row.Cases.Values.Sum(x => x.Huy) != row.DaHuy || row.Cases.Values.Sum(x => x.TraKhach) != row.TraKhach)
             F("Vụ lỗi ≠ đường đi hàng lỗi", $"sinh {sSinh}/{trv.PhatSinh} chuyển {sChuyen}/{trv.DangChuyen} xử lý {sXl}/{trv.VeSx} huỷ {row.Cases.Values.Sum(x => x.Huy)}/{row.DaHuy} khách {row.Cases.Values.Sum(x => x.TraKhach)}/{row.TraKhach}");

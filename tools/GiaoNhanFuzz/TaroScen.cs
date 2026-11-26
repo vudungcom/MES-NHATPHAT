@@ -508,6 +508,14 @@ public static class TaroScen
         var lt = db.HandoverTransactions.List.Last();
         Ok(!bad.Ok && f1.Ok && lt.Purpose == HandoverPurpose.HelpReturn && lt.FromCell == HandoverCell.Loi && lt.ToCell == HandoverCell.Loi && lt.NgCaseId == ngCase && lt.ToNC == null && lt.QtyIssued == 1,
            "T16i trả lỗi: giao KCS → chặn; trả Gia công 1 → phiếu Trả về Gia công theo NC ô Hàng lỗi → ô Hàng lỗi, mang vụ, không NC", $"{bad.Error} | {f1.Error}");
+        {   // T16i2 [N22-SUA 2026-11-26] Sửa phiếu "Trả lỗi hàng làm hộ" (chưa nhận): được — ô nhận máy chủ tự đặt lại (trước: "Ô nhận không hợp lệ" oan — trạm kiem 26/11 chuoi_ktt seed 28794)
+            var ed = await svc.EditIssueAsync(lt.HandoverTxId, "GC", 1, null, null, "ghi chu moi", "Sửa ghi chú", U);
+            var lt2 = db.HandoverTransactions.List.Last();
+            Ok(ed.Ok && lt2.HandoverTxId != lt.HandoverTxId && lt2.Purpose == HandoverPurpose.HelpReturn && lt2.FromCell == HandoverCell.Loi && lt2.ToCell == HandoverCell.Loi
+               && lt2.NgCaseId == ngCase && lt2.ToNC == null && lt2.QtyIssued == 1 && db.HandoverTransactions.List.Single(t => t.HandoverTxId == lt.HandoverTxId).IsVoided,
+               "T16i2 Sửa phiếu Trả lỗi hàng làm hộ: phiếu cũ huỷ, phiếu mới y dạng (ô Hàng lỗi, cùng vụ, không NC)", ed.Error);
+            lt = lt2;
+        }
         var gx = await svc.ReceiveAsync(lt.HandoverTxId, 0, 1, null, U, toCell: HandoverCell.Xl, toCellReason: "doi o");
         var gl = await svc.ReceiveAsync(lt.HandoverTxId, 0, 1, null, U);
         row = (await led.GetLedgerForDetailAsync(det))!;

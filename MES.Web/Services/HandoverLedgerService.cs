@@ -112,10 +112,17 @@ namespace MES.Web.Services
         ///   Nhận / Giao · Hàng lỗi của mình (chỉ Giao · Hàng sửa). Cách Y — Nguồn: KHÁCH 23/11 (mockup TH6, TH7 chọn Cách Y; sheet dòng 15, 16);
         ///   HÙNG 23/11 16:24 (N18) + 25/11 13:56 OK bản "em hiểu" G-E.</summary>
         public const string LoiVe = "LOIV";
-        /// <summary>[N18-TRAVE] Ô chỉ định thật để kiểm / nhận (LOIV → Hàng lỗi); ô khác giữ nguyên.</summary>
-        public static string? DesigOf(string? toCell) => toCell == LoiVe ? Loi : toCell;
+        /// <summary>[N19-BU-VU 2026-11-26] Ô bên giao CHỈ ĐỊNH của phiếu Kho → Gia công giao PHÔI KHÁCH GỬI BÙ THEO MÃ VỤ (vụ đã qua Gia công — Cách A).
+        ///   Chỉ máy chủ ghi (HandoverService [N19-BU-VU]), chỉ ở HandoverTransactions.ToCell; lần nhận ghi ô Hàng lỗi đã xử lý. Bên giao: Kho Giao · Hàng mới (phôi còn);
+        ///   bên nhận: Gia công Nhận · Hàng lỗi đã xử lý, chờ NC đầu (như phôi — "làm từ NC 1"); vụ: khoản "Bù vào" (cân vụ: Sinh ra + Bù vào = …).
+        ///   Nguồn: KHÁCH 23/11 (mockup TH1b "Đúng + Cách A", sheet dòng 8); HÙNG 23/11 16:24 (N19) + 26/11 03:49 OK bản em hiểu G-F.</summary>
+        public const string BuVu = "XLBU";
+        /// <summary>[N18-TRAVE] Ô chỉ định thật để kiểm / nhận (LOIV → Hàng lỗi); ô khác giữ nguyên. [N19-BU-VU] XLBU → Hàng lỗi đã xử lý.</summary>
+        public static string? DesigOf(string? toCell) => toCell == LoiVe ? Loi : toCell == BuVu ? Xl : toCell;
         /// <summary>[N18-TRAVE] Phiếu tự trả chiếc sửa chưa đạt (Cách Y).</summary>
         public static bool IsTraVe(string? toCell) => toCell == LoiVe;
+        /// <summary>[N19-BU-VU] Phiếu Kho → Gia công phôi bù theo mã vụ (Cách A).</summary>
+        public static bool IsBuVu(string? toCell) => toCell == BuVu;
 
         public static readonly string[] IssueCells = { Moi, Loi, Sua };
         /// <summary>[SUA-XL-GIU 2026-11-10] Ô giao được của phiếu (IssueCells + ô Hàng lỗi đã xử lý — chỉ phiếu Trả hàng đã sửa, mang vụ).
@@ -125,6 +132,7 @@ namespace MES.Web.Services
         public static string Label(string? c) => c switch
         {
             LoiVe => "Hàng sửa trả về chưa đạt",   // [N18-TRAVE]
+            BuVu => "Hàng lỗi đã xử lý (phôi khách gửi bù theo mã vụ)",   // [N19-BU-VU]
             Moi => "Hàng mới", Loi => "Hàng lỗi", Sua => "Hàng sửa", Xl => "Hàng lỗi đã xử lý", LamHo => "Tồn hàng giao theo NC (làm hộ bị lỗi)", _ => c ?? ""   // [TARO-LAMHO-NC]
         };
 
@@ -565,6 +573,15 @@ namespace MES.Web.Services
         public decimal DaBu      { get; set; }
         /// <summary>[KHACH-GUI-LAI] Các phiếu bù của vụ (Id, số) — chỉ để hiện / lời báo.</summary>
         public List<(long Id, decimal Qty)> BuDocs { get; set; } = new();
+        /// <summary>[N19-BU-VU 2026-11-26] Phôi bù nhận từ bản G-F (giờ máy chủ ≥ HandoverLedgerService.BuVuFrom) — phần phải giao Gia công theo mã vụ khi vụ đã qua
+        ///   Gia công (BuQuaGc). Phiếu bù nhận trước bản này giữ nghĩa cũ (đi như phôi thường). Chỉ để tính "còn chờ giao theo vụ".</summary>
+        public decimal DaBuMoi   { get; set; }
+        /// <summary>[N19-BU-VU] Phôi bù Kho đã giao Gia công THEO MÃ VỤ (phiếu ô chỉ định XLBU, số giao — tính cả phần chưa nhận). Vào cân vụ như nguồn:
+        ///   Sinh ra + Bù vào = Đang giữ + Đang chuyển + Đã xử lý + Huỷ + Trả khách (Gia công nhận → Đã xử lý). Nguồn: KHÁCH 23/11 (TH1b Cách A — thay N15
+        ///   "bù không vào cân vụ" cho chiếc đã qua Gia công); HÙNG 23/11 16:24.</summary>
+        public decimal BuVao     { get; set; }
+        /// <summary>[N19-BU-VU] Phôi bù còn chờ giao Gia công theo mã vụ = đã bù (từ bản G-F) − đã giao theo vụ. Chỉ có nghĩa khi vụ đã qua Gia công.</summary>
+        public decimal BuCho     => DaBuMoi - BuVao;
         public Dictionary<string, decimal> HuyBy   { get; set; } = new();
         public Dictionary<string, decimal> KhachBy { get; set; } = new();
         /// <summary>Chặng "Nhận lỗi": số vào ô Hàng lỗi theo nhóm (gồm cả nơi tự giữ hàng mình làm hỏng).</summary>
@@ -591,8 +608,8 @@ namespace MES.Web.Services
         public decimal HeldTotal => Held.Values.Sum();
         public decimal DaXuLyTotal => DaXuLy.Values.Sum();
         /// <summary>Phải luôn = 0 (cân vụ).</summary>
-        public decimal Lech => SinhRa - HeldTotal - Transit - DaXuLyTotal - Huy - TraKhach;
-        public bool IsEmpty => SinhRa == 0 && Hops.Count == 0 && Held.Values.All(v => v == 0) && Transit == 0 && DaBu == 0;   // [KHACH-GUI-LAI] vụ có phiếu bù giữ lại
+        public decimal Lech => SinhRa + BuVao - HeldTotal - Transit - DaXuLyTotal - Huy - TraKhach;   // [N19-BU-VU] + Bù vào (phôi bù giao Gia công theo vụ)
+        public bool IsEmpty => SinhRa == 0 && Hops.Count == 0 && Held.Values.All(v => v == 0) && Transit == 0 && DaBu == 0 && BuVao == 0;   // [KHACH-GUI-LAI] vụ có phiếu bù giữ lại · [N19-BU-VU]
     }
 
     public class LedgerStepRow
@@ -1148,6 +1165,8 @@ namespace MES.Web.Services
             if (purpose is HandoverPurpose.HelpSend or HandoverPurpose.HelpReturn || HandoverPurpose.IsOut(purpose)) return HandoverPurpose.Label(purpose);
             var from = HandoverCell.IssueCellOf(purpose, t.FromCell);
             if (HandoverCell.IsTraVe(t.ToCell)) return "Sửa chưa đạt — phần mềm tự trả → ô Hàng lỗi (Hàng sửa trả về chưa đạt)";   // [N18-TRAVE]
+            if (HandoverCell.IsBuVu(t.ToCell) && t.NgCaseId is long bv)   // [N19-BU-VU] mockup TH1b bước 3 "mang mã vụ VL…"
+                return $"Phôi khách gửi bù theo mã vụ {NgCaseNo.Format(bv)} → ô Hàng lỗi đã xử lý (làm từ NC đầu)";
             return $"{HandoverCell.Label(from)}{(purpose == HandoverPurpose.NgReturn ? " ☑ công đoạn trước" : "")} → ô {HandoverCell.Label(DesigCellOf(t, purpose))}";
         }
 
@@ -1853,6 +1872,11 @@ namespace MES.Web.Services
                 bool carry = !isHelp && fromCell is HandoverCell.Loi or HandoverCell.Sua or HandoverCell.Xl;   // [SUA-XL-GIU] + hàng đã sửa (ô Hàng lỗi đã xử lý) mang vụ
                 LedgerCase? csT = carry ? Cs(t.NgCaseId) : null;
                 string txDocName = $"Phiếu #{t.Id}";
+                // [N19-BU-VU 2026-11-26] Phiếu Kho → Gia công giao phôi khách gửi bù THEO MÃ VỤ (ô chỉ định XLBU — chỉ máy chủ ghi): ô hai đầu như phôi
+                //   (Kho Giao · Hàng mới; Gia công Nhận · Hàng lỗi đã xử lý, chờ NC đầu) + vụ có khoản "Bù vào" = số giao (đang chuyển tới khi Gia công nhận → Đã xử lý).
+                //   Nguồn: KHÁCH 23/11 (mockup TH1b "Đúng + Cách A"); HÙNG 23/11 16:24 (N19) + 26/11 03:49 OK bản em hiểu G-F.
+                bool buVu = !isHelp && fromCell == HandoverCell.Moi && HandoverCell.IsBuVu(t.ToCell) && t.NgCaseId is long bvId && bvId > 0;
+                LedgerCase? csBv = buVu ? Cs(t.NgCaseId) : null;
 
                 // ── [KHO-TARO-THANG 2026-11-12] KHO GIAO THẲNG TARO (NC đầu Gia công là máy loại trừ có Taro — đoạn làm hộ đầu chuỗi, NC nguồn @VAO) ──
                 //   Nguồn: KHÁCH 10/11 (hỏi lại 3.3 chọn B) + 12/11 file Word (b = A: NC đầu Taro thì Kho chỉ giao Taro); HÙNG 12/11 14:00 OK kế hoạch.
@@ -1928,6 +1952,11 @@ namespace MES.Web.Services
                 {
                     case HandoverCell.Moi:
                         Add(t.From, "gm", "Giao Hàng mới", giao, txDoc);
+                        if (buVu)
+                        {   // [N19-BU-VU] phôi bù đi Gia công theo vụ: nguồn của vụ, đang chuyển
+                            csBv!.BuVao += giao; csBv.Transit += giao;
+                            CHop(csBv, "BUGIAO", t.From, t.To, HandoverCell.Moi, giao, txDocName, t.Id, t.At);
+                        }
                         break;
                     case HandoverCell.Loi:
                         if (prevNg)
@@ -2063,6 +2092,12 @@ namespace MES.Web.Services
                     //   Phiếu không mang vụ: nhận vào ô Hàng lỗi / Hàng sửa, hoặc NG đếm lúc nhận = vụ MỚI sinh ở bên nhận (r.NgCaseId).
                     var q = r.Ok + r.Ng;
                     LedgerCase? ngCs = null;
+                    if (buVu && q != 0)
+                    {   // [N19-BU-VU] phôi bù theo vụ tới Gia công (mọi ô bên nhận chọn — OFF đổi ô được): vụ đã bù xong phần này (Đã xử lý ở Gia công).
+                        //   NG đếm lúc nhận = phôi bù bị lỗi: vụ MỚI như phôi thường (nhánh dưới), không quay về vụ cũ.
+                        csBv!.Transit -= q; CAdd(csBv.DaXuLy, t.To, q);
+                        CHop(csBv, "BUNHAN", t.To, t.From, cell, q, txDocName, t.Id, r.At);
+                    }
                     if (carry)
                     {
                         csT!.Transit -= q;
@@ -2664,6 +2699,7 @@ namespace MES.Web.Services
                 var csB = Cs(bu1.NgCaseId);
                 csB.DaBu += bu1.Qty;
                 csB.BuDocs.Add((bu1.Id, bu1.Qty));
+                if (bu1.At >= BuVuFrom) csB.DaBuMoi += bu1.Qty;   // [N19-BU-VU] phiếu bù nhận từ bản G-F (trước đó: đi như phôi thường — giữ nghĩa cũ)
             }
 
             // ── [VULOI] Chốt sổ vụ lỗi: gắn nhãn, bỏ vụ rỗng, tự kiểm (cân từng vụ + khớp ô Tồn hàng lỗi / Tồn hàng sửa) ──
@@ -2695,7 +2731,7 @@ namespace MES.Web.Services
                     cs.DetectGroup = ps?.Group; cs.At = ps?.At;
                 }
                 if (cs.Lech != 0)
-                    row.G(cs.DetectGroup ?? "KHO").Warnings.Add($"{cs.No}: sinh ra {cs.SinhRa:0.##} khác giữ + chuyển + đã xử lý + huỷ + trả khách (lệch {cs.Lech:0.##}) — báo lại để kiểm");
+                    row.G(cs.DetectGroup ?? "KHO").Warnings.Add($"{cs.No}: sinh ra {cs.SinhRa:0.##}{(cs.BuVao != 0 ? $" + phôi bù giao theo vụ {cs.BuVao:0.##}" : "")} khác giữ + chuyển + đã xử lý + huỷ + trả khách (lệch {cs.Lech:0.##}) — báo lại để kiểm");
                 // [LAMHO-OFF 2026-11-09] Vụ làm hộ (chiếc của chuỗi Gia công) mà đã vào ô hàng đạt / ô Hàng sửa / Kết quả sửa của nhóm khác Gia công: Workflow ON máy chủ chặn,
                 //   OFF lưu được (họ tự kiểm soát) → cảnh báo trên sổ nhóm đó (dữ liệu cũ trước khi có chặn cũng hiện). Không đổi phép tính số.
                 //   Nguồn: HÙNG 09/11 08:21 + 09:18 OK (Gói 12).
@@ -2903,6 +2939,9 @@ namespace MES.Web.Services
                     HandoverPurpose.HelpReturn when HandoverCell.IsLamHoLoi(purpose, t.FromCell)   // [LAMHO-B-CHU 2026-11-07] trả hàng làm hộ bị lỗi (mang vụ) — trước chữ như trả hàng tốt
                                                => $"{GroupLabel(t.From)} trả hàng làm hộ bị lỗi {t.Issued:0.##} → {GroupLabel(t.To)} ô Hàng lỗi (cùng vụ)",
                     HandoverPurpose.HelpReturn => $"{GroupLabel(t.From)} trả về Gia công {t.Issued:0.##} → {GroupLabel(t.To)}" + (string.IsNullOrEmpty(t.ToNC) ? "" : $" (vào NC {t.ToNC})"),
+                    HandoverPurpose.New when HandoverCell.IsBuVu(t.ToCell) && t.NgCaseId is long bvs   // [N19-BU-VU 2026-11-26] mockup TH1b bước 3
+                                               => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô Hàng mới — phôi khách gửi bù theo mã vụ {NgCaseNo.Format(bvs)} → {GroupLabel(t.To)} ô Hàng lỗi đã xử lý"
+                                                  + (string.IsNullOrEmpty(t.ToNC) ? $" ({VaoLabel})" : $" (làm từ {NcName(t.ToNC)})"),
                     _ => $"{GroupLabel(t.From)} giao {t.Issued:0.##} · ô {HandoverCell.Label(cell)}"
                          + (purpose == HandoverPurpose.NgReturn ? " ☑ lỗi công đoạn trước" : "")
                          + (purpose == HandoverPurpose.NgReturn && !string.IsNullOrEmpty(t.FromNC) ? (IsTaroPhoiLoi(t, purpose) ? $" ({TaroPhoiLoiFrom})" : $" (phát hiện ở {NcText(t.FromNC)})") : "")   // [GN-NC-PIN] [N3-FIRST] chữ @VAO · [KTT-PHOILOI]
@@ -3639,6 +3678,67 @@ namespace MES.Web.Services
         public static List<LedgerCase> BuCases(LedgerRow row)
             => row.Cases.Values.Where(c => c.Id > 0 && BuCap(row, c.Id).Max > 0).OrderBy(c => c.At ?? DateTime.MinValue).ThenBy(c => c.Id).ToList();
 
+        // ================================================================
+        // [N19-BU-VU 2026-11-26] PHÔI KHÁCH GỬI BÙ CHO CHIẾC LỖI ĐÃ QUA GIA CÔNG — Kho giao Gia công bắt buộc chọn mã vụ, Gia công nhận ô Hàng lỗi đã xử lý
+        //   theo vụ, làm từ NC đầu (Cách A). Chiếc lỗi chưa qua Gia công (lỗi từ Kho): như N15 — phôi bù đi như phôi thường, không chọn mã vụ (TH1).
+        //   Nguồn: KHÁCH 23/11 (mockup TH1 "Đúng — không chọn mã vụ khi lỗi từ Kho, chưa qua Gia công"; TH1b "Đúng + Cách A"; sheet dòng 8);
+        //   HÙNG 23/11 16:24 (N19) + 26/11 03:49 OK bản em hiểu G-F. Chi tiết Claude tự chốt (khách kiểm khi test — project doc claude/tu-chot-bao-khach.md):
+        //   "đã qua Gia công" theo nơi phát hiện (BuQuaGc); PO Kho giao thẳng Taro như TH1; phiếu bù nhận trước bản này (BuVuFrom) giữ nghĩa cũ.
+        // ================================================================
+        /// <summary>[N19-BU-VU] Phiếu khách gửi bù nhận từ giờ này (giờ máy chủ) mới phải giao theo mã vụ — phiếu bù cũ đã / sẽ đi như phôi thường (chứng từ cũ giữ nghĩa cũ).</summary>
+        public static readonly DateTime BuVuFrom = new DateTime(2026, 11, 26);
+
+        /// <summary>[N19-BU-VU] Vụ có chiếc lỗi ĐÃ QUA Gia công (Gia công đã làm ít nhất 1 NC, hoặc bộ phận sau Gia công phát hiện) → phôi bù giao theo mã vụ (TH1b).
+        ///   Không qua: Kho phát hiện (trừ NG đếm lúc Kho nhận hàng bộ phận sản xuất giao về); NG đếm lúc nhận phôi Kho giao (mọi bộ phận); Gia công báo lỗi / trả hàng lỗi công đoạn trước ở hàng chưa làm NC đầu (dòng "Nhận vào"
+        ///   khi NC đầu là máy loại trừ); PO Kho giao thẳng Taro (NC đầu Taro — phôi đi Taro, không vào Gia công trước). Nguồn: CLAUDE tự chốt (HÙNG 26/11 03:49 OK).</summary>
+        public static bool BuQuaGc(LedgerRow row, LedgerCase c)
+        {
+            if (c.Id <= 0 || KhoTaroRun(row) != null) return false;
+            var dg = c.DetectGroup;
+            if (string.IsNullOrEmpty(dg)) return false;
+            // [N19-BU-VU rà độc lập T1 26/11] NG đếm lúc nhận (mọi bộ phận, cả Kho nhận thành phẩm Đóng gói giao về): đã qua Gia công khi hàng do bộ phận sản xuất giao
+            //   (nơi gây lỗi = bên giao GC / HTSP / KCS / PKG); phôi Kho giao thẳng (nơi gây lỗi Kho) hoặc phôi khách = chưa qua. Nguồn: CLAUDE (G-F, rà độc lập T1 + L3).
+            if (c.Origin is NgOrigin.Nhan or NgOrigin.NhanLoi) return c.Cause is "GC" or "HTSP" or "KCS" or "PKG";
+            if (dg == "KHO") return false;
+            if (dg != "GC") return true;
+            if ((c.Origin is NgOrigin.BaoLoi or NgOrigin.TraLoi) && !c.FromDa)
+            {
+                var dn = c.DetectNc?.Trim();
+                if (IsVao(dn)) return false;
+                if (!HandoverForm.HasVao(row) && HandoverForm.NormalNcs(row) is { Count: > 0 } ncs && string.Equals(ncs[0], dn, StringComparison.OrdinalIgnoreCase)) return false;
+                if (string.IsNullOrEmpty(dn) && HandoverForm.NormalNcs(row).Count == 0) return false;   // PO không có NC Gia công: không có "đã gia công"
+            }
+            return true;
+        }
+
+        /// <summary>[N19-BU-VU] Phôi bù của vụ còn chờ giao Gia công theo mã vụ (0 nếu vụ chưa qua Gia công).</summary>
+        public static decimal BuVuCho(LedgerRow row, LedgerCase c) => BuQuaGc(row, c) ? Math.Max(0, c.BuCho) : 0;
+
+        /// <summary>[N19-BU-VU] Vụ còn phôi bù chờ giao theo mã vụ, theo giờ vụ (ô "Bù cho mã vụ" ở form Kho).</summary>
+        public static List<LedgerCase> BuVuCases(LedgerRow row)
+            => row.Cases.Values.Where(c => BuVuCho(row, c) > 0).OrderBy(c => c.At ?? DateTime.MinValue).ThenBy(c => c.Id).ToList();
+
+        /// <summary>[N19-BU-VU] Tổng phôi bù đang chờ giao theo mã vụ (Workflow ON: giữ chỗ — phiếu Hàng mới thường của Kho không lấy phần này).</summary>
+        public static decimal BuVuHold(LedgerRow row) => row.Cases.Values.Sum(c => BuVuCho(row, c));
+
+        /// <summary>[N19-BU-VU] Trần phiếu Kho → Gia công bù theo vụ = min(phôi bù chờ giao của vụ, phôi còn của Kho).</summary>
+        public static (decimal Max, string Text) BuVuCap(LedgerRow row, long ngCaseId)
+        {
+            if (ngCaseId <= 0 || !row.Cases.TryGetValue(ngCaseId, out var c) || !BuQuaGc(row, c))
+                return (0, "mã vụ này không có phôi khách gửi bù chờ giao Gia công theo vụ");
+            var con = row.G("KHO").ConGiao;
+            var cho = Math.Max(0, c.BuCho);
+            return (Math.Max(0, Math.Min(cho, con)), $"phôi bù của {c.No} chờ giao {cho:0.##}" + (con < cho ? $", Kho phôi còn {con:0.##}" : ""));
+        }
+
+        /// <summary>[N19-BU-VU] Trần phiếu Hàng mới THƯỜNG của Kho khi Workflow ON = phôi còn − phôi bù chờ giao theo mã vụ.</summary>
+        public static decimal KhoMoiThuongCap(LedgerRow row) => Math.Max(0, row.G("KHO").ConGiao - BuVuHold(row));
+
+        /// <summary>[N19-BU-VU] Số phôi khách gửi bù hiện ở dòng "Phôi còn" (chỉ để xem — mockup TH1 "gồm 1 phôi khách gửi bù"): min(phôi còn, phôi bù chưa
+        ///   giao theo vụ). Phôi bù đi như phôi thường lẫn với phôi khác, không tách được chiếc nào — số này giả định phôi bù giao sau cùng.</summary>
+        public static decimal KhoBuTrongPhoiCon(LedgerRow row)
+            => Math.Max(0, Math.Min(row.G("KHO").ConGiao, row.Bu - row.Cases.Values.Sum(c => c.BuVao)));
+
         /// <summary>[KHACH-GUI-LAI] Vụ có đã bù vượt trả khách + huỷ (không được xảy ra — máy chủ chặn nhập bù vượt và huỷ phiếu trả khách / huỷ làm bù vượt).</summary>
         public static List<LedgerCase> BuOver(LedgerRow row)
             => row.Cases.Values.Where(c => c.DaBu > c.TraKhach + c.Huy).ToList();
@@ -3945,6 +4045,9 @@ namespace MES.Web.Services
                 // [KHACH-GUI-LAI 2026-11-11] Đã bù vượt trả khách + huỷ của vụ (khoá "BU|<vụ>") — không được xảy ra; HandoverWhy lần ra phiếu bù cần huỷ trước.
                 //   Nguồn: KHÁCH 10/11 vòng 1 câu 1b A; HÙNG 11/11 14:39 (trần bù chặn cả Workflow OFF — máy chủ chặn riêng ở nhập bù + huỷ phiếu Trả khách / Huỷ).
                 if (cs.DaBu > 0) Put($"BU|{cs.Id}", cs.TraKhach + cs.Huy - cs.DaBu, $"{cs.No}: khách đã gửi bù {cs.DaBu:0.##} nhiều hơn trả khách + huỷ");
+                // [N19-BU-VU 2026-11-26] Đã giao Gia công theo mã vụ nhiều hơn phôi khách gửi bù của vụ (khoá "BUV|<vụ>") — vd huỷ phiếu bù khi phôi bù đã giao theo vụ.
+                //   HandoverWhy lần ra phiếu Kho → Gia công bù theo vụ cần huỷ trước. Nguồn: CLAUDE (G-F); HÙNG 26/11 03:49 OK.
+                if (cs.BuVao > 0) Put($"BUV|{cs.Id}", cs.DaBuMoi - cs.BuVao, $"{cs.No}: đã giao Gia công theo mã vụ {cs.BuVao:0.##} nhiều hơn phôi khách gửi bù {cs.DaBuMoi:0.##}");
             }
             return d;
         }
