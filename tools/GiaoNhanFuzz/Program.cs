@@ -2013,7 +2013,8 @@ for (int po = startPo; po < startPo + poCount; po++)
                     if (mode == 0 && o0 > 0) { nOk--; nNg++; } else if (mode == 1 && g0 > 0) { nOk++; nNg--; } else if (mode == 2 && o0 > 1) nOk--; else if (mode == 4) nNg++; else nOk++;
                     if (eff == HandoverCell.Loi) { nNg += nOk; nOk = 0; }
                     if (eff == HandoverCell.Sua) { nOk += nNg; nNg = 0; }
-                    bool needCat = eff != HandoverCell.Loi && eff != HandoverCell.Sua && nNg > 0 && grp.All(x => x.NgCaseId == null) && tx.NgCaseId == null && tx.SourceReceiveId == null;
+                    bool bvTx = HandoverCell.IsBuVu(tx.ToCell);   // [N19-BU-VU 2026-11-26] phiếu bù theo mã vụ: mang vụ nhưng KHÔNG chở vụ — NG lúc nhận = vụ mới (cần loại lỗi). Trạm kiem 26/11 20:06 loi_loaitru seed 12258 PO5
+                    bool needCat = eff != HandoverCell.Loi && eff != HandoverCell.Sua && nNg > 0 && grp.All(x => x.NgCaseId == null) && (tx.NgCaseId == null || bvTx) && tx.SourceReceiveId == null;
                     desc = $"suanhan #{r0.ReceiveId} (nhóm {grp.Count}) phiếu #{tx.HandoverTxId} {tx.FromGroupCode}->{tx.ToGroupCode} ô {eff} {o0}+{g0} → {nOk}+{nNg}";
                     // đáp án độc lập
                     var at0 = grp.Min(x => x.ReceivedAt); var gT = tx.ToGroupCode;
@@ -2039,7 +2040,7 @@ for (int po = startPo; po < startPo + poCount; po++)
                         var deny2 = await svc.EditReceiveAsync(r0.ReceiveId, nOk, nNg, needCat ? 2 : null, "sua thu", FuzzPerm.GcOnlyUser(db));
                         if (deny2.Ok) fails.Add($"[N22 Quyền] PO{po} op{op} người chỉ có quyền Gia công sửa được lần nhận của {gT} — {desc}");
                     }
-                    var caseB = grp.Select(x => x.NgCaseId).FirstOrDefault(x => x != null) ?? (tx.SourceReceiveId != null || tx.NgCaseId != null ? tx.NgCaseId : null);
+                    var caseB = grp.Select(x => x.NgCaseId).FirstOrDefault(x => x != null) ?? (tx.SourceReceiveId != null || (tx.NgCaseId != null && !bvTx) ? tx.NgCaseId : null);   // [N19-BU-VU] phiếu bù: NG thêm = vụ mới
                     var backsSnap = backsB.Select(b => (b.HandoverTxId, b.QtyIssued)).ToList();
                     var res = await svc.EditReceiveAsync(r0.ReceiveId, nOk, nNg, needCat ? 2 : null, "sua thu", Uid(gT));
                     ok = res.Ok;

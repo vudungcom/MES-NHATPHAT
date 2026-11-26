@@ -481,6 +481,29 @@ public static partial class SuaScen
             _ = P;
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        Console.WriteLine("[G12] [N19-BU-VU × N22-SUA] Sửa lần nhận phiếu bù theo mã vụ: 2 OK → 1 OK + 1 NG = vụ MỚI (cần loại lỗi), vụ cũ vẫn đã bù xong phần OK (trạm kiem 26/11 20:06)");
+        {
+            WtsSvcHelp.Reset();
+            var db = SeedN19(); var svc = new HandoverService(db);
+            var vu = await PreTh1b(db, svc);
+            var bu = await svc.ReceiveReplacementAsync(1, vu, 1, "PX-12", 1);
+            var g = await KhoGiao(svc, 1, vu);
+            var txb = Tx(db);
+            var n = await svc.ReceiveAsync(txb.HandoverTxId, 1, 0, null, Gc);
+            var rId = db.HandoverReceives.List.Single(r => r.HandoverTxId == txb.HandoverTxId && !r.IsVoided).ReceiveId;
+            var a0 = await CheckBu(db, "G12 dựng");
+            Ok(bu.Ok && g.Ok && n.Ok && a0.Cases[vu].BuVao == 1, "Dựng: phôi bù 1 đã giao + Gia công nhận 1 OK", $"{bu.Error}|{g.Error}|{n.Error}");
+            var e0 = await svc.EditReceiveAsync(rId, 0, 1, null, "nhan nham", Gc);
+            Ok(!e0.Ok && e0.Error.Contains("loại lỗi"), "Sửa 1 OK → 1 NG không chọn loại lỗi → chặn (NG lúc nhận phiếu bù = vụ mới)", e0.Error);
+            var e1 = await svc.EditReceiveAsync(rId, 0, 1, 1, "nhan nham", Gc);
+            var a1 = await CheckBu(db, "G12 sau sửa");
+            var rNew = db.HandoverReceives.List.Where(r => r.HandoverTxId == txb.HandoverTxId && !r.IsVoided).ToList();
+            var vNew = rNew.Select(r => r.NgCaseId).FirstOrDefault(x => x != null);
+            Ok(e1.Ok && rNew.Sum(r => r.QtyNg) == 1 && vNew != null && vNew != vu && a1.Cases[vu].BuVao == 1 && a1.Cases[vNew!.Value].DetectGroup == "GC" && a1.Cases[vNew.Value].Cause == "KHO",
+               "Sửa 1 OK → 1 NG có loại lỗi: lần nhận mang vụ MỚI (nơi gây lỗi Kho), vụ cũ giữ Bù vào 1", e1.Error);
+        }
+
         Console.WriteLine(fails == 0 ? "KẾT QUẢ: ĐẠT hết" : $"KẾT QUẢ: SAI {fails}");
         return fails == 0 ? 0 : 1;
     }
