@@ -13,11 +13,17 @@
    Nguồn: HÙNG 22/11 08:29 + 11:58 "code luôn"; CLAUDE đề xuất ô Nhóm 22/11.
    [WTS-1NGUON 2026-11-26] Phút chia theo PHẦN (WtsReportRow.Parts: phần việc của dòng + từng mục phát sinh theo mã) và 3 loại theo cờ mã WTS
    tiêu chuẩn: Có ích / Vô ích / Chưa có mã (+ Chưa khai báo) = giờ chuẩn. Gia công theo "Mã dùng cho Gia công".
-   Nguồn: HÙNG 26/11 22:09 + 23:00 "chốt lại làm theo bạn" + 23:08 "Ok làm đi". *@
+   Nguồn: HÙNG 26/11 22:09 + 23:00 "chốt lại làm theo bạn" + 23:08 "Ok làm đi".
+   [RPT-TAB-MOI 2026-11-27] Bấm tên người / "Xem ngày" / thanh ngày → mở TAB MỚI đúng màn đó (link thật, tab cũ giữ nguyên + chỗ đang cuộn); mỗi màn
+   có địa chỉ riêng /hieu-suat-cong-nhan?bc=1&ky=&ngay= (hoặc tu= & den=)&cn=&nhom=&tim= — đọc lúc mở, ghi lại khi đổi (F5 / gửi địa chỉ giữ màn;
+   máy chủ vẫn kiểm quyền). Link "Tất cả công nhân", nút kỳ, mũi tên, ▸ mở dòng ngày vẫn trong tab đang xem.
+   Nguồn: HÙNG 27/11 06:30 ("không thể quay lại bước trước") + 06:33 ("click vào thì nó mở ra trang mới") + 06:36 "bạn sửa đi". *@
 @using System.Globalization
 @using MES.Web.Services
 @inject WtsReportService ReportSvc
 @inject ILogger<WtsReportTab> Logger
+@inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <div class="card shadow-sm border-0">
     <div class="card-body">
@@ -53,6 +59,7 @@
 
 @code {
     [Parameter] public int ViewerUserId { get; set; }
+    [Parameter] public bool ReadFromUrl { get; set; }   // [RPT-TAB-MOI] trang cha bật khi mở trang bằng ?bc=1 (chỉ lần đầu — rà độc lập 27/11 T2)
 
     static readonly CultureInfo Vi = CultureInfo.GetCultureInfo("vi-VN");
     const string CG = "#198754";    // có ích
@@ -98,9 +105,72 @@
 
     protected override async Task OnInitializedAsync()
     {
+        var urlWorker = ReadFromUrl ? ReadUrl() : 0;   // [RPT-TAB-MOI] kỳ / nhóm / tìm nhanh / người từ địa chỉ (tab mới, F5)
         try { _workers = await ReportSvc.GetAllActiveWorkersAsync(ViewerUserId); }
         catch (Exception ex) { _error = UiSafe.Text(ex, Logger, "tải danh sách công nhân"); }
         await LoadAsync();
+        if (urlWorker > 0 && _result != null)
+        {
+            if (WorkerOptions().Any(w => w.Id == urlWorker)) PickWorker(urlWorker);
+            else { _workerText = "#" + urlWorker; _workerNotFound = true; }   // người lạ / không được xem / khác nhóm → tất cả + báo (rà độc lập 27/11 L1)
+        }
+    }
+
+    // ── [RPT-TAB-MOI 2026-11-27] địa chỉ riêng cho mỗi màn báo cáo ─────────────────────────────────────────────
+    //   Nguồn: HÙNG 27/11 06:33 + 06:36. Chỉ đọc khi có bc=1; giá trị sai / lạ thì bỏ qua (giữ mặc định tuần này, tất cả công nhân).
+    const string UrlPath = "/hieu-suat-cong-nhan";
+    static readonly string[] Kys = { "day", "week", "month", "year", "custom" };
+    string _shownPeriod = "week";                 // kỳ của số ĐANG hiện (nút "Tự chọn" chưa bấm Xem báo cáo thì chưa đổi)
+    DateOnly _shownFrom, _shownTo;
+    bool _urlDirty;
+    static bool TryDay(string v, out DateTime d) =>
+        DateTime.TryParseExact(v, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d) && d.Year >= 2000 && d.Year <= 2100;
+    int ReadUrl()
+    {
+        try
+        {
+            var q = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Nav.ToAbsoluteUri(Nav.Uri).Query);
+            string Q(string k) => q.TryGetValue(k, out var v) ? (v.ToString() ?? "").Trim() : "";
+            if (Q("bc") != "1") return 0;   // (trang cha đã kiểm; giữ để component tự đứng được)
+            var ky = Q("ky");
+            if (ky == "custom")
+            {
+                if (TryDay(Q("tu"), out var a) && TryDay(Q("den"), out var b)) { _period = "custom"; _customFrom = a; _customTo = b; }
+            }
+            else if (Kys.Contains(ky))
+            {
+                _period = ky;
+                if (TryDay(Q("ngay"), out var a)) _anchor = a;
+            }
+            var nhom = Q("nhom");
+            if (nhom == "none" || (nhom.Length > 1 && nhom.Length <= 12 && nhom[0] == 'g' && nhom.Skip(1).All(char.IsAsciiDigit))) _groupKey = nhom;
+            var tim = Q("tim");
+            if (tim.Length <= 200) _search = tim;
+            return int.TryParse(Q("cn"), NumberStyles.None, CultureInfo.InvariantCulture, out var cn) && cn > 0 ? cn : 0;
+        }
+        catch (Exception ex) { Logger.LogWarning(ex, "[RPT-TAB-MOI] đọc địa chỉ báo cáo"); return 0; }
+    }
+    /// <summary>Địa chỉ 1 màn: kỳ đang hiện (hoặc 1 ngày), người, nhóm, tìm nhanh hiện tại.</summary>
+    string ViewUrl(string ky, DateOnly from, DateOnly to, int cn)
+    {
+        var p = new List<string> { "bc=1", "ky=" + ky };
+        if (ky == "custom") { p.Add("tu=" + from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)); p.Add("den=" + to.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)); }
+        else p.Add("ngay=" + from.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));   // ngày đầu kỳ: tuần / tháng / năm suy lại đúng kỳ
+        if (cn > 0) p.Add("cn=" + cn.ToString(CultureInfo.InvariantCulture));
+        if (_groupKey.Length > 0) p.Add("nhom=" + Uri.EscapeDataString(_groupKey));
+        var s = (_search ?? "").Trim();
+        if (s.Length > 0 && s.Length <= 200) p.Add("tim=" + Uri.EscapeDataString(s));   // khớp trần lúc đọc (rà độc lập 27/11 L2)
+        return UrlPath + "?" + string.Join("&", p);
+    }
+    string WorkerUrl(int id) => ViewUrl(_shownPeriod, _shownFrom, _shownTo, id);
+    string DayUrl(DateOnly d) => ViewUrl("day", d, d, _workerId);
+    string CurUrl => ViewUrl(_shownPeriod, _shownFrom, _shownTo, _workerId);
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_urlDirty || _result == null) return;
+        _urlDirty = false;
+        try { await JS.InvokeVoidAsync("mesReplaceUrl", CurUrl); }
+        catch (Exception ex) { Logger.LogDebug(ex, "[RPT-TAB-MOI] ghi địa chỉ"); }   // chỉ là địa chỉ hiển thị — không ảnh hưởng số
     }
 
     async Task LoadAsync()
@@ -114,6 +184,7 @@
             if (t < f) { _error = "Ngày \"Từ\" phải trước hoặc bằng ngày \"Đến\"."; return; }
             // không trần số ngày (rà độc lập 16/11 T2 đã chốt cho báo cáo WTS — giữ; rà độc lập 21/11 L10)
             _result = await ReportSvc.GetReportAsync(f, t, null, ViewerUserId);   // [RPT-4] máy chủ kiểm quyền; lọc người ở trang (đã có đủ người-ngày)
+            _shownPeriod = _period; _shownFrom = f; _shownTo = t;   // [RPT-TAB-MOI]
             _openDays.Clear();
             Recompute();
         }
@@ -142,6 +213,7 @@
         _dayOf = _workerId == 0 ? new() : _scopeDays.GroupBy(d => d.Day).ToDictionary(g => g.Key, g => g.First());
         var ud = _scopeDays.Where(d => d.UnaccountedMin != null).ToList();
         _unacc = s.Length > 0 || _result == null || ud.Count == 0 ? null : ud.Sum(d => d.UnaccountedMin!.Value);
+        _urlDirty = true;   // [RPT-TAB-MOI] mọi đổi người / nhóm / tìm nhanh / kỳ đều qua đây → ghi lại địa chỉ sau khi vẽ
     }
     List<WtsReportDay> _scopeDays = new();
     // [G31-LOC-NHOM] nhóm → tập công nhân (theo dòng đã tải); null = không lọc nhóm
@@ -213,7 +285,7 @@
         Recompute();
     }
     void BackToTeam() { _workerId = 0; _workerText = ""; _workerNotFound = false; Recompute(); }
-    async Task OpenDay(DateOnly d) { if (_loading) return; _period = "day"; _anchor = d.ToDateTime(TimeOnly.MinValue); await LoadAsync(); }
+    // [RPT-TAB-MOI] OpenDay (đổi kỳ sang Ngày ngay trong tab — mất màn trước) bỏ: "Xem ngày" / thanh ngày là link DayUrl mở tab mới
     void ToggleDay(DateOnly d) { if (!_openDays.Remove(d)) _openDays.Add(d); }
     void ToggleExtra() => _showExtra = !_showExtra;
     string _extraIcon => _showExtra ? "bi bi-chevron-up me-1" : "bi bi-chevron-down me-1";
@@ -504,7 +576,7 @@
                                 {
                                     var id = t.Id;
                                     <tr @key="t.Id">
-                                        <td><button type="button" class="btn btn-link btn-sm p-0 fw-bold" @onclick="() => PickWorker(id)">@t.Name</button></td>
+                                        <td><a class="btn btn-link btn-sm p-0 fw-bold" href="@WorkerUrl(id)" target="_blank" rel="noopener" title="Mở @t.Name ở tab mới">@t.Name</a></td>
                                         <td>@t.Main</td>
                                         <td class="text-end">@t.Days</td>
                                         <td class="text-end">@N(t.Base)</td>
@@ -645,7 +717,7 @@
             @foreach (var b in bars)
             {
                 var d = b.Day;
-                <button type="button" class="btn btn-light w-100 d-flex align-items-center gap-2 py-1 px-1 mb-1 border-0 text-start" @onclick="() => OpenDay(d)" disabled="@_loading">
+                <a class="btn btn-light w-100 d-flex align-items-center gap-2 py-1 px-1 mb-1 border-0 text-start" href="@DayUrl(d)" target="_blank" rel="noopener" title="Mở ngày @DayLabel(d) ở tab mới">
                     <span style="width:70px" class="small">@DayLabel(b.Day)</span>
                     <span class="flex-grow-1 d-flex align-items-center gap-1">
                         <span class="d-flex rounded overflow-hidden" style="height:20px;width:@W(b.Base, scale)">
@@ -658,7 +730,7 @@
                     </span>
                     <span style="width:180px" class="small text-muted text-end">@b.Pro · @b.Waste · @b.NoCode · @(b.Unacc?.ToString() ?? "—") / @b.Base</span>
                     <span style="width:56px;@LowStyle(b.Pro, b.Base)" class="small fw-bold text-end">@Pct(b.Pro, b.Base)</span>
-                </button>
+                </a>
             }
             <div class="small text-muted mt-1">Thanh dài = giờ chuẩn của ngày (ngày làm thông nghỉ / làm ngoài ca dài hơn; ngày không rõ ca = phút khai báo). % = có ích ÷ @BaseWord; đỏ = dưới @LowPct%.</div>
         </div>
@@ -811,7 +883,7 @@
                     <span class="ms-auto fw-bold" style="@LowStyle(pro, dbase)">@Pct(pro, dbase)</span>
                     @if (!isDay)
                     {
-                        <button type="button" class="btn btn-sm btn-link p-0" @onclick="() => OpenDay(d)" disabled="@_loading">Xem ngày</button>
+                        <a class="btn btn-sm btn-link p-0" href="@DayUrl(d)" target="_blank" rel="noopener" title="Mở ngày @DayLabel(d) ở tab mới">Xem ngày <i class="bi bi-box-arrow-up-right" style="font-size:.7rem"></i></a>
                     }
                 </div>
                 @if (open)

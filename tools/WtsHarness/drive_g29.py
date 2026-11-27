@@ -34,6 +34,7 @@
 #     /harness/g31-seed, K31 việc 11–13 qua nghỉ trưa đã lưu: Gia công giữ 1.440 / 990 / 60 / 390, KCS = 480 / 0 / 60 / 420). Bản Gói 30 (6dc3153): M1 / M3 / M4 / M5 / M6 / R7 SAI. Nguồn: HÙNG 22/11 08:58 + 09:03 + 11:58.
 #   [WTS-1NGUON 26/11] ĐÁP ÁN ĐỔI: ô số thêm "Chưa có mã" (ô thứ 4, ở đây 0 vì HarnessG29 khai mã Gia công GC29 có ích — Gia công giữ có ích như đáp án cũ).
 #     Bản trước gói (7bf0cf5): mọi bước R SAI ở ô số (5 ô). Nguồn: HÙNG 26/11 23:00 + 23:08.
+#   [RPT-TAB-MOI 27/11] ĐÁP ÁN ĐỔI: thanh ngày (R2) là link; R4 bấm thanh ngày mở TAB MỚI, đọc ngày ở tab đó rồi đóng. Nguồn: HÙNG 27/11 06:36.
 # Chạy trên harness VỪA khởi động: python3 drive_g29.py <port> <nhãn>
 import sys, asyncio, json, re, urllib.request, datetime
 from playwright.async_api import async_playwright
@@ -91,7 +92,7 @@ async def main():
             ok(k[:5] == ["960", "780", "30", "0", "150"], "R2 ô số A29: giờ chuẩn 960 (810 + 150) / 780 / 30 / 150", k)
             b2 = await pg.locator("body").inner_text()
             ok("81,3%" in b2 and "Tổng = giờ chuẩn" in b2 and "Giờ ca không có dòng WTS" in b2, "R2 [G30] A 81,3%; bảng theo việc có dòng Chưa KB + Tổng = giờ chuẩn", b2[b2.find("Theo việc"):b2.find("Theo việc") + 700])
-            bars = await pg.locator("button:has-text('/ 480')").all_inner_texts()
+            bars = await pg.locator("a:has-text('/ 480')").all_inner_texts()   # [RPT-TAB-MOI 27/11] đáp án đổi: thanh ngày là link mở tab mới (trước: nút)
             b1 = [x for x in bars if "300 · 30 · 0 · 150 / 480" in x]   # [WTS-1NGUON 26/11] đáp án đổi: thêm số chưa có mã (0)
             ok(len(b1) == 1 and "62,5%" in b1[0], "R2 [G30] thanh từng ngày: ngày 1 300 · 30 · 150 / 480 → 62,5% (trước 90,9% trên khai báo)", bars)
             hd = [x for x in await pg.locator("div.rounded.border.small").all_inner_texts() if "khai báo 330" in x]
@@ -114,13 +115,17 @@ async def main():
 
             print("STEP R4 G29-RPT — bấm ngày 1 → xem Ngày")
             lbl = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"][mon.weekday()] + " " + mon.strftime("%d/%m")
-            await pg.locator("button", has_text=lbl).first.click(); await pg.wait_for_timeout(2500)
+            # [RPT-TAB-MOI 27/11] đáp án đổi: thanh ngày mở TAB MỚI (trang ngày đọc ở tab đó; tab này giữ Tuần — R5 vẫn bấm Tuần như cũ)
+            pg0 = pg
+            async with ctx.expect_page(timeout=8000) as pi: await pg.locator("a", has_text=lbl).first.click()
+            pg = await pi.value; await pg.wait_for_load_state("networkidle"); await pg.wait_for_timeout(3000)
             k = await kpis(pg)
             body = await pg.locator("body").inner_text()
             ok(k[:5] == ["480", "300", "30", "0", "150"] and "Dòng thời gian trong ngày" in body, "R4 ngày 1: giờ chuẩn 480 / 300 / 30 / 150 + dòng thời gian", (k, body[:300]))
             ok("62,5%" in body, "R4 [G30] ngày 1 có ích 300 / 480 = 62,5%", body[:800])
             ok(await pg.locator("div.position-absolute[title*='Hàng loạt']").count() >= 2, "R4 dòng thời gian có khối Hàng loạt")
             await pg.screenshot(path=f"{OUT}_g29_r4.png", full_page=True)
+            await pg.close(); pg = pg0
 
             print("STEP R5 G29-TIMNHANH — tất cả + tìm HOP29 (tuần)")
             await pg.click("button:has-text('Tuần')"); await pg.wait_for_timeout(2000)

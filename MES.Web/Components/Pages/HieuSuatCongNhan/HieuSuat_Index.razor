@@ -3773,7 +3773,7 @@ else
    Component tự tải số (WtsReportService, máy chủ kiểm quyền Xem WTS Report [RPT-4]). Hùng 21/11 09:46 OK mockup. *@
 @if (_activeTab == "report" && _canViewReport)
 {
-    <WtsReportTab ViewerUserId="_currentUserId" />
+    <WtsReportTab ViewerUserId="_currentUserId" ReadFromUrl="_rptFromUrl" />   @* [RPT-TAB-MOI] *@
 }
 
 @code {
@@ -3833,7 +3833,18 @@ else
 
     private string _TabReportCls => _activeTab == "report" ? "nav-link active" : "nav-link";
 
-    private void SetTabInput() { _activeTab = "input"; }
+    // [RPT-TAB-MOI 2026-11-27] Về tab Nhập WTS: bỏ tham số báo cáo trên địa chỉ (F5 không mở lại báo cáo). Báo cáo mở theo địa chỉ ?bc=1 —
+    //   WtsReportTab đọc kỳ / người / nhóm / tìm nhanh từ địa chỉ (link tên người / "Xem ngày" mở tab mới).
+    //   Nguồn: HÙNG 27/11 06:30 + 06:33 "click vào thì nó mở ra trang mới" + 06:36 "bạn sửa đi".
+    //   Rà độc lập 27/11 T1: bc là chuỗi (int? thì ?bc=abc làm lỗi cả trang); T2: đọc địa chỉ CHỈ lần mở đầu (_rptFromUrl) — Nav.Uri không đổi theo
+    //   replaceState, nên bấm Nhập WTS rồi WTS Report không được đọc lại tham số cũ.
+    [SupplyParameterFromQuery(Name = "bc")] public string? Bc { get; set; }
+    private bool _rptFromUrl;
+    private async Task SetTabInput()
+    {
+        _activeTab = "input"; _rptFromUrl = false;
+        try { await JS.InvokeVoidAsync("mesReplaceUrl", "/hieu-suat-cong-nhan"); } catch { /* chỉ đổi địa chỉ hiển thị */ }
+    }
 
     // [G29-RPT 2026-11-21] Trạng thái báo cáo (ngày, người, kết quả) chuyển vào component WtsReportTab.
 
@@ -4432,6 +4443,7 @@ else
         _canViewReport = (_perms.TryGetValue(SystemPermissions.WtsReport, out var pr) && pr.CanView)
 
                       || gc == "ADMIN";
+        if (Bc?.Trim() == "1" && _canViewReport) { _activeTab = "report"; _rptFromUrl = true; }   // [RPT-TAB-MOI] mở thẳng tab báo cáo (tab mới / F5 / địa chỉ gửi nhau)
 
         // [L7-WTS-CU 2026-11-19] quyền cao hơn (chỉ để hiện ô chọn người + nút; máy chủ kiểm lại) + danh sách người để chọn
         _viewUserId = _currentUserId;

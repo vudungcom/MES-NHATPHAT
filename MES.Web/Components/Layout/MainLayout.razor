@@ -64,7 +64,7 @@
 <MES.Web.Components.Shared.AuthWatch @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
 
 @* JS helper: download file từ Blazor (dùng cho xuất Excel, PDF...) *@
-<script src="/js/downloadHelper.js"></script>
+<script src="/js/downloadHelper.js?v=20261127"></script>   @* [RPT-TAB-MOI 2026-11-27] ?v= để trình duyệt lấy bản có mesReplaceUrl (rà độc lập L3). Nguồn: HÙNG 27/11 06:36 *@
 
 @code {
     private bool _isBlocked = false;
